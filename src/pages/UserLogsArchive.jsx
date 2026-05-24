@@ -33,7 +33,7 @@ export default function UserLogsArchive() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/user-logs-archive", {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/user-logs-archive`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();

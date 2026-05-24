@@ -56,7 +56,7 @@ export default function TransactionLogArchivePage() {
   const fetchRecords = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await fetch("/api/archives/transaction-logs", {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/transaction-logs`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();

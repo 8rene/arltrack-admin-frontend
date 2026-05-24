@@ -51,7 +51,7 @@ export default function UserLogArchivePage() {
   const fetchRecords = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await fetch("/api/archives/user-log", {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/user-log`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();

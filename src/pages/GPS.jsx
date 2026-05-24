@@ -137,7 +137,7 @@ export default function GPSTracking() {
   // ── Fetch stored GPS locations + refresh markers ──────────────────────────
   const fetchLocations = useCallback(async () => {
     try {
-      const res  = await fetch("/api/gps", {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/gps`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();
@@ -233,7 +233,7 @@ export default function GPSTracking() {
       }
 
       // 2. Save / overwrite it (POST back so it persists to Firestore)
-      await fetch("/api/gps", {
+      await fetch(`${process.env.REACT_APP_API_URL}/api/gps`, {
         method:  "POST",
         headers: {
           "Content-Type": "application/json",
