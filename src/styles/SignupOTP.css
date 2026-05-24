@@ -1,0 +1,67 @@
+.modal-overlay {
+position: fixed;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+background: rgba(0,0,0,0.45);
+display: flex;
+justify-content: center;
+align-items: center;
+z-index: 1000;
+}
+
+.otp-modal {
+background: #fff;
+padding: 30px;
+border-radius: 10px;
+width: 350px;
+text-align: center;
+box-shadow: 0 5px 25px rgba(0,0,0,0.2);
+}
+
+.otp-modal h2 {
+margin-bottom: 10px;
+}
+
+.otp-modal p {
+font-size: 14px;
+color: #555;
+margin-bottom: 20px;
+}
+
+.otp-modal input {
+width: 100%;
+padding: 10px;
+border-radius: 6px;
+border: 1px solid #ccc;
+margin-bottom: 10px;
+}
+
+.otp-error {
+color: red;
+font-size: 13px;
+margin-bottom: 10px;
+}
+
+.otp-actions {
+display: flex;
+justify-content: space-between;
+}
+
+.verify-btn {
+background: #4caf50;
+color: white;
+border: none;
+padding: 8px 15px;
+border-radius: 6px;
+cursor: pointer;
+}
+
+.cancel-btn {
+background: #ddd;
+border: none;
+padding: 8px 15px;
+border-radius: 6px;
+cursor: pointer;
+}

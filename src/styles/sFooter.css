@@ -1,0 +1,28 @@
+.footer {
+  height: 100px;
+  background-color: #6e6e6e; /* same gray as header */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+/* CENTER TEXT */
+.footer-text {
+  color: white;
+  font-size: 16px;
+}
+
+/* RIGHT ICONS */
+.footer-icons {
+  position: absolute;
+  right: 40px;
+  display: flex;
+  gap: 20px;
+}
+
+.footer-icons img {
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+}

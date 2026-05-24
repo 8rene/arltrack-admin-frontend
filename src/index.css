@@ -1,0 +1,269 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════
+   FULL-PAGE RESET — edge-to-edge layout
+   ═══════════════════════════════════════ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Ensure the app shell fills the full screen */
+.flex.min-h-screen {
+  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Make the scrollable main area fill remaining space */
+main.flex-1 {
+  height: 0;
+  flex: 1 1 0%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Pages themselves fill the content area */
+main.flex-1 > * {
+  min-height: 100%;
+}
+
+/* Hide scrollbar but keep scroll functional */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE / Edge */
+  scrollbar-width: none;     /* Firefox */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;             /* Chrome / Safari / Opera */
+}
+
+/* ═══════════════════════════════════════
+   DARK MODE — global overrides
+   ═══════════════════════════════════════ */
+
+/* Base page */
+.dark body,
+.dark #root {
+  background-color: #0f1117;
+  color: #e5e7eb;
+}
+
+/* Layout backgrounds */
+.dark .bg-white            { background-color: #1e2130 !important; }
+.dark .bg-gray-50          { background-color: #181b27 !important; }
+.dark .bg-arl-light        { background-color: #0f1117 !important; }
+.dark .bg-gray-100         { background-color: #252836 !important; }
+
+/* Borders */
+.dark .border-gray-100     { border-color: #2a2d3e !important; }
+.dark .border-gray-200     { border-color: #2e3245 !important; }
+.dark .border              { border-color: #2a2d3e !important; }
+
+/* Text */
+.dark .text-gray-800       { color: #e5e7eb !important; }
+.dark .text-gray-700       { color: #d1d5db !important; }
+.dark .text-gray-600       { color: #9ca3af !important; }
+.dark .text-gray-500       { color: #6b7280 !important; }
+.dark .text-gray-400       { color: #4b5563 !important; }
+.dark .text-gray-300       { color: #374151 !important; }
+.dark .text-arl-dark       { color: #e5e7eb !important; }
+
+/* Inputs */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #252836 !important;
+  border-color: #2e3245 !important;
+  color: #e5e7eb !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: #4b5563 !important; }
+
+/* Tables */
+.dark table thead tr,
+.dark .bg-gray-50          { background-color: #181b27 !important; }
+.dark tbody tr:hover        { background-color: #252836 !important; }
+.dark tr.bg-gray-50\/30    { background-color: rgba(24,27,39,0.3) !important; }
+
+/* Cards & panels */
+.dark .shadow-soft         { box-shadow: 0 10px 30px rgba(0,0,0,0.4) !important; }
+
+/* Sidebar */
+.dark aside                { background-color: #141624 !important; border-right-color: #1e2130; }
+.dark aside .text-gray-400 { color: #6b7280 !important; }
+.dark aside .text-gray-500 { color: #4b5563 !important; }
+
+/* Header */
+.dark header.w-full        { background-color: #1e2130 !important; border-color: #2a2d3e !important; }
+
+/* Modals / drawers */
+.dark .bg-white.rounded-2xl { background-color: #1e2130 !important; }
+.dark .bg-white.shadow-xl   { background-color: #1e2130 !important; }
+.dark .bg-white.rounded-xl  { background-color: #1e2130 !important; }
+
+/* Dividers */
+.dark .bg-gray-200         { background-color: #2a2d3e !important; }
+
+/* Sticky table header in dark */
+.dark thead th             { background-color: #181b27 !important; color: #6b7280 !important; }
+
+/* Toggle thumb */
+.dark .bg-gray-300         { background-color: #374151 !important; }
+
+/* Badges — keep colours, just adjust backgrounds */
+.dark .bg-green-50         { background-color: rgba(16,185,129,0.15) !important; }
+.dark .bg-red-50           { background-color: rgba(239,68,68,0.15) !important; }
+.dark .bg-yellow-50        { background-color: rgba(245,158,11,0.15) !important; }
+.dark .bg-blue-50          { background-color: rgba(59,130,246,0.15) !important; }
+.dark .bg-purple-50        { background-color: rgba(139,92,246,0.15) !important; }
+.dark .bg-teal-50          { background-color: rgba(20,184,166,0.15) !important; }
+.dark .bg-orange-50        { background-color: rgba(249,115,22,0.15) !important; }
+.dark .bg-pink-50          { background-color: rgba(236,72,153,0.15) !important; }
+
+.dark .bg-gray-100.text-gray-500,
+.dark .bg-gray-100.text-gray-600  { background-color: #252836 !important; }
+
+/* Stat card backgrounds */
+.dark .bg-teal-50    { background-color: rgba(20,184,166,0.12) !important; }
+.dark .bg-green-50   { background-color: rgba(16,185,129,0.12) !important; }
+.dark .bg-orange-50  { background-color: rgba(249,115,22,0.12) !important; }
+.dark .bg-blue-50    { background-color: rgba(59,130,246,0.12) !important; }
+.dark .bg-purple-50  { background-color: rgba(139,92,246,0.12) !important; }
+.dark .bg-pink-50    { background-color: rgba(236,72,153,0.12) !important; }
+
+/* Locked / disabled fields */
+.dark .bg-gray-50.cursor-not-allowed { background-color: #181b27 !important; }
+
+/* Dropdown / select */
+.dark select option { background-color: #1e2130; color: #e5e7eb; }
+
+/* Scrollbar in dark */
+.dark ::-webkit-scrollbar             { width: 6px; height: 6px; }
+.dark ::-webkit-scrollbar-track       { background: #181b27; }
+.dark ::-webkit-scrollbar-thumb       { background: #2e3245; border-radius: 3px; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #374151; }
+
+/* Chart.js canvas — no special override needed, uses JS config */
+
+/* Analytics bar chart empty bars */
+.dark .bg-gray-100.rounded-t-md { background-color: #252836 !important; }
+
+/* Print — always light */
+@media print {
+  .dark body, .dark #root { background-color: #fff !important; color: #111 !important; }
+  .dark .bg-white         { background-color: #fff !important; }
+  .dark .text-gray-800    { color: #111 !important; }
+}
+
+/* ═══════════════════════════════════════
+   DARK MODE — enhanced text + buttons
+   ═══════════════════════════════════════ */
+
+/* Brighter, bolder headings in dark mode */
+.dark h1, .dark h2, .dark h3, .dark h4 {
+  color: #f1f5f9 !important;
+  font-weight: 700 !important;
+}
+.dark h1 { font-size: 1.35em; }
+.dark p, .dark span, .dark td, .dark th, .dark label, .dark li {
+  color: #cbd5e1;
+}
+.dark .font-bold, .dark .font-semibold {
+  color: #f1f5f9 !important;
+}
+.dark .font-medium {
+  color: #e2e8f0 !important;
+}
+
+/* Stronger text on key content */
+.dark .text-arl-dark   { color: #f1f5f9 !important; }
+.dark .text-gray-800   { color: #e2e8f0 !important; }
+.dark .text-gray-700   { color: #cbd5e1 !important; }
+.dark .text-gray-600   { color: #94a3b8 !important; }
+.dark .text-gray-500   { color: #64748b !important; }
+.dark .text-gray-400   { color: #475569 !important; }
+
+/* Buttons — lighter/brighter in dark mode */
+.dark button:not([class*="bg-arl"]):not([class*="bg-red"]):not([class*="bg-green"]):not([class*="bg-teal"]):not([class*="bg-blue"]) {
+  border-color: #2e3245 !important;
+  color: #e2e8f0 !important;
+}
+/* Default gray buttons */
+.dark .border.border-gray-200 { border-color: #2e3245 !important; }
+.dark .hover\:bg-gray-50:hover { background-color: #252836 !important; }
+.dark .hover\:bg-gray-100:hover { background-color: #2a2d3e !important; }
+/* Tab pills */
+.dark .bg-gray-100.p-1 { background-color: #252836 !important; }
+.dark .bg-gray-100.p-1 button { color: #94a3b8 !important; }
+.dark .bg-gray-100.p-1 button.bg-white {
+  background-color: #1e2130 !important;
+  color: #f1f5f9 !important;
+}
+/* Outline buttons */
+.dark .border.rounded-xl, .dark .border.rounded-lg {
+  border-color: #2e3245 !important;
+}
+/* Icon buttons */
+.dark .bg-arl-light.border { background-color: #252836 !important; border-color: #2e3245 !important; }
+
+/* Fleet status dropdown in dark */
+.dark .bg-white.border.border-gray-100.rounded-xl.shadow-xl {
+  background-color: #1e2130 !important;
+  border-color: #2e3245 !important;
+}
+.dark .bg-white.border.border-gray-100.rounded-xl.shadow-xl button:hover {
+  background-color: #252836 !important;
+}
+.dark .bg-white.border.border-gray-100.rounded-xl.shadow-xl button {
+  color: #e2e8f0 !important;
+}
+
+/* Stat cards in dark */
+.dark .bg-white.rounded-2xl { background-color: #1e2130 !important; }
+.dark .border-gray-100.shadow-soft { border-color: #2a2d3e !important; }
+
+/* Animated pulse skeleton in dark */
+.dark .bg-gray-100.rounded.animate-pulse { background-color: #252836 !important; }
+.dark .bg-gray-100.rounded-full.animate-pulse { background-color: #252836 !important; }
+
+/* Table striped rows in dark */
+.dark .bg-gray-50\/30 { background-color: rgba(24,27,39,0.3) !important; }
+.dark tr:hover td { background-color: #252836 !important; }
+
+/* Progress bars */
+.dark .bg-gray-100.rounded-full { background-color: #252836 !important; }
+
+/* Dropdown selects */
+.dark select { background-color: #252836 !important; color: #e2e8f0 !important; border-color: #2e3245 !important; }
+
+/* Cards summary label */
+.dark .text-xs.text-gray-400.uppercase { color: #475569 !important; }
+
+/* Sidebar active item */
+.dark .bg-arl-light\/50 { background-color: rgba(37,40,54,0.5) !important; }
+
+/* Locked field */
+.dark .cursor-not-allowed.bg-gray-50 {
+  background-color: #181b27 !important;
+  color: #475569 !important;
+}

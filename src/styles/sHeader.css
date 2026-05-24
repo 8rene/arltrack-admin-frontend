@@ -1,0 +1,61 @@
+.header {
+  height: 100px;
+  background-color: #6e6e6e;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 40px;
+}
+
+/* LEFT */
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo {
+  height: 50px;
+}
+
+.logo-text {
+  font-size: 22px;
+  font-weight: bold;
+  color: white;
+}
+
+/* CENTER */
+.header-center {
+  display: flex;
+  gap: 40px;
+}
+
+.header-center a {
+  text-decoration: none;
+  color: white;
+  font-size: 18px;
+}
+
+/* RIGHT */
+.header-right {
+  display: flex;
+  gap: 15px;
+}
+
+.login-btn,
+.signup-btn {
+  padding: 8px 18px;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.login-btn {
+  background-color: #444;
+  color: white;
+}
+
+.signup-btn {
+  background-color: white;
+  color: black;
+}

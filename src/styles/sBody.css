@@ -1,0 +1,26 @@
+.body-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 60px;
+
+  background-color: #2f2f2f; /* darker than gray */
+  min-height: 700px;
+  padding: 60px;
+}
+
+/* carousel */
+.carousel img {
+  width: 450px;
+  height: 300px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+/* text */
+.carousel-text {
+  width: 420px;
+  color: white;
+  font-size: 20px;
+  line-height: 1.5;
+}

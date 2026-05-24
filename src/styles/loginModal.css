@@ -1,0 +1,126 @@
+/* Full screen overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0,0,0,0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+/* Modal box */
+.login-modal {
+  background-color: #e0e0e0; /* gray */
+  padding: 2rem;
+  width: 350px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  text-align: center;
+}
+
+/* Title */
+.modal-title {
+  font-size: 1.5rem;
+  margin-bottom: 1.5rem;
+  font-weight: bold;
+}
+
+/* Form */
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.modal-form input {
+  padding: 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+
+/* Options */
+.form-options {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  align-items: center;
+}
+
+.form-options input {
+  margin-right: 5px;
+}
+
+.form-options a {
+  color: black;
+  text-decoration: none;
+}
+
+.form-options a:hover {
+  text-decoration: underline;
+}
+
+/* Login button */
+.login-btn {
+  padding: 0.7rem;
+  border: none;
+  border-radius: 6px;
+  background-color: #333;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.login-btn:hover {
+  background-color: #555;
+}
+
+/* Signup link */
+.signup-link {
+  font-size: 0.85rem;
+  margin-top: 10px;
+}
+
+.signup-link span {
+  color: black;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Social login */
+.social-login {
+  margin-top: 20px;
+}
+
+.social-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.social-buttons button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+/* Make BOTH buttons black */
+.social-buttons .google {
+  background-color: black;
+}
+
+.social-buttons .facebook {
+  background-color: black;
+}
+
+.social-buttons button:hover {
+  opacity: 0.8;
+}
