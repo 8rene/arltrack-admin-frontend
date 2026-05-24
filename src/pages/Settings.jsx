@@ -28,14 +28,14 @@ export default function Settings() {
     setLoading(true);
     try {
       // Get from user collection
-      const userRes = await fetch(`/api/users/by-uid/${user.uid}`, {
+      const userRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/by-uid/${user.uid}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const userData = await userRes.json();
       const u = userData?.data || {};
 
       // Get from userDetails
-      const detailRes = await fetch(`/api/users/details/${user.uid}`, {
+      const detailRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/details/${user.uid}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const detailData = await detailRes.json();

@@ -28,7 +28,7 @@ export default function Analytics() {
     setLoading(true);
     setError(null);
     try {
-      const res  = await fetch(`/api/analytics?type=${type}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/analytics?type=${type}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();

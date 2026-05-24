@@ -45,7 +45,7 @@ export default function Reports() {
   const generate = useCallback(async (p) => {
     setLoading(true); setError(null); setReport(null);
     try {
-      const res  = await fetch(`/api/reports?period=${p}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/reports?period=${p}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();

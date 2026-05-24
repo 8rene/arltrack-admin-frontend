@@ -113,7 +113,7 @@ function EditModal({ booking, onClose, onSave }) {
     const bID = booking.bookingID || booking.id;
     if (!bID || currentStatus !== "pending") return;
     setPaymentLoading(true);
-    fetch(`/api/payments?bookingID=${encodeURIComponent(bID)}`, {
+    fetch(`${process.env.REACT_APP_API_URL}/api/payments?bookingID=${encodeURIComponent(bID)}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     })
       .then(r => r.json())
@@ -136,7 +136,7 @@ function EditModal({ booking, onClose, onSave }) {
   const handleSave = async () => {
     setSaving(true); setError(null);
     try {
-      const res = await fetch(`/api/bookings/${booking.id}`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify(form),
@@ -279,7 +279,7 @@ export default function Bookings() {
   const fetchBookings = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await fetch(`/api/bookings?status=all`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings?status=all`, { headers: { Authorization: `Bearer ${getToken()}` } });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to load bookings");
       setAllBookings(json.data);
@@ -319,7 +319,7 @@ export default function Bookings() {
     if (!deleteBooking) return;
     setDeleting(true);
     try {
-      const res  = await fetch(`/api/bookings/${deleteBooking.id}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${deleteBooking.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${getToken()}` },
       });
