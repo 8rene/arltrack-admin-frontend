@@ -55,7 +55,7 @@ export default function AuditLogsArchivePage() {
   const fetchRecords = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await fetch("/api/archives/audit-logs", {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/audit-logs`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();

@@ -52,7 +52,7 @@ export default function BookingArchivePage() {
   const fetchRecords = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await fetch("/api/archives/bookings", {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/bookings`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();

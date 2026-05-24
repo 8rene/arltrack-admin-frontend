@@ -75,7 +75,7 @@ export default function AuditLog() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/audit-logs", {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/audit-logs`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();

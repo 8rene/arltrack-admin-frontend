@@ -126,7 +126,7 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
       const token = getToken();
-      const res = await fetch("/api/dashboard/metrics", {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/dashboard/metrics`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();
