@@ -128,8 +128,9 @@ function CustomersTab({ users, onRefresh }) {
   const handleDelete = async (user) => {
     try {
       // Call backend — archives Firestore docs AND deletes from Firebase Auth
-      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/users/${user.id}`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}`, {
         method: "DELETE",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       });
       if (!res.ok) {
         const err = await res.json();
