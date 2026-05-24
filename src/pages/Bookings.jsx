@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
@@ -269,7 +269,7 @@ export default function Bookings() {
 
   const [newBookingNotifs, setNewBookingNotifs] = useState([]);
   const [alertDismissed, setAlertDismissed]     = useState(false);
-  const isInitialRef = useRef(true);
+
 
   const showToast = (msg, type = "success") => {
     setDeleteToast({ msg, type });
@@ -298,7 +298,6 @@ export default function Bookings() {
     );
     const unsub = onSnapshot(q, (snap) => {
       const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      if (isInitialRef.current) { isInitialRef.current = false; return; }
       if (docs.length > 0) { setNewBookingNotifs(docs); setAlertDismissed(false); fetchBookings(); }
     });
     return () => unsub();
