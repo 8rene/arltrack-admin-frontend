@@ -4,20 +4,8 @@ import {
   collection, getDocs, query, where, orderBy, doc, updateDoc,
   addDoc, deleteDoc, serverTimestamp
 } from "firebase/firestore";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { initializeApp, getApps } from "firebase/app";
-import { db } from "../fireabase";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyDXSIR_zZh6LolqoW7tkERyXMglGCPGHdg",
-  authDomain: "arltrack-carrentalservices.firebaseapp.com",
-  projectId: "arltrack-carrentalservices",
-  storageBucket: "arltrack-carrentalservices.firebasestorage.app",
-  messagingSenderId: "803760784395",
-  appId: "1:803760784395:web:1f428b6bb2b51e2721b30e",
-};
-const fbApp = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
-const storage = getStorage(fbApp);
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "../fireabase";
 
 const STATUS_STYLE = {
   Active:      "bg-green-100 text-green-700",
