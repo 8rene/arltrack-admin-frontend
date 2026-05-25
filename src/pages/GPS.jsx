@@ -222,7 +222,7 @@ export default function GPSTracking() {
     setNotice(null);
     try {
       // 1. Get the live location from the GPS device endpoint
-      const res  = await fetch(`/api/gps/${deviceId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/gps/${deviceId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const live = await res.json();
