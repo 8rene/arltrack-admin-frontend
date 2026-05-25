@@ -3,8 +3,21 @@ import {
   collection, getDocs, query, where, doc,
   setDoc, addDoc, serverTimestamp, getDoc,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "../fireabase";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { initializeApp, getApps } from "firebase/app";
+import { db } from "../fireabase";
+
+/* ── Firebase Storage ── */
+const firebaseConfig = {
+  apiKey: "AIzaSyDXSIR_zZh6LolqoW7tkERyXMglGCPGHdg",
+  authDomain: "arltrack-carrentalservices.firebaseapp.com",
+  projectId: "arltrack-carrentalservices",
+  storageBucket: "arltrack-carrentalservices.firebasestorage.app",
+  messagingSenderId: "803760784395",
+  appId: "1:803760784395:web:1f428b6bb2b51e2721b30e",
+};
+const fbApp   = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+const storage = getStorage(fbApp);
 
 /* ── Fixed exterior views ── */
 const EXTERIOR_SLOTS = [
@@ -234,7 +247,7 @@ export default function VehicleDocs() {
           try {
             const [detailDoc, userDoc] = await Promise.all([
               getDoc(doc(db, "userDetails", userID)),
-              getDoc(doc(db, "users", userID)),
+              getDoc(doc(db, "user", userID)),
             ]);
             const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
             const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();

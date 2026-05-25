@@ -118,7 +118,7 @@ const sendAfterTripNotification = async (damagedParts, carName, carID, bookingID
         const { firstName = "", lastName = "" } = detailDoc.data();
         fullName = [firstName, lastName].filter(Boolean).join(" ").trim() || fullName;
       } else {
-        const userDoc = await getDoc(doc(db, "users", userID));
+        const userDoc = await getDoc(doc(db, "user", userID));
         if (userDoc.exists()) {
           const { firstName = "", lastName = "", username = "" } = userDoc.data();
           fullName = [firstName, lastName].filter(Boolean).join(" ").trim() || username || fullName;
@@ -334,7 +334,7 @@ export default function Inventory() {
           try {
             const [detailDoc, userDoc] = await Promise.all([
               getDoc(doc(db, "userDetails", userID)),
-              getDoc(doc(db, "users", userID)),
+              getDoc(doc(db, "user", userID)),
             ]);
             const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
             const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
