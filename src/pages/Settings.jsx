@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useCurrency } from "../context/CurrencyContext";
 import { useTheme } from "../context/ThemeContext";
+import { auth } from "../fireabase";
+import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
 
 const SUPPORTED_CURRENCIES = ["PHP", "USD", "EUR"];
 
@@ -16,6 +18,10 @@ export default function Settings() {
   const { currency, setCurrency, rates, ratesLoading, SYMBOLS } = useCurrency();
   const { isDark, toggleDark } = useTheme();
   const [notifications, setNotifications] = useState(true);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPw, setChangingPw] = useState(false);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -61,6 +67,38 @@ export default function Settings() {
   const handleCurrencyChange = (cur) => {
     setCurrency(cur);
     showToast(`Currency set to ${cur}.`);
+  };
+
+  /* ── Change Password ── */
+  const handleChangePassword = async () => {
+    if (!newPassword || !confirmPassword || !currentPassword) {
+      showToast("Please fill in all password fields.", "error"); return;
+    }
+    if (newPassword.length < 6) {
+      showToast("New password must be at least 6 characters.", "error"); return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast("Passwords do not match.", "error"); return;
+    }
+    setChangingPw(true);
+    try {
+      const user = auth.currentUser;
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(user, credential);
+      await updatePassword(user, newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      showToast("Password changed successfully.");
+    } catch (e) {
+      if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential") {
+        showToast("Current password is incorrect.", "error");
+      } else {
+        showToast(e.message, "error");
+      }
+    } finally {
+      setChangingPw(false);
+    }
   };
 
   /* ── Save profile (name only — email & role locked) ── */
@@ -199,8 +237,16 @@ export default function Settings() {
       {/* SECURITY */}
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-soft space-y-4">
         <h2 className="font-semibold text-gray-700 text-sm">🔐 Security</h2>
-        <PasswordInput label="New Password" />
-        <PasswordInput label="Confirm Password" />
+        <PasswordInput label="Current Password" value={currentPassword} onChange={setCurrentPassword} />
+        <PasswordInput label="New Password" value={newPassword} onChange={setNewPassword} />
+        <PasswordInput label="Confirm New Password" value={confirmPassword} onChange={setConfirmPassword} />
+        <button
+          onClick={handleChangePassword}
+          disabled={changingPw}
+          className="w-full bg-arl-dark hover:opacity-90 text-white px-6 py-2.5 rounded-xl shadow text-sm font-medium disabled:opacity-50 transition-opacity"
+        >
+          {changingPw ? "Changing Password…" : "Change Password"}
+        </button>
       </div>
 
       {/* Save */}
@@ -257,17 +303,16 @@ function Toggle({ label, checked, onChange }) {
   );
 }
 
-function PasswordInput({ label }) {
+function PasswordInput({ label, value, onChange }) {
   const [show, setShow] = useState(false);
-  const [val, setVal]   = useState("");
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{label}</label>
       <div className="relative">
         <input
           type={show ? "text" : "password"}
-          value={val}
-          onChange={(e) => setVal(e.target.value)}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
           className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none pr-10"
         />
         <button
