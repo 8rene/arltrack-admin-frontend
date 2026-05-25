@@ -70,7 +70,7 @@ export default function ReviewsArchivePage() {
   const handleRestore = async (reviewsArchivesID) => {
     setActionId(reviewsArchivesID);
     try {
-      const res  = await fetch(`/api/archives/reviews/${reviewsArchivesID}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/reviews/${reviewsArchivesID}/restore`, {
         method: "POST", headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -86,7 +86,7 @@ export default function ReviewsArchivePage() {
   const handleDelete = async (reviewsArchivesID) => {
     setConfirmId(null); setActionId(reviewsArchivesID);
     try {
-      const res  = await fetch(`/api/archives/reviews/${reviewsArchivesID}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/reviews/${reviewsArchivesID}`, {
         method: "DELETE", headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();

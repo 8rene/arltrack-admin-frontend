@@ -68,7 +68,7 @@ export default function TransactionLogs() {
   const handleDelete = async (id) => {
     setDeletingId(id);
     try {
-      const res = await fetch(`/api/transaction-logs/${id}`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/transaction-logs/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

@@ -70,7 +70,7 @@ export default function BookingArchivePage() {
   const handleRestore = async (bookingArchivesId) => {
     setActionId(bookingArchivesId);
     try {
-      const res  = await fetch(`/api/archives/bookings/${bookingArchivesId}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/bookings/${bookingArchivesId}/restore`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -89,7 +89,7 @@ export default function BookingArchivePage() {
     setConfirmId(null);
     setActionId(bookingArchivesId);
     try {
-      const res  = await fetch(`/api/archives/bookings/${bookingArchivesId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/bookings/${bookingArchivesId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

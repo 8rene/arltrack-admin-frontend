@@ -65,7 +65,7 @@ export default function PaymentsArchivePage() {
   const handleRestore = async (paymentsArchivesId) => {
     setActionId(paymentsArchivesId);
     try {
-      const res  = await fetch(`/api/archives/payments/${paymentsArchivesId}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/payments/${paymentsArchivesId}/restore`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -87,7 +87,7 @@ export default function PaymentsArchivePage() {
     setConfirmId(null);
     setActionId(paymentsArchivesId);
     try {
-      const res  = await fetch(`/api/archives/payments/${paymentsArchivesId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/payments/${paymentsArchivesId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

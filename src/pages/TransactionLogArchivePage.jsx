@@ -71,7 +71,7 @@ export default function TransactionLogArchivePage() {
   const handleRestore = async (transactionLogArchivesId) => {
     setActionId(transactionLogArchivesId);
     try {
-      const res  = await fetch(`/api/archives/transaction-logs/${transactionLogArchivesId}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/transaction-logs/${transactionLogArchivesId}/restore`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -93,7 +93,7 @@ export default function TransactionLogArchivePage() {
     setConfirmId(null);
     setActionId(transactionLogArchivesId);
     try {
-      const res  = await fetch(`/api/archives/transaction-logs/${transactionLogArchivesId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/transaction-logs/${transactionLogArchivesId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

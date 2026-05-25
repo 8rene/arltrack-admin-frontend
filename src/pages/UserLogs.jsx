@@ -54,7 +54,7 @@ export default function UserLogs() {
   const handleDelete = async (id) => {
     setDeletingId(id);
     try {
-      const res = await fetch(`/api/user-logs/${id}`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/user-logs/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

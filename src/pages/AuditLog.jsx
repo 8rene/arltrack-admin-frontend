@@ -49,7 +49,7 @@ export default function AuditLog() {
 
     try {
       // Step 1: Get user doc by uid
-      const userRes = await fetch(`/api/users/by-uid/${encodeURIComponent(userID)}`, {
+      const userRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/by-uid/${encodeURIComponent(userID)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!userRes.ok) throw new Error("user not found");
@@ -57,7 +57,7 @@ export default function AuditLog() {
       const uid = userData?.data?.uid || userID;
 
       // Step 2: Get userDetails by uid
-      const detailsRes = await fetch(`/api/users/details/${encodeURIComponent(uid)}`, {
+      const detailsRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/details/${encodeURIComponent(uid)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!detailsRes.ok) throw new Error("details not found");
@@ -99,7 +99,7 @@ export default function AuditLog() {
   const handleDelete = async (id) => {
     setDeletingId(id);
     try {
-      const res = await fetch(`/api/audit-logs/${id}`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/audit-logs/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

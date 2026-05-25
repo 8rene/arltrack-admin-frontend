@@ -70,7 +70,7 @@ export default function AuditLogsArchivePage() {
   const handleRestore = async (auditLogsArchivesId) => {
     setActionId(auditLogsArchivesId);
     try {
-      const res  = await fetch(`/api/archives/audit-logs/${auditLogsArchivesId}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/audit-logs/${auditLogsArchivesId}/restore`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -92,7 +92,7 @@ export default function AuditLogsArchivePage() {
     setConfirmId(null);
     setActionId(auditLogsArchivesId);
     try {
-      const res  = await fetch(`/api/archives/audit-logs/${auditLogsArchivesId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/audit-logs/${auditLogsArchivesId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

@@ -67,7 +67,7 @@ export default function UserLogArchivePage() {
   const handleRestore = async (userLogArchivesId) => {
     setActionId(userLogArchivesId);
     try {
-      const res  = await fetch(`/api/archives/user-log/${userLogArchivesId}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/user-log/${userLogArchivesId}/restore`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -90,7 +90,7 @@ export default function UserLogArchivePage() {
     setConfirmId(null);
     setActionId(userLogArchivesId);
     try {
-      const res  = await fetch(`/api/archives/user-log/${userLogArchivesId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/user-log/${userLogArchivesId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
