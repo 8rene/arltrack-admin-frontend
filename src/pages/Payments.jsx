@@ -63,7 +63,7 @@ export default function Payments() {
   const openDetail = async (id) => {
     setDetailLoading(true); setSelected(null);
     try {
-      const res  = await fetch(`/api/payments/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       setSelected(data.data);
@@ -74,7 +74,7 @@ export default function Payments() {
   const updateStatus = async (id, status) => {
     setUpdating(true);
     try {
-      const res = await fetch(`/api/payments/${id}/status`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/${id}/status`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
