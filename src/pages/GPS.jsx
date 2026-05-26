@@ -1,39 +1,10 @@
-/**
- * GPS.jsx  —  Upgraded GPS Tracking Page
- *
- * WHAT CHANGED vs. the original:
- *
- * 1. "Show all stored locations together" (Goal 2)
- *    • GET /api/gps now returns EVERY car that ever had a location applied.
- *    • All markers are shown on the map simultaneously.
- *    • The sidebar lists all cars that have a stored location.
- *
- * 2. "Tap a car → its last location appears instantly" (Goal 1)
- *    • Selecting a car in the sidebar pans + zooms to its marker and opens
- *      its popup — no button press needed.
- *    • If that car has no stored location yet, a friendly notice is shown.
- *
- * 3. "Apply GPS Location" button still exists per-car
- *    • It fetches the live location from GET /api/gps/:id and POSTs it
- *      via /api/gps, then refreshes the list so the new pin appears.
- *    • This is the only way to UPDATE a car's position.
- *
- * 4. All-cars panel (top of sidebar)
- *    • Shows total cars in your Firestore fleet (from /api/cars or the
- *      existing Fleet collection).  Falls back gracefully if that endpoint
- *      doesn't exist yet.
- *
- * 5. Auto-refresh every 10 s (was 5 s) to reduce noise; configurable via
- *    POLL_MS constant.
- */
-
 import { useEffect, useState, useCallback, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
 
-// ── Fix Leaflet default marker icons (webpack/vite asset issue) ───────────────
+// ── Fix Leaflet default marker icons ─────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
@@ -41,9 +12,9 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
-const POLL_MS = 10_000; // auto-refresh interval
+const POLL_MS = 10_000;
+const API     = process.env.REACT_APP_API_URL;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function timeAgo(iso) {
   if (!iso) return "—";
   const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
@@ -69,37 +40,36 @@ function makeCarIcon(active = false) {
   });
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
 export default function GPSTracking() {
-  // Vehicles that have a stored GPS location
-  const [vehicles, setVehicles]       = useState([]);
-  // ALL cars from Firestore fleet (for the "total cars" panel + Apply GPS)
-  const [allCars, setAllCars]         = useState([]);
-  const [brandMap, setBrandMap]       = useState({});  // brandID → brandName
-  const [modelMap, setModelMap]       = useState({});  // modelID → modelName
-  const [selected, setSelected]       = useState(null);   // deviceId
-  const [loading, setLoading]         = useState(true);
-  const [applyingId, setApplyingId]   = useState(null);   // car being applied
-  const [lastPoll, setLastPoll]       = useState(null);
-  const [notice, setNotice]           = useState(null);   // { type, msg }
+  const [vehicles,    setVehicles]    = useState([]);
+  const [allCars,     setAllCars]     = useState([]);
+  const [brandMap,    setBrandMap]    = useState({});
+  const [modelMap,    setModelMap]    = useState({});
+  const [gpsDevices,  setGpsDevices]  = useState([]);   // gpsLocation collection
+  const [selected,    setSelected]    = useState(null);
+  const [loading,     setLoading]     = useState(true);
+  const [applyingId,  setApplyingId]  = useState(null);
+  const [lastPoll,    setLastPoll]    = useState(null);
+  const [notice,      setNotice]      = useState(null);
+  const [addingDevice, setAddingDevice] = useState(false);
+  const [editingDevice, setEditingDevice] = useState(null); // { id, carID }
+  const [savingDevice,  setSavingDevice]  = useState(false);
+  const [activeTab,   setActiveTab]   = useState("cars"); // "cars" | "devices"
 
-  const mapRef      = useRef(null);
-  const leafletMap  = useRef(null);
-  const markers     = useRef({});       // deviceId → L.Marker
-  const token = localStorage.getItem("token");
+  const mapRef     = useRef(null);
+  const leafletMap = useRef(null);
+  const markers    = useRef({});
+  const token      = localStorage.getItem("token");
 
-  // ── Init Leaflet map once ─────────────────────────────────────────────────
+  // ── Init Leaflet map ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!mapRef.current || leafletMap.current) return;
-
     leafletMap.current = L.map(mapRef.current, { zoomControl: true })
       .setView([14.5995, 120.9842], 12);
-
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "© OpenStreetMap contributors",
       maxZoom: 19,
     }).addTo(leafletMap.current);
-
     return () => {
       if (leafletMap.current) {
         leafletMap.current.remove();
@@ -109,7 +79,7 @@ export default function GPSTracking() {
     };
   }, []);
 
-  // ── Fetch ALL cars + brand/model lookups from Firestore ──────────────────
+  // ── Fetch all cars + brand/model from Firestore ───────────────────────────
   const fetchAllCars = useCallback(async () => {
     try {
       const [carsSnap, brandSnap, modelSnap] = await Promise.all([
@@ -117,16 +87,9 @@ export default function GPSTracking() {
         getDocs(collection(db, "brand")),
         getDocs(collection(db, "model")),
       ]);
-      const cars = carsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const brands = Object.fromEntries(
-        brandSnap.docs.map(d => [d.id, d.data().brandName || ""])
-      );
-      const models = Object.fromEntries(
-        modelSnap.docs.map(d => [d.id, d.data().modelName || ""])
-      );
-      setAllCars(cars);
-      setBrandMap(brands);
-      setModelMap(models);
+      setAllCars(carsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setBrandMap(Object.fromEntries(brandSnap.docs.map(d => [d.id, d.data().brandName || ""])));
+      setModelMap(Object.fromEntries(modelSnap.docs.map(d => [d.id, d.data().modelName || ""])));
     } catch (e) {
       console.error("[GPS] Firestore fetch error:", e);
     }
@@ -134,50 +97,55 @@ export default function GPSTracking() {
 
   useEffect(() => { fetchAllCars(); }, [fetchAllCars]);
 
+  // ── Fetch GPS devices from gpsLocation collection ─────────────────────────
+  const fetchGpsDevices = useCallback(async () => {
+    try {
+      const res  = await fetch(`${API}/api/gps/devices`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setGpsDevices(json.data || []);
+    } catch (e) {
+      console.error("[GPS] fetchGpsDevices error:", e);
+    }
+  }, [token]);
+
+  useEffect(() => { fetchGpsDevices(); }, [fetchGpsDevices]);
+
   // ── Fetch stored GPS locations + refresh markers ──────────────────────────
   const fetchLocations = useCallback(async () => {
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/gps`, {
+      const res  = await fetch(`${API}/api/gps`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();
       const data = (json.data || []).filter(v => v.lat && v.lng);
-
       setVehicles(data);
       setLastPoll(new Date());
 
       if (!leafletMap.current) return;
 
-      // Add / update markers for every vehicle with a stored location
       data.forEach(v => {
         const isActive = v.deviceId === selected;
         const icon     = makeCarIcon(isActive);
         const carInfo  = allCars.find(c => c.id === v.deviceId);
         const carLabel = carInfo
-          ? [brandMap[carInfo.brandID] || carInfo.brandID, modelMap[carInfo.modelID] || carInfo.modelID].filter(Boolean).join(" ")
+          ? [brandMap[carInfo.brandID], modelMap[carInfo.modelID]].filter(Boolean).join(" ")
           : v.deviceId;
-        const popup    = `<b>${carLabel}</b><br>${v.lat.toFixed(5)}, ${v.lng.toFixed(5)}<br>
+        const popup = `<b>${carLabel}</b><br>${v.lat.toFixed(5)}, ${v.lng.toFixed(5)}<br>
           <span style="color:#9ca3af;font-size:11px">${timeAgo(v.updatedAt)}</span>`;
 
         if (markers.current[v.deviceId]) {
-          markers.current[v.deviceId]
-            .setLatLng([v.lat, v.lng])
-            .setIcon(icon)
-            .getPopup()?.setContent(popup);
+          markers.current[v.deviceId].setLatLng([v.lat, v.lng]).setIcon(icon).getPopup()?.setContent(popup);
         } else {
           markers.current[v.deviceId] = L.marker([v.lat, v.lng], { icon })
-            .addTo(leafletMap.current)
-            .bindPopup(popup);
+            .addTo(leafletMap.current).bindPopup(popup);
         }
       });
 
-      // Remove stale markers
       const activeIds = new Set(data.map(v => v.deviceId));
       Object.keys(markers.current).forEach(id => {
-        if (!activeIds.has(id)) {
-          markers.current[id].remove();
-          delete markers.current[id];
-        }
+        if (!activeIds.has(id)) { markers.current[id].remove(); delete markers.current[id]; }
       });
     } catch (e) {
       console.error("[GPS] fetch error:", e);
@@ -186,91 +154,111 @@ export default function GPSTracking() {
     }
   }, [token, selected, allCars, brandMap, modelMap]);
 
-  // Initial + polling fetch
   useEffect(() => {
     fetchLocations();
     const interval = setInterval(fetchLocations, POLL_MS);
     return () => clearInterval(interval);
   }, [fetchLocations]);
 
-  // ── Goal 1: selecting a car → instantly pan to its stored location ─────────
+  // ── Select car → pan map ──────────────────────────────────────────────────
   useEffect(() => {
     if (!selected || !leafletMap.current) return;
-
-    // Refresh marker icons (active highlight)
-    Object.entries(markers.current).forEach(([id, m]) => {
-      m.setIcon(makeCarIcon(id === selected));
-    });
-
+    Object.entries(markers.current).forEach(([id, m]) => m.setIcon(makeCarIcon(id === selected)));
     const v = vehicles.find(v => v.deviceId === selected);
     if (v) {
       leafletMap.current.setView([v.lat, v.lng], 15, { animate: true });
       markers.current[v.deviceId]?.openPopup();
       setNotice(null);
     } else {
-      // Car is selected but has no stored location yet
-      setNotice({
-        type: "info",
-        msg:  'No GPS location stored for this car yet. Press "Apply GPS Location" to record one.',
-      });
+      setNotice({ type: "info", msg: 'No GPS location stored for this car yet. Press "Apply GPS Location" to record one.' });
     }
   }, [selected, vehicles]);
 
-  // ── Apply GPS: fetch live location & save it ───────────────────────────────
+  // ── Apply GPS location ────────────────────────────────────────────────────
   const applyGps = async (deviceId) => {
     setApplyingId(deviceId);
     setNotice(null);
     try {
-      // 1. Get the live location from the GPS device endpoint
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/gps/${deviceId}`, {
+      const res  = await fetch(`${API}/api/gps/${deviceId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const live = await res.json();
-
       if (!live.lat || !live.lng) {
         setNotice({ type: "warn", msg: "GPS device has not reported a location yet." });
         return;
       }
-
-      // 2. Save / overwrite it (POST back so it persists to Firestore)
-      await fetch(`${process.env.REACT_APP_API_URL}/api/gps`, {
-        method:  "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization:  `Bearer ${token}`,
-        },
+      await fetch(`${API}/api/gps`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ device_id: deviceId, lat: live.lat, lng: live.lng }),
       });
-
-      // 3. Refresh the map
       await fetchLocations();
       setSelected(deviceId);
-      setNotice({ type: "ok", msg: `GPS location applied for ${deviceId}.` });
+      setNotice({ type: "ok", msg: `GPS location applied.` });
     } catch (e) {
       setNotice({ type: "error", msg: "Failed to apply GPS location." });
-      console.error("[GPS] apply error:", e);
     } finally {
       setApplyingId(null);
     }
   };
 
-  // ── Helpers for display ───────────────────────────────────────────────────
+  // ── Add GPS device ────────────────────────────────────────────────────────
+  const handleAddDevice = async () => {
+    setAddingDevice(true);
+    try {
+      const res = await fetch(`${API}/api/gps/devices`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (json.status === "ok") {
+        await fetchGpsDevices();
+        setNotice({ type: "ok", msg: `${json.data.gpsName} added successfully.` });
+      }
+    } catch (e) {
+      setNotice({ type: "error", msg: "Failed to add GPS device." });
+    } finally {
+      setAddingDevice(false);
+    }
+  };
+
+  // ── Assign/unassign car to GPS device ─────────────────────────────────────
+  const handleSaveDeviceAssignment = async () => {
+    if (!editingDevice) return;
+    setSavingDevice(true);
+    try {
+      const res = await fetch(`${API}/api/gps/devices/${editingDevice.id}`, {
+        method:  "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ carID: editingDevice.carID }),
+      });
+      const json = await res.json();
+      if (json.status === "ok") {
+        await fetchGpsDevices();
+        setEditingDevice(null);
+        setNotice({ type: "ok", msg: "GPS device assignment saved." });
+      }
+    } catch (e) {
+      setNotice({ type: "error", msg: "Failed to save assignment." });
+    } finally {
+      setSavingDevice(false);
+    }
+  };
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
   const locationMap = Object.fromEntries(vehicles.map(v => [v.deviceId, v]));
 
-  const getCarLabel = (car) => {
-    const brand = brandMap[car.brandID] || car.brandID || "";
-    const model = modelMap[car.modelID] || car.modelID || "";
-    return [brand, model].filter(Boolean).join(" ") || car.id;
-  };
+  const getCarLabel = (car) =>
+    [brandMap[car.brandID], modelMap[car.modelID]].filter(Boolean).join(" ") || car.id;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-full gap-4 min-h-0">
 
-      {/* ── Sidebar ────────────────────────────────────────────────────────── */}
+      {/* ── Sidebar ──────────────────────────────────────────────────────── */}
       <div className="w-80 shrink-0 flex flex-col gap-3 overflow-y-auto scrollbar-hide">
 
-        {/* Header card */}
+        {/* Header */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4">
           <div className="flex items-center justify-between mb-1">
             <h2 className="font-bold text-arl-dark text-sm">GPS Tracking</h2>
@@ -283,8 +271,6 @@ export default function GPSTracking() {
             {vehicles.length} / {allCars.length} car{allCars.length !== 1 ? "s" : ""} with stored GPS
             {lastPoll && ` · ${timeAgo(lastPoll.toISOString())}`}
           </p>
-
-          {/* Refresh button */}
           <button
             onClick={fetchLocations}
             className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50"
@@ -298,7 +284,7 @@ export default function GPSTracking() {
           </button>
         </div>
 
-        {/* Notice banner */}
+        {/* Notice */}
         {notice && (
           <div className={`rounded-2xl px-4 py-3 text-xs font-medium border ${
             notice.type === "ok"    ? "bg-green-50 border-green-200 text-green-700" :
@@ -310,93 +296,193 @@ export default function GPSTracking() {
           </div>
         )}
 
-        {/* ── Goal 2: ALL CARS listed — each shows last GPS if available ───── */}
-        {loading && allCars.length === 0 ? (
-          Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="bg-white rounded-2xl border border-gray-100 p-4 h-24 animate-pulse" />
-          ))
-        ) : allCars.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-6 text-center">
-            <div className="text-3xl mb-2">🚗</div>
-            <p className="text-sm text-gray-500 font-semibold">No cars in database</p>
+        {/* ── Tabs ─────────────────────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+          <div className="flex border-b border-gray-100">
+            <button
+              onClick={() => setActiveTab("cars")}
+              className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${
+                activeTab === "cars" ? "bg-teal-50 text-teal-700 border-b-2 border-teal-500" : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              🚗 Cars ({allCars.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("devices")}
+              className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${
+                activeTab === "devices" ? "bg-teal-50 text-teal-700 border-b-2 border-teal-500" : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              📡 Devices ({gpsDevices.length})
+            </button>
           </div>
-        ) : (
-          allCars.map(car => {
-            const loc       = locationMap[car.id];
-            const isSelected = selected === car.id;
-            const isApplying = applyingId === car.id;
+        </div>
 
-            return (
-              <button
-                key={car.id}
-                onClick={() => { setSelected(car.id); setNotice(null); }}
-                className={`w-full text-left bg-white rounded-2xl border-2 shadow-soft p-4 transition-all ${
-                  isSelected ? "border-teal-500 ring-1 ring-teal-200" : "border-gray-100 hover:border-teal-300"
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  {/* Car icon */}
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 ${
-                    loc ? "bg-teal-50" : "bg-gray-50"
-                  }`}>
-                    🚗
-                  </div>
+        {/* ── Cars Tab ─────────────────────────────────────────────────── */}
+        {activeTab === "cars" && (
+          loading && allCars.length === 0 ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-2xl border border-gray-100 p-4 h-24 animate-pulse" />
+            ))
+          ) : allCars.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-6 text-center">
+              <div className="text-3xl mb-2">🚗</div>
+              <p className="text-sm text-gray-500 font-semibold">No cars in database</p>
+            </div>
+          ) : (
+            allCars.map(car => {
+              const loc        = locationMap[car.id];
+              const isSelected = selected === car.id;
+              const isApplying = applyingId === car.id;
+              const device     = gpsDevices.find(d => d.carID === car.id);
 
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-gray-800 text-sm truncate">{getCarLabel(car)}</p>
-
-                    {loc ? (
-                      <>
-                        <p className="text-xs text-gray-400 font-mono">{loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}</p>
-                        <p className="text-xs text-green-500 mt-0.5 font-medium">📍 {timeAgo(loc.updatedAt)}</p>
-                      </>
-                    ) : (
-                      <p className="text-xs text-gray-300 mt-0.5 italic">No GPS location yet</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Apply GPS button — stops propagation so card-select isn't re-triggered */}
+              return (
                 <button
-                  onClick={(e) => { e.stopPropagation(); applyGps(car.id); }}
-                  disabled={isApplying}
-                  className={`mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                    isApplying
-                      ? "bg-gray-100 text-gray-400 cursor-wait"
-                      : "bg-teal-600 text-white hover:bg-teal-700 active:scale-95"
+                  key={car.id}
+                  onClick={() => { setSelected(car.id); setNotice(null); }}
+                  className={`w-full text-left bg-white rounded-2xl border-2 shadow-soft p-4 transition-all ${
+                    isSelected ? "border-teal-500 ring-1 ring-teal-200" : "border-gray-100 hover:border-teal-300"
                   }`}
                 >
-                  {isApplying ? (
-                    <>
-                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round"
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Applying…
-                    </>
-                  ) : (
-                    <>📡 {loc ? "Update GPS Location" : "Apply GPS Location"}</>
-                  )}
+                  <div className="flex items-start gap-3">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 ${loc ? "bg-teal-50" : "bg-gray-50"}`}>
+                      🚗
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-gray-800 text-sm truncate">{getCarLabel(car)}</p>
+                      {device ? (
+                        <p className="text-xs text-teal-600 font-medium mt-0.5">📡 {device.gpsName}</p>
+                      ) : (
+                        <p className="text-xs text-gray-300 mt-0.5 italic">No GPS device assigned</p>
+                      )}
+                      {loc ? (
+                        <>
+                          <p className="text-xs text-gray-400 font-mono">{loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}</p>
+                          <p className="text-xs text-green-500 mt-0.5 font-medium">📍 {timeAgo(loc.updatedAt)}</p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-gray-300 mt-0.5 italic">No GPS location yet</p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); applyGps(car.id); }}
+                    disabled={isApplying}
+                    className={`mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                      isApplying ? "bg-gray-100 text-gray-400 cursor-wait" : "bg-teal-600 text-white hover:bg-teal-700 active:scale-95"
+                    }`}
+                  >
+                    {isApplying ? (
+                      <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>Applying…</>
+                    ) : (
+                      <>📡 {loc ? "Update GPS Location" : "Apply GPS Location"}</>
+                    )}
+                  </button>
                 </button>
-              </button>
-            );
-          })
+              );
+            })
+          )
+        )}
+
+        {/* ── Devices Tab ──────────────────────────────────────────────── */}
+        {activeTab === "devices" && (
+          <div className="flex flex-col gap-3">
+
+            {/* Add Device button */}
+            <button
+              onClick={handleAddDevice}
+              disabled={addingDevice}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-teal-600 text-white rounded-2xl text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50"
+            >
+              {addingDevice ? "Adding…" : "+ Add GPS Device"}
+            </button>
+
+            {gpsDevices.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-6 text-center">
+                <div className="text-3xl mb-2">📡</div>
+                <p className="text-sm text-gray-500 font-semibold">No GPS devices yet</p>
+                <p className="text-xs text-gray-400 mt-1">Click "+ Add GPS Device" to register one.</p>
+              </div>
+            ) : (
+              gpsDevices.map(device => {
+                const assignedCar = allCars.find(c => c.id === device.carID);
+                const isEditing   = editingDevice?.id === device.id;
+
+                return (
+                  <div key={device.id} className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">📡</span>
+                        <p className="font-bold text-gray-800 text-sm">{device.gpsName}</p>
+                      </div>
+                      <button
+                        onClick={() => setEditingDevice(isEditing ? null : { id: device.id, carID: device.carID || "" })}
+                        className="text-xs text-teal-600 font-semibold hover:underline"
+                      >
+                        {isEditing ? "Cancel" : "Edit"}
+                      </button>
+                    </div>
+
+                    {isEditing ? (
+                      // Edit mode — dropdown to assign car
+                      <div className="flex flex-col gap-2">
+                        <select
+                          value={editingDevice.carID}
+                          onChange={(e) => setEditingDevice(prev => ({ ...prev, carID: e.target.value }))}
+                          className="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-teal-400"
+                        >
+                          <option value="">— Unassigned —</option>
+                          {allCars.map(car => (
+                            <option key={car.id} value={car.id}>
+                              {getCarLabel(car)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={handleSaveDeviceAssignment}
+                          disabled={savingDevice}
+                          className="w-full py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 disabled:opacity-50"
+                        >
+                          {savingDevice ? "Saving…" : "Save Assignment"}
+                        </button>
+                      </div>
+                    ) : (
+                      // View mode
+                      <div>
+                        {assignedCar ? (
+                          <p className="text-xs text-teal-600 font-medium">🚗 {getCarLabel(assignedCar)}</p>
+                        ) : (
+                          <p className="text-xs text-gray-300 italic">Unassigned</p>
+                        )}
+                        {device.lastLocation?.latitude && device.lastLocation?.longitude ? (
+                          <p className="text-xs text-gray-400 font-mono mt-1">
+                            {device.lastLocation.latitude.toFixed(5)}, {device.lastLocation.longitude.toFixed(5)}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-300 mt-1 italic">No location yet</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
         )}
       </div>
 
-      {/* ── Map ──────────────────────────────────────────────────────────────── */}
+      {/* ── Map ────────────────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden relative">
         <div ref={mapRef} className="w-full h-full" style={{ minHeight: "500px" }} />
 
-        {/* Legend overlay */}
         <div className="absolute bottom-4 left-4 z-[1000] bg-white/90 backdrop-blur-sm border border-gray-100 rounded-xl px-3 py-2 text-xs text-gray-500 shadow-sm space-y-1">
           <p className="font-semibold text-gray-700 mb-1">Map Legend</p>
           <p>🚗 Stored location</p>
           <p className="text-gray-400">Tap a car in the list to focus it.</p>
         </div>
 
-        {/* "No locations" overlay */}
         {!loading && vehicles.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center z-[999] pointer-events-none">
             <div className="bg-white/95 rounded-2xl border border-gray-100 shadow-lg p-6 text-center max-w-xs">
