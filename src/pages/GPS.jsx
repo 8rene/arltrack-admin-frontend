@@ -41,20 +41,23 @@ function makeCarIcon(active = false) {
 }
 
 export default function GPSTracking() {
-  const [vehicles,    setVehicles]    = useState([]);
-  const [allCars,     setAllCars]     = useState([]);
-  const [brandMap,    setBrandMap]    = useState({});
-  const [modelMap,    setModelMap]    = useState({});
-  const [gpsDevices,  setGpsDevices]  = useState([]);   // gpsLocation collection
-  const [selected,    setSelected]    = useState(null);
-  const [loading,     setLoading]     = useState(true);
-  const [applyingId,  setApplyingId]  = useState(null);
-  const [lastPoll,    setLastPoll]    = useState(null);
-  const [notice,      setNotice]      = useState(null);
+  const [vehicles,     setVehicles]     = useState([]);
+  const [allCars,      setAllCars]      = useState([]);
+  const [brandMap,     setBrandMap]     = useState({});
+  const [modelMap,     setModelMap]     = useState({});
+  const [gpsDevices,   setGpsDevices]   = useState([]);   // gpsDevice collection
+  const [selected,     setSelected]     = useState(null);
+  const [loading,      setLoading]      = useState(true);
+  const [applyingId,   setApplyingId]   = useState(null);
+  const [lastPoll,     setLastPoll]     = useState(null);
+  const [notice,       setNotice]       = useState(null);
   const [addingDevice, setAddingDevice] = useState(false);
-  const [editingDevice, setEditingDevice] = useState(null); // { id, carID }
-  const [savingDevice,  setSavingDevice]  = useState(false);
-  const [activeTab,   setActiveTab]   = useState("cars"); // "cars" | "devices"
+  const [activeTab,    setActiveTab]    = useState("cars"); // "cars" | "devices"
+
+  // Device-tab assign state
+  const [assignCarID,    setAssignCarID]    = useState("");  // selected car in dropdown
+  const [assignDeviceID, setAssignDeviceID] = useState(""); // which device is being assigned
+  const [savingAssign,   setSavingAssign]   = useState(false);
 
   const mapRef     = useRef(null);
   const leafletMap = useRef(null);
@@ -97,7 +100,7 @@ export default function GPSTracking() {
 
   useEffect(() => { fetchAllCars(); }, [fetchAllCars]);
 
-  // ── Fetch GPS devices from gpsLocation collection ─────────────────────────
+  // ── Fetch GPS devices from gpsDevice collection ───────────────────────────
   const fetchGpsDevices = useCallback(async () => {
     try {
       const res  = await fetch(`${API}/api/gps/devices`, {
@@ -222,26 +225,27 @@ export default function GPSTracking() {
     }
   };
 
-  // ── Assign/unassign car to GPS device ─────────────────────────────────────
-  const handleSaveDeviceAssignment = async () => {
-    if (!editingDevice) return;
-    setSavingDevice(true);
+  // ── Assign car to GPS device ──────────────────────────────────────────────
+  const handleAssign = async (deviceId) => {
+    if (!assignCarID) return;
+    setSavingAssign(true);
     try {
-      const res = await fetch(`${API}/api/gps/devices/${editingDevice.id}`, {
+      const res = await fetch(`${API}/api/gps/devices/${deviceId}/assign`, {
         method:  "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ carID: editingDevice.carID }),
+        body:    JSON.stringify({ carID: assignCarID }),
       });
       const json = await res.json();
       if (json.status === "ok") {
         await fetchGpsDevices();
-        setEditingDevice(null);
-        setNotice({ type: "ok", msg: "GPS device assignment saved." });
+        setAssignDeviceID("");
+        setAssignCarID("");
+        setNotice({ type: "ok", msg: "Car assigned to GPS device." });
       }
     } catch (e) {
-      setNotice({ type: "error", msg: "Failed to save assignment." });
+      setNotice({ type: "error", msg: "Failed to assign car." });
     } finally {
-      setSavingDevice(false);
+      setSavingAssign(false);
     }
   };
 
@@ -250,6 +254,15 @@ export default function GPSTracking() {
 
   const getCarLabel = (car) =>
     [brandMap[car.brandID], modelMap[car.modelID]].filter(Boolean).join(" ") || car.id;
+
+  // Devices shown in list = only assigned ones
+  const assignedDevices   = gpsDevices.filter(d => d.assigned === true);
+  // Unassigned devices = available to show in "Add Assignment" section
+  const unassignedDevices = gpsDevices.filter(d => !d.assigned);
+
+  // Cars not yet assigned to any device
+  const assignedCarIDs = new Set(gpsDevices.filter(d => d.assigned).map(d => d.carID));
+  const availableCars  = allCars.filter(c => !assignedCarIDs.has(c.id));
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -313,7 +326,7 @@ export default function GPSTracking() {
                 activeTab === "devices" ? "bg-teal-50 text-teal-700 border-b-2 border-teal-500" : "text-gray-400 hover:text-gray-600"
               }`}
             >
-              📡 Devices ({gpsDevices.length})
+              📡 Devices ({assignedDevices.length})
             </button>
           </div>
         </div>
@@ -334,7 +347,7 @@ export default function GPSTracking() {
               const loc        = locationMap[car.id];
               const isSelected = selected === car.id;
               const isApplying = applyingId === car.id;
-              const device     = gpsDevices.find(d => d.carID === car.id);
+              const device     = gpsDevices.find(d => d.carID === car.id && d.assigned);
 
               return (
                 <button
@@ -399,72 +412,71 @@ export default function GPSTracking() {
               {addingDevice ? "Adding…" : "+ Add GPS Device"}
             </button>
 
-            {gpsDevices.length === 0 ? (
+            {/* Assign section — shown only when there are unassigned devices */}
+            {unassignedDevices.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4">
+                <p className="text-xs font-bold text-gray-700 mb-2">Assign Car to Device</p>
+
+                {/* Device selector */}
+                <select
+                  value={assignDeviceID}
+                  onChange={(e) => { setAssignDeviceID(e.target.value); setAssignCarID(""); }}
+                  className="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 mb-2 focus:outline-none focus:border-teal-400"
+                >
+                  <option value="">— Select GPS Device —</option>
+                  {unassignedDevices.map(d => (
+                    <option key={d.id} value={d.id}>{d.gpsName}</option>
+                  ))}
+                </select>
+
+                {/* Car selector */}
+                <select
+                  value={assignCarID}
+                  onChange={(e) => setAssignCarID(e.target.value)}
+                  disabled={!assignDeviceID}
+                  className="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 mb-2 focus:outline-none focus:border-teal-400 disabled:opacity-40"
+                >
+                  <option value="">— Select Car —</option>
+                  {availableCars.map(car => (
+                    <option key={car.id} value={car.id}>{getCarLabel(car)}</option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={() => handleAssign(assignDeviceID)}
+                  disabled={!assignDeviceID || !assignCarID || savingAssign}
+                  className="w-full py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 disabled:opacity-40 transition-all"
+                >
+                  {savingAssign ? "Assigning…" : "Assign"}
+                </button>
+              </div>
+            )}
+
+            {/* Assigned devices list */}
+            {assignedDevices.length === 0 ? (
               <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-6 text-center">
                 <div className="text-3xl mb-2">📡</div>
-                <p className="text-sm text-gray-500 font-semibold">No GPS devices yet</p>
-                <p className="text-xs text-gray-400 mt-1">Click "+ Add GPS Device" to register one.</p>
+                <p className="text-sm text-gray-500 font-semibold">No assigned devices yet</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Add a device, then assign a car to it.
+                </p>
               </div>
             ) : (
-              gpsDevices.map(device => {
+              assignedDevices.map(device => {
                 const assignedCar = allCars.find(c => c.id === device.carID);
-                const isEditing   = editingDevice?.id === device.id;
 
                 return (
                   <div key={device.id} className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg">📡</span>
-                        <p className="font-bold text-gray-800 text-sm">{device.gpsName}</p>
-                      </div>
-                      <button
-                        onClick={() => setEditingDevice(isEditing ? null : { id: device.id, carID: device.carID || "" })}
-                        className="text-xs text-teal-600 font-semibold hover:underline"
-                      >
-                        {isEditing ? "Cancel" : "Edit"}
-                      </button>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-lg">📡</span>
+                      <p className="font-bold text-gray-800 text-sm">{device.gpsName}</p>
                     </div>
-
-                    {isEditing ? (
-                      // Edit mode — dropdown to assign car
-                      <div className="flex flex-col gap-2">
-                        <select
-                          value={editingDevice.carID}
-                          onChange={(e) => setEditingDevice(prev => ({ ...prev, carID: e.target.value }))}
-                          className="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-teal-400"
-                        >
-                          <option value="">— Unassigned —</option>
-                          {allCars.map(car => (
-                            <option key={car.id} value={car.id}>
-                              {getCarLabel(car)}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={handleSaveDeviceAssignment}
-                          disabled={savingDevice}
-                          className="w-full py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 disabled:opacity-50"
-                        >
-                          {savingDevice ? "Saving…" : "Save Assignment"}
-                        </button>
-                      </div>
+                    {assignedCar ? (
+                      <p className="text-xs text-teal-600 font-medium">🚗 {getCarLabel(assignedCar)}</p>
                     ) : (
-                      // View mode
-                      <div>
-                        {assignedCar ? (
-                          <p className="text-xs text-teal-600 font-medium">🚗 {getCarLabel(assignedCar)}</p>
-                        ) : (
-                          <p className="text-xs text-gray-300 italic">Unassigned</p>
-                        )}
-                        {device.lastLocation?.latitude && device.lastLocation?.longitude ? (
-                          <p className="text-xs text-gray-400 font-mono mt-1">
-                            {device.lastLocation.latitude.toFixed(5)}, {device.lastLocation.longitude.toFixed(5)}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-gray-300 mt-1 italic">No location yet</p>
-                        )}
-                      </div>
+                      <p className="text-xs text-gray-300 italic">Car not found</p>
                     )}
+                    <p className="text-xs text-gray-300 mt-1 font-mono">{device.gpsDeviceID}</p>
                   </div>
                 );
               })
