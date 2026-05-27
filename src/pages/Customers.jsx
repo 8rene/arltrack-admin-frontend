@@ -211,16 +211,16 @@ function CustomersTab({ users, onRefresh }) {
                       </td>
                       <td className="px-5 py-3">
                         {u.isVerified
-                          ? <span className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-700 font-medium">✓ Verified</span>
-                          : <span className="px-2 py-1 rounded-full text-xs bg-yellow-100 text-yellow-700 font-medium">Pending</span>
+                          ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-black font-medium"><span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />✓ Verified</span>
+                          : <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-black font-medium"><span className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />Pending</span>
                         }
                       </td>
                       <td className="px-5 py-3 font-semibold text-gray-700">{u.bookingCount}</td>
                       <td className="px-5 py-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${
-                          u.status?.toLowerCase() === "active"   ? "bg-blue-100 text-blue-700" :
-                          u.status?.toLowerCase() === "locked"   ? "bg-red-100 text-red-600" :
-                          "bg-gray-100 text-gray-500"
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium capitalize text-black ${
+                          u.status?.toLowerCase() === "active"   ? "bg-blue-50 border border-blue-200" :
+                          u.status?.toLowerCase() === "locked"   ? "bg-red-50 border border-red-200" :
+                          "bg-gray-50 border border-gray-200"
                         }`}>{u.status || "—"}</span>
                       </td>
                       <td className="px-5 py-3 text-gray-500">{fmtDate(u.createdAt)}</td>
@@ -318,11 +318,11 @@ function DocumentsTab({ users, onRefresh }) {
                       <td className="px-5 py-3 text-gray-600">{u.document?.documentType || "—"}</td>
                       <td className="px-5 py-3 text-gray-600">{u.document?.documentNumber || "—"}</td>
                       <td className="px-5 py-3">
-                        <span className="px-2 py-1 rounded-full text-xs bg-yellow-100 text-yellow-700 font-medium">Pending</span>
+                        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-black font-medium"><span className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />Pending</span>
                       </td>
                       <td className="px-5 py-3">
                         {u.isFlagged
-                          ? <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-600 font-medium">🚩 Flagged</span>
+                          ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-black font-medium"><span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />🚩 Flagged</span>
                           : <span className="text-gray-400 text-xs">—</span>
                         }
                       </td>
@@ -647,3 +647,4 @@ function StatCard({ title, value, icon, color }) {
     </div>
   );
 }
+

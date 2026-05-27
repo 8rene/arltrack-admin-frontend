@@ -20,15 +20,15 @@ function inRange(iso, from, to) {
 }
 
 const statusColor = {
-  Success:  "bg-green-100 text-green-700",
-  Failed:   "bg-red-100 text-red-600",
-  Pending:  "bg-yellow-100 text-yellow-700",
+  Success:  "bg-green-50 border border-green-200",
+  Failed:   "bg-red-50 border border-red-200",
+  Pending:  "bg-yellow-50 border border-yellow-200",
   Refunded: "bg-blue-100 text-blue-700",
 };
 const typeColor = {
-  Payment: "bg-purple-100 text-purple-600",
-  Refund:  "bg-blue-100 text-blue-600",
-  Deposit: "bg-teal-100 text-teal-600",
+  Payment: "bg-purple-50 border border-purple-200",
+  Refund:  "bg-blue-50 border border-blue-200",
+  Deposit: "bg-teal-50 border border-teal-200",
 };
 
 const PAGE_SIZE = 15;
@@ -208,13 +208,13 @@ export default function TransactionLogArchivePage() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.transactionLogArchivesId}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[120px]">{r.transactionID || "—"}</td>
                   <td className="px-4 py-3 text-xs">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${typeColor[r.type] || "bg-gray-100 text-gray-500"}`}>
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium text-black ${typeColor[r.type] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${typeColor[r.type]?.includes("purple") ? "bg-purple-500" : typeColor[r.type]?.includes("blue") ? "bg-blue-500" : typeColor[r.type]?.includes("teal") ? "bg-teal-500" : "bg-gray-400"}`} />
                       {r.type || "—"}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700 font-medium">{peso(r.amount)}</td>
                   <td className="px-4 py-3 text-xs">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor[r.status] || "bg-gray-100 text-gray-500"}`}>
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium text-black ${statusColor[r.status] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${statusColor[r.status]?.includes("green") ? "bg-green-500" : statusColor[r.status]?.includes("red") ? "bg-red-500" : statusColor[r.status]?.includes("yellow") ? "bg-yellow-400" : statusColor[r.status]?.includes("blue") ? "bg-blue-500" : "bg-gray-400"}`} />
                       {r.status || "—"}
                     </span>
                   </td>

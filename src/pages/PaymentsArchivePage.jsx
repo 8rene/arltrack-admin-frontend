@@ -19,11 +19,27 @@ function inRange(iso, from, to) {
   return true;
 }
 
-const statusColor = {
-  Paid:     "bg-green-100 text-green-700",
-  Pending:  "bg-yellow-100 text-yellow-700",
-  Refunded: "bg-blue-100 text-blue-700",
+const statusDot = {
+  Paid:     "bg-green-500",
+  Pending:  "bg-yellow-400",
+  Refunded: "bg-blue-500",
 };
+const statusBg = {
+  Paid:     "bg-green-50 border border-green-200",
+  Pending:  "bg-yellow-50 border border-yellow-200",
+  Refunded: "bg-blue-50 border border-blue-200",
+};
+function StatusBadge({ status }) {
+  const dot = statusDot[status] || "bg-gray-400";
+  const bg  = statusBg[status]  || "bg-gray-50 border border-gray-200";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      {status}
+    </span>
+  );
+}
+const statusColor = {};
 
 const PAGE_SIZE = 15;
 

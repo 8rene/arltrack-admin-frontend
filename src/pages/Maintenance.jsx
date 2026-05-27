@@ -31,13 +31,32 @@ const isSoon = (val) => {
   return diff >= 0 && diff <= 7;
 };
 
-const STATUS_STYLE = {
-  Completed:   "bg-green-100 text-green-700",
-  Scheduled:   "bg-blue-100 text-blue-700",
-  "In Progress":"bg-yellow-100 text-yellow-700",
-  Cancelled:   "bg-gray-100 text-gray-500",
-  Overdue:     "bg-red-100 text-red-600",
+const STATUS_DOT = {
+  Completed:    "bg-green-500",
+  Scheduled:    "bg-blue-500",
+  "In Progress":"bg-yellow-400",
+  Cancelled:    "bg-gray-400",
+  Overdue:      "bg-red-500",
 };
+const STATUS_BG = {
+  Completed:    "bg-green-50 border border-green-200",
+  Scheduled:    "bg-blue-50 border border-blue-200",
+  "In Progress":"bg-yellow-50 border border-yellow-200",
+  Cancelled:    "bg-gray-100 border border-gray-200",
+  Overdue:      "bg-red-50 border border-red-200",
+};
+function MainStatusBadge({ status }) {
+  const dot = STATUS_DOT[status] || "bg-gray-400";
+  const bg  = STATUS_BG[status]  || "bg-gray-50 border border-gray-200";
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      {status}
+    </span>
+  );
+}
+const STATUS_STYLE = Object.fromEntries(Object.keys(STATUS_BG).map(k => [k, STATUS_BG[k]]));
+
 const MAINTENANCE_STATUSES = ["Scheduled", "In Progress", "Completed", "Cancelled", "Overdue"];
 const MAINTENANCE_TYPES    = ["Routine Maintenance", "Oil Change", "Brake Inspection", "Tire Rotation", "Battery Check", "Engine Check", "Transmission Service", "Suspension Check", "Electrical Check", "Other"];
 
@@ -47,11 +66,12 @@ const EMPTY_FORM = {
 };
 
 export default function Maintenance() {
-  const [records, setRecords]         = useState([]);
-  const [cars, setCars]               = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [search, setSearch]           = useState("");
+  const [records, setRecords]           = useState([]);
+  const [cars, setCars]                 = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+<<<<<<< HEAD
   const [editRecord, setEditRecord]   = useState(null);
   const [showAdd, setShowAdd]         = useState(false);
   const [form, setForm]               = useState(EMPTY_FORM);
@@ -88,6 +108,17 @@ export default function Maintenance() {
   // Currency symbol for the cost input label
   const costSymbol = SYMBOLS?.[currency] ?? SYMBOLS?.["PHP"] ?? "₱";
   // ─────────────────────────────────────────────────────────────────
+=======
+  const [editRecord, setEditRecord]     = useState(null);
+  const [showAdd, setShowAdd]           = useState(false);
+  const [form, setForm]                 = useState(EMPTY_FORM);
+  const [saving, setSaving]             = useState(false);
+  const [toast, setToast]               = useState(null);
+  const [view, setView]                 = useState("table");
+  const [calMonth, setCalMonth]         = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [damagedParts, setDamagedParts] = useState([]);
+  const [replacedParts, setReplacedParts] = useState([]);
+>>>>>>> 1254102 (darkmode fixed)
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -147,7 +178,10 @@ export default function Maintenance() {
       })));
 
       const partsMap = Object.fromEntries(partsSnap.docs.map(d => [d.id, d.data()]));
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
       const pickLatestByCarID = (snap) => {
         const byCarID = {};
         snap.docs.forEach(d => {
@@ -164,12 +198,14 @@ export default function Maintenance() {
 
       const latestBefore = pickLatestByCarID(beforeSnap);
       const latestAfter  = pickLatestByCarID(afterSnap);
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
       const carIDsWithRecords = new Set([
         ...latestBefore.map(r => r.carID),
         ...latestAfter.map(r => r.carID),
       ]);
-
       const beforeByCarID = Object.fromEntries(latestBefore.map(r => [r.carID, r]));
       const afterByCarID  = Object.fromEntries(latestAfter.map(r => [r.carID, r]));
 
@@ -181,7 +217,6 @@ export default function Maintenance() {
         if (!record) return;
         const carLabel = carMap[carID]?.label || "Unknown Car";
         const source   = afterRec ? "after_trip" : "before_trip";
-
         (record.damageParts || []).forEach(p => {
           if (!["Damaged", "Stolen", "Missing"].includes(p.status)) return;
           const partName = p.carPartName || partsMap[p.carPartID]?.carPartName || "Unknown Part";
@@ -225,7 +260,6 @@ export default function Maintenance() {
         nextMaintenanceDate: form.nextMaintenanceDate ? new Date(form.nextMaintenanceDate) : null,
         status:              form.status,
       };
-
       if (editRecord) {
         await updateDoc(doc(db, "carMaintenance", editRecord.id), { ...payload, updatedAt: serverTimestamp() });
         showToast("Record updated.");
@@ -490,9 +524,7 @@ export default function Maintenance() {
                     {r.cost ? formatCost(r.cost) : "—"}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_STYLE[r.status] || "bg-gray-100 text-gray-500"}`}>
-                      {r.status || "—"}
-                    </span>
+                    <MainStatusBadge status={r.status || "—"} />
                   </td>
                   <td className="px-4 py-3">
                     <button onClick={e => { e.stopPropagation(); openEdit(r); }}
@@ -516,7 +548,10 @@ export default function Maintenance() {
               <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
                 className="text-gray-400 hover:text-gray-600">✕</button>
             </div>
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
             <Field label="Vehicle *">
               <select value={form.carID} onChange={e => setForm(f => ({...f, carID: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
@@ -524,7 +559,10 @@ export default function Maintenance() {
                 {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.platenumber ? `· ${c.platenumber}` : ""}</option>)}
               </select>
             </Field>
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
             <Field label="Maintenance Type *">
               <select value={form.type} onChange={e => setForm(f => ({...f, type: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
@@ -532,30 +570,46 @@ export default function Maintenance() {
                 {MAINTENANCE_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </Field>
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
             <Field label="Description">
               <textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
                 rows={3} placeholder="Details of the maintenance…"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none resize-none" />
             </Field>
+<<<<<<< HEAD
 
             {/* ↓ Cost label now shows active currency symbol */}
             <Field label={`Cost (${costSymbol})`}>
+=======
+            <Field label="Cost (₱)">
+>>>>>>> 1254102 (darkmode fixed)
               <input type="number" value={form.cost} onChange={e => setForm(f => ({...f, cost: e.target.value}))}
                 placeholder="0"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
             </Field>
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
             <Field label="Maintenance Date *">
               <input type="date" value={form.maintenanceDate} onChange={e => setForm(f => ({...f, maintenanceDate: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
             </Field>
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
             <Field label="Next Maintenance Date">
               <input type="date" value={form.nextMaintenanceDate} onChange={e => setForm(f => ({...f, nextMaintenanceDate: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
             </Field>
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
             <Field label="Status">
               <div className="grid grid-cols-2 gap-1.5">
                 {MAINTENANCE_STATUSES.map(s => (
@@ -570,7 +624,10 @@ export default function Maintenance() {
                 ))}
               </div>
             </Field>
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1254102 (darkmode fixed)
             <div className="flex gap-2 pt-1">
               <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
                 className="flex-1 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">
@@ -613,5 +670,140 @@ function Field({ label, children }) {
 }
 
 function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
+<<<<<<< HEAD
   // ... unchanged — no cost display here, so no currency changes needed
 }
+=======
+  const { y, m } = calMonth;
+  const monthName = new Date(y, m, 1).toLocaleString("en-PH", { month: "long", year: "numeric" });
+
+  const firstDay    = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const today       = new Date();
+
+  const dayMap = {};
+  records.forEach(r => {
+    const d = r.maintenanceDate?.toDate?.() || (r.maintenanceDate?._seconds ? new Date(r.maintenanceDate._seconds * 1000) : r.maintenanceDate ? new Date(r.maintenanceDate) : null);
+    if (!d || isNaN(d)) return;
+    if (d.getFullYear() === y && d.getMonth() === m) {
+      const k = d.getDate();
+      if (!dayMap[k]) dayMap[k] = [];
+      dayMap[k].push(r);
+    }
+    const nd = r.nextMaintenanceDate?.toDate?.() || (r.nextMaintenanceDate?._seconds ? new Date(r.nextMaintenanceDate._seconds * 1000) : r.nextMaintenanceDate ? new Date(r.nextMaintenanceDate) : null);
+    if (!nd || isNaN(nd)) return;
+    if (nd.getFullYear() === y && nd.getMonth() === m) {
+      const k = `next_${nd.getDate()}`;
+      if (!dayMap[k]) dayMap[k] = [];
+      dayMap[k].push({ ...r, _isNext: true });
+    }
+  });
+
+  const DOT = {
+    Completed:    "bg-green-500",
+    Scheduled:    "bg-blue-500",
+    "In Progress":"bg-yellow-500",
+    Cancelled:    "bg-gray-400",
+    Overdue:      "bg-red-500",
+  };
+
+  const prevMonth = () => { if (m === 0) setCalMonth({ y: y - 1, m: 11 }); else setCalMonth({ y, m: m - 1 }); };
+  const nextMonth = () => { if (m === 11) setCalMonth({ y: y + 1, m: 0 }); else setCalMonth({ y, m: m + 1 }); };
+
+  const cells = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const [selected, setSelected] = useState(null);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={prevMonth}
+            className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50">‹</button>
+          <h2 className="font-bold text-gray-800 text-base">{monthName}</h2>
+          <button onClick={nextMonth}
+            className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50">›</button>
+        </div>
+        <div className="grid grid-cols-7 mb-1">
+          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
+            <div key={d} className="text-center text-xs font-semibold text-gray-400 py-1">{d}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((day, i) => {
+            if (!day) return <div key={i} />;
+            const isToday  = today.getDate() === day && today.getMonth() === m && today.getFullYear() === y;
+            const dayRecs  = dayMap[day]           || [];
+            const nextRecs = dayMap[`next_${day}`] || [];
+            const allRecs  = [...dayRecs, ...nextRecs];
+            const hasRecs  = allRecs.length > 0;
+            return (
+              <button key={i}
+                onClick={() => setSelected(hasRecs ? { day, recs: allRecs } : null)}
+                className={`relative min-h-[60px] p-1.5 rounded-xl text-left transition-all border ${
+                  isToday ? "border-teal-500 bg-teal-50"
+                  : hasRecs ? "border-gray-200 hover:border-teal-300 hover:bg-gray-50"
+                  : "border-transparent hover:bg-gray-50"
+                }`}>
+                <span className={`text-xs font-semibold ${isToday ? "text-teal-600" : "text-gray-700"}`}>{day}</span>
+                <div className="flex flex-wrap gap-0.5 mt-1">
+                  {dayRecs.slice(0, 3).map((r, ri) => (
+                    <span key={ri} className={`w-2 h-2 rounded-full ${DOT[r.status] || "bg-gray-300"}`} title={`${r.type} — ${r.status}`} />
+                  ))}
+                  {nextRecs.slice(0, 2).map((r, ri) => (
+                    <span key={`n${ri}`} className="w-2 h-2 rounded-full bg-purple-400 border border-purple-300" title={`Next: ${r.type}`} />
+                  ))}
+                  {allRecs.length > 3 && (
+                    <span className="text-xs text-gray-400 leading-none">+{allRecs.length - 3}</span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap gap-4 mt-4 pt-3 border-t border-gray-100">
+          {Object.entries(DOT).map(([s, cls]) => (
+            <span key={s} className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className={`w-2.5 h-2.5 rounded-full ${cls}`}/>{s}
+            </span>
+          ))}
+          <span className="flex items-center gap-1.5 text-xs text-gray-500">
+            <span className="w-2.5 h-2.5 rounded-full bg-purple-400"/>Next Due
+          </span>
+        </div>
+      </div>
+
+      {selected && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-gray-800 text-sm">
+              {new Date(y, m, selected.day).toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+            </h3>
+            <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+          <div className="space-y-2">
+            {selected.recs.map((r, i) => (
+              <div key={i}
+                className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer hover:border-teal-300 transition-colors ${r._isNext ? "border-purple-200 bg-purple-50" : "border-gray-100 bg-gray-50"}`}
+                onClick={() => { onEditRecord(r); setSelected(null); }}>
+                <div className="flex items-center gap-3">
+                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${r._isNext ? "bg-purple-400" : DOT[r.status] || "bg-gray-300"}`}/>
+                  <div>
+                    <p className="text-xs font-semibold text-gray-800">{r.carLabel}</p>
+                    <p className="text-xs text-gray-500">{r.type}{r._isNext ? " (Next Due)" : ""}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!r._isNext && <MainStatusBadge status={r.status} />}
+                  <span className="text-xs text-teal-500 font-medium">Edit →</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+>>>>>>> 1254102 (darkmode fixed)

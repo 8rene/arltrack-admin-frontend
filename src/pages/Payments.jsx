@@ -15,13 +15,31 @@ function fmtDate(iso) {
 }
 
 /* ── badge maps ── */
-const statusColor = {
-  Pending:   "bg-yellow-100 text-yellow-700",
-  Approved:  "bg-green-100 text-green-700",
-  Rejected:  "bg-red-100 text-red-600",
-  Cancelled: "bg-gray-100 text-gray-500",
-  Paid:      "bg-green-100 text-green-700",
+const statusDot = {
+  Pending:   "bg-yellow-400",
+  Approved:  "bg-green-500",
+  Rejected:  "bg-red-500",
+  Cancelled: "bg-gray-400",
+  Paid:      "bg-green-500",
 };
+const statusBg = {
+  Pending:   "bg-yellow-50 border border-yellow-200",
+  Approved:  "bg-green-50 border border-green-200",
+  Rejected:  "bg-red-50 border border-red-200",
+  Cancelled: "bg-gray-100 border border-gray-200",
+  Paid:      "bg-green-50 border border-green-200",
+};
+function StatusBadge({ status }) {
+  const dot = statusDot[status] || "bg-gray-400";
+  const bg  = statusBg[status]  || "bg-gray-50 border border-gray-200";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      {status}
+    </span>
+  );
+}
+const statusColor = {};
 
 const PAGE_SIZE = 15;
 const STATUSES  = ["All", "Pending", "Approved", "Rejected", "Cancelled"];
@@ -143,9 +161,7 @@ export default function Payments() {
                 <div className="p-6 space-y-5">
                   {/* Status + Actions */}
                   <div className="flex items-center gap-3 flex-wrap">
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColor[selected.status] || "bg-gray-100 text-gray-500"}`}>
-                      {selected.status}
-                    </span>
+                    <StatusBadge status={selected.status} />
                     {!["Cancelled","Approved"].includes(selected.status) && (
                       <>
                         <button disabled={updating} onClick={() => updateStatus(selected.id, "Approved")}
@@ -303,9 +319,7 @@ export default function Payments() {
                 <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.referenceNumber || "—"}</td>
                 {/* Status */}
                 <td className="px-4 py-3">
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statusColor[p.status] || "bg-gray-100 text-gray-500"}`}>
-                    {p.status}
-                  </span>
+                  <StatusBadge status={p.status} />
                 </td>
                 {/* Submitted */}
                 <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
@@ -370,3 +384,4 @@ function Row({ label, value, mono, bold, color }) {
     </div>
   );
 }
+

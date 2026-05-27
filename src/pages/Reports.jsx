@@ -10,12 +10,12 @@ const PERIODS = [
 ];
 
 const STATUS_COLORS = {
-  Approved: "bg-green-100 text-green-700",
-  Pending:  "bg-yellow-100 text-yellow-700",
-  Rejected: "bg-red-100 text-red-600",
+  Approved: "bg-green-50 border border-green-200",
+  Pending:  "bg-yellow-50 border border-yellow-200",
+  Rejected: "bg-red-50 border border-red-200",
   Cancelled:"bg-gray-100 text-gray-500",
-  confirmed:"bg-green-100 text-green-700",
-  pending:  "bg-yellow-100 text-yellow-700",
+  confirmed:"bg-green-50 border border-green-200",
+  pending:  "bg-yellow-50 border border-yellow-200",
   cancelled:"bg-gray-100 text-gray-500",
   completed:"bg-blue-100 text-blue-700",
 };
@@ -440,3 +440,4 @@ function BreakdownCard({ title, data, colorFn, isCurrency, fmt: fmtFn }) {
     </div>
   );
 }
+

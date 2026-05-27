@@ -31,24 +31,24 @@ const toSec = (val) => {
 };
 
 const STATUS_STYLE = {
-  Active:      "bg-green-100 text-green-700",
-  Inactive:    "bg-gray-100 text-gray-500",
-  Maintenance: "bg-yellow-100 text-yellow-700",
+  Active:      "bg-green-50 border border-green-200",
+  Inactive:    "bg-gray-100 border border-gray-200",
+  Maintenance: "bg-yellow-50 border border-yellow-200 text-yellow-700",
 };
 
 const PART_STATUS_STYLE = {
-  New:     "bg-blue-100 text-blue-700",
-  Good:    "bg-green-100 text-green-700",
-  Damaged: "bg-red-100 text-red-600",
+  New:     "bg-blue-50 border border-blue-200",
+  Good:    "bg-green-50 border border-green-200",
+  Damaged: "bg-red-50 border border-red-200",
   Worn:    "bg-yellow-100 text-yellow-700",
   Missing: "bg-gray-200 text-gray-500",
-  Stolen:  "bg-purple-100 text-purple-700",
+  Stolen:  "bg-purple-50 border border-purple-200",
 };
 
 const BOOKING_STATUS_STYLE = {
-  approved:             "bg-green-100 text-green-700",
-  pending:              "bg-yellow-100 text-yellow-700",
-  completed:            "bg-blue-100 text-blue-700",
+  approved:             "bg-green-50 border border-green-200",
+  pending:              "bg-yellow-50 border border-yellow-200",
+  completed:            "bg-blue-50 border border-blue-200",
   cancelled:            "bg-red-100 text-red-600",
   cancellation_request: "bg-orange-100 text-orange-700",
 };
@@ -568,7 +568,7 @@ export default function Inventory() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${STATUS_STYLE[selectedCar.status] || "bg-gray-100 text-gray-600"}`}>
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-black ${STATUS_STYLE[selectedCar.status] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_STYLE[selectedCar.status]?.includes("green") ? "bg-green-500" : STATUS_STYLE[selectedCar.status]?.includes("blue") ? "bg-blue-500" : STATUS_STYLE[selectedCar.status]?.includes("yellow") ? "bg-yellow-400" : STATUS_STYLE[selectedCar.status]?.includes("red") ? "bg-red-500" : STATUS_STYLE[selectedCar.status]?.includes("purple") ? "bg-purple-500" : "bg-gray-400"}`} />
                     {selectedCar.status || "—"}
                   </span>
                   <button
@@ -667,7 +667,7 @@ function InventoryPanel({
               Nearest Upcoming Booking
             </h3>
           </div>
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${BOOKING_STATUS_STYLE[booking.status?.toLowerCase()] || "bg-gray-100 text-gray-600"}`}>
+          <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[booking.status?.toLowerCase()] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_STATUS_STYLE[booking.status?.toLowerCase()]?.includes("green") ? "bg-green-500" : BOOKING_STATUS_STYLE[booking.status?.toLowerCase()]?.includes("yellow") ? "bg-yellow-400" : BOOKING_STATUS_STYLE[booking.status?.toLowerCase()]?.includes("blue") ? "bg-blue-500" : BOOKING_STATUS_STYLE[booking.status?.toLowerCase()]?.includes("red") ? "bg-red-500" : "bg-gray-400"}`} />
             {booking.status?.replace("_", " ") || "—"}
           </span>
         </div>
@@ -992,7 +992,7 @@ function CarCard({ car, selected, compact, onClick }) {
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-gray-800 text-sm truncate">{car.brandName} {car.modelName}</p>
           <p className="text-xs text-gray-400 truncate">{car.platenumber || car.plateNumber || "—"} · {car.year || "—"}</p>
-          <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${STATUS_STYLE[car.status] || "bg-gray-100 text-gray-600"}`}>
+          <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium text-black ${STATUS_STYLE[car.status] || "bg-gray-50 border border-gray-200"}`}><span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_STYLE[car.status]?.includes("green") ? "bg-green-500" : STATUS_STYLE[car.status]?.includes("yellow") ? "bg-yellow-400" : "bg-gray-400"}`} />
             {car.status}
           </span>
         </div>
@@ -1007,3 +1007,4 @@ function CarCard({ car, selected, compact, onClick }) {
     </button>
   );
 }
+

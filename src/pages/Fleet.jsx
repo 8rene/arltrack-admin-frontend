@@ -7,9 +7,9 @@ import {
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
 
-const STATUS_STYLE = {
-  Active:      "bg-green-100 text-green-700",
-  Rented:      "bg-blue-100 text-blue-700",
+const STATUS_DOT_FLEET = {
+  Active:      "bg-green-500",
+  Rented:      "bg-blue-500",
   Reserved:    "bg-orange-100 text-orange-700",
   Maintenance: "bg-red-100 text-red-600",
 };
@@ -520,7 +520,7 @@ function ViewDetailsModal({ car, onClose, onEdit }) {
                       <p className="text-xs text-gray-400">{fmtDate(b.startDateTime)} → {fmtDate(b.endDateTime)}</p>
                     </div>
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      b.status === "approved" ? "bg-blue-100 text-blue-700" : "bg-yellow-100 text-yellow-700"
+                      b.status === "approved" ? "bg-blue-50 border border-blue-200 text-black" : "bg-yellow-50 border border-yellow-200 text-black"
                     }`}>{b.status}</span>
                   </div>
                 ))}
@@ -1003,3 +1003,4 @@ function ConfirmDeleteModal({ message, onConfirm, onCancel }) {
     </div>
   );
 }
+
