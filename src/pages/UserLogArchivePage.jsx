@@ -253,9 +253,9 @@ export default function UserLogArchivePage() {
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {r.restoredAt ? (
-                      <span className="px-2 py-0.5 rounded-full bg-green-50 text-green-600 text-xs font-medium">Restored</span>
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-50 border border-green-200 text-xs font-medium text-black"><span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />Restored</span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs font-medium">Archived</span>
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-xs font-medium text-black"><span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" />Archived</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -304,3 +304,4 @@ export default function UserLogArchivePage() {
     </div>
   );
 }
+

@@ -14,12 +14,39 @@ import {
 
 const STATUS_TABS = ["All", "Pending", "Active", "Cancelled", "Completed"];
 
-const STATUS_STYLE = {
-  pending:   "bg-yellow-100 text-yellow-700 border border-yellow-200",
-  approved:  "bg-blue-100 text-blue-700 border border-blue-200",
-  completed: "bg-gray-100 text-gray-600 border border-gray-200",
-  cancelled: "bg-red-100 text-red-600 border border-red-200",
+const STATUS_DOT = {
+  pending:   "bg-yellow-400",
+  approved:  "bg-blue-500",
+  completed: "bg-green-500",
+  cancelled: "bg-red-500",
 };
+
+const STATUS_BG = {
+  pending:   "bg-yellow-50 border border-yellow-200",
+  approved:  "bg-blue-50 border border-blue-200",
+  completed: "bg-green-50 border border-green-200",
+  cancelled: "bg-red-50 border border-red-200",
+};
+
+// Legacy - keep for fallback
+const STATUS_STYLE = {
+  pending:   "bg-yellow-50 border border-yellow-200",
+  approved:  "bg-blue-50 border border-blue-200",
+  completed: "bg-green-50 border border-green-200",
+  cancelled: "bg-red-50 border border-red-200",
+};
+
+function StatusBadge({ status }) {
+  const s = (status || "").toLowerCase();
+  const dot = STATUS_DOT[s] || "bg-gray-400";
+  const bg  = STATUS_BG[s]  || "bg-gray-50 border border-gray-200";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      {status?.replace("_", " ")}
+    </span>
+  );
+}
 
 const fmtDate = (val) => {
   if (!val) return "—";
@@ -224,7 +251,7 @@ function ViewModal({ booking, onClose }) {
           <h2 className="font-bold text-lg text-gray-800">Booking Details</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
-        <span className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${STATUS_STYLE[booking.status?.toLowerCase()] || "bg-gray-100 text-gray-600"}`}>{booking.status}</span>
+        <StatusBadge status={booking.status} />
         <div className="pt-1">
           {row("Booking ID",      booking.bookingID || booking.id)}
           {row("Customer",        booking.customerName)}
@@ -459,7 +486,7 @@ export default function Bookings() {
                       <td className="px-4 py-3 font-semibold text-gray-800">{fmt(b.totalFee)}</td>
                       <td className="px-4 py-3 text-gray-600">{b.paymentMethod}</td>
                       <td className="px-4 py-3">
-                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${STATUS_STYLE[b.status?.toLowerCase()] || "bg-gray-100 text-gray-600"}`}>{b.status}</span>
+                        <StatusBadge status={b.status} />
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2">

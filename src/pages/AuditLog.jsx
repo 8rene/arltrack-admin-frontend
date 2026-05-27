@@ -1,18 +1,33 @@
 import { useEffect, useState, useCallback } from "react";
 
-const typeBadge = {
-  delete:   "bg-red-100 text-red-600",
-  update:   "bg-blue-100 text-blue-600",
-  create:   "bg-green-100 text-green-600",
-  export:   "bg-yellow-100 text-yellow-700",
-  auth:     "bg-gray-100 text-gray-500",
-  system:   "bg-purple-100 text-purple-600",
-  REGISTER: "bg-green-100 text-green-600",
-  LOGIN:    "bg-gray-100 text-gray-500",
-  LOGOUT:   "bg-gray-100 text-gray-400",
-  UPDATE:   "bg-blue-100 text-blue-600",
-  DELETE:   "bg-red-100 text-red-600",
+const typeBadgeDot = {
+  delete:   "bg-red-500",
+  update:   "bg-blue-500",
+  create:   "bg-green-500",
+  export:   "bg-yellow-400",
+  auth:     "bg-gray-400",
+  system:   "bg-purple-500",
+  REGISTER: "bg-green-500",
+  LOGIN:    "bg-gray-400",
+  LOGOUT:   "bg-gray-400",
+  UPDATE:   "bg-blue-500",
+  DELETE:   "bg-red-500",
 };
+const typeBadgeBg = {
+  delete:   "bg-red-50 border border-red-200",
+  update:   "bg-blue-50 border border-blue-200",
+  create:   "bg-green-50 border border-green-200",
+  export:   "bg-yellow-50 border border-yellow-200",
+  auth:     "bg-gray-50 border border-gray-200",
+  system:   "bg-purple-50 border border-purple-200",
+  REGISTER: "bg-green-50 border border-green-200",
+  LOGIN:    "bg-gray-50 border border-gray-200",
+  LOGOUT:   "bg-gray-50 border border-gray-200",
+  UPDATE:   "bg-blue-50 border border-blue-200",
+  DELETE:   "bg-red-50 border border-red-200",
+};
+// legacy
+const typeBadge = Object.fromEntries(Object.keys(typeBadgeBg).map(k => [k, typeBadgeBg[k]]));
 
 function formatDate(isoString) {
   if (!isoString) return "—";
@@ -239,7 +254,8 @@ export default function AuditLog() {
             ) : (
               paginated.map((log, i) => {
                 const actionKey = log.action || "system";
-                const badgeClass = typeBadge[actionKey] || "bg-gray-100 text-gray-500";
+                const badgeDot = typeBadgeDot[actionKey] || "bg-gray-400";
+                const badgeBg  = typeBadgeBg[actionKey]  || "bg-gray-50 border border-gray-200";
                 const nameVal = customerNames[log.userID];
                 const displayName = !log.userID
                   ? "—"
@@ -257,7 +273,7 @@ export default function AuditLog() {
                     }`}
                   >
                     <td className="px-5 py-3.5">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${badgeClass}`}>
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${badgeBg}`}><span className={`w-2 h-2 rounded-full shrink-0 ${badgeDot}`} />
                         {actionKey}
                       </span>
                     </td>
@@ -310,3 +326,4 @@ export default function AuditLog() {
     </div>
   );
 }
+

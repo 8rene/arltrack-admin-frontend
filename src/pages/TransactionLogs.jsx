@@ -2,16 +2,16 @@ import { useCurrency } from "../context/CurrencyContext";
 import { useEffect, useState, useCallback } from "react";
 
 const statusBadge = {
-  Success:  "bg-green-100 text-green-600",
-  Failed:   "bg-red-100 text-red-600",
-  Pending:  "bg-yellow-100 text-yellow-700",
+  Success:  "bg-green-50 border border-green-200",
+  Failed:   "bg-red-50 border border-red-200",
+  Pending:  "bg-yellow-50 border border-yellow-200",
   Refunded: "bg-blue-100 text-blue-600",
 };
 
 const typeBadge = {
-  Payment:  "bg-purple-100 text-purple-600",
-  Refund:   "bg-blue-100 text-blue-600",
-  Deposit:  "bg-teal-100 text-teal-600",
+  Payment:  "bg-purple-50 border border-purple-200",
+  Refund:   "bg-blue-50 border border-blue-200",
+  Deposit:  "bg-teal-50 border border-teal-200",
 };
 
 function formatDate(val) {
@@ -226,7 +226,7 @@ export default function TransactionLogs() {
                       {log.transactionID || log.id || "—"}
                     </td>
                     <td className="px-5 py-3.5">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${tBadge}`}>
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${tBadge}`}><span className={`w-2 h-2 rounded-full shrink-0 ${tBadge.includes("purple") ? "bg-purple-500" : tBadge.includes("blue") ? "bg-blue-500" : tBadge.includes("teal") ? "bg-teal-500" : "bg-gray-400"}`} />
                         {log.type || "—"}
                       </span>
                     </td>
@@ -234,7 +234,7 @@ export default function TransactionLogs() {
                       {formatAmount(log.amount, fmt)}
                     </td>
                     <td className="px-5 py-3.5">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${sBadge}`}>
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${sBadge}`}><span className={`w-2 h-2 rounded-full shrink-0 ${sBadge.includes("green") ? "bg-green-500" : sBadge.includes("red") ? "bg-red-500" : sBadge.includes("yellow") ? "bg-yellow-400" : sBadge.includes("blue") ? "bg-blue-500" : "bg-gray-400"}`} />
                         {log.status || "—"}
                       </span>
                     </td>
@@ -285,3 +285,4 @@ export default function TransactionLogs() {
     </div>
   );
 }
+
