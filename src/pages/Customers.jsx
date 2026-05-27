@@ -211,8 +211,8 @@ function CustomersTab({ users, onRefresh }) {
                       </td>
                       <td className="px-5 py-3">
                         {u.isVerified
-                          ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-black font-medium"><span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />✓ Verified</span>
-                          : <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-black font-medium"><span className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />Pending</span>
+                          ? <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-green-700 font-medium">✓ Verified</span>
+                          : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending</span>
                         }
                       </td>
                       <td className="px-5 py-3 font-semibold text-gray-700">{u.bookingCount}</td>
@@ -318,7 +318,7 @@ function DocumentsTab({ users, onRefresh }) {
                       <td className="px-5 py-3 text-gray-600">{u.document?.documentType || "—"}</td>
                       <td className="px-5 py-3 text-gray-600">{u.document?.documentNumber || "—"}</td>
                       <td className="px-5 py-3">
-                        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-black font-medium"><span className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />Pending</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending</span>
                       </td>
                       <td className="px-5 py-3">
                         {u.isFlagged
@@ -647,4 +647,3 @@ function StatCard({ title, value, icon, color }) {
     </div>
   );
 }
-
