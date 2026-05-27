@@ -41,7 +41,7 @@ function DashboardLayout({ children }) {
             <Sidebar />
             <div className="flex-1 flex flex-col overflow-hidden">
                 <Header />
-                <main className="flex-1 overflow-auto">
+                <main className="flex-1 overflow-auto p-6">
                     {children}
                 </main>
             </div>
@@ -128,7 +128,6 @@ function AppRoutes() {
                     <DashboardLayout><Settings /></DashboardLayout>
                 </ProtectedRoute>
             } />
-
             <Route path="/user-logs" element={
                 <ProtectedRoute>
                     <DashboardLayout><UserLogs /></DashboardLayout>
@@ -171,7 +170,8 @@ function AppRoutes() {
                     <DashboardLayout><ReviewsArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
-{/* Fallback */}
+
+            {/* Fallback */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
     );
@@ -181,12 +181,12 @@ export default function App() {
     return (
         <BrowserRouter>
             <AuthProvider>
-      <ThemeProvider>
-      <CurrencyProvider>
-                <AppRoutes />
-            </CurrencyProvider>
-      </ThemeProvider>
-    </AuthProvider>
+                <ThemeProvider>
+                    <CurrencyProvider>
+                        <AppRoutes />
+                    </CurrencyProvider>
+                </ThemeProvider>
+            </AuthProvider>
         </BrowserRouter>
     );
 }
