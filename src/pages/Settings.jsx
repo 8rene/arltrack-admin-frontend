@@ -11,36 +11,56 @@ export default function Settings() {
   const { user } = useAuth();
   const token = localStorage.getItem("token");
 
-  const [profile, setProfile]   = useState({ username: "", email: "", role: "", firstName: "", lastName: "" });
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [toast, setToast]       = useState(null);
+  const [profile, setProfile] = useState({ username: "", email: "", role: "", firstName: "", lastName: "" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+  const [toast, setToast]     = useState(null);
+
   const { currency, setCurrency, rates, ratesLoading, SYMBOLS } = useCurrency();
   const { isDark, toggleDark } = useTheme();
-  const [notifications, setNotifications] = useState(true);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [changingPw, setChangingPw] = useState(false);
 
+  // ── Staged (unsaved) preferences ──────────────────────────────────
+  const [stagedCurrency,      setStagedCurrency]      = useState(null); // null = not changed yet
+  const [stagedNotifications, setStagedNotifications] = useState(null);
+  const [stagedDark,          setStagedDark]          = useState(null);
+
+  // Resolved display values (staged overrides applied if set)
+  const [savedNotifications] = useState(
+    () => localStorage.getItem("notifications") !== "false"
+  );
+
+  const activeCurrency      = stagedCurrency      !== null ? stagedCurrency      : currency;
+  const activeNotifications = stagedNotifications !== null ? stagedNotifications : savedNotifications;
+  const activeDark          = stagedDark          !== null ? stagedDark          : isDark;
+
+  const hasUnsaved =
+    (stagedCurrency      !== null && stagedCurrency      !== currency) ||
+    (stagedNotifications !== null && stagedNotifications !== savedNotifications) ||
+    (stagedDark          !== null && stagedDark          !== isDark);
+
+  // ── Password fields ───────────────────────────────────────────────
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword,     setNewPassword]     = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPw,      setChangingPw]      = useState(false);
+
+  // ── Toast helper ─────────────────────────────────────────────────
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   };
 
-  /* ── Load user profile ── */
+  // ── Load profile ─────────────────────────────────────────────────
   const fetchProfile = useCallback(async () => {
     if (!user?.uid) return;
     setLoading(true);
     try {
-      // Get from user collection
       const userRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/by-uid/${user.uid}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const userData = await userRes.json();
       const u = userData?.data || {};
 
-      // Get from userDetails
       const detailRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/details/${user.uid}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -63,13 +83,44 @@ export default function Settings() {
 
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
 
-  /* ── Currency change ── */
-  const handleCurrencyChange = (cur) => {
-    setCurrency(cur);
-    showToast(`Currency set to ${cur}.`);
+  // ── Discard staged changes ───────────────────────────────────────
+  const handleDiscard = () => {
+    setStagedCurrency(null);
+    setStagedNotifications(null);
+    setStagedDark(null);
+    showToast("Changes discarded.");
   };
 
-  /* ── Change Password ── */
+  // ── Save all preferences ─────────────────────────────────────────
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      // Apply currency
+      if (stagedCurrency !== null && stagedCurrency !== currency) {
+        setCurrency(stagedCurrency);
+      }
+      // Apply dark mode
+      if (stagedDark !== null && stagedDark !== isDark) {
+        toggleDark(); // toggles to match stagedDark
+      }
+      // Persist notifications
+      const notifValue = stagedNotifications !== null ? stagedNotifications : savedNotifications;
+      localStorage.setItem("notifications", notifValue ? "true" : "false");
+
+      // Clear staged state
+      setStagedCurrency(null);
+      setStagedNotifications(null);
+      setStagedDark(null);
+
+      showToast("Preferences saved.");
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Change Password ──────────────────────────────────────────────
   const handleChangePassword = async () => {
     if (!newPassword || !confirmPassword || !currentPassword) {
       showToast("Please fill in all password fields.", "error"); return;
@@ -82,10 +133,10 @@ export default function Settings() {
     }
     setChangingPw(true);
     try {
-      const user = auth.currentUser;
-      const credential = EmailAuthProvider.credential(user.email, currentPassword);
-      await reauthenticateWithCredential(user, credential);
-      await updatePassword(user, newPassword);
+      const firebaseUser = auth.currentUser;
+      const credential = EmailAuthProvider.credential(firebaseUser.email, currentPassword);
+      await reauthenticateWithCredential(firebaseUser, credential);
+      await updatePassword(firebaseUser, newPassword);
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -101,31 +152,15 @@ export default function Settings() {
     }
   };
 
-  /* ── Save profile (name only — email & role locked) ── */
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      // Only save notifications preference locally for now
-      localStorage.setItem("notifications", notifications ? "true" : "false");
-      showToast("Preferences saved.");
-    } catch (e) {
-      showToast(e.message, "error");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /* ── Derived display name ── */
+  // ── Derived values ───────────────────────────────────────────────
   const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || profile.username || "—";
 
-  /* ── Currency preview ── */
   const previewAmounts = [100, 1000, 5000];
   const convertFromPHP = (php) => {
-    if (currency === "PHP") return `₱${php.toLocaleString("en-PH")}`;
-    const rate = rates[currency];
+    if (activeCurrency === "PHP") return `₱${php.toLocaleString("en-PH")}`;
+    const rate = rates[activeCurrency];
     if (!rate) return "—";
-    const converted = (php * rate).toFixed(2);
-    return `${SYMBOLS[currency]}${Number(converted).toLocaleString()}`;
+    return `${SYMBOLS[activeCurrency]}${Number((php * rate).toFixed(2)).toLocaleString()}`;
   };
 
   return (
@@ -134,7 +169,9 @@ export default function Settings() {
       {/* Toast */}
       {toast && (
         <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          toast.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+          toast.type === "success"
+            ? "bg-green-50 text-green-700 border border-green-200"
+            : "bg-red-50 text-red-700 border border-red-200"
         }`}>{toast.msg}</div>
       )}
 
@@ -144,10 +181,22 @@ export default function Settings() {
         <p className="text-xs text-gray-400 mt-0.5">Manage your account and system preferences</p>
       </div>
 
-      {/* PROFILE */}
+      {/* ── Unsaved Changes Banner ── */}
+      {hasUnsaved && (
+        <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm">
+          <span className="text-amber-700 font-medium">⚠️ You have unsaved changes — click <strong>Save Preferences</strong> to apply them.</span>
+          <button
+            onClick={handleDiscard}
+            className="ml-4 text-amber-500 hover:text-amber-700 text-xs underline shrink-0"
+          >
+            Discard
+          </button>
+        </div>
+      )}
+
+      {/* ── PROFILE ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-soft space-y-4">
         <h2 className="font-semibold text-gray-700 text-sm">👤 Profile</h2>
-
         {loading ? (
           <div className="space-y-3">
             {[1,2,3,4].map(i => <div key={i} className="h-10 bg-gray-100 rounded-xl animate-pulse" />)}
@@ -156,24 +205,28 @@ export default function Settings() {
           <div className="grid md:grid-cols-2 gap-4">
             <ReadOnly label="Display Name" value={displayName} />
             <ReadOnly label="Username"     value={profile.username} />
-            {/* Locked */}
-            <Locked label="Email"          value={profile.email} />
-            <Locked label="Role"           value={profile.role} />
+            <Locked   label="Email"        value={profile.email} />
+            <Locked   label="Role"         value={profile.role} />
           </div>
         )}
       </div>
 
-      {/* CURRENCY */}
+      {/* ── CURRENCY ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-soft space-y-4">
-        <h2 className="font-semibold text-gray-700 text-sm">💱 Currency</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-gray-700 text-sm">💱 Currency</h2>
+          {stagedCurrency !== null && stagedCurrency !== currency && (
+            <span className="text-xs text-amber-500 font-medium">Unsaved</span>
+          )}
+        </div>
 
         <div className="flex gap-3 flex-wrap">
           {SUPPORTED_CURRENCIES.map((c) => (
             <button
               key={c}
-              onClick={() => handleCurrencyChange(c)}
+              onClick={() => setStagedCurrency(c)}
               className={`px-5 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                currency === c
+                activeCurrency === c
                   ? "bg-arl-dark text-white border-arl-dark"
                   : "bg-white text-gray-600 border-gray-200 hover:border-arl-dark"
               }`}
@@ -200,9 +253,9 @@ export default function Settings() {
           )}
         </div>
 
-        {/* Conversion preview */}
+        {/* Conversion preview — uses staged currency */}
         <div>
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Preview ({currency})</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Preview ({activeCurrency})</p>
           <div className="flex gap-3 flex-wrap">
             {previewAmounts.map((amt) => (
               <div key={amt} className="bg-gray-50 rounded-xl px-4 py-2 text-center">
@@ -214,31 +267,41 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* NOTIFICATIONS */}
+      {/* ── NOTIFICATIONS ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-soft space-y-4">
-        <h2 className="font-semibold text-gray-700 text-sm">🔔 Notifications</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-gray-700 text-sm">🔔 Notifications</h2>
+          {stagedNotifications !== null && stagedNotifications !== savedNotifications && (
+            <span className="text-xs text-amber-500 font-medium">Unsaved</span>
+          )}
+        </div>
         <Toggle
           label="Enable Notifications"
-          checked={notifications}
-          onChange={setNotifications}
+          checked={activeNotifications}
+          onChange={(val) => setStagedNotifications(val)}
         />
       </div>
 
-      {/* APPEARANCE */}
+      {/* ── APPEARANCE ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-soft space-y-4">
-        <h2 className="font-semibold text-gray-700 text-sm">🎨 Appearance</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-gray-700 text-sm">🎨 Appearance</h2>
+          {stagedDark !== null && stagedDark !== isDark && (
+            <span className="text-xs text-amber-500 font-medium">Unsaved</span>
+          )}
+        </div>
         <Toggle
           label="Dark Mode"
-          checked={isDark}
-          onChange={toggleDark}
+          checked={activeDark}
+          onChange={(val) => setStagedDark(val)}
         />
       </div>
 
-      {/* SECURITY */}
+      {/* ── SECURITY ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-soft space-y-4">
         <h2 className="font-semibold text-gray-700 text-sm">🔐 Security</h2>
-        <PasswordInput label="Current Password" value={currentPassword} onChange={setCurrentPassword} />
-        <PasswordInput label="New Password" value={newPassword} onChange={setNewPassword} />
+        <PasswordInput label="Current Password"     value={currentPassword} onChange={setCurrentPassword} />
+        <PasswordInput label="New Password"         value={newPassword}     onChange={setNewPassword} />
         <PasswordInput label="Confirm New Password" value={confirmPassword} onChange={setConfirmPassword} />
         <button
           onClick={handleChangePassword}
@@ -249,8 +312,16 @@ export default function Settings() {
         </button>
       </div>
 
-      {/* Save */}
-      <div className="flex justify-end pb-4">
+      {/* ── Save / Discard footer ── */}
+      <div className="flex justify-end gap-3 pb-4">
+        {hasUnsaved && (
+          <button
+            onClick={handleDiscard}
+            className="border border-gray-200 text-gray-500 hover:bg-gray-50 px-6 py-2.5 rounded-xl text-sm font-medium transition-colors"
+          >
+            Discard Changes
+          </button>
+        )}
         <button
           onClick={handleSave}
           disabled={saving}
