@@ -4,7 +4,6 @@ import {
   updateDoc, addDoc, serverTimestamp, orderBy
 } from "firebase/firestore";
 import { db } from "../fireabase";
-import { useCurrency } from "../context/CurrencyContext"; // ← ADD THIS
 
 /* ── helpers ── */
 const toDate = (val) => {
@@ -71,44 +70,6 @@ export default function Maintenance() {
   const [loading, setLoading]           = useState(true);
   const [search, setSearch]             = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
-<<<<<<< HEAD
-  const [editRecord, setEditRecord]   = useState(null);
-  const [showAdd, setShowAdd]         = useState(false);
-  const [form, setForm]               = useState(EMPTY_FORM);
-  const [saving, setSaving]           = useState(false);
-  const [toast, setToast]             = useState(null);
-  const [view, setView]               = useState("table");
-  const [calMonth, setCalMonth]       = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
-  const [damagedParts, setDamagedParts] = useState([]);
-  const [replacedParts, setReplacedParts] = useState([]);
-
-  // ── Currency ──────────────────────────────────────────────────────
-  const { currency, rates, SYMBOLS } = useCurrency();
-
-  /**
-   * Costs are stored in PHP in Firestore.
-   * This helper converts a PHP amount to the active display currency.
-   */
-  const formatCost = useCallback((phpAmount) => {
-    if (phpAmount === null || phpAmount === undefined || phpAmount === "") return "—";
-    const num = Number(phpAmount);
-    if (isNaN(num)) return "—";
-
-    const symbol = SYMBOLS?.[currency] ?? SYMBOLS?.["PHP"] ?? "₱";
-
-    if (currency === "PHP" || !rates?.[currency]) {
-      // Default / fallback: show as PHP
-      return `${SYMBOLS?.["PHP"] ?? "₱"}${num.toLocaleString("en-PH")}`;
-    }
-
-    const converted = num * rates[currency];
-    return `${symbol}${Number(converted.toFixed(2)).toLocaleString()}`;
-  }, [currency, rates, SYMBOLS]);
-
-  // Currency symbol for the cost input label
-  const costSymbol = SYMBOLS?.[currency] ?? SYMBOLS?.["PHP"] ?? "₱";
-  // ─────────────────────────────────────────────────────────────────
-=======
   const [editRecord, setEditRecord]     = useState(null);
   const [showAdd, setShowAdd]           = useState(false);
   const [form, setForm]                 = useState(EMPTY_FORM);
@@ -118,7 +79,6 @@ export default function Maintenance() {
   const [calMonth, setCalMonth]         = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [damagedParts, setDamagedParts] = useState([]);
   const [replacedParts, setReplacedParts] = useState([]);
->>>>>>> 1254102 (darkmode fixed)
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -178,10 +138,6 @@ export default function Maintenance() {
       })));
 
       const partsMap = Object.fromEntries(partsSnap.docs.map(d => [d.id, d.data()]));
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
       const pickLatestByCarID = (snap) => {
         const byCarID = {};
         snap.docs.forEach(d => {
@@ -198,10 +154,6 @@ export default function Maintenance() {
 
       const latestBefore = pickLatestByCarID(beforeSnap);
       const latestAfter  = pickLatestByCarID(afterSnap);
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
       const carIDsWithRecords = new Set([
         ...latestBefore.map(r => r.carID),
         ...latestAfter.map(r => r.carID),
@@ -255,7 +207,7 @@ export default function Maintenance() {
         carID:               form.carID,
         type:                form.type,
         description:         form.description,
-        cost:                Number(form.cost) || 0, // always stored as PHP number
+        cost:                Number(form.cost) || 0,
         maintenanceDate:     form.maintenanceDate ? new Date(form.maintenanceDate) : null,
         nextMaintenanceDate: form.nextMaintenanceDate ? new Date(form.nextMaintenanceDate) : null,
         status:              form.status,
@@ -490,8 +442,7 @@ export default function Maintenance() {
                 <th className="px-4 py-3 text-left font-semibold">Type</th>
                 <th className="px-4 py-3 text-left font-semibold">Date</th>
                 <th className="px-4 py-3 text-left font-semibold">Next Due</th>
-                {/* ↓ Column header now reflects active currency */}
-                <th className="px-4 py-3 text-left font-semibold">Cost ({currency})</th>
+                <th className="px-4 py-3 text-left font-semibold">Cost</th>
                 <th className="px-4 py-3 text-left font-semibold">Status</th>
                 <th className="px-4 py-3 text-left font-semibold">Action</th>
               </tr>
@@ -519,9 +470,8 @@ export default function Maintenance() {
                   <td className={`px-4 py-3 text-xs whitespace-nowrap font-semibold ${isPast(r.nextMaintenanceDate) && r.status !== "Completed" ? "text-red-500" : isSoon(r.nextMaintenanceDate) ? "text-yellow-600" : "text-gray-500"}`}>
                     {fmtDate(r.nextMaintenanceDate)}
                   </td>
-                  {/* ↓ Use formatCost() instead of hardcoded ₱ */}
                   <td className="px-4 py-3 text-xs text-gray-700">
-                    {r.cost ? formatCost(r.cost) : "—"}
+                    {r.cost ? `₱${Number(r.cost).toLocaleString()}` : "—"}
                   </td>
                   <td className="px-4 py-3">
                     <MainStatusBadge status={r.status || "—"} />
@@ -548,10 +498,6 @@ export default function Maintenance() {
               <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
                 className="text-gray-400 hover:text-gray-600">✕</button>
             </div>
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
             <Field label="Vehicle *">
               <select value={form.carID} onChange={e => setForm(f => ({...f, carID: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
@@ -559,10 +505,6 @@ export default function Maintenance() {
                 {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.platenumber ? `· ${c.platenumber}` : ""}</option>)}
               </select>
             </Field>
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
             <Field label="Maintenance Type *">
               <select value={form.type} onChange={e => setForm(f => ({...f, type: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
@@ -570,46 +512,24 @@ export default function Maintenance() {
                 {MAINTENANCE_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </Field>
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
             <Field label="Description">
               <textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
                 rows={3} placeholder="Details of the maintenance…"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none resize-none" />
             </Field>
-<<<<<<< HEAD
-
-            {/* ↓ Cost label now shows active currency symbol */}
-            <Field label={`Cost (${costSymbol})`}>
-=======
             <Field label="Cost (₱)">
->>>>>>> 1254102 (darkmode fixed)
               <input type="number" value={form.cost} onChange={e => setForm(f => ({...f, cost: e.target.value}))}
                 placeholder="0"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
             </Field>
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
             <Field label="Maintenance Date *">
               <input type="date" value={form.maintenanceDate} onChange={e => setForm(f => ({...f, maintenanceDate: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
             </Field>
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
             <Field label="Next Maintenance Date">
               <input type="date" value={form.nextMaintenanceDate} onChange={e => setForm(f => ({...f, nextMaintenanceDate: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
             </Field>
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
             <Field label="Status">
               <div className="grid grid-cols-2 gap-1.5">
                 {MAINTENANCE_STATUSES.map(s => (
@@ -624,10 +544,6 @@ export default function Maintenance() {
                 ))}
               </div>
             </Field>
-<<<<<<< HEAD
-
-=======
->>>>>>> 1254102 (darkmode fixed)
             <div className="flex gap-2 pt-1">
               <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
                 className="flex-1 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">
@@ -644,8 +560,6 @@ export default function Maintenance() {
     </div>
   );
 }
-
-// ── StatCard, Field, MaintenanceCalendar — unchanged ──────────────────────────
 
 function StatCard({ icon, value, label, color }) {
   const colors = { red:"text-red-500", yellow:"text-yellow-600", blue:"text-blue-600", green:"text-green-600" };
@@ -669,11 +583,8 @@ function Field({ label, children }) {
   );
 }
 
+/* ── Maintenance Calendar ── */
 function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
-<<<<<<< HEAD
-  // ... unchanged — no cost display here, so no currency changes needed
-}
-=======
   const { y, m } = calMonth;
   const monthName = new Date(y, m, 1).toLocaleString("en-PH", { month: "long", year: "numeric" });
 
@@ -806,4 +717,3 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
     </div>
   );
 }
->>>>>>> 1254102 (darkmode fixed)
