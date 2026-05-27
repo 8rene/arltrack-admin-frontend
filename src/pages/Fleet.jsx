@@ -7,6 +7,13 @@ import {
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
 
+const STATUS_STYLE = {
+  Active:      "bg-green-50 border border-green-200 text-black",
+  Rented:      "bg-blue-50 border border-blue-200 text-black",
+  Reserved:    "bg-orange-50 border border-orange-200 text-black",
+  Maintenance: "bg-red-50 border border-red-200 text-black",
+};
+
 const STATUS_DOT_FLEET = {
   Active:      "bg-green-500",
   Rented:      "bg-blue-500",
@@ -1003,4 +1010,3 @@ function ConfirmDeleteModal({ message, onConfirm, onCancel }) {
     </div>
   );
 }
-
