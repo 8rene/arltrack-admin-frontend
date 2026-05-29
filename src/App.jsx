@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { CurrencyProvider } from "./context/CurrencyContext";
 import { ThemeProvider } from "./context/ThemeContext";
+import { canAccess } from "./utils/permissions";
 import AuthPage from "./pages/AuthPage";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
@@ -27,14 +28,23 @@ import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
 import ReviewsArchivePage from "./pages/ReviewsArchivePage";
 
-// Wraps any route — redirects to /login if not authenticated
+// Redirects to /login if not authenticated
 function ProtectedRoute({ children }) {
     const { user } = useAuth();
     if (!user) return <Navigate to="/login" replace />;
     return children;
 }
 
-// The main dashboard shell (sidebar + header + page content)
+// Redirects to /dashboard if the user's role cannot access the given permission key
+function RoleRoute({ permissionKey, children }) {
+    const { user } = useAuth();
+    if (!user) return <Navigate to="/login" replace />;
+    const role = user?.role?.toLowerCase();
+    if (!canAccess(role, permissionKey)) return <Navigate to="/dashboard" replace />;
+    return children;
+}
+
+// Main dashboard shell: sidebar + header + page content
 function DashboardLayout({ children }) {
     return (
         <div className="flex min-h-screen bg-arl-light">
@@ -54,121 +64,127 @@ function AppRoutes() {
 
     return (
         <Routes>
-            {/* Public route */}
+            {/* Public */}
             <Route
                 path="/login"
                 element={user ? <Navigate to="/dashboard" replace /> : <AuthPage />}
             />
 
-            {/* Protected routes */}
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
+            {/* ── Main ── */}
             <Route path="/dashboard" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="dashboard">
                     <DashboardLayout><Dashboard /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
             <Route path="/bookings" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="bookings">
                     <DashboardLayout><Bookings /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
             <Route path="/fleet" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="fleet">
                     <DashboardLayout><Fleet /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
             <Route path="/customers" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="customers">
                     <DashboardLayout><Customers /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/gps" element={
-                <ProtectedRoute>
-                    <DashboardLayout><GPS /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/maintenance" element={
-                <ProtectedRoute>
-                    <DashboardLayout><Maintenance /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/inventory" element={
-                <ProtectedRoute>
-                    <DashboardLayout><Inventory /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/vehicle-documentation" element={
-                <ProtectedRoute>
-                    <DashboardLayout><VehicleDocumentation /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/analytics" element={
-                <ProtectedRoute>
-                    <DashboardLayout><Analytics /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/payments" element={
-                <ProtectedRoute>
-                    <DashboardLayout><Payments /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/reports" element={
-                <ProtectedRoute>
-                    <DashboardLayout><Reports /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/audit-log" element={
-                <ProtectedRoute>
-                    <DashboardLayout><AuditLog /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/settings" element={
-                <ProtectedRoute>
-                    <DashboardLayout><Settings /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/user-logs" element={
-                <ProtectedRoute>
-                    <DashboardLayout><UserLogs /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/transaction-logs" element={
-                <ProtectedRoute>
-                    <DashboardLayout><TransactionLogs /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
 
-            {/* Archive routes */}
+            {/* ── Operations ── */}
+            <Route path="/gps" element={
+                <RoleRoute permissionKey="gps">
+                    <DashboardLayout><GPS /></DashboardLayout>
+                </RoleRoute>
+            } />
+            <Route path="/maintenance" element={
+                <RoleRoute permissionKey="maintenance">
+                    <DashboardLayout><Maintenance /></DashboardLayout>
+                </RoleRoute>
+            } />
+            <Route path="/inventory" element={
+                <RoleRoute permissionKey="inventory">
+                    <DashboardLayout><Inventory /></DashboardLayout>
+                </RoleRoute>
+            } />
+            <Route path="/vehicle-documentation" element={
+                <RoleRoute permissionKey="vehicle-documentation">
+                    <DashboardLayout><VehicleDocumentation /></DashboardLayout>
+                </RoleRoute>
+            } />
+
+            {/* ── Reports ── */}
+            <Route path="/analytics" element={
+                <RoleRoute permissionKey="analytics">
+                    <DashboardLayout><Analytics /></DashboardLayout>
+                </RoleRoute>
+            } />
+            <Route path="/payments" element={
+                <RoleRoute permissionKey="payments">
+                    <DashboardLayout><Payments /></DashboardLayout>
+                </RoleRoute>
+            } />
+            <Route path="/reports" element={
+                <RoleRoute permissionKey="reports">
+                    <DashboardLayout><Reports /></DashboardLayout>
+                </RoleRoute>
+            } />
+
+            {/* ── System ── */}
+            <Route path="/audit-log" element={
+                <RoleRoute permissionKey="audit-log">
+                    <DashboardLayout><AuditLog /></DashboardLayout>
+                </RoleRoute>
+            } />
+            <Route path="/user-logs" element={
+                <RoleRoute permissionKey="user-logs">
+                    <DashboardLayout><UserLogs /></DashboardLayout>
+                </RoleRoute>
+            } />
+            <Route path="/transaction-logs" element={
+                <RoleRoute permissionKey="transaction-logs">
+                    <DashboardLayout><TransactionLogs /></DashboardLayout>
+                </RoleRoute>
+            } />
+            <Route path="/settings" element={
+                <RoleRoute permissionKey="settings">
+                    <DashboardLayout><Settings /></DashboardLayout>
+                </RoleRoute>
+            } />
+
+            {/* ── Archives ── */}
             <Route path="/archives/user-log" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="archives/user-log">
                     <DashboardLayout><UserLogArchivePage /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
             <Route path="/archives/payments" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="archives/payments">
                     <DashboardLayout><PaymentsArchivePage /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
             <Route path="/archives/bookings" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="archives/bookings">
                     <DashboardLayout><BookingArchivePage /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
             <Route path="/archives/transaction-log" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="archives/transaction-log">
                     <DashboardLayout><TransactionLogArchivePage /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
             <Route path="/archives/audit-log" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="archives/audit-log">
                     <DashboardLayout><AuditLogsArchivePage /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
             <Route path="/archives/reviews" element={
-                <ProtectedRoute>
+                <RoleRoute permissionKey="archives/reviews">
                     <DashboardLayout><ReviewsArchivePage /></DashboardLayout>
-                </ProtectedRoute>
+                </RoleRoute>
             } />
 
             {/* Fallback */}

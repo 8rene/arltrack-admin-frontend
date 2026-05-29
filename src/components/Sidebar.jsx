@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { canAccess } from "../utils/permissions";
 
+// Each item carries a `key` that matches a permissions.js key.
 const nav = [
   {
     group: "Main",
     items: [
       {
+        key: "dashboard",
         label: "Dashboard",
         path: "/dashboard",
         icon: (
@@ -15,6 +19,7 @@ const nav = [
         ),
       },
       {
+        key: "bookings",
         label: "Bookings",
         path: "/bookings",
         icon: (
@@ -24,6 +29,7 @@ const nav = [
         ),
       },
       {
+        key: "fleet",
         label: "Fleet Management",
         path: "/fleet",
         icon: (
@@ -33,6 +39,7 @@ const nav = [
         ),
       },
       {
+        key: "customers",
         label: "Customers",
         path: "/customers",
         icon: (
@@ -47,6 +54,7 @@ const nav = [
     group: "Operations",
     items: [
       {
+        key: "gps",
         label: "GPS Tracking",
         path: "/gps",
         icon: (
@@ -56,6 +64,7 @@ const nav = [
         ),
       },
       {
+        key: "maintenance",
         label: "Maintenance",
         path: "/maintenance",
         icon: (
@@ -65,6 +74,7 @@ const nav = [
         ),
       },
       {
+        key: "inventory",
         label: "Inventory",
         path: "/inventory",
         icon: (
@@ -74,11 +84,12 @@ const nav = [
         ),
       },
       {
+        key: "vehicle-documentation",
         label: "Vehicle Documentation",
         path: "/vehicle-documentation",
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         ),
       },
@@ -88,6 +99,7 @@ const nav = [
     group: "Reports",
     items: [
       {
+        key: "analytics",
         label: "Analytics",
         path: "/analytics",
         icon: (
@@ -97,6 +109,7 @@ const nav = [
         ),
       },
       {
+        key: "payments",
         label: "Payments",
         path: "/payments",
         icon: (
@@ -106,6 +119,7 @@ const nav = [
         ),
       },
       {
+        key: "reports",
         label: "Reports",
         path: "/reports",
         icon: (
@@ -120,6 +134,7 @@ const nav = [
     group: "System",
     items: [
       {
+        key: "audit-log",
         label: "Audit Log",
         path: "/audit-log",
         icon: (
@@ -129,6 +144,7 @@ const nav = [
         ),
       },
       {
+        key: "user-logs",
         label: "User Logs",
         path: "/user-logs",
         icon: (
@@ -138,6 +154,7 @@ const nav = [
         ),
       },
       {
+        key: "transaction-logs",
         label: "Transaction Logs",
         path: "/transaction-logs",
         icon: (
@@ -147,6 +164,7 @@ const nav = [
         ),
       },
       {
+        key: "settings",
         label: "Settings",
         path: "/settings",
         icon: (
@@ -162,6 +180,7 @@ const nav = [
     group: "Archives",
     items: [
       {
+        key: "archives/user-log",
         label: "User Log Archive",
         path: "/archives/user-log",
         icon: (
@@ -171,6 +190,7 @@ const nav = [
         ),
       },
       {
+        key: "archives/payments",
         label: "Payments Archive",
         path: "/archives/payments",
         icon: (
@@ -180,6 +200,7 @@ const nav = [
         ),
       },
       {
+        key: "archives/bookings",
         label: "Booking Archive",
         path: "/archives/bookings",
         icon: (
@@ -189,6 +210,7 @@ const nav = [
         ),
       },
       {
+        key: "archives/transaction-log",
         label: "Transaction Log Archive",
         path: "/archives/transaction-log",
         icon: (
@@ -198,6 +220,7 @@ const nav = [
         ),
       },
       {
+        key: "archives/audit-log",
         label: "Audit Logs Archive",
         path: "/archives/audit-log",
         icon: (
@@ -207,6 +230,7 @@ const nav = [
         ),
       },
       {
+        key: "archives/reviews",
         label: "Reviews Archive",
         path: "/archives/reviews",
         icon: (
@@ -219,35 +243,43 @@ const nav = [
   },
 ];
 
+// Role badge styles
+const ROLE_BADGE = {
+  admin:      { label: "Admin",      bg: "bg-blue-500/20",   text: "text-blue-300",   dot: "bg-blue-400"   },
+  supervisor: { label: "Supervisor", bg: "bg-amber-500/20",  text: "text-amber-300",  dot: "bg-amber-400"  },
+  owner:      { label: "Owner",      bg: "bg-emerald-500/20",text: "text-emerald-300",dot: "bg-emerald-400" },
+};
+
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
+  const { user } = useAuth();
+  const role = user?.role?.toLowerCase();
+
+  // Filter each group's items by what this role may access
+  const visibleNav = nav
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => canAccess(role, item.key)),
+    }))
+    .filter((section) => section.items.length > 0);
+
+  const badge = ROLE_BADGE[role];
+
   return (
     <aside
       id="sidebar"
-      className={`h-screen flex-shrink-0 sticky top-0 flex flex-col px-3 py-5 transition-all duration-300 ease-smooth ${collapsed ? "w-20" : "w-64"
-        }`}
-      style={{
-        background:
-          "linear-gradient(180deg, #16526a 0%, #1A5F7A 100%)",
-      }}
+      className={`h-screen flex-shrink-0 sticky top-0 flex flex-col px-3 py-5 transition-all duration-300 ease-smooth ${
+        collapsed ? "w-20" : "w-64"
+      }`}
+      style={{ background: "linear-gradient(180deg, #16526a 0%, #1A5F7A 100%)" }}
     >
       {/* Top */}
-      <div
-        id="sidebarTop"
-        className="flex items-center justify-between mb-8"
-      >
+      <div id="sidebarTop" className="flex items-center justify-between mb-6">
         {/* Logo */}
-        <div
-          id="sidebarLogo"
-          className={`${collapsed ? "hidden" : "block"} px-2`}
-        >
+        <div id="sidebarLogo" className={`${collapsed ? "hidden" : "block"} px-2`}>
           <h1 className="text-arl-cta text-2xl font-bold font-display leading-tight">
-            ARL{" "}
-            <span className="text-arl-light">
-              Car Rental
-            </span>
+            ARL <span className="text-arl-light">Car Rental</span>
           </h1>
-
           <p className="text-arl-secondary text-xs tracking-[0.2em] uppercase mt-1 opacity-70">
             Management System
           </p>
@@ -271,40 +303,46 @@ export default function Sidebar() {
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
-            className={`w-5 h-5 transition-transform duration-300 ${collapsed ? "rotate-180" : ""
-              }`}
+            className={`w-5 h-5 transition-transform duration-300 ${collapsed ? "rotate-180" : ""}`}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
           >
-            {/* Box */}
             <rect x="3" y="4" width="18" height="16" rx="2" />
-
-            {/* Arrow (sidebar collapse indicator) */}
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M14 8l-4 4 4 4"
-            />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M14 8l-4 4 4 4" />
           </svg>
         </button>
       </div>
+
+      {/* Role Badge */}
+      {badge && !collapsed && (
+        <div className={`mx-2 mb-5 flex items-center gap-2 px-3 py-2 rounded-xl ${badge.bg} border border-white/10`}>
+          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${badge.dot}`} />
+          <div className="min-w-0">
+            <p className={`text-xs font-semibold ${badge.text}`}>{badge.label}</p>
+            <p className="text-white/40 text-[10px] truncate">{user?.email ?? ""}</p>
+          </div>
+        </div>
+      )}
+      {badge && collapsed && (
+        <div className={`mx-auto mb-5 w-8 h-8 rounded-full flex items-center justify-center ${badge.bg}`} title={badge.label}>
+          <span className={`w-2.5 h-2.5 rounded-full ${badge.dot}`} />
+        </div>
+      )}
 
       {/* Navigation */}
       <nav
         id="sidebarNav"
         className="flex flex-col gap-6 flex-1 overflow-y-auto scrollbar-hide"
       >
-        {nav.map((section) => (
+        {visibleNav.map((section) => (
           <div key={section.group}>
-            {/* Group Label */}
             {!collapsed && (
               <p className="text-xs font-semibold tracking-[0.18em] uppercase text-white/40 mb-2 px-2">
                 {section.group}
               </p>
             )}
-
             <ul className="flex flex-col gap-1">
               {section.items.map((item) => (
                 <li key={item.path}>
@@ -313,9 +351,7 @@ export default function Sidebar() {
                     className={({ isActive }) =>
                       [
                         "flex items-center rounded-xl text-sm font-medium transition-all duration-200",
-                        collapsed
-                          ? "justify-center px-2 py-3"
-                          : "gap-3 px-3 py-2.5",
+                        collapsed ? "justify-center px-2 py-3" : "gap-3 px-3 py-2.5",
                         isActive
                           ? "bg-white/15 text-white shadow-sm"
                           : "text-white/60 hover:bg-white/10 hover:text-white",
@@ -325,16 +361,9 @@ export default function Sidebar() {
                   >
                     {({ isActive }) => (
                       <>
-                        <span
-                          className={
-                            isActive
-                              ? "text-arl-secondary"
-                              : "text-white/50"
-                          }
-                        >
+                        <span className={isActive ? "text-arl-secondary" : "text-white/50"}>
                           {item.icon}
                         </span>
-
                         {!collapsed && item.label}
                       </>
                     )}
@@ -347,18 +376,11 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div
-        id="sidebarFooter"
-        className="pt-4 mt-4 border-t border-white/10"
-      >
+      <div id="sidebarFooter" className="pt-4 mt-4 border-t border-white/10">
         {!collapsed ? (
-          <p className="text-xs text-white/40 px-2">
-            ARL Admin Panel v1.0
-          </p>
+          <p className="text-xs text-white/40 px-2">ARL Admin Panel v1.0</p>
         ) : (
-          <div className="text-center text-white/30 text-xs">
-            v1
-          </div>
+          <div className="text-center text-white/30 text-xs">v1</div>
         )}
       </div>
     </aside>
