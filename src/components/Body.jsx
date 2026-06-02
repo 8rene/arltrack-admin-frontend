@@ -4,7 +4,22 @@ import React from "react";
 
 const STATS = [
   {
-    icon: "📋",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="w-6 h-6"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z"
+        />
+      </svg>
+    ),
     value: "24",
     label: "TOTAL BOOKINGS",
     delta: "↑ 12%",
@@ -12,7 +27,22 @@ const STATS = [
     accentColor: "border-arl-primary",
   },
   {
-    icon: "💰",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="w-6 h-6"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M12 8c-2 0-4 1-4 3s2 3 4 3 4 1 4 3-2 3-4 3m0-12v12"
+        />
+      </svg>
+    ),
     value: "₱87,400",
     label: "TOTAL REVENUE",
     delta: "↑ 8%",
@@ -20,7 +50,22 @@ const STATS = [
     accentColor: "border-arl-primary",
   },
   {
-    icon: "🚗",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="w-6 h-6"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M9 17H5l4-8h6l4 8h-4M7 17h10"
+        />
+      </svg>
+    ),
     value: "4 / 6",
     label: "VEHICLES ACTIVE",
     delta: "↑ 1",
@@ -28,7 +73,22 @@ const STATS = [
     accentColor: "border-arl-primary",
   },
   {
-    icon: "⏳",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="w-6 h-6"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <circle cx="12" cy="12" r="9" strokeWidth="2" />
+        <path
+          strokeWidth="2"
+          strokeLinecap="round"
+          d="M12 7v5l3 3"
+        />
+      </svg>
+    ),
     value: "5",
     label: "PENDING APPROVAL",
     delta: "↑ 3",
@@ -48,19 +108,19 @@ const WEEK_DATA = [
 ];
 
 const DONUT_SEGMENTS = [
-  { label: "Available",   count: 2, color: "#16a34a" },
-  { label: "Rented",      count: 2, color: "#2563eb" },
-  { label: "Reserved",    count: 1, color: "#d97706" },
+  { label: "Available", count: 2, color: "#16a34a" },
+  { label: "Rented", count: 2, color: "#2563eb" },
+  { label: "Reserved", count: 1, color: "#d97706" },
   { label: "Maintenance", count: 1, color: "#dc2626" },
 ];
 
 const FLEET = [
-  { name: "L300",     plate: "ABC 123", status: "Rented",      color: "bg-blue-100 text-blue-700",   icon: "🚐" },
-  { name: "S.PRESSO", plate: "DEF 456", status: "Available",   color: "bg-green-100 text-green-700", icon: "🚗" },
-  { name: "Avanza",   plate: "GHI 789", status: "Maintenance", color: "bg-red-100 text-red-700",     icon: "🚙" },
-  { name: "EON",      plate: "JKL 012", status: "Available",   color: "bg-green-100 text-green-700", icon: "🚗" },
-  { name: "Wigo",     plate: "MNO 345", status: "Reserved",    color: "bg-amber-100 text-amber-700", icon: "🚗" },
-  { name: "Veloz",    plate: "PQR 678", status: "Rented",      color: "bg-blue-100 text-blue-700",   icon: "🚗" },
+  { name: "L300", plate: "ABC 123", status: "Rented", color: "bg-blue-100 text-blue-700", icon: "🚐" },
+  { name: "S.PRESSO", plate: "DEF 456", status: "Available", color: "bg-green-100 text-green-700", icon: "🚗" },
+  { name: "Avanza", plate: "GHI 789", status: "Maintenance", color: "bg-red-100 text-red-700", icon: "🚙" },
+  { name: "EON", plate: "JKL 012", status: "Available", color: "bg-green-100 text-green-700", icon: "🚗" },
+  { name: "Wigo", plate: "MNO 345", status: "Reserved", color: "bg-amber-100 text-amber-700", icon: "🚗" },
+  { name: "Veloz", plate: "PQR 678", status: "Rented", color: "bg-blue-100 text-blue-700", icon: "🚗" },
 ];
 
 // ─── DONUT CHART ─────────────────────────────────────────────────────────────
@@ -74,9 +134,9 @@ function DonutChart({ segments }) {
   return (
     <svg width="160" height="160" viewBox="0 0 160 160">
       {segments.map((seg, i) => {
-        const pct  = seg.count / total;
+        const pct = seg.count / total;
         const dash = pct * circ;
-        const gap  = circ - dash;
+        const gap = circ - dash;
         const rotate = offset * 360 - 90;
         offset += pct;
         return (
@@ -155,12 +215,15 @@ export default function SBody() {
             className={`bg-white rounded-2xl p-5 border-t-4 ${s.accentColor} shadow-soft`}
           >
             <div className="text-2xl mb-3">{s.icon}</div>
+
             <div className="font-display text-3xl font-bold text-arl-dark leading-none">
               {s.value}
             </div>
+
             <div className="font-sans text-[11px] font-semibold text-gray-400 tracking-wide uppercase mt-2 mb-2">
               {s.label}
             </div>
+
             <div className="font-sans text-xs text-green-600">
               <span className="font-bold">{s.delta}</span>{" "}
               <span className="text-gray-400">{s.deltaNote}</span>
