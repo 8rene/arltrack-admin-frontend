@@ -87,17 +87,13 @@ export default function Reports() {
       ["Total Bookings",          report.summary.totalBookings],
       ["Avg Revenue per Booking", fmt(report.summary.avgRevenuePerBooking)],
       [],
-      ["Payments by Status"],
-      ["Status", "Count"],
-      ...Object.entries(report.paymentsByStatus).map(([k, v]) => [k, v]),
-      [],
       ["Revenue by Gateway"],
       ["Gateway", "Amount"],
       ...Object.entries(report.paymentsByGateway).map(([k, v]) => [k, fmt(v)]),
       [],
       ["Bookings by Status"],
       ["Status", "Count"],
-      ...Object.entries(report.bookingsByStatus).map(([k, v]) => [k, v]),
+      ...Object.entries(report.bookingsByStatus).filter(([k]) => ["completed", "cancelled"].includes(k.toLowerCase())).map(([k, v]) => [k, v]),
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
     autoWidth(wsSummary, summaryRows);
@@ -271,16 +267,10 @@ export default function Reports() {
 
               {/* Breakdown charts */}
               <div className="grid md:grid-cols-2 gap-4">
-                {/* Payment status breakdown */}
-                <BreakdownCard title="Payments by Status" data={report.paymentsByStatus}
-                  colorFn={(k) => STATUS_COLORS[k] || "bg-gray-100 text-gray-600"} />
                 {/* Gateway breakdown */}
                 <BreakdownCard title="Revenue by Gateway" data={report.paymentsByGateway}
                   isCurrency fmt={fmt}
                   colorFn={() => "bg-teal-100 text-teal-700"} />
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
                 {/* Booking status */}
                 <BreakdownCard title="Bookings by Status" data={report.bookingsByStatus}
                   colorFn={(k) => STATUS_COLORS[k] || "bg-gray-100 text-gray-600"} />
@@ -440,4 +430,3 @@ function BreakdownCard({ title, data, colorFn, isCurrency, fmt: fmtFn }) {
     </div>
   );
 }
-
