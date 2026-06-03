@@ -12,6 +12,65 @@ import {
   doc,
 } from "firebase/firestore";
 
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+
+const IconBell = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconTrash = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <polyline points="3 6 5 6 21 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconWarning = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCheck = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconBlock = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconClock = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconX = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// ─── DATA ────────────────────────────────────────────────────────────────────
+
 const STATUS_TABS = ["All", "Pending", "Active", "Cancelled", "Completed"];
 
 const STATUS_DOT = {
@@ -28,16 +87,8 @@ const STATUS_BG = {
   cancelled: "bg-red-50 border border-red-200",
 };
 
-// Legacy - keep for fallback
-const STATUS_STYLE = {
-  pending:   "bg-yellow-50 border border-yellow-200",
-  approved:  "bg-blue-50 border border-blue-200",
-  completed: "bg-green-50 border border-green-200",
-  cancelled: "bg-red-50 border border-red-200",
-};
-
 function StatusBadge({ status }) {
-  const s = (status || "").toLowerCase();
+  const s   = (status || "").toLowerCase();
   const dot = STATUS_DOT[s] || "bg-gray-400";
   const bg  = STATUS_BG[s]  || "bg-gray-50 border border-gray-200";
   return (
@@ -63,14 +114,17 @@ const fmtDate = (val) => {
 const canEdit  = (status) => ["pending", "approved"].includes(status?.toLowerCase());
 const isLocked = (status) => ["completed", "cancelled"].includes(status?.toLowerCase());
 
-/* ── NEW BOOKING ALERT BANNER ── */
+// ─── NEW BOOKING ALERT BANNER ─────────────────────────────────────────────────
+
 function NewBookingAlert({ notifications, onDismiss, onView }) {
   if (notifications.length === 0) return null;
   const latest = notifications[0];
   const count  = notifications.length;
   return (
     <div className="flex items-start gap-4 bg-teal-600 text-white px-5 py-4 rounded-2xl shadow-lg">
-      <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0 mt-0.5 text-lg">🔔</div>
+      <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0 mt-0.5">
+        <IconBell className="w-5 h-5" />
+      </div>
       <div className="flex-1 min-w-0">
         <p className="font-bold text-sm leading-tight">
           {count === 1 ? "New booking request!" : `${count} new booking requests!`}
@@ -79,19 +133,24 @@ function NewBookingAlert({ notifications, onDismiss, onView }) {
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <button onClick={onView} className="px-3 py-1.5 bg-white text-teal-700 text-xs font-bold rounded-xl hover:bg-teal-50 transition-colors">View Pending</button>
-        <button onClick={onDismiss} className="text-white/70 hover:text-white transition-colors text-lg leading-none px-1">✕</button>
+        <button onClick={onDismiss} className="text-white/70 hover:text-white transition-colors">
+          <IconX className="w-5 h-5" />
+        </button>
       </div>
     </div>
   );
 }
 
-/* ── DELETE CONFIRM MODAL ── */
+// ─── DELETE CONFIRM MODAL ─────────────────────────────────────────────────────
+
 function DeleteModal({ booking, onClose, onConfirm, deleting }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 text-xl">🗑</div>
+          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600">
+            <IconTrash className="w-5 h-5" />
+          </div>
           <h2 className="font-bold text-lg text-gray-800">Delete Booking</h2>
         </div>
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-1">
@@ -121,7 +180,8 @@ function DeleteModal({ booking, onClose, onConfirm, deleting }) {
   );
 }
 
-/* ── EDIT MODAL ── */
+// ─── EDIT MODAL ───────────────────────────────────────────────────────────────
+
 function EditModal({ booking, onClose, onSave }) {
   const currentStatus     = booking.status?.toLowerCase() || "";
   const defaultNextStatus = currentStatus === "pending" ? "approved" : "completed";
@@ -183,10 +243,13 @@ function EditModal({ booking, onClose, onSave }) {
         {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
         {form.status === "approved" && currentStatus === "pending" && (
           paymentLoading ? (
-            <div className="text-xs text-gray-400 bg-gray-50 border border-gray-200 p-3 rounded-xl">⏳ Checking payment status…</div>
+            <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 border border-gray-200 p-3 rounded-xl">
+              <IconClock className="w-4 h-4 shrink-0" />
+              Checking payment status…
+            </div>
           ) : paymentStatus === null ? (
             <div className="flex items-start gap-2 bg-red-50 border border-red-200 p-3 rounded-xl">
-              <span className="shrink-0">🚫</span>
+              <IconBlock className="w-5 h-5 shrink-0 text-red-500 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-red-700">No payment record found</p>
                 <p className="text-xs text-red-600 mt-0.5">Cannot approve — no payment has been submitted for this booking yet.</p>
@@ -194,12 +257,12 @@ function EditModal({ booking, onClose, onSave }) {
             </div>
           ) : approvedStatuses.includes(paymentStatus?.toLowerCase()) ? (
             <div className="flex items-center gap-2 bg-green-50 border border-green-200 p-3 rounded-xl">
-              <span>✅</span>
+              <IconCheck className="w-5 h-5 text-green-600 shrink-0" />
               <p className="text-sm text-green-700 font-medium">Payment is <span className="font-bold">{paymentStatus}</span> — booking can be approved.</p>
             </div>
           ) : (
             <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 p-3 rounded-xl">
-              <span className="shrink-0">⚠️</span>
+              <IconWarning className="w-5 h-5 shrink-0 text-amber-500 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-amber-800">Payment not yet approved</p>
                 <p className="text-xs text-amber-700 mt-0.5">Payment status is currently <span className="font-bold">"{paymentStatus}"</span>. Go to the <span className="font-semibold">Payments page</span> and approve the payment first.</p>
@@ -235,7 +298,8 @@ function EditModal({ booking, onClose, onSave }) {
   );
 }
 
-/* ── VIEW DETAILS MODAL ── */
+// ─── VIEW DETAILS MODAL ───────────────────────────────────────────────────────
+
 function ViewModal({ booking, onClose }) {
   const { fmt } = useCurrency();
   const row = (label, value) => (
@@ -249,7 +313,9 @@ function ViewModal({ booking, onClose }) {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <h2 className="font-bold text-lg text-gray-800">Booking Details</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <IconX className="w-5 h-5" />
+          </button>
         </div>
         <StatusBadge status={booking.status} />
         <div className="pt-1">
@@ -279,24 +345,23 @@ function ViewModal({ booking, onClose }) {
   );
 }
 
-/* ── MAIN PAGE ── */
+// ─── MAIN PAGE ────────────────────────────────────────────────────────────────
+
 export default function Bookings() {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
-  const [activeTab, setActiveTab]       = useState("All");
-  const [search, setSearch]             = useState("");
-  const [allBookings, setAllBookings]   = useState([]);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState(null);
-  const [viewBooking, setViewBooking]   = useState(null);
-  const [editBooking, setEditBooking]   = useState(null);
-  const [deleteBooking, setDeleteBooking] = useState(null);
-  const [deleting, setDeleting]         = useState(false);
-  const [deleteToast, setDeleteToast]   = useState(null);
-
+  const [activeTab, setActiveTab]           = useState("All");
+  const [search, setSearch]                 = useState("");
+  const [allBookings, setAllBookings]       = useState([]);
+  const [loading, setLoading]               = useState(true);
+  const [error, setError]                   = useState(null);
+  const [viewBooking, setViewBooking]       = useState(null);
+  const [editBooking, setEditBooking]       = useState(null);
+  const [deleteBooking, setDeleteBooking]   = useState(null);
+  const [deleting, setDeleting]             = useState(false);
+  const [deleteToast, setDeleteToast]       = useState(null);
   const [newBookingNotifs, setNewBookingNotifs] = useState([]);
   const [alertDismissed, setAlertDismissed]     = useState(false);
-
 
   const showToast = (msg, type = "success") => {
     setDeleteToast({ msg, type });
@@ -340,7 +405,6 @@ export default function Bookings() {
 
   const viewPending = () => { setActiveTab("Pending"); dismissAlert(); };
 
-  /* ── CASCADE DELETE ── */
   const handleDeleteConfirm = async () => {
     if (!deleteBooking) return;
     setDeleting(true);
@@ -394,7 +458,7 @@ export default function Bookings() {
         </div>
       )}
 
-      {/* 🔔 NEW BOOKING ALERT */}
+      {/* NEW BOOKING ALERT */}
       {!alertDismissed && newBookingNotifs.length > 0 && (
         <NewBookingAlert notifications={newBookingNotifs} onDismiss={dismissAlert} onView={viewPending} />
       )}
@@ -416,13 +480,28 @@ export default function Bookings() {
 
       {/* SEARCH */}
       <div className="flex gap-3 items-center bg-white p-4 rounded-2xl border">
-        <input type="text" placeholder="Search by booking ID, customer, vehicle, phone..." value={search} onChange={(e) => setSearch(e.target.value)} className="flex-1 px-4 py-2 border rounded-xl text-sm outline-none" />
-        <button onClick={fetchBookings} className="px-4 py-2 border rounded-xl text-sm text-teal-600 font-medium hover:bg-teal-50">🔄 Refresh</button>
+        <input
+          type="text"
+          placeholder="Search by booking ID, customer, vehicle, phone..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 px-4 py-2 border rounded-xl text-sm outline-none"
+        />
+        <button
+          onClick={fetchBookings}
+          className="px-4 py-2 border rounded-xl text-sm text-teal-600 font-medium hover:bg-teal-50 flex items-center gap-1.5"
+        >
+          <IconRefresh className="w-3.5 h-3.5" />
+          Refresh
+        </button>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex justify-between">
-          <span>⚠️ {error}</span>
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex justify-between items-center">
+          <span className="flex items-center gap-2">
+            <IconWarning className="w-4 h-4 shrink-0" />
+            {error}
+          </span>
           <button onClick={fetchBookings} className="underline font-semibold">Retry</button>
         </div>
       )}
@@ -485,9 +564,7 @@ export default function Bookings() {
                       </td>
                       <td className="px-4 py-3 font-semibold text-gray-800">{fmt(b.totalFee)}</td>
                       <td className="px-4 py-3 text-gray-600">{b.paymentMethod}</td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={b.status} />
-                      </td>
+                      <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2">
                           <button onClick={() => setViewBooking(b)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
