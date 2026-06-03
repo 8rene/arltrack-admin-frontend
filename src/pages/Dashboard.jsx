@@ -10,6 +10,110 @@ import {
   onSnapshot,
 } from "firebase/firestore";
 
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+
+const IconCar = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M5 11l2.5-4h9L19 11" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="2" y="11" width="20" height="6" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <circle cx="6.5" cy="17.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="17.5" cy="17.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M7 11h10" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCheck = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClock = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconKey = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="8" cy="12" r="4" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 12h8M18 12v3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconMoney = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="6" width="20" height="13" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <circle cx="12" cy="12.5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M6 6V5M18 6V5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCalendar = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconBarChart = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 20h18M7 20V10M12 20V4M17 20v-7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconBell = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconBellOff = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M13.73 21a2 2 0 01-3.46 0M18.63 13A17.9 17.9 0 0118 8a6 6 0 00-9.33-5M6.26 6.26A5.86 5.86 0 006 8c0 7-3 9-3 9h14" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M2 2l20 20" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconClipboard = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWarning = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWrench = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconFileText = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+// ─── STATUS BADGE ─────────────────────────────────────────────────────────────
+
 function StatusBadge({ status }) {
   const dotMap = {
     approved:             "bg-green-500",
@@ -36,10 +140,12 @@ function StatusBadge({ status }) {
   );
 }
 
+// ─── STAT CARD ────────────────────────────────────────────────────────────────
+
 function StatCard({ title, value, icon, color, loading }) {
   return (
     <div className="bg-white p-5 rounded-2xl border shadow-sm flex items-center gap-4">
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl ${color}`}>
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
         {icon}
       </div>
       <div>
@@ -54,6 +160,8 @@ function StatCard({ title, value, icon, color, loading }) {
   );
 }
 
+// ─── SKELETON ROW ─────────────────────────────────────────────────────────────
+
 function SkeletonRow() {
   return (
     <tr className="border-b border-gray-50">
@@ -66,18 +174,19 @@ function SkeletonRow() {
   );
 }
 
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
+
 export default function Dashboard() {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
-  const [metrics, setMetrics]           = useState(null);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState(null);
-  const [pendingBookings, setPendingBookings] = useState([]);
-  const [cancelBookings, setCancelBookings]   = useState([]);
-  const [damagedParts, setDamagedParts]       = useState([]);
+  const [metrics, setMetrics]                 = useState(null);
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState(null);
+  const [pendingBookings, setPendingBookings]  = useState([]);
+  const [cancelBookings, setCancelBookings]    = useState([]);
+  const [damagedParts, setDamagedParts]        = useState([]);
 
-  // 🔔 REAL-TIME — read directly from bookings collection
-  // pending bookings
+  // REAL-TIME — pending bookings
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, "bookings"), where("status", "==", "pending")),
@@ -86,7 +195,7 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  // cancellation_request bookings
+  // REAL-TIME — cancellation_request bookings
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, "bookings"), where("status", "==", "cancellation_request")),
@@ -95,13 +204,12 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  // 🔧 REAL-TIME — damaged/stolen carParts
+  // REAL-TIME — damaged/stolen carParts
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, "carParts"), where("status", "in", ["Damaged", "Stolen"])),
       async (snap) => {
         const parts = snap.docs.map((d) => ({ id: d.id, ...d.data(), _type: "damaged_part" }));
-        // Enrich with car name
         const carIDs = [...new Set(parts.map(p => p.carID).filter(Boolean))];
         let carNameMap = {};
         if (carIDs.length > 0) {
@@ -125,7 +233,6 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  // Combine + sort by latest first
   const alerts = [...pendingBookings, ...cancelBookings, ...damagedParts].sort((a, b) => {
     const ta = a.createdAt?._seconds ?? a.updatedAt?._seconds ?? 0;
     const tb = b.createdAt?._seconds ?? b.updatedAt?._seconds ?? 0;
@@ -171,33 +278,37 @@ export default function Dashboard() {
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
-          <span>⚠️ {error}</span>
+          <span className="flex items-center gap-2">
+            <IconWarning className="w-4 h-4 shrink-0" />
+            {error}
+          </span>
           <button onClick={fetchMetrics} className="text-red-600 font-semibold underline text-xs ml-4">Retry</button>
         </div>
       )}
 
       {/* STATS ROW */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Vehicles"   value={metrics?.totalVehicles ?? "—"}  icon="🚗" color="bg-blue-50 text-blue-600"   loading={loading} />
-        <StatCard title="Active Bookings"  value={metrics?.activeBookings ?? "—"} icon="✅" color="bg-green-50 text-green-600"  loading={loading} />
-        <StatCard title="Pending Bookings" value={metrics?.pendingBookings ?? "—"} icon="⏳" color="bg-yellow-50 text-yellow-600" loading={loading} />
-        <StatCard title="Vehicles In Use"  value={metrics?.vehiclesInUse ?? "—"}  icon="🔑" color="bg-purple-50 text-purple-600" loading={loading} />
+        <StatCard title="Total Vehicles"   value={metrics?.totalVehicles ?? "—"}   icon={<IconCar className="w-6 h-6" />}      color="bg-blue-50 text-blue-600"    loading={loading} />
+        <StatCard title="Active Bookings"  value={metrics?.activeBookings ?? "—"}  icon={<IconCheck className="w-6 h-6" />}    color="bg-green-50 text-green-600"  loading={loading} />
+        <StatCard title="Pending Bookings" value={metrics?.pendingBookings ?? "—"} icon={<IconClock className="w-6 h-6" />}    color="bg-yellow-50 text-yellow-600" loading={loading} />
+        <StatCard title="Vehicles In Use"  value={metrics?.vehiclesInUse ?? "—"}   icon={<IconKey className="w-6 h-6" />}      color="bg-purple-50 text-purple-600" loading={loading} />
       </div>
 
       {/* REVENUE ROW */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard title="Revenue Today"   value={loading ? "—" : fmt(metrics?.revenueToday)}   icon="💰" color="bg-teal-50 text-teal-600"   loading={loading} />
-        <StatCard title="Monthly Revenue" value={loading ? "—" : fmt(metrics?.monthlyRevenue)} icon="📅" color="bg-orange-50 text-orange-600" loading={loading} />
-        <StatCard title="Yearly Revenue"  value={loading ? "—" : fmt(metrics?.yearlyRevenue)}  icon="📊" color="bg-indigo-50 text-indigo-600" loading={loading} />
+        <StatCard title="Revenue Today"   value={loading ? "—" : fmt(metrics?.revenueToday)}   icon={<IconMoney className="w-6 h-6" />}    color="bg-teal-50 text-teal-600"    loading={loading} />
+        <StatCard title="Monthly Revenue" value={loading ? "—" : fmt(metrics?.monthlyRevenue)} icon={<IconCalendar className="w-6 h-6" />} color="bg-orange-50 text-orange-600" loading={loading} />
+        <StatCard title="Yearly Revenue"  value={loading ? "—" : fmt(metrics?.yearlyRevenue)}  icon={<IconBarChart className="w-6 h-6" />} color="bg-indigo-50 text-indigo-600" loading={loading} />
       </div>
 
       {/* BOTTOM: ALERTS + RECENT BOOKINGS */}
       <div className="grid lg:grid-cols-2 gap-4">
 
-        {/* ALERTS — live from bookings collection */}
+        {/* ALERTS */}
         <div className="bg-white p-5 rounded-2xl border shadow-sm">
           <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            🔔 Alerts
+            <IconBell className="w-4 h-4 text-gray-600" />
+            Alerts
             {alerts.length > 0 && (
               <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
                 {alerts.length}
@@ -206,46 +317,52 @@ export default function Dashboard() {
           </h2>
           <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
             {alerts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-28 text-gray-400 text-sm">
-                <span className="text-3xl mb-2">🔕</span>
+              <div className="flex flex-col items-center justify-center h-28 text-gray-400 text-sm gap-2">
+                <IconBellOff className="w-8 h-8 text-gray-300" />
                 No alerts at this time
               </div>
             ) : (
               alerts.map((a) => {
                 const isDamaged = a._type === "damaged_part";
+                const isCancel  = a.status === "cancellation_request";
                 return (
-                <div
-                  key={a.id}
-                  className={`flex items-start gap-3 p-3 rounded-xl border ${
-                    isDamaged
-                      ? "bg-red-50 border-red-100"
-                      : a.status === "cancellation_request"
-                      ? "bg-orange-50 border-orange-100"
-                      : "bg-yellow-50 border-yellow-100"
-                  }`}
-                >
-                  <span className="text-xl shrink-0">
-                    {isDamaged ? "🔧" : a.status === "cancellation_request" ? "⚠️" : "🔔"}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 leading-snug">
+                  <div
+                    key={a.id}
+                    className={`flex items-start gap-3 p-3 rounded-xl border ${
+                      isDamaged
+                        ? "bg-red-50 border-red-100"
+                        : isCancel
+                        ? "bg-orange-50 border-orange-100"
+                        : "bg-yellow-50 border-yellow-100"
+                    }`}
+                  >
+                    <span className={`shrink-0 mt-0.5 ${isDamaged ? "text-red-500" : isCancel ? "text-orange-500" : "text-yellow-500"}`}>
                       {isDamaged
-                        ? `${a.status === "Stolen" ? "Stolen" : "Damaged"} Part Detected`
-                        : a.status === "cancellation_request" ? "Cancellation Request" : "New Booking Request"}
-                    </p>
-                    {isDamaged ? (
-                      <>
-                        <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.carPartName || "Unknown Part"}</p>
-                        <p className="text-xs text-gray-400">{a.carName || a.carID || "—"}</p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-xs text-gray-500 mt-0.5">Booking ID: {a.bookingID || a.id}</p>
-                        <p className="text-xs text-gray-400">User ID: {a.userID || "—"}</p>
-                      </>
-                    )}
+                        ? <IconWrench className="w-5 h-5" />
+                        : isCancel
+                        ? <IconWarning className="w-5 h-5" />
+                        : <IconBell className="w-5 h-5" />
+                      }
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 leading-snug">
+                        {isDamaged
+                          ? `${a.status === "Stolen" ? "Stolen" : "Damaged"} Part Detected`
+                          : isCancel ? "Cancellation Request" : "New Booking Request"}
+                      </p>
+                      {isDamaged ? (
+                        <>
+                          <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.carPartName || "Unknown Part"}</p>
+                          <p className="text-xs text-gray-400">{a.carName || a.carID || "—"}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-xs text-gray-500 mt-0.5">Booking ID: {a.bookingID || a.id}</p>
+                          <p className="text-xs text-gray-400">User ID: {a.userID || "—"}</p>
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
                 );
               })
             )}
@@ -254,8 +371,9 @@ export default function Dashboard() {
 
         {/* RECENT BOOKINGS PREVIEW */}
         <div className="bg-white p-5 rounded-2xl border shadow-sm">
-          <h2 className="font-semibold text-gray-800 mb-4 flex items-center">
-            📋 Recent Bookings
+          <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <IconClipboard className="w-4 h-4 text-gray-600" />
+            Recent Bookings
             {!loading && (
               <span className="text-xs font-normal bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full ml-auto">
                 {metrics?.recentBookings?.length ?? 0} entries
@@ -296,9 +414,13 @@ export default function Dashboard() {
       {/* FULL BOOKINGS TABLE */}
       <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-800">📄 All Bookings</h2>
-          <button onClick={fetchMetrics} className="text-xs text-teal-600 font-medium hover:underline">
-            🔄 Refresh
+          <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+            <IconFileText className="w-4 h-4 text-gray-600" />
+            All Bookings
+          </h2>
+          <button onClick={fetchMetrics} className="text-xs text-teal-600 font-medium hover:underline flex items-center gap-1">
+            <IconRefresh className="w-3.5 h-3.5" />
+            Refresh
           </button>
         </div>
         <div className="overflow-x-auto">
@@ -339,4 +461,3 @@ export default function Dashboard() {
     </div>
   );
 }
-
