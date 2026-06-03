@@ -87,10 +87,6 @@ export default function Reports() {
       ["Total Bookings",          report.summary.totalBookings],
       ["Avg Revenue per Booking", fmt(report.summary.avgRevenuePerBooking)],
       [],
-      ["Payments by Status"],
-      ["Status", "Count"],
-      ...Object.entries(report.paymentsByStatus).map(([k, v]) => [k, v]),
-      [],
       ["Revenue by Gateway"],
       ["Gateway", "Amount"],
       ...Object.entries(report.paymentsByGateway).map(([k, v]) => [k, fmt(v)]),
@@ -271,9 +267,6 @@ export default function Reports() {
 
               {/* Breakdown charts */}
               <div className="grid md:grid-cols-2 gap-4">
-                {/* Payment status breakdown */}
-                <BreakdownCard title="Payments by Status" data={report.paymentsByStatus}
-                  colorFn={(k) => STATUS_COLORS[k] || "bg-gray-100 text-gray-600"} />
                 {/* Gateway breakdown */}
                 <BreakdownCard title="Revenue by Gateway" data={report.paymentsByGateway}
                   isCurrency fmt={fmt}
@@ -440,4 +433,3 @@ function BreakdownCard({ title, data, colorFn, isCurrency, fmt: fmtFn }) {
     </div>
   );
 }
-
