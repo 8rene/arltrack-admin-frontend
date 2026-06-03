@@ -7,6 +7,98 @@ import { db } from "../fireabase";
 
 const CUSTOMER_ROLE_ID = "9vD6ZU1s2qUtmyu0RXKD";
 
+// ─── SVG ICONS ────────────────────────────────────────────────────────────────
+const Icons = {
+  Users: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+    </svg>
+  ),
+  CheckCircle: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
+  ),
+  Moon: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+    </svg>
+  ),
+  IdCard: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <circle cx="8" cy="12" r="2" />
+      <path d="M14 9h4M14 12h4M14 15h2" />
+    </svg>
+  ),
+  Flag: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+      <line x1="4" y1="22" x2="4" y2="15" />
+    </svg>
+  ),
+  Refresh: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+    </svg>
+  ),
+  Trash: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6M14 11v6M9 6V4h6v2" />
+    </svg>
+  ),
+  Edit: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  ),
+  ArrowRight: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
+  ),
+  Close: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  ),
+  Check: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
+  X: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  ),
+  AlertTriangle: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  Document: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+      <polyline points="10 9 9 9 8 9" />
+    </svg>
+  ),
+};
+
 function fmtDate(val) {
   if (!val) return "—";
   const d = val?.toDate ? val.toDate() : new Date(val);
@@ -70,9 +162,7 @@ export default function Customers() {
   const RefreshBtn = () => (
     <button onClick={fetchUsers}
       className="flex items-center gap-2 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 transition-colors">
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-      </svg>
+      <Icons.Refresh className="w-4 h-4" />
       Refresh
     </button>
   );
@@ -81,23 +171,27 @@ export default function Customers() {
     <div className="p-4 space-y-5 font-sans">
       {/* STAT CARDS */}
       <div className="grid grid-cols-5 gap-4">
-        <StatCard title="Total"    value={users.length}  icon="👥" color="teal" />
-        <StatCard title="Active"   value={users.filter(u => u.status?.toLowerCase() === "active").length}   icon="✅" color="green" />
-        <StatCard title="Inactive" value={users.filter(u => u.status?.toLowerCase() === "inactive").length} icon="💤" color="gray" />
-        <StatCard title="ID Verified" value={verifiedCount} icon="🪪" color="blue" />
-        <StatCard title="Flagged"  value={flaggedCount}  icon="🚩" color="red" />
+        <StatCard title="Total"       value={users.length}  Icon={Icons.Users}       color="teal" />
+        <StatCard title="Active"      value={users.filter(u => u.status?.toLowerCase() === "active").length}   Icon={Icons.CheckCircle} color="green" />
+        <StatCard title="Inactive"    value={users.filter(u => u.status?.toLowerCase() === "inactive").length} Icon={Icons.Moon}        color="gray" />
+        <StatCard title="ID Verified" value={verifiedCount} Icon={Icons.IdCard}      color="blue" />
+        <StatCard title="Flagged"     value={flaggedCount}  Icon={Icons.Flag}        color="red" />
       </div>
 
       {/* TABS + REFRESH */}
       <div className="flex justify-between items-center">
         <div className="flex gap-2">
           <button onClick={() => setTab("customers")}
-            className={`px-5 py-2 rounded-xl text-sm font-medium transition-all ${tab === "customers" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
-            👥 Customers <span className="ml-1 opacity-70">{users.length}</span>
+            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${tab === "customers" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
+            <Icons.Users className="w-4 h-4" />
+            Customers
+            <span className="ml-1 opacity-70">{users.length}</span>
           </button>
           <button onClick={() => setTab("documents")}
-            className={`px-5 py-2 rounded-xl text-sm font-medium transition-all ${tab === "documents" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
-            🪪 Customer Document <span className="ml-1 opacity-70 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{pendingDocs.length}</span>
+            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${tab === "documents" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
+            <Icons.IdCard className="w-4 h-4" />
+            Customer Document
+            <span className="ml-1 opacity-70 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{pendingDocs.length}</span>
           </button>
         </div>
         <RefreshBtn />
@@ -121,13 +215,12 @@ export default function Customers() {
 function CustomersTab({ users, onRefresh }) {
   const [search, setSearch]       = useState("");
   const [filterStatus, setFilter] = useState("All");
-  const [detailUser, setDetailUser]     = useState(null);
-  const [editUser, setEditUser]         = useState(null);
+  const [detailUser, setDetailUser]       = useState(null);
+  const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const handleDelete = async (user) => {
     try {
-      // Call backend — archives Firestore docs AND deletes from Firebase Auth
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
@@ -199,7 +292,9 @@ function CustomersTab({ users, onRefresh }) {
                           <div>
                             <p className="font-semibold text-gray-800 flex items-center gap-1">
                               {fullName}
-                              {u.isFlagged && <span className="text-red-500 text-xs">🚩</span>}
+                              {u.isFlagged && (
+                                <Icons.Flag className="w-3.5 h-3.5 text-red-500 fill-red-500 stroke-red-500" />
+                              )}
                             </p>
                             <p className="text-xs text-gray-400">@{u.username || "—"}</p>
                           </div>
@@ -211,8 +306,12 @@ function CustomersTab({ users, onRefresh }) {
                       </td>
                       <td className="px-5 py-3">
                         {u.isVerified
-                          ? <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-green-700 font-medium">✓ Verified</span>
-                          : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending</span>
+                          ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-green-700 font-medium">
+                              <Icons.Check className="w-3 h-3" /> Verified
+                            </span>
+                          : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending
+                            </span>
                         }
                       </td>
                       <td className="px-5 py-3 font-semibold text-gray-700">{u.bookingCount}</td>
@@ -227,11 +326,19 @@ function CustomersTab({ users, onRefresh }) {
                       <td className="px-5 py-3">
                         <div className="flex gap-2 justify-end">
                           <button onClick={() => setConfirmDelete(u)}
-                            className="px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50">🗑</button>
+                            className="p-1.5 border border-red-200 rounded-lg text-red-500 hover:bg-red-50">
+                            <Icons.Trash className="w-4 h-4" />
+                          </button>
                           <button onClick={() => setEditUser(u)}
-                            className="px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">Edit</button>
+                            className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+                            <Icons.Edit className="w-3.5 h-3.5" />
+                            Edit
+                          </button>
                           <button onClick={() => setDetailUser(u)}
-                            className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">Details →</button>
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
+                            Details
+                            <Icons.ArrowRight className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -278,7 +385,11 @@ function DocumentsTab({ users, onRefresh }) {
         </div>
         {users.length === 0 ? (
           <div className="text-center text-gray-400 py-16">
-            <div className="text-4xl mb-2">✅</div>
+            <div className="flex justify-center mb-3">
+              <div className="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center">
+                <Icons.CheckCircle className="w-7 h-7 text-green-500" />
+              </div>
+            </div>
             <p>No pending verifications</p>
           </div>
         ) : (
@@ -318,11 +429,16 @@ function DocumentsTab({ users, onRefresh }) {
                       <td className="px-5 py-3 text-gray-600">{u.document?.documentType || "—"}</td>
                       <td className="px-5 py-3 text-gray-600">{u.document?.documentNumber || "—"}</td>
                       <td className="px-5 py-3">
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending
+                        </span>
                       </td>
                       <td className="px-5 py-3">
                         {u.isFlagged
-                          ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-black font-medium"><span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />🚩 Flagged</span>
+                          ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-black font-medium">
+                              <Icons.Flag className="w-3 h-3 text-red-500 fill-red-500 stroke-red-500" />
+                              Flagged
+                            </span>
                           : <span className="text-gray-400 text-xs">—</span>
                         }
                       </td>
@@ -330,14 +446,19 @@ function DocumentsTab({ users, onRefresh }) {
                       <td className="px-5 py-3">
                         <div className="flex gap-2 justify-end">
                           <button onClick={() => setDetailUser(u)}
-                            className="px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">View IDs →</button>
+                            className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+                            View IDs
+                            <Icons.ArrowRight className="w-3.5 h-3.5" />
+                          </button>
                           <button onClick={() => handleVerify(u, false)} disabled={isLoading || !uploaded}
-                            className="px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed">
-                            {isLoading ? "..." : "✕ Reject"}
+                            className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                            <Icons.X className="w-3.5 h-3.5" />
+                            {isLoading ? "..." : "Reject"}
                           </button>
                           <button onClick={() => handleVerify(u, true)} disabled={isLoading || !uploaded}
-                            className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                            {isLoading ? "..." : "✓ Approve"}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                            <Icons.Check className="w-3.5 h-3.5" />
+                            {isLoading ? "..." : "Approve"}
                           </button>
                         </div>
                       </td>
@@ -388,13 +509,19 @@ function ViewDetailsModal({ user, onClose, onEdit }) {
         <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
           <div>
             <h2 className="font-bold text-xl text-gray-800 flex items-center gap-2">
-              {fullName} {user.isFlagged && <span className="text-red-500">🚩</span>}
+              {fullName}
+              {user.isFlagged && <Icons.Flag className="w-4 h-4 text-red-500 fill-red-500 stroke-red-500" />}
             </h2>
             <p className="text-sm text-gray-400">@{user.username || "—"} · {user.email}</p>
           </div>
           <div className="flex gap-2 items-center">
-            <button onClick={onEdit} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">✏️ Edit</button>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl px-2">✕</button>
+            <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
+              <Icons.Edit className="w-4 h-4" />
+              Edit
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+              <Icons.Close className="w-5 h-5" />
+            </button>
           </div>
         </div>
         <div className="p-5 space-y-6">
@@ -404,7 +531,7 @@ function ViewDetailsModal({ user, onClose, onEdit }) {
             <Field label="Username"  value={user.username} />
             <Field label="Status"    value={user.status} />
             <Field label="ID Status" value={user.isVerified ? "✓ Verified" : "Pending"} />
-            <Field label="Flagged"   value={user.isFlagged ? "🚩 Yes" : "No"} />
+            <Field label="Flagged"   value={user.isFlagged ? "Yes" : "No"} />
             <Field label="Joined"    value={fmtDate(user.createdAt)} />
           </Section>
           <Section title="Personal Details">
@@ -429,7 +556,6 @@ function ViewDetailsModal({ user, onClose, onEdit }) {
             <Field label="Document Number" value={docu.documentNumber} />
             <Field label="ID Status"       value={user.isVerified ? "✓ Verified" : "Pending"} />
           </Section>
-          {/* Document images */}
           {(() => {
             const imgs = getDocImages(docu);
             const hasAny = Object.values(imgs).some(v => v && v.trim() !== "");
@@ -467,7 +593,6 @@ function DocImg({ label, url }) {
   );
 }
 
-// Field names confirmed from Firestore screenshot
 function getDocImages(docu) {
   if (!docu) return {};
   return {
@@ -478,7 +603,7 @@ function getDocImages(docu) {
   };
 }
 
-// ─── DOC DETAIL MODAL (Document tab) ─────────────────────────────────────────
+// ─── DOC DETAIL MODAL ─────────────────────────────────────────────────────────
 function DocDetailModal({ user, onClose, onApprove, onReject }) {
   const det  = user.details  || {};
   const docu = user.document || {};
@@ -494,7 +619,9 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
             <h2 className="font-bold text-lg text-gray-800">{fullName}</h2>
             <p className="text-sm text-gray-400">@{user.username || "—"}</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl px-2">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+            <Icons.Close className="w-5 h-5" />
+          </button>
         </div>
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3 text-sm">
@@ -524,8 +651,12 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
             <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Close</button>
             {hasUploads && (
               <>
-                <button onClick={onReject}  className="px-5 py-2 border border-red-200 text-red-500 rounded-xl text-sm font-medium hover:bg-red-50">✕ Reject</button>
-                <button onClick={onApprove} className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700">✓ Approve</button>
+                <button onClick={onReject}  className="flex items-center gap-2 px-5 py-2 border border-red-200 text-red-500 rounded-xl text-sm font-medium hover:bg-red-50">
+                  <Icons.X className="w-4 h-4" /> Reject
+                </button>
+                <button onClick={onApprove} className="flex items-center gap-2 px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700">
+                  <Icons.Check className="w-4 h-4" /> Approve
+                </button>
               </>
             )}
           </div>
@@ -557,7 +688,9 @@ function EditUserModal({ user, onClose, onSaved }) {
       <div className="bg-white rounded-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b">
           <h2 className="font-bold text-lg text-gray-800">Edit Customer</h2>
-          <button onClick={onClose} className="text-gray-400 text-xl px-2">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+            <Icons.Close className="w-5 h-5" />
+          </button>
         </div>
         <div className="p-5 space-y-4">
           {/* Read-only info */}
@@ -581,9 +714,12 @@ function EditUserModal({ user, onClose, onSaved }) {
 
           {/* Flagged toggle */}
           <div className="flex items-center justify-between p-3 border rounded-xl">
-            <div>
-              <p className="text-sm font-medium text-gray-700">🚩 Flag this customer</p>
-              <p className="text-xs text-gray-400">Mark as suspicious or problematic</p>
+            <div className="flex items-center gap-2">
+              <Icons.Flag className={`w-4 h-4 ${form.isFlagged ? "text-red-500 fill-red-500 stroke-red-500" : "text-gray-400"}`} />
+              <div>
+                <p className="text-sm font-medium text-gray-700">Flag this customer</p>
+                <p className="text-xs text-gray-400">Mark as suspicious or problematic</p>
+              </div>
             </div>
             <button
               onClick={() => setForm(f => ({ ...f, isFlagged: !f.isFlagged }))}
@@ -613,7 +749,11 @@ function ConfirmDeleteModal({ name, onConfirm, onCancel }) {
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
         <div className="text-center">
-          <div className="text-4xl mb-3">🗑️</div>
+          <div className="flex justify-center mb-3">
+            <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
+              <Icons.Trash className="w-7 h-7 text-red-500" />
+            </div>
+          </div>
           <h3 className="font-bold text-gray-800 text-lg">Delete Customer?</h3>
           <p className="text-sm text-gray-500 mt-1">
             Delete <strong>{name}</strong>? Their data will be moved to the archive and cannot be undone.
@@ -629,7 +769,7 @@ function ConfirmDeleteModal({ name, onConfirm, onCancel }) {
 }
 
 // ─── STAT CARD ────────────────────────────────────────────────────────────────
-function StatCard({ title, value, icon, color }) {
+function StatCard({ title, value, Icon, color }) {
   const colors = {
     teal:  "bg-teal-50 text-teal-600",
     green: "bg-green-50 text-green-600",
@@ -639,7 +779,9 @@ function StatCard({ title, value, icon, color }) {
   };
   return (
     <div className="bg-white rounded-2xl shadow-sm border p-4 flex items-center gap-3">
-      <div className={`w-11 h-11 flex items-center justify-center rounded-xl text-xl ${colors[color] || colors.gray}`}>{icon}</div>
+      <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${colors[color] || colors.gray}`}>
+        <Icon className="w-5 h-5" />
+      </div>
       <div>
         <div className="text-2xl font-bold text-gray-800">{value}</div>
         <div className="text-xs text-gray-500">{title}</div>

@@ -7,6 +7,91 @@ import {
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
 
+// ─── SVG ICONS ────────────────────────────────────────────────────────────────
+const Icons = {
+  Car: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 11l2-4h10l2 4M3 11h18v8H3v-8zm4 8v2m10-2v2" />
+      <circle cx="7.5" cy="15" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="16.5" cy="15" r="1.5" fill="currentColor" stroke="none"/>
+    </svg>
+  ),
+  Refresh: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+    </svg>
+  ),
+  Plus: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  ),
+  Tag: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" />
+      <line x1="7" y1="7" x2="7.01" y2="7" />
+    </svg>
+  ),
+  Trash: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4h6v2" />
+    </svg>
+  ),
+  Edit: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  ),
+  Close: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  ),
+  ChevronDown: (props) => (
+    <svg {...props} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.085l3.71-3.855a.75.75 0 111.08 1.04l-4.25 4.42a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd"/>
+    </svg>
+  ),
+  Camera: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  ),
+  Calendar: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  ),
+  AlertTriangle: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  Brands: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32" />
+    </svg>
+  ),
+  ArrowRight: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
+  ),
+};
+
 const STATUS_STYLE = {
   Active:      "bg-green-50 border border-green-200 text-black",
   Rented:      "bg-blue-50 border border-blue-200 text-black",
@@ -145,19 +230,19 @@ export default function Fleet() {
             className="px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400 w-52"
           />
           <button onClick={() => setShowManageBrands(true)}
-            className="px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
-            🏷️ Brands & Models
+            className="flex items-center gap-2 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+            <Icons.Tag className="w-4 h-4" />
+            Brands & Models
           </button>
           <button onClick={fetchAll}
             className="flex items-center gap-2 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
+            <Icons.Refresh className="w-4 h-4" />
             Refresh
           </button>
           <button onClick={() => setShowAddCar(true)}
-            className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700">
-            + Add Vehicle
+            className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700">
+            <Icons.Plus className="w-4 h-4" />
+            Add Vehicle
           </button>
         </div>
       </div>
@@ -279,10 +364,7 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
             onError={e => { e.target.style.display = "none"; }} />
         ) : (
           <div className="flex items-center justify-center h-full text-gray-300">
-            <svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
-                d="M5 11l2-4h10l2 4M3 11h18v8H3v-8zm4 8v2m10-2v2" />
-            </svg>
+            <Icons.Car className="w-16 h-16" />
           </div>
         )}
         {/* Status badge — click to change */}
@@ -293,9 +375,7 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
             className={`px-3 py-1 text-xs rounded-full font-semibold flex items-center gap-1 transition-opacity ${STATUS_STYLE[car.status] || "bg-gray-100 text-gray-600"} hover:opacity-80`}
           >
             {statusSaving ? "…" : car.status}
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.085l3.71-3.855a.75.75 0 111.08 1.04l-4.25 4.42a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd"/>
-            </svg>
+            <Icons.ChevronDown className="w-3 h-3" />
           </button>
           {statusOpen && (
             <div className="absolute right-0 mt-1 bg-white border border-gray-100 rounded-xl shadow-xl overflow-hidden z-20 min-w-[130px]">
@@ -351,15 +431,24 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
               </p>
             )}
             {(car.status === "Rented" || car.status === "Reserved") && nearestBooking && (
-              <p className="text-xs text-blue-600 font-medium mt-0.5">
-                📅 Until {fmtDate(nearestBooking.endDateTime)}
+              <p className="text-xs text-blue-600 font-medium mt-0.5 flex items-center gap-1">
+                <Icons.Calendar className="w-3 h-3" />
+                Until {fmtDate(nearestBooking.endDateTime)}
               </p>
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={onDelete} className="px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50">🗑</button>
-            <button onClick={onEdit} className="px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">Edit</button>
-            <button onClick={onViewDetails} className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">Details →</button>
+            <button onClick={onDelete} className="p-1.5 border border-red-200 rounded-lg text-red-500 hover:bg-red-50">
+              <Icons.Trash className="w-4 h-4" />
+            </button>
+            <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+              <Icons.Edit className="w-3.5 h-3.5" />
+              Edit
+            </button>
+            <button onClick={onViewDetails} className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
+              Details
+              <Icons.ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       </div>
@@ -438,8 +527,13 @@ function ViewDetailsModal({ car, onClose, onEdit }) {
             <p className="text-sm text-gray-400">{car.bodyType} · {car.platenumber || car.plateNumber}</p>
           </div>
           <div className="flex gap-2 items-center">
-            <button onClick={onEdit} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">✏️ Edit</button>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl px-2">✕</button>
+            <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
+              <Icons.Edit className="w-4 h-4" />
+              Edit
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+              <Icons.Close className="w-5 h-5" />
+            </button>
           </div>
         </div>
 
@@ -449,7 +543,7 @@ function ViewDetailsModal({ car, onClose, onEdit }) {
             <div className="h-56 bg-gray-100 rounded-xl overflow-hidden">
               {activeImg
                 ? <img src={activeImg} alt="car" className="w-full h-full object-cover" />
-                : <div className="flex items-center justify-center h-full text-gray-300 text-5xl">🚗</div>
+                : <div className="flex items-center justify-center h-full text-gray-300"><Icons.Car className="w-16 h-16" /></div>
               }
             </div>
             {allImages.length > 1 && (
@@ -579,10 +673,11 @@ function CarForm({ form, setForm, pricing, setPricing, imagePreview, onImageChan
           <div className="w-28 h-20 bg-gray-100 rounded-xl overflow-hidden flex-shrink-0">
             {imagePreview
               ? <img src={imagePreview} alt="preview" className="w-full h-full object-cover" />
-              : <div className="flex items-center justify-center h-full text-gray-300 text-2xl">📷</div>
+              : <div className="flex items-center justify-center h-full text-gray-300"><Icons.Camera className="w-8 h-8" /></div>
             }
           </div>
-          <label className="cursor-pointer px-4 py-2 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors">
+          <label className="cursor-pointer flex items-center gap-2 px-4 py-2 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors">
+            <Icons.Camera className="w-4 h-4" />
             Choose Image
             <input type="file" accept="image/*" className="hidden" onChange={onImageChange} />
           </label>
@@ -642,7 +737,10 @@ function CarForm({ form, setForm, pricing, setPricing, imagePreview, onImageChan
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-xs font-medium text-gray-500">Pricing (12 Hours goes last)</h3>
           <button onClick={addPriceTier} type="button"
-            className="text-xs px-3 py-1 bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100">+ Add Tier</button>
+            className="flex items-center gap-1 text-xs px-3 py-1 bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100">
+            <Icons.Plus className="w-3 h-3" />
+            Add Tier
+          </button>
         </div>
         <div className="space-y-2">
           {sortPricing(pricing).map((p, i) => (
@@ -657,7 +755,9 @@ function CarForm({ form, setForm, pricing, setPricing, imagePreview, onImageChan
                   className="w-32 border rounded-xl pl-7 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
               </div>
               <button onClick={() => removePriceTier(i)} type="button"
-                className="text-red-400 hover:text-red-600 text-lg leading-none">×</button>
+                className="text-red-400 hover:text-red-600 p-1">
+                <Icons.Close className="w-4 h-4" />
+              </button>
             </div>
           ))}
         </div>
@@ -736,7 +836,9 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
           <h2 className="font-bold text-lg text-gray-800">Edit Vehicle</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl px-2">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+            <Icons.Close className="w-5 h-5" />
+          </button>
         </div>
         <div className="p-5">
           <CarForm form={form} setForm={setForm} pricing={pricing} setPricing={setPricing}
@@ -809,7 +911,9 @@ function AddCarModal({ brands, models, onClose, onSaved }) {
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
           <h2 className="font-bold text-lg text-gray-800">Add New Vehicle</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl px-2">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+            <Icons.Close className="w-5 h-5" />
+          </button>
         </div>
         <div className="p-5">
           <CarForm form={form} setForm={setForm} pricing={pricing} setPricing={setPricing}
@@ -836,7 +940,7 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
   const [saving, setSaving]         = useState(false);
   const [tab, setTab]               = useState("brand");
   const [error, setError]           = useState(null);
-  const [confirmDel, setConfirmDel] = useState(null); // { type: "brand"|"model", item }
+  const [confirmDel, setConfirmDel] = useState(null);
 
   const addBrand = async () => {
     if (!newBrand.trim()) return;
@@ -864,7 +968,6 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
     try {
       if (confirmDel.type === "brand") {
         await deleteDoc(doc(db, "brand", confirmDel.item.id));
-        // also delete its models
         const mSnap = await getDocs(query(collection(db, "model"), where("brandID", "==", confirmDel.item.id)));
         for (const d of mSnap.docs) await deleteDoc(d.ref);
       } else {
@@ -879,18 +982,24 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
       <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
           <h2 className="font-bold text-lg text-gray-800">Brands & Models</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl px-2">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+            <Icons.Close className="w-5 h-5" />
+          </button>
         </div>
 
         <div className="p-5 space-y-4">
           {/* Tabs */}
           <div className="flex gap-2">
-            {["brand","model"].map(t => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all capitalize ${tab === t ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                {t === "brand" ? "🏷️ Brands" : "🚘 Models"}
-              </button>
-            ))}
+            <button onClick={() => setTab("brand")}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${tab === "brand" ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+              <Icons.Tag className="w-3.5 h-3.5" />
+              Brands
+            </button>
+            <button onClick={() => setTab("model")}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${tab === "model" ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+              <Icons.Car className="w-3.5 h-3.5" />
+              Models
+            </button>
           </div>
 
           {tab === "brand" ? (
@@ -912,7 +1021,9 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
                       <span className="text-xs text-gray-400 ml-2">{models.filter(m => m.brandID === b.id).length} models</span>
                     </div>
                     <button onClick={() => setConfirmDel({ type: "brand", item: b })}
-                      className="text-red-400 hover:text-red-600 text-lg px-2">🗑</button>
+                      className="text-red-400 hover:text-red-600 p-1">
+                      <Icons.Trash className="w-4 h-4" />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -944,7 +1055,9 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
                         <div key={m.id} className="flex items-center justify-between px-4 py-2 bg-gray-50 rounded-xl mb-1">
                           <span className="text-sm text-gray-700">{m.modelName}</span>
                           <button onClick={() => setConfirmDel({ type: "model", item: m })}
-                            className="text-red-400 hover:text-red-600 text-lg px-2">🗑</button>
+                            className="text-red-400 hover:text-red-600 p-1">
+                            <Icons.Trash className="w-4 h-4" />
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -963,7 +1076,11 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
             <div className="text-center">
-              <div className="text-4xl mb-3">🗑️</div>
+              <div className="flex justify-center mb-3">
+                <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
+                  <Icons.Trash className="w-7 h-7 text-red-500" />
+                </div>
+              </div>
               <h3 className="font-bold text-gray-800 text-lg">Confirm Delete</h3>
               <p className="text-sm text-gray-500 mt-1">
                 {confirmDel.type === "brand"
@@ -992,7 +1109,11 @@ function ConfirmDeleteModal({ message, onConfirm, onCancel }) {
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
         <div className="text-center">
-          <div className="text-4xl mb-3">🗑️</div>
+          <div className="flex justify-center mb-3">
+            <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
+              <Icons.AlertTriangle className="w-7 h-7 text-red-500" />
+            </div>
+          </div>
           <h3 className="font-bold text-gray-800 text-lg">Confirm Delete</h3>
           <p className="text-sm text-gray-500 mt-1">{message}</p>
         </div>

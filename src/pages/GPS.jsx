@@ -12,6 +12,77 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
+// ─── SVG ICONS ────────────────────────────────────────────────────────────────
+const Icons = {
+  Car: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 11l2-4h10l2 4M3 11h18v8H3v-8zm4 8v2m10-2v2" />
+      <circle cx="7.5" cy="15" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="16.5" cy="15" r="1.5" fill="currentColor" stroke="none"/>
+    </svg>
+  ),
+  Satellite: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <ellipse cx="12" cy="12" rx="3" ry="3" />
+      <path d="M6.3 6.3a8 8 0 000 11.4M17.7 6.3a8 8 0 010 11.4M3.5 3.5a13 13 0 000 17M20.5 3.5a13 13 0 010 17" />
+    </svg>
+  ),
+  MapPin: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z" />
+      <circle cx="12" cy="10" r="3" />
+    </svg>
+  ),
+  Map: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+      <line x1="8" y1="2" x2="8" y2="18" />
+      <line x1="16" y1="6" x2="16" y2="22" />
+    </svg>
+  ),
+  Refresh: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+    </svg>
+  ),
+  Clock: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  ),
+  AlertTriangle: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  Plus: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  ),
+  Signal: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16" />
+    </svg>
+  ),
+  Navigation: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="3 11 22 2 13 21 11 13 3 11" />
+    </svg>
+  ),
+};
+
+// Car SVG string for the Leaflet divIcon (can't use React components there)
+const CAR_SVG = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" width="20" height="20">
+  <path d="M5 11l2-4h10l2 4M3 11h18v8H3v-8zm4 8v2m10-2v2"/>
+  <circle cx="7.5" cy="15" r="1.5"/>
+  <circle cx="16.5" cy="15" r="1.5"/>
+</svg>`);
+
 const POLL_MS = 10_000;
 const API     = process.env.REACT_APP_API_URL;
 
@@ -30,10 +101,11 @@ function makeCarIcon(active = false) {
       background:${active ? "#0f766e" : "#0d9488"};
       color:white;border-radius:50%;width:36px;height:36px;
       display:flex;align-items:center;justify-content:center;
-      font-size:20px;
       box-shadow:0 2px 10px rgba(0,0,0,${active ? "0.5" : "0.3"});
       border:${active ? "3px solid #134e4a" : "2px solid transparent"};
-      transition:all .2s">🚗</div>`,
+      transition:all .2s">
+      <img src="data:image/svg+xml,${CAR_SVG}" width="20" height="20" style="display:block" />
+    </div>`,
     iconSize:   [36, 36],
     iconAnchor: [18, 18],
     popupAnchor:[0, -22],
@@ -45,7 +117,6 @@ export default function GPSTracking() {
   const [brandMap,     setBrandMap]     = useState({});
   const [modelMap,     setModelMap]     = useState({});
   const [gpsDevices,   setGpsDevices]   = useState([]);
-  // locationMap: { [carID]: { lat, lng, updatedAt, lastLocation } }
   const [locationMap,  setLocationMap]  = useState({});
   const [selected,     setSelected]     = useState(null);
   const [loading,      setLoading]      = useState(true);
@@ -55,14 +126,12 @@ export default function GPSTracking() {
   const [addingDevice, setAddingDevice] = useState(false);
   const [activeTab,    setActiveTab]    = useState("cars");
 
-  // Device-tab assign state
   const [assignCarID,    setAssignCarID]    = useState("");
   const [assignDeviceID, setAssignDeviceID] = useState("");
   const [savingAssign,   setSavingAssign]   = useState(false);
 
   const mapRef     = useRef(null);
   const leafletMap = useRef(null);
-  // Only ONE marker at a time (the selected car)
   const activeMarker = useRef(null);
   const token      = localStorage.getItem("token");
 
@@ -117,7 +186,7 @@ export default function GPSTracking() {
 
   useEffect(() => { fetchGpsDevices(); }, [fetchGpsDevices]);
 
-  // ── Fetch location for a single device by deviceID → return location obj ──
+  // ── Fetch location for a single device ───────────────────────────────────
   const fetchOneLocation = useCallback(async (deviceId) => {
     try {
       const res  = await fetch(`${API}/api/gps/${deviceId}`, {
@@ -131,34 +200,7 @@ export default function GPSTracking() {
     return null;
   }, [token]);
 
-  // ── Load/refresh location for the currently selected car only ─────────────
-  const loadSelectedCarLocation = useCallback(async (carId, devices) => {
-    if (!carId) return;
-    const device = devices.find(d => d.carID === carId && d.assigned);
-    if (!device) return;
-
-    const loc = await fetchOneLocation(device.gpsDeviceID);
-    setLocationMap(prev => ({
-      ...prev,
-      [carId]: loc || null,
-    }));
-    setLastPoll(new Date());
-    setLoading(false);
-
-    // Update map marker — remove old, add new if location exists
-    if (!leafletMap.current) return;
-    if (activeMarker.current) {
-      activeMarker.current.remove();
-      activeMarker.current = null;
-    }
-    if (loc?.lat && loc?.lng) {
-      const label = ""; // will be set by caller
-      activeMarker.current = L.marker([loc.lat, loc.lng], { icon: makeCarIcon(true) })
-        .addTo(leafletMap.current);
-    }
-  }, [fetchOneLocation]);
-
-  // ── Initial load: just mark loading done ─────────────────────────────────
+  // ── Initial load ──────────────────────────────────────────────────────────
   useEffect(() => {
     setLoading(false);
   }, []);
@@ -166,7 +208,6 @@ export default function GPSTracking() {
   // ── When selected car changes: load its location + update map ─────────────
   useEffect(() => {
     if (!selected) {
-      // Clear marker when nothing selected
       if (activeMarker.current) {
         activeMarker.current.remove();
         activeMarker.current = null;
@@ -176,7 +217,6 @@ export default function GPSTracking() {
 
     const device = gpsDevices.find(d => d.carID === selected && d.assigned);
     if (!device) {
-      // No device assigned — clear marker, show notice
       if (activeMarker.current) {
         activeMarker.current.remove();
         activeMarker.current = null;
@@ -184,7 +224,6 @@ export default function GPSTracking() {
       return;
     }
 
-    // Load location for this car
     (async () => {
       const loc = await fetchOneLocation(device.gpsDeviceID);
       setLocationMap(prev => ({ ...prev, [selected]: loc || null }));
@@ -233,8 +272,6 @@ export default function GPSTracking() {
   // ── Apply GPS Location ────────────────────────────────────────────────────
   const applyGps = async (carId) => {
     const device = gpsDevices.find(d => d.carID === carId && d.assigned);
-
-    // Guard: no device assigned
     if (!device) {
       setNotice({ type: "warn", msg: "Please apply a device first to show the data." });
       return;
@@ -259,7 +296,6 @@ export default function GPSTracking() {
         body: JSON.stringify({ device_id: device.gpsDeviceID, lat: live.lat, lng: live.lng }),
       });
 
-      // Refresh only this car's location
       const updated = await fetchOneLocation(device.gpsDeviceID);
       setLocationMap(prev => ({ ...prev, [carId]: updated || null }));
       setLastPoll(new Date());
@@ -325,7 +361,6 @@ export default function GPSTracking() {
   const assignedCarIDs    = new Set(gpsDevices.filter(d => d.assigned).map(d => d.carID));
   const availableCars     = allCars.filter(c => !assignedCarIDs.has(c.id));
 
-  // Location of the currently selected car only
   const selectedLoc = selected ? (locationMap[selected] ?? undefined) : undefined;
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -362,23 +397,20 @@ export default function GPSTracking() {
             }}
             className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`}
-              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
+            <Icons.Refresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </button>
         </div>
 
         {/* Notice */}
         {notice && (
-          <div className={`rounded-2xl px-4 py-3 text-xs font-medium border ${
+          <div className={`rounded-2xl px-4 py-3 text-xs font-medium border flex items-start gap-2 ${
             notice.type === "ok"    ? "bg-green-50 border-green-200 text-green-700" :
             notice.type === "warn"  ? "bg-yellow-50 border-yellow-200 text-yellow-700" :
             notice.type === "info"  ? "bg-blue-50 border-blue-200 text-blue-700" :
             "bg-red-50 border-red-200 text-red-700"
           }`}>
+            <Icons.AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
             {notice.msg}
           </div>
         )}
@@ -388,19 +420,21 @@ export default function GPSTracking() {
           <div className="flex border-b border-gray-100">
             <button
               onClick={() => setActiveTab("cars")}
-              className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${
                 activeTab === "cars" ? "bg-teal-50 text-teal-700 border-b-2 border-teal-500" : "text-gray-400 hover:text-gray-600"
               }`}
             >
-              🚗 Cars ({allCars.length})
+              <Icons.Car className="w-3.5 h-3.5" />
+              Cars ({allCars.length})
             </button>
             <button
               onClick={() => setActiveTab("devices")}
-              className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${
                 activeTab === "devices" ? "bg-teal-50 text-teal-700 border-b-2 border-teal-500" : "text-gray-400 hover:text-gray-600"
               }`}
             >
-              📡 Devices ({assignedDevices.length})
+              <Icons.Satellite className="w-3.5 h-3.5" />
+              Devices ({assignedDevices.length})
             </button>
           </div>
         </div>
@@ -413,7 +447,9 @@ export default function GPSTracking() {
             ))
           ) : allCars.length === 0 ? (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-6 text-center">
-              <div className="text-3xl mb-2">🚗</div>
+              <div className="flex justify-center mb-2">
+                <Icons.Car className="w-10 h-10 text-gray-300" />
+              </div>
               <p className="text-sm text-gray-500 font-semibold">No cars in database</p>
             </div>
           ) : (
@@ -421,7 +457,6 @@ export default function GPSTracking() {
               const isSelected = selected === car.id;
               const isApplying = applyingId === car.id;
               const device     = gpsDevices.find(d => d.carID === car.id && d.assigned);
-              // Only show location if THIS car is selected and has location data
               const loc        = isSelected ? selectedLoc : undefined;
 
               return (
@@ -430,7 +465,6 @@ export default function GPSTracking() {
                   onClick={() => {
                     setSelected(car.id);
                     setNotice(null);
-                    // If no device assigned, show warning immediately
                     if (!device) {
                       setNotice({ type: "warn", msg: "Please apply a device first to show the data." });
                     }
@@ -440,22 +474,28 @@ export default function GPSTracking() {
                   }`}
                 >
                   <div className="flex items-start gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 ${
-                      isSelected && loc ? "bg-teal-50" : "bg-gray-50"
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                      isSelected && loc ? "bg-teal-50 text-teal-600" : "bg-gray-50 text-gray-400"
                     }`}>
-                      🚗
+                      <Icons.Car className="w-5 h-5" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-gray-800 text-sm truncate">{getCarLabel(car)}</p>
 
                       {/* Device badge */}
                       {device ? (
-                        <p className="text-xs text-teal-600 font-medium mt-0.5">📡 {device.gpsName}</p>
+                        <p className="text-xs text-teal-600 font-medium mt-0.5 flex items-center gap-1">
+                          <Icons.Satellite className="w-3 h-3" />
+                          {device.gpsName}
+                        </p>
                       ) : (
-                        <p className="text-xs text-red-400 mt-0.5 italic">⚠ No GPS device assigned</p>
+                        <p className="text-xs text-red-400 mt-0.5 italic flex items-center gap-1">
+                          <Icons.AlertTriangle className="w-3 h-3" />
+                          No GPS device assigned
+                        </p>
                       )}
 
-                      {/* Location — only show for the selected car */}
+                      {/* Location — only for selected car */}
                       {isSelected ? (
                         loc ? (
                           <>
@@ -463,24 +503,22 @@ export default function GPSTracking() {
                               {parseFloat(loc.lat).toFixed(5)}, {parseFloat(loc.lng).toFixed(5)}
                             </p>
                             {loc.lastLocation && (
-                              <p className="text-xs text-gray-500 mt-0.5 truncate" title={loc.lastLocation}>
-                                📍 {loc.lastLocation}
+                              <p className="text-xs text-gray-500 mt-0.5 truncate flex items-center gap-1" title={loc.lastLocation}>
+                                <Icons.MapPin className="w-3 h-3 shrink-0" />
+                                {loc.lastLocation}
                               </p>
                             )}
-                            <p className="text-xs text-green-500 mt-0.5 font-medium">
-                              🕒 {timeAgo(loc.updatedAt)}
+                            <p className="text-xs text-green-500 mt-0.5 font-medium flex items-center gap-1">
+                              <Icons.Clock className="w-3 h-3" />
+                              {timeAgo(loc.updatedAt)}
                             </p>
                           </>
                         ) : (
-                          // Selected but no location data
                           device ? (
                             <p className="text-xs text-gray-400 mt-0.5 italic">No GPS location stored yet</p>
                           ) : null
                         )
-                      ) : (
-                        // Not selected — show nothing about location
-                        null
-                      )}
+                      ) : null}
                     </div>
                   </div>
 
@@ -498,14 +536,14 @@ export default function GPSTracking() {
                   >
                     {isApplying ? (
                       <>
-                        <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round"
-                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
+                        <Icons.Refresh className="w-3 h-3 animate-spin" />
                         Applying…
                       </>
                     ) : (
-                      <>📡 {isSelected && loc ? "Update GPS Location" : "Apply GPS Location"}</>
+                      <>
+                        <Icons.Navigation className="w-3 h-3" />
+                        {isSelected && loc ? "Update GPS Location" : "Apply GPS Location"}
+                      </>
                     )}
                   </button>
                 </button>
@@ -524,7 +562,8 @@ export default function GPSTracking() {
               disabled={addingDevice}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-teal-600 text-white rounded-2xl text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50"
             >
-              {addingDevice ? "Adding…" : "+ Add GPS Device"}
+              <Icons.Plus className="w-3.5 h-3.5" />
+              {addingDevice ? "Adding…" : "Add GPS Device"}
             </button>
 
             {/* Assign section */}
@@ -568,7 +607,9 @@ export default function GPSTracking() {
             {/* Assigned devices list */}
             {assignedDevices.length === 0 ? (
               <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-6 text-center">
-                <div className="text-3xl mb-2">📡</div>
+                <div className="flex justify-center mb-2">
+                  <Icons.Satellite className="w-10 h-10 text-gray-300" />
+                </div>
                 <p className="text-sm text-gray-500 font-semibold">No assigned devices yet</p>
                 <p className="text-xs text-gray-400 mt-1">Add a device, then assign a car to it.</p>
               </div>
@@ -578,11 +619,14 @@ export default function GPSTracking() {
                 return (
                   <div key={device.id} className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-lg">📡</span>
+                      <Icons.Satellite className="w-4 h-4 text-teal-600" />
                       <p className="font-bold text-gray-800 text-sm">{device.gpsName}</p>
                     </div>
                     {assignedCar ? (
-                      <p className="text-xs text-teal-600 font-medium">🚗 {getCarLabel(assignedCar)}</p>
+                      <p className="text-xs text-teal-600 font-medium flex items-center gap-1">
+                        <Icons.Car className="w-3 h-3" />
+                        {getCarLabel(assignedCar)}
+                      </p>
                     ) : (
                       <p className="text-xs text-gray-300 italic">Car not found</p>
                     )}
@@ -601,7 +645,10 @@ export default function GPSTracking() {
 
         <div className="absolute bottom-4 left-4 z-[1000] bg-white/90 backdrop-blur-sm border border-gray-100 rounded-xl px-3 py-2 text-xs text-gray-500 shadow-sm space-y-1">
           <p className="font-semibold text-gray-700 mb-1">Map Legend</p>
-          <p>🚗 Selected car location</p>
+          <p className="flex items-center gap-1.5">
+            <Icons.Car className="w-3.5 h-3.5 text-teal-600" />
+            Selected car location
+          </p>
           <p className="text-gray-400">Select a car from the list to view its location.</p>
         </div>
 
@@ -609,7 +656,11 @@ export default function GPSTracking() {
         {!selected && (
           <div className="absolute inset-0 flex items-center justify-center z-[999] pointer-events-none">
             <div className="bg-white/95 rounded-2xl border border-gray-100 shadow-lg p-6 text-center max-w-xs">
-              <div className="text-4xl mb-2">🗺️</div>
+              <div className="flex justify-center mb-3">
+                <div className="w-14 h-14 rounded-full bg-gray-50 flex items-center justify-center">
+                  <Icons.Map className="w-7 h-7 text-gray-400" />
+                </div>
+              </div>
               <p className="font-semibold text-gray-700 text-sm">No car selected</p>
               <p className="text-xs text-gray-400 mt-1">
                 Select a car from the list to view its GPS location on the map.
@@ -622,7 +673,11 @@ export default function GPSTracking() {
         {selected && selectedLoc === null && (
           <div className="absolute inset-0 flex items-center justify-center z-[999] pointer-events-none">
             <div className="bg-white/95 rounded-2xl border border-gray-100 shadow-lg p-6 text-center max-w-xs">
-              <div className="text-4xl mb-2">📡</div>
+              <div className="flex justify-center mb-3">
+                <div className="w-14 h-14 rounded-full bg-teal-50 flex items-center justify-center">
+                  <Icons.Satellite className="w-7 h-7 text-teal-500" />
+                </div>
+              </div>
               <p className="font-semibold text-gray-700 text-sm">No GPS location stored</p>
               <p className="text-xs text-gray-400 mt-1">
                 Press "Apply GPS Location" on this car to record its position.
