@@ -5,19 +5,8 @@ import React from "react";
 const STATS = [
   {
     icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="w-6 h-6"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-      >
-        <path
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z"
-        />
+      <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" />
       </svg>
     ),
     value: "24",
@@ -28,19 +17,8 @@ const STATS = [
   },
   {
     icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="w-6 h-6"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-      >
-        <path
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M12 8c-2 0-4 1-4 3s2 3 4 3 4 1 4 3-2 3-4 3m0-12v12"
-        />
+      <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 8c-2 0-4 1-4 3s2 3 4 3 4 1 4 3-2 3-4 3m0-12v12" />
       </svg>
     ),
     value: "₱87,400",
@@ -51,19 +29,8 @@ const STATS = [
   },
   {
     icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="w-6 h-6"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-      >
-        <path
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M9 17H5l4-8h6l4 8h-4M7 17h10"
-        />
+      <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M3 13l2-5h14l2 5M5 13h14v5H5zM7 18h.01M17 18h.01" />
       </svg>
     ),
     value: "4 / 6",
@@ -74,19 +41,9 @@ const STATS = [
   },
   {
     icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="w-6 h-6"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-      >
+      <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <circle cx="12" cy="12" r="9" strokeWidth="2" />
-        <path
-          strokeWidth="2"
-          strokeLinecap="round"
-          d="M12 7v5l3 3"
-        />
+        <path strokeWidth="2" strokeLinecap="round" d="M12 7v5l3 3" />
       </svg>
     ),
     value: "5",
@@ -108,20 +65,65 @@ const WEEK_DATA = [
 ];
 
 const DONUT_SEGMENTS = [
-  { label: "Available", count: 2, color: "#16a34a" },
-  { label: "Rented", count: 2, color: "#2563eb" },
-  { label: "Reserved", count: 1, color: "#d97706" },
+  { label: "Available",   count: 2, color: "#16a34a" },
+  { label: "Rented",      count: 2, color: "#2563eb" },
+  { label: "Reserved",    count: 1, color: "#d97706" },
   { label: "Maintenance", count: 1, color: "#dc2626" },
 ];
 
+// ─── VEHICLE ICONS ───────────────────────────────────────────────────────────
+
+// Van / L300
+const IconVan = ({ className = "w-5 h-5" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="1" y="9" width="16" height="9" rx="1.5" />
+    <path d="M17 12l3.5 1.5V18H17" />
+    <circle cx="5.5" cy="18.5" r="1.5" />
+    <circle cx="13.5" cy="18.5" r="1.5" />
+    <path d="M1 13h16M5 9V6a1 1 0 011-1h7l3 4" />
+  </svg>
+);
+
+// Small hatchback — S.PRESSO, EON, Wigo
+const IconHatchback = ({ className = "w-5 h-5" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 13h18v3a1 1 0 01-1 1H4a1 1 0 01-1-1v-3z" />
+    <path d="M3 13l2.5-5h9l3.5 5" />
+    <path d="M6 8.5l1-2.5h6l2 2.5" />
+    <circle cx="6.5" cy="16.5" r="1.5" />
+    <circle cx="17.5" cy="16.5" r="1.5" />
+  </svg>
+);
+
+// MPV — Avanza, Veloz
+const IconMPV = ({ className = "w-5 h-5" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M2 13h20v3a1 1 0 01-1 1H3a1 1 0 01-1-1v-3z" />
+    <path d="M2 13l3-6h11l4 6" />
+    <path d="M5 7l1.5-2h8l2 2" />
+    <circle cx="6" cy="16.5" r="1.5" />
+    <circle cx="18" cy="16.5" r="1.5" />
+  </svg>
+);
+
 const FLEET = [
-  { name: "L300", plate: "ABC 123", status: "Rented", color: "bg-blue-100 text-blue-700", icon: "🚐" },
-  { name: "S.PRESSO", plate: "DEF 456", status: "Available", color: "bg-green-100 text-green-700", icon: "🚗" },
-  { name: "Avanza", plate: "GHI 789", status: "Maintenance", color: "bg-red-100 text-red-700", icon: "🚙" },
-  { name: "EON", plate: "JKL 012", status: "Available", color: "bg-green-100 text-green-700", icon: "🚗" },
-  { name: "Wigo", plate: "MNO 345", status: "Reserved", color: "bg-amber-100 text-amber-700", icon: "🚗" },
-  { name: "Veloz", plate: "PQR 678", status: "Rented", color: "bg-blue-100 text-blue-700", icon: "🚗" },
+  { name: "L300",     plate: "ABC 123", status: "Rented",      color: "bg-blue-100 text-blue-700",   Icon: IconVan },
+  { name: "S.PRESSO", plate: "DEF 456", status: "Available",   color: "bg-green-100 text-green-700", Icon: IconHatchback },
+  { name: "Avanza",   plate: "GHI 789", status: "Maintenance", color: "bg-red-100 text-red-700",     Icon: IconMPV },
+  { name: "EON",      plate: "JKL 012", status: "Available",   color: "bg-green-100 text-green-700", Icon: IconHatchback },
+  { name: "Wigo",     plate: "MNO 345", status: "Reserved",    color: "bg-amber-100 text-amber-700", Icon: IconHatchback },
+  { name: "Veloz",    plate: "PQR 678", status: "Rented",      color: "bg-blue-100 text-blue-700",   Icon: IconMPV },
 ];
+
+// ─── ALERT ICON ──────────────────────────────────────────────────────────────
+
+const IconWarning = ({ className = "w-5 h-5" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+    <line x1="12" y1="9" x2="12" y2="13" />
+    <line x1="12" y1="17" x2="12.01" y2="17" />
+  </svg>
+);
 
 // ─── DONUT CHART ─────────────────────────────────────────────────────────────
 
@@ -151,7 +153,6 @@ function DonutChart({ segments }) {
           />
         );
       })}
-      {/* inner white hole */}
       <circle cx={cx} cy={cy} r={r - strokeW / 2 - 2} fill="white" />
     </svg>
   );
@@ -197,7 +198,7 @@ export default function SBody() {
       {/* Maintenance Alert */}
       <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3.5">
         <div className="flex items-center gap-3 text-sm text-amber-800 font-sans">
-          <span>⚠️</span>
+          <IconWarning className="w-5 h-5 text-amber-500 flex-shrink-0" />
           <span>
             <strong>2 vehicles</strong> are due for maintenance this week — L300 (Mar 30) and Avanza (Apr 1).
           </span>
@@ -214,7 +215,7 @@ export default function SBody() {
             key={i}
             className={`bg-white rounded-2xl p-5 border-t-4 ${s.accentColor} shadow-soft`}
           >
-            <div className="text-2xl mb-3">{s.icon}</div>
+            <div className="text-arl-primary mb-3">{s.icon}</div>
 
             <div className="font-display text-3xl font-bold text-arl-dark leading-none">
               {s.value}
@@ -239,9 +240,7 @@ export default function SBody() {
         <div className="bg-white rounded-2xl p-6 shadow-soft">
           <div className="flex items-start justify-between mb-5">
             <div>
-              <div className="font-display text-base font-bold text-arl-dark">
-                Booking Activity
-              </div>
+              <div className="font-display text-base font-bold text-arl-dark">Booking Activity</div>
               <div className="font-sans text-xs text-gray-400 mt-0.5">Last 7 days</div>
             </div>
             <div className="flex items-center gap-3">
@@ -262,16 +261,12 @@ export default function SBody() {
           <div className="font-display text-base font-bold text-arl-dark">Fleet Status</div>
           <div className="font-sans text-xs text-gray-400 mt-0.5 mb-4">6 vehicles total</div>
 
-          {/* Donut + Legend */}
           <div className="flex items-center gap-4 mb-5">
             <DonutChart segments={DONUT_SEGMENTS} />
             <div className="flex flex-col gap-2">
               {DONUT_SEGMENTS.map((seg, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm font-sans">
-                  <span
-                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                    style={{ background: seg.color }}
-                  />
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: seg.color }} />
                   <span className="text-gray-600 flex-1">{seg.label}</span>
                   <span className="font-bold text-arl-dark">{seg.count}</span>
                 </div>
@@ -279,14 +274,13 @@ export default function SBody() {
             </div>
           </div>
 
-          {/* Vehicle Grid */}
           <div className="grid grid-cols-2 gap-2">
             {FLEET.map((v, i) => (
               <div
                 key={i}
                 className="flex items-center gap-2 px-3 py-2 rounded-xl bg-arl-light border border-gray-200"
               >
-                <span className="text-lg">{v.icon}</span>
+                <v.Icon className="w-5 h-5 text-gray-500 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="font-sans text-xs font-bold text-arl-dark truncate">{v.name}</div>
                   <div className="font-sans text-[10px] text-gray-400">{v.plate}</div>
