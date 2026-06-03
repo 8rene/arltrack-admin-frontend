@@ -271,9 +271,6 @@ export default function Reports() {
                 <BreakdownCard title="Revenue by Gateway" data={report.paymentsByGateway}
                   isCurrency fmt={fmt}
                   colorFn={() => "bg-teal-100 text-teal-700"} />
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
                 {/* Booking status */}
                 <BreakdownCard title="Bookings by Status" data={report.bookingsByStatus}
                   colorFn={(k) => STATUS_COLORS[k] || "bg-gray-100 text-gray-600"} />
