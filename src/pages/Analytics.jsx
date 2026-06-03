@@ -3,12 +3,57 @@ import Chart from "chart.js/auto";
 import { useCurrency } from "../context/CurrencyContext";
 import { useTheme } from "../context/ThemeContext";
 
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+
+const IconCalendarDay = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M8 13h.01M12 13h.01M8 17h.01M12 17h.01M16 13h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCalendarWeek = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M7 14h10M7 18h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCalendarMonth = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <rect x="7" y="13" width="4" height="4" rx="0.5" stroke="currentColor" strokeWidth="1.25" />
+    <rect x="13" y="13" width="4" height="4" rx="0.5" stroke="currentColor" strokeWidth="1.25" />
+  </svg>
+);
+
+const IconBarChart = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 20h18M7 20V10M12 20V4M17 20v-7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWarning = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+// ─── DATA ────────────────────────────────────────────────────────────────────
+
 const TABS = [
-  { key: "daily",   label: "Daily",   icon: "📆", sub: "Hours 0–23" },
-  { key: "weekly",  label: "Weekly",  icon: "🗓",  sub: "Mon – Sun" },
-  { key: "monthly", label: "Monthly", icon: "📅", sub: "Weeks 1–4" },
-  { key: "yearly",  label: "Yearly",  icon: "📊", sub: "Jan – Dec" },
+  { key: "daily",   label: "Daily",   Icon: IconCalendarDay,   sub: "Hours 0–23" },
+  { key: "weekly",  label: "Weekly",  Icon: IconCalendarWeek,  sub: "Mon – Sun" },
+  { key: "monthly", label: "Monthly", Icon: IconCalendarMonth, sub: "Weeks 1–4" },
+  { key: "yearly",  label: "Yearly",  Icon: IconBarChart,      sub: "Jan – Dec" },
 ];
+
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function Analytics() {
   const { fmt, currency, convert } = useCurrency();
@@ -44,7 +89,6 @@ export default function Analytics() {
 
   useEffect(() => { fetchAnalytics(activeTab); }, [activeTab, fetchAnalytics]);
 
-  // Rebuild chart whenever data or currency changes
   useEffect(() => {
     if (!chartRef.current || !analyticsData?.data) return;
 
@@ -57,7 +101,6 @@ export default function Analytics() {
 
     const maxVal = Math.max(...values, 1);
 
-    // Color bars: teal for non-zero, light gray for zero
     const bgColors = values.map((v) =>
       v > 0 ? "rgba(13, 148, 136, 0.85)" : (isDark ? "rgba(37,40,54,0.8)" : "rgba(229,231,235,0.6)")
     );
@@ -65,8 +108,6 @@ export default function Analytics() {
       v > 0 ? "rgba(13, 148, 136, 1)" : (isDark ? "rgba(55,65,81,0.8)" : "rgba(209,213,219,0.8)")
     );
     const gridColor = isDark ? "rgba(42,45,62,0.8)" : "rgba(229,231,235,0.5)";
-    const tickColor = isDark ? "#4b5563" : "#9ca3af";
-    const tooltipBg = isDark ? "#252836" : "#1f2937";
 
     if (chartInst.current) {
       chartInst.current.destroy();
@@ -95,7 +136,7 @@ export default function Analytics() {
             callbacks: {
               label: (ctx) => ` ${fmt(rawPHP[ctx.dataIndex])}`,
             },
-            backgroundColor: tooltipBg,
+            backgroundColor: isDark ? "#252836" : "#1f2937",
             titleColor: isDark ? "#6b7280" : "#9ca3af",
             bodyColor: "#f9fafb",
             padding: 10,
@@ -137,7 +178,6 @@ export default function Analytics() {
     };
   }, [analyticsData, currency, fmt, convert, activeTab, isDark]);
 
-  // Listen for currency change events
   useEffect(() => {
     const handler = () => {};
     window.addEventListener("currencyChange", handler);
@@ -157,6 +197,8 @@ export default function Analytics() {
     return "";
   };
 
+  const activeTabData = TABS.find((t) => t.key === activeTab);
+
   return (
     <div className="w-full px-4 space-y-5">
 
@@ -175,7 +217,6 @@ export default function Analytics() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Refresh */}
           <button onClick={() => fetchAnalytics(activeTab)} disabled={loading}
             className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
             <svg xmlns="http://www.w3.org/2000/svg" className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -184,16 +225,16 @@ export default function Analytics() {
             {loading ? "Loading…" : "Refresh"}
           </button>
 
-          {/* Tab toggle */}
           <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
             {TABS.map((t) => (
               <button key={t.key} onClick={() => setActiveTab(t.key)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
                   activeTab === t.key
                     ? "bg-white text-arl-dark shadow-sm font-semibold"
                     : "text-gray-500 hover:text-gray-700"
                 }`}>
-                {t.icon} {t.label}
+                <t.Icon className="w-3.5 h-3.5" />
+                {t.label}
               </button>
             ))}
           </div>
@@ -203,23 +244,26 @@ export default function Analytics() {
       {/* ERROR */}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
-          <span>⚠️ {error}</span>
+          <span className="flex items-center gap-2">
+            <IconWarning className="w-4 h-4 shrink-0" />
+            {error}
+          </span>
           <button onClick={() => fetchAnalytics(activeTab)} className="text-red-600 font-semibold underline text-xs ml-4">Retry</button>
         </div>
       )}
 
       {/* STAT CARDS */}
       <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Total Revenue"  value={loading ? null : fmt(total)} color="teal" />
-        <StatCard label="Peak Period"    value={loading ? null : peak?.revenue > 0 ? peak.label : "—"} color="blue" />
-        <StatCard label="Peak Amount"    value={loading ? null : peak?.revenue > 0 ? fmt(peak.revenue) : fmt(0)} color="purple" />
+        <StatCard label="Total Revenue" value={loading ? null : fmt(total)}                                            color="teal" />
+        <StatCard label="Peak Period"   value={loading ? null : peak?.revenue > 0 ? peak.label : "—"}                 color="blue" />
+        <StatCard label="Peak Amount"   value={loading ? null : peak?.revenue > 0 ? fmt(peak.revenue) : fmt(0)}       color="purple" />
       </div>
 
       {/* CHART */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-gray-800 text-sm">
-            {TABS.find((t) => t.key === activeTab)?.label} Revenue
+            {activeTabData?.label} Revenue
           </h2>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-sm bg-teal-500" />
@@ -227,7 +271,6 @@ export default function Analytics() {
           </div>
         </div>
 
-        {/* Chart canvas — always rendered, opacity trick avoids destroy/create flash */}
         <div className="relative" style={{ height: "300px" }}>
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-xl z-10">
@@ -249,7 +292,7 @@ export default function Analytics() {
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="font-semibold text-gray-800 text-sm">Breakdown</h2>
           <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full uppercase tracking-wide">
-            {TABS.find((t) => t.key === activeTab)?.sub}
+            {activeTabData?.sub}
           </span>
         </div>
         <div className="overflow-x-auto">
@@ -301,20 +344,21 @@ export default function Analytics() {
   );
 }
 
+// ─── STAT CARD ────────────────────────────────────────────────────────────────
+
 function StatCard({ label, value, color }) {
-  const colors = {
-    teal:   "bg-teal-50 text-teal-600",
-    blue:   "bg-blue-50 text-blue-600",
-    purple: "bg-purple-50 text-purple-600",
+  const textColors = {
+    teal:   "text-teal-600",
+    blue:   "text-blue-600",
+    purple: "text-purple-600",
   };
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4">
       <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">{label}</p>
       {value === null
         ? <div className="h-6 w-28 bg-gray-100 rounded animate-pulse" />
-        : <p className={`text-lg font-bold ${colors[color]?.split(" ")[1] || "text-gray-800"}`}>{value}</p>
+        : <p className={`text-lg font-bold ${textColors[color] || "text-gray-800"}`}>{value}</p>
       }
     </div>
   );
 }
-

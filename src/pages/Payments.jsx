@@ -1,7 +1,46 @@
 import { useEffect, useState, useCallback } from "react";
 import { useCurrency } from "../context/CurrencyContext";
 
-/* ── helpers ── */
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+
+const IconMoney = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="6" width="20" height="13" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <circle cx="12" cy="12.5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M6 6V5M18 6V5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCheck = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClock = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCreditCard = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M2 10h20" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M6 15h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconX = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
 function peso(n, fmtFn) {
   if (n == null || n === "") return "—";
   if (fmtFn) return fmtFn(n);
@@ -14,7 +53,8 @@ function fmtDate(iso) {
   return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 }
 
-/* ── badge maps ── */
+// ─── BADGE MAPS ───────────────────────────────────────────────────────────────
+
 const statusDot = {
   Pending:   "bg-yellow-400",
   Approved:  "bg-green-500",
@@ -39,23 +79,24 @@ function StatusBadge({ status }) {
     </span>
   );
 }
-const statusColor = {};
 
 const PAGE_SIZE = 15;
 const STATUSES  = ["All", "Pending", "Approved", "Rejected", "Cancelled"];
 
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
+
 export default function Payments() {
-  const [payments, setPayments]   = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState(null);
-  const [search, setSearch]       = useState("");
-  const [statusF, setStatusF]     = useState("All");
-  const [methodF, setMethodF]     = useState("All");
-  const [page, setPage]           = useState(1);
-  const [selected, setSelected]   = useState(null);   // detail drawer
+  const [payments, setPayments]           = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState(null);
+  const [search, setSearch]               = useState("");
+  const [statusF, setStatusF]             = useState("All");
+  const [methodF, setMethodF]             = useState("All");
+  const [page, setPage]                   = useState(1);
+  const [selected, setSelected]           = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [toast, setToast]         = useState(null);
-  const [updating, setUpdating]   = useState(false);
+  const [toast, setToast]                 = useState(null);
+  const [updating, setUpdating]           = useState(false);
 
   const token = localStorage.getItem("token");
   const { fmt: fmtCurrency } = useCurrency();
@@ -106,7 +147,7 @@ export default function Payments() {
     finally { setUpdating(false); }
   };
 
-  /* ── filter ── */
+  // ── filter ──
   const methods = ["All", ...new Set(payments.map((p) => p.paymentMethod).filter((m) => m && m !== "—"))];
 
   const filtered = payments.filter((p) => {
@@ -124,7 +165,7 @@ export default function Payments() {
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   useEffect(() => setPage(1), [search, statusF, methodF]);
 
-  /* ── stat cards ── */
+  // ── stat cards ──
   const totalCollected = payments.filter(p => ["Approved","Paid"].includes(p.status)).reduce((s,p) => s + p.amountPaid, 0);
   const approved  = payments.filter(p => ["Approved","Paid"].includes(p.status)).length;
   const pending   = payments.filter(p => p.status === "Pending").length;
@@ -149,13 +190,14 @@ export default function Payments() {
               <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">Loading…</div>
             ) : selected && (
               <>
-                {/* Drawer Header */}
                 <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
                   <div>
                     <p className="text-xs text-gray-400 uppercase tracking-wider">Payment Detail</p>
                     <p className="font-bold text-arl-dark text-sm">{selected.paymentID}</p>
                   </div>
-                  <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+                  <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
+                    <IconX className="w-5 h-5" />
+                  </button>
                 </div>
 
                 <div className="p-6 space-y-5">
@@ -176,14 +218,12 @@ export default function Payments() {
                     )}
                   </div>
 
-                  {/* Customer */}
                   <Section title="Customer">
                     <Row label="Name" value={selected.customerName} />
                     <Row label="Booking ID" value={selected.bookingID} mono />
                     <Row label="Vehicle" value={selected.vehicleName} />
                   </Section>
 
-                  {/* Payment Info */}
                   <Section title="Payment Info">
                     <Row label="Payment ID" value={selected.paymentID} mono />
                     <Row label="Reference #" value={selected.referenceNumber} />
@@ -192,7 +232,6 @@ export default function Payments() {
                     <Row label="Submitted" value={fmtDate(selected.createdAt)} />
                   </Section>
 
-                  {/* Fees */}
                   <Section title="Fee Breakdown">
                     <Row label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
                     <Row label="Deposit Fee" value={peso(selected.depositFee, fmtCurrency)} />
@@ -205,7 +244,6 @@ export default function Payments() {
                     </div>
                   </Section>
 
-                  {/* Proof of Payment */}
                   <Section title="Proof of Payment">
                     {selected.proofUrl ? (
                       <a href={selected.proofUrl} target="_blank" rel="noreferrer"
@@ -216,7 +254,6 @@ export default function Payments() {
                       <p className="text-sm text-gray-400 italic">No proof image uploaded.</p>
                     )}
                   </Section>
-
                 </div>
               </>
             )}
@@ -226,10 +263,10 @@ export default function Payments() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard icon="💰" value={peso(totalCollected)} label="Total Collected" />
-        <StatCard icon="✅" value={approved} label="Approved Payments" />
-        <StatCard icon="⏳" value={pending} label="Awaiting Review" />
-        <StatCard icon="💳" value={peso(totalBal)} label="Total Balance Due" />
+        <StatCard icon={<IconMoney      className="w-5 h-5" />} value={peso(totalCollected)} label="Total Collected"    color="teal" />
+        <StatCard icon={<IconCheck      className="w-5 h-5" />} value={approved}             label="Approved Payments"  color="green" />
+        <StatCard icon={<IconClock      className="w-5 h-5" />} value={pending}              label="Awaiting Review"    color="yellow" />
+        <StatCard icon={<IconCreditCard className="w-5 h-5" />} value={peso(totalBal)}       label="Total Balance Due"  color="purple" />
       </div>
 
       {/* Filter Bar */}
@@ -285,16 +322,12 @@ export default function Payments() {
               </td></tr>
             ) : paginated.map((p, i) => (
               <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
-                {/* Ref */}
                 <td className="px-4 py-3 font-mono text-xs text-arl-dark font-semibold">{p.paymentID}</td>
-                {/* Customer + BookingID */}
                 <td className="px-4 py-3">
                   <div className="font-semibold text-gray-800 text-xs">{p.customerName}</div>
                   <div className="text-xs text-gray-400 font-mono">{p.bookingID}</div>
                 </td>
-                {/* Car */}
                 <td className="px-4 py-3 text-xs text-gray-600">{p.vehicleName}</td>
-                {/* Total Fee + methodOfPayment */}
                 <td className="px-4 py-3">
                   <div className="text-xs font-semibold text-gray-800">{peso(p.totalFee, fmtCurrency)}</div>
                   {p.methodOfPayment && p.methodOfPayment !== "—" && (
@@ -307,23 +340,14 @@ export default function Payments() {
                     }`}>{p.methodOfPayment}</span>
                   )}
                 </td>
-                {/* Amount Paid */}
                 <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.amountPaid, fmtCurrency)}</td>
-                {/* Balance */}
                 <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
                   {peso(p.balance, fmtCurrency)}
                 </td>
-                {/* Method */}
                 <td className="px-4 py-3 text-xs text-gray-600">{p.paymentMethod}</td>
-                {/* Payment Ref */}
                 <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.referenceNumber || "—"}</td>
-                {/* Status */}
-                <td className="px-4 py-3">
-                  <StatusBadge status={p.status} />
-                </td>
-                {/* Submitted */}
+                <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
                 <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
-                {/* View */}
                 <td className="px-4 py-3">
                   <button onClick={() => openDetail(p.id)}
                     className="px-3 py-1.5 text-xs bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
@@ -352,11 +376,20 @@ export default function Payments() {
   );
 }
 
-/* ── sub-components ── */
-function StatCard({ icon, value, label }) {
+// ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
+
+function StatCard({ icon, value, label, color }) {
+  const bgColors = {
+    teal:   "bg-teal-50 text-teal-600",
+    green:  "bg-green-50 text-green-600",
+    yellow: "bg-yellow-50 text-yellow-600",
+    purple: "bg-purple-50 text-purple-600",
+  };
   return (
     <div className="bg-white rounded-2xl shadow-soft p-4 flex items-center gap-4">
-      <div className="w-11 h-11 flex items-center justify-center rounded-xl bg-gray-100 text-xl">{icon}</div>
+      <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>
+        {icon}
+      </div>
       <div>
         <div className="text-xl font-bold text-arl-dark">{value}</div>
         <div className="text-xs text-gray-500">{label}</div>
@@ -384,4 +417,3 @@ function Row({ label, value, mono, bold, color }) {
     </div>
   );
 }
-

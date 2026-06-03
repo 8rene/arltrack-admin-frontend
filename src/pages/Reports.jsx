@@ -2,11 +2,105 @@ import { useState, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { useCurrency } from "../context/CurrencyContext";
 
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+
+const IconCalendarDay = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M8 13h.01M12 13h.01M8 17h.01M12 17h.01M16 13h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCalendarWeek = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M7 14h10M7 18h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCalendarMonth = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <rect x="7" y="13" width="4" height="4" rx="0.5" stroke="currentColor" strokeWidth="1.25" />
+    <rect x="13" y="13" width="4" height="4" rx="0.5" stroke="currentColor" strokeWidth="1.25" />
+  </svg>
+);
+
+const IconBarChart = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 20h18M7 20V10M12 20V4M17 20v-7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconDownload = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconPrinter = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 9V2h12v7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="3" y="9" width="18" height="10" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M6 14h12M6 18h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWarning = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconClipboard = ({ className = "w-12 h-12" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+  </svg>
+);
+
+const IconSummary = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCreditCard = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M2 10h20" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M6 15h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconPackage = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
+    <path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+// ─── DATA ────────────────────────────────────────────────────────────────────
+
 const PERIODS = [
-  { key: "daily",   label: "Daily",   icon: "📆", desc: "Today's report" },
-  { key: "weekly",  label: "Weekly",  icon: "🗓",  desc: "This week" },
-  { key: "monthly", label: "Monthly", icon: "📅", desc: "This month" },
-  { key: "yearly",  label: "Yearly",  icon: "📊", desc: "This year" },
+  { key: "daily",   label: "Daily",   Icon: IconCalendarDay,   desc: "Today's report" },
+  { key: "weekly",  label: "Weekly",  Icon: IconCalendarWeek,  desc: "This week" },
+  { key: "monthly", label: "Monthly", Icon: IconCalendarMonth, desc: "This month" },
+  { key: "yearly",  label: "Yearly",  Icon: IconBarChart,      desc: "This year" },
+];
+
+const TABS = [
+  { key: "summary",  label: "Summary",  Icon: IconSummary },
+  { key: "payments", label: "Payments", Icon: IconCreditCard },
+  { key: "bookings", label: "Bookings", Icon: IconPackage },
 ];
 
 const STATUS_COLORS = {
@@ -20,6 +114,8 @@ const STATUS_COLORS = {
   completed:"bg-blue-100 text-blue-700",
 };
 
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
 function fmt2(n) {
   return Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -32,12 +128,14 @@ function fmtDateTime(iso) {
   return new Date(iso).toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 }
 
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
+
 export default function Reports() {
   const { fmt, currency } = useCurrency();
-  const [period, setPeriod]     = useState("monthly");
-  const [report, setReport]     = useState(null);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState(null);
+  const [period, setPeriod]       = useState("monthly");
+  const [report, setReport]       = useState(null);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState(null);
   const [activeTab, setActiveTab] = useState("summary");
   const printRef = useRef(null);
   const token = localStorage.getItem("token");
@@ -56,12 +154,11 @@ export default function Reports() {
     finally { setLoading(false); }
   }, [token]);
 
-  /* ── Excel Export ── */
+  // ── Excel Export ──
   const exportCSV = () => {
     if (!report) return;
     const wb = XLSX.utils.book_new();
 
-    // ── Helper: auto-fit column widths based on content ──
     const autoWidth = (ws, rows) => {
       const maxLens = [];
       rows.forEach((row) => {
@@ -73,7 +170,6 @@ export default function Reports() {
       ws["!cols"] = maxLens.map((w) => ({ wch: Math.min(Math.max(w + 2, 8), 60) }));
     };
 
-    // ── Sheet 1: Summary ──
     const summaryRows = [
       ["Report Period", report.label],
       ["Generated At",  fmtDateTime(report.generatedAt)],
@@ -99,7 +195,6 @@ export default function Reports() {
     autoWidth(wsSummary, summaryRows);
     XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
-    // ── Sheet 2: Payments ──
     const payHeaders = ["Payment ID","Booking ID","Total Fee","Amount Paid","Balance","Status","Payment Type","Gateway","Reference #","Date"];
     const payRows = report.payments.map((p) => [
       p.paymentID, p.bookingID,
@@ -111,7 +206,6 @@ export default function Reports() {
     autoWidth(wsPayments, [payHeaders, ...payRows]);
     XLSX.utils.book_append_sheet(wb, wsPayments, "Payments");
 
-    // ── Sheet 3: Bookings ──
     const bookHeaders = ["Booking ID","Status","Location","Total Fee","Days","Start Date","End Date","Created At"];
     const bookRows = report.bookings.map((b) => [
       b.bookingID, b.status, b.location,
@@ -122,11 +216,10 @@ export default function Reports() {
     autoWidth(wsBookings, [bookHeaders, ...bookRows]);
     XLSX.utils.book_append_sheet(wb, wsBookings, "Bookings");
 
-    // ── Download ──
     XLSX.writeFile(wb, `report-${report.period}-${report.label.replace(/[\s/–→]/g, "-")}.xlsx`);
   };
 
-  /* ── Print / PDF ── */
+  // ── Print / PDF ──
   const printReport = () => {
     const printContent = printRef.current?.querySelector(".report-printable");
     if (!printContent) return;
@@ -188,11 +281,11 @@ export default function Reports() {
           <div className="flex gap-2">
             <button onClick={exportCSV}
               className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50">
-              <span>⬇️</span> Export Excel
+              <IconDownload className="w-4 h-4" /> Export Excel
             </button>
             <button onClick={printReport}
               className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90">
-              <span>🖨️</span> Print / PDF
+              <IconPrinter className="w-4 h-4" /> Print / PDF
             </button>
           </div>
         )}
@@ -209,7 +302,7 @@ export default function Reports() {
                   ? "border-arl-dark bg-arl-dark text-white"
                   : "border-gray-100 hover:border-gray-300 text-gray-600"
               }`}>
-              <span className="text-2xl">{p.icon}</span>
+              <p.Icon className="w-7 h-7" />
               <span className="font-semibold text-sm">{p.label}</span>
               <span className={`text-xs ${period === p.key ? "text-white/70" : "text-gray-400"}`}>{p.desc}</span>
             </button>
@@ -230,7 +323,10 @@ export default function Reports() {
 
       {/* ERROR */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">⚠️ {error}</div>
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
+          <IconWarning className="w-4 h-4 shrink-0" />
+          {error}
+        </div>
       )}
 
       {/* REPORT OUTPUT */}
@@ -238,15 +334,12 @@ export default function Reports() {
         <>
           {/* TABS */}
           <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-            {[
-              { key: "summary",  label: "📋 Summary" },
-              { key: "payments", label: "💳 Payments" },
-              { key: "bookings", label: "📦 Bookings" },
-            ].map((t) => (
+            {TABS.map((t) => (
               <button key={t.key} onClick={() => setActiveTab(t.key)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
                   activeTab === t.key ? "bg-white text-arl-dark shadow-sm font-semibold" : "text-gray-500 hover:text-gray-700"
                 }`}>
+                <t.Icon className="w-3.5 h-3.5" />
                 {t.label}
               </button>
             ))}
@@ -255,23 +348,19 @@ export default function Reports() {
           {/* SUMMARY TAB */}
           {activeTab === "summary" && (
             <div className="space-y-4">
-              {/* Stat cards */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <BigStat label="Total Revenue"           value={fmt(s.totalRevenue)}           sub="Gross amount" color="teal" />
-                <BigStat label="Amount Collected"        value={fmt(s.totalPaid)}              sub="Payments received" color="green" />
-                <BigStat label="Outstanding Balance"     value={fmt(s.totalBalance)}           sub="Still due" color="orange" />
-                <BigStat label="Total Payments"          value={s.totalPayments}               sub="Transactions" color="blue" />
-                <BigStat label="Total Bookings"          value={s.totalBookings}               sub="Reservations" color="purple" />
-                <BigStat label="Avg Revenue / Booking"   value={fmt(s.avgRevenuePerBooking)}   sub="Per reservation" color="pink" />
+                <BigStat label="Total Revenue"         value={fmt(s.totalRevenue)}         sub="Gross amount"       color="teal" />
+                <BigStat label="Amount Collected"      value={fmt(s.totalPaid)}            sub="Payments received"  color="green" />
+                <BigStat label="Outstanding Balance"   value={fmt(s.totalBalance)}         sub="Still due"          color="orange" />
+                <BigStat label="Total Payments"        value={s.totalPayments}             sub="Transactions"       color="blue" />
+                <BigStat label="Total Bookings"        value={s.totalBookings}             sub="Reservations"       color="purple" />
+                <BigStat label="Avg Revenue / Booking" value={fmt(s.avgRevenuePerBooking)} sub="Per reservation"    color="pink" />
               </div>
 
-              {/* Breakdown charts */}
               <div className="grid md:grid-cols-2 gap-4">
-                {/* Gateway breakdown */}
                 <BreakdownCard title="Revenue by Gateway" data={report.paymentsByGateway}
                   isCurrency fmt={fmt}
                   colorFn={() => "bg-teal-100 text-teal-700"} />
-                {/* Booking status */}
                 <BreakdownCard title="Bookings by Status" data={report.bookingsByStatus}
                   colorFn={(k) => STATUS_COLORS[k] || "bg-gray-100 text-gray-600"} />
               </div>
@@ -365,8 +454,8 @@ export default function Reports() {
 
       {/* Empty state */}
       {!report && !loading && !error && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft flex flex-col items-center justify-center py-20 gap-3">
-          <div className="text-5xl">📋</div>
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft flex flex-col items-center justify-center py-20 gap-3 text-gray-300">
+          <IconClipboard className="w-12 h-12" />
           <p className="text-gray-500 font-semibold">No report generated yet</p>
           <p className="text-gray-400 text-sm">Pick a period above and click Generate Report</p>
         </div>
@@ -376,7 +465,7 @@ export default function Reports() {
   );
 }
 
-/* ── Sub-components ── */
+// ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
 
 function BigStat({ label, value, sub, color }) {
   const colors = {
