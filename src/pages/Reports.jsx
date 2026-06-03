@@ -93,7 +93,7 @@ export default function Reports() {
       [],
       ["Bookings by Status"],
       ["Status", "Count"],
-      ...Object.entries(report.bookingsByStatus).map(([k, v]) => [k, v]),
+      ...Object.entries(report.bookingsByStatus).filter(([k]) => ["completed", "cancelled"].includes(k.toLowerCase())).map(([k, v]) => [k, v]),
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
     autoWidth(wsSummary, summaryRows);
