@@ -634,15 +634,23 @@ function ViewDetailsModal({ car, onClose, onEdit }) {
   );
 }
 
-// ─── SHARED CAR FORM FIELDS ───────────────────────────────────────────────────
-function CarForm({ form, setForm, pricing, setPricing, imagePreview, onImageChange, brands, models }) {
+// ─── PRICING ICON ─────────────────────────────────────────────────────────────
+const PricingIcon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <line x1="12" y1="1" x2="12" y2="23" />
+    <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
+  </svg>
+);
+
+// ─── DETAILS FORM ─────────────────────────────────────────────────────────────
+function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, models }) {
   const filteredModels = models.filter(m => m.brandID === form.brandID);
 
-  const Field = ({ label, name, type = "text", options, span }) => (
-    <div className={span ? "col-span-2" : ""}>
+  const Field = ({ label, name, type = "text", options }) => (
+    <div>
       <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
       {options ? (
-        <select value={form[name]} onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
+        <select value={form[name] || ""} onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
           className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
           <option value="">Select {label}</option>
           {options.map(o => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}
@@ -654,15 +662,6 @@ function CarForm({ form, setForm, pricing, setPricing, imagePreview, onImageChan
       )}
     </div>
   );
-
-  const handlePriceChange = (idx, field, val) =>
-    setPricing(prev => prev.map((p, i) => i === idx ? { ...p, [field]: val } : p));
-
-  const addPriceTier = () =>
-    setPricing(prev => [...prev, { durationType: "", price: "" }]);
-
-  const removePriceTier = (idx) =>
-    setPricing(prev => prev.filter((_, i) => i !== idx));
 
   return (
     <div className="space-y-5">
@@ -731,43 +730,105 @@ function CarForm({ form, setForm, pricing, setPricing, imagePreview, onImageChan
           onChange={e => setForm(f => ({ ...f, longDescription: e.target.value }))}
           className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 resize-none" />
       </div>
+    </div>
+  );
+}
 
-      {/* Pricing (12 Hours last) */}
-      <div>
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="text-xs font-medium text-gray-500">Pricing (12 Hours goes last)</h3>
-          <button onClick={addPriceTier} type="button"
-            className="flex items-center gap-1 text-xs px-3 py-1 bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100">
-            <Icons.Plus className="w-3 h-3" />
-            Add Tier
-          </button>
-        </div>
-        <div className="space-y-2">
-          {sortPricing(pricing).map((p, i) => (
-            <div key={i} className="flex gap-3 items-center">
-              <input value={p.durationType} placeholder="e.g. 24 Hours / Full Day"
-                onChange={e => handlePriceChange(i, "durationType", e.target.value)}
-                className="flex-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-              <div className="relative">
-                <span className="absolute left-3 top-2 text-sm text-gray-400">₱</span>
-                <input type="number" value={p.price}
-                  onChange={e => handlePriceChange(i, "price", e.target.value)}
-                  className="w-32 border rounded-xl pl-7 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-              </div>
-              <button onClick={() => removePriceTier(i)} type="button"
-                className="text-red-400 hover:text-red-600 p-1">
-                <Icons.Close className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
+// ─── PRICING FORM (standalone tab) ────────────────────────────────────────────
+function PricingForm({ pricing, setPricing }) {
+  const handlePriceChange = (idx, field, val) =>
+    setPricing(prev => prev.map((p, i) => i === idx ? { ...p, [field]: val } : p));
+
+  const addPriceTier = () =>
+    setPricing(prev => [...prev, { durationType: "", price: "" }]);
+
+  const removePriceTier = (idx) =>
+    setPricing(prev => prev.filter((_, i) => i !== idx));
+
+  const sorted = sortPricing(pricing);
+
+  const DURATION_SUGGESTIONS = ["3 Hours", "6 Hours", "12 Hours", "24 Hours", "Full Day", "2 Days", "Weekly"];
+
+  return (
+    <div className="space-y-5">
+      {/* Header info */}
+      <div className="bg-teal-50 border border-teal-100 rounded-xl p-4">
+        <div className="flex items-start gap-3">
+          <PricingIcon className="w-5 h-5 text-teal-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-teal-800">Pricing Tiers</p>
+            <p className="text-xs text-teal-600 mt-0.5">Add multiple rental duration options. "12 Hours" tier will always appear last.</p>
+          </div>
         </div>
       </div>
+
+      {/* Pricing rows */}
+      <div className="space-y-3">
+        {sorted.length === 0 && (
+          <div className="text-center py-10 text-gray-400">
+            <PricingIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">No pricing tiers yet</p>
+            <p className="text-xs mt-1">Click "Add Tier" to get started</p>
+          </div>
+        )}
+        {sorted.map((p, i) => (
+          <div key={i} className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-3">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tier {i + 1}</span>
+              <button onClick={() => removePriceTier(i)} type="button"
+                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors">
+                <Icons.Trash className="w-3.5 h-3.5" />
+                Remove
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Duration Type</label>
+                <input value={p.durationType} placeholder="e.g. 24 Hours / Full Day"
+                  onChange={e => handlePriceChange(i, "durationType", e.target.value)}
+                  list={`dur-suggestions-${i}`}
+                  className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
+                <datalist id={`dur-suggestions-${i}`}>
+                  {DURATION_SUGGESTIONS.map(s => <option key={s} value={s} />)}
+                </datalist>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Price (₱)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-sm text-gray-400 font-medium">₱</span>
+                  <input type="number" value={p.price} min={0}
+                    onChange={e => handlePriceChange(i, "price", e.target.value)}
+                    placeholder="0.00"
+                    className="w-full border rounded-xl pl-8 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
+                </div>
+              </div>
+            </div>
+            {/* Preview pill */}
+            {p.durationType && p.price && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400">Preview:</span>
+                <span className="bg-teal-50 border border-teal-100 text-teal-700 text-xs font-semibold px-3 py-1 rounded-full">
+                  ₱{Number(p.price).toLocaleString()} / {p.durationType}
+                </span>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Add tier button */}
+      <button onClick={addPriceTier} type="button"
+        className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-teal-200 rounded-xl text-sm text-teal-600 hover:border-teal-400 hover:bg-teal-50 transition-colors font-medium">
+        <Icons.Plus className="w-4 h-4" />
+        Add Pricing Tier
+      </button>
     </div>
   );
 }
 
 // ─── EDIT CAR MODAL ───────────────────────────────────────────────────────────
 function EditCarModal({ car, brands, models, onClose, onSaved }) {
+  const [activeTab, setActiveTab] = useState("details");
   const [form, setForm]         = useState({
     shortDescription: car.shortDescription || "",
     longDescription:  car.longDescription  || "",
@@ -831,21 +892,70 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
     }
   };
 
+  const pricingCount = pricing.filter(p => p.durationType && p.price).length;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
-          <h2 className="font-bold text-lg text-gray-800">Edit Vehicle</h2>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex justify-between items-center p-5 border-b">
+          <div>
+            <h2 className="font-bold text-lg text-gray-800">Edit Vehicle</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{car.brandName} {car.modelName} · {car.platenumber || car.plateNumber}</p>
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
             <Icons.Close className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-5">
-          <CarForm form={form} setForm={setForm} pricing={pricing} setPricing={setPricing}
-            imagePreview={imagePreview} onImageChange={handleImageChange} brands={brands} models={models} />
+
+        {/* Tabs */}
+        <div className="flex gap-1 px-5 pt-4 border-b pb-0">
+          <button
+            onClick={() => setActiveTab("details")}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "details"
+                ? "border-teal-600 text-teal-700"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}>
+            <Icons.Car className="w-4 h-4" />
+            Details
+          </button>
+          <button
+            onClick={() => setActiveTab("pricing")}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors relative ${
+              activeTab === "pricing"
+                ? "border-teal-600 text-teal-700"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}>
+            <PricingIcon className="w-4 h-4" />
+            Pricing
+            {pricingCount > 0 && (
+              <span className="ml-1 bg-teal-100 text-teal-700 text-xs font-bold px-1.5 py-0.5 rounded-full">
+                {pricingCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Scrollable content */}
+        <div className="overflow-y-auto flex-1 p-5">
+          {activeTab === "details" ? (
+            <CarDetailsForm form={form} setForm={setForm}
+              imagePreview={imagePreview} onImageChange={handleImageChange}
+              brands={brands} models={models} />
+          ) : (
+            <PricingForm pricing={pricing} setPricing={setPricing} />
+          )}
           {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3 mt-4">{error}</p>}
-          <div className="flex justify-end gap-3 pt-5">
-            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-between items-center gap-3 p-5 border-t bg-gray-50 rounded-b-2xl">
+          <div className="text-xs text-gray-400">
+            {activeTab === "details" ? "Edit vehicle info, then switch to Pricing tab" : `${pricingCount} pricing tier${pricingCount !== 1 ? "s" : ""} configured`}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 bg-white">Cancel</button>
             <button onClick={handleSave} disabled={saving}
               className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
               {saving ? "Saving..." : "Save Changes"}
@@ -859,6 +969,7 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
 
 // ─── ADD CAR MODAL ────────────────────────────────────────────────────────────
 function AddCarModal({ brands, models, onClose, onSaved }) {
+  const [activeTab, setActiveTab] = useState("details");
   const [form, setForm]     = useState({ status: "Active", fuelType: "Gasoline", transmission: "Automatic" });
   const [pricing, setPricing] = useState([{ durationType: "", price: "" }]);
   const [imageFile, setImageFile] = useState(null);
@@ -906,21 +1017,67 @@ function AddCarModal({ brands, models, onClose, onSaved }) {
     }
   };
 
+  const pricingCount = pricing.filter(p => p.durationType && p.price).length;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex justify-between items-center p-5 border-b">
           <h2 className="font-bold text-lg text-gray-800">Add New Vehicle</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
             <Icons.Close className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-5">
-          <CarForm form={form} setForm={setForm} pricing={pricing} setPricing={setPricing}
-            imagePreview={imagePreview} onImageChange={handleImageChange} brands={brands} models={models} />
+
+        {/* Tabs */}
+        <div className="flex gap-1 px-5 pt-4 border-b pb-0">
+          <button
+            onClick={() => setActiveTab("details")}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "details"
+                ? "border-teal-600 text-teal-700"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}>
+            <Icons.Car className="w-4 h-4" />
+            Details
+          </button>
+          <button
+            onClick={() => setActiveTab("pricing")}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "pricing"
+                ? "border-teal-600 text-teal-700"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}>
+            <PricingIcon className="w-4 h-4" />
+            Pricing
+            {pricingCount > 0 && (
+              <span className="ml-1 bg-teal-100 text-teal-700 text-xs font-bold px-1.5 py-0.5 rounded-full">
+                {pricingCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Scrollable content */}
+        <div className="overflow-y-auto flex-1 p-5">
+          {activeTab === "details" ? (
+            <CarDetailsForm form={form} setForm={setForm}
+              imagePreview={imagePreview} onImageChange={handleImageChange}
+              brands={brands} models={models} />
+          ) : (
+            <PricingForm pricing={pricing} setPricing={setPricing} />
+          )}
           {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3 mt-4">{error}</p>}
-          <div className="flex justify-end gap-3 pt-5">
-            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-between items-center gap-3 p-5 border-t bg-gray-50 rounded-b-2xl">
+          <div className="text-xs text-gray-400">
+            {activeTab === "details" ? "Fill in vehicle info, then set Pricing" : `${pricingCount} pricing tier${pricingCount !== 1 ? "s" : ""} configured`}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 bg-white">Cancel</button>
             <button onClick={handleSave} disabled={saving}
               className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
               {saving ? "Adding..." : "Add Vehicle"}
