@@ -736,18 +736,50 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
 
 // ─── PRICING FORM (standalone tab) ────────────────────────────────────────────
 function PricingForm({ pricing, setPricing }) {
-  const handlePriceChange = (idx, field, val) =>
-    setPricing(prev => prev.map((p, i) => i === idx ? { ...p, [field]: val } : p));
-
-  const addPriceTier = () =>
-    setPricing(prev => [...prev, { durationType: "", price: "" }]);
-
-  const removePriceTier = (idx) =>
-    setPricing(prev => prev.filter((_, i) => i !== idx));
+  // editingIdx: which tier is currently in edit mode (-1 = none, "new" = new tier being added)
+  const [editingIdx, setEditingIdx] = useState(null);
+  // draft holds the temp values while editing
+  const [draft, setDraft] = useState({ durationType: "", price: "" });
 
   const sorted = sortPricing(pricing);
 
   const DURATION_SUGGESTIONS = ["3 Hours", "6 Hours", "12 Hours", "24 Hours", "Full Day", "2 Days", "Weekly"];
+
+  const startEdit = (idx) => {
+    setEditingIdx(idx);
+    setDraft({ durationType: sorted[idx].durationType, price: sorted[idx].price });
+  };
+
+  const cancelEdit = () => {
+    setEditingIdx(null);
+    setDraft({ durationType: "", price: "" });
+  };
+
+  const saveEdit = (idx) => {
+    // find the actual index in the unsorted pricing array matching the sorted item
+    const target = sorted[idx];
+    setPricing(prev => prev.map(p =>
+      p === target ? { ...p, durationType: draft.durationType, price: draft.price } : p
+    ));
+    cancelEdit();
+  };
+
+  const startAdd = () => {
+    setEditingIdx("new");
+    setDraft({ durationType: "", price: "" });
+  };
+
+  const saveNew = () => {
+    if (!draft.durationType || draft.price === "") return;
+    setPricing(prev => [...prev, { durationType: draft.durationType, price: draft.price }]);
+    cancelEdit();
+  };
+
+  const removeTier = (idx) => {
+    const target = sorted[idx];
+    setPricing(prev => prev.filter(p => p !== target));
+    if (editingIdx === idx) cancelEdit();
+  };
 
   return (
     <div className="space-y-5">
@@ -757,71 +789,143 @@ function PricingForm({ pricing, setPricing }) {
           <PricingIcon className="w-5 h-5 text-teal-600 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-semibold text-teal-800">Pricing Tiers</p>
-            <p className="text-xs text-teal-600 mt-0.5">Add multiple rental duration options. "12 Hours" tier will always appear last.</p>
+            <p className="text-xs text-teal-600 mt-0.5">Click Edit on a tier to modify it. "12 Hours" tier will always appear last.</p>
           </div>
         </div>
       </div>
 
-      {/* Pricing rows */}
+      {/* Existing tiers */}
       <div className="space-y-3">
-        {sorted.length === 0 && (
+        {sorted.length === 0 && editingIdx !== "new" && (
           <div className="text-center py-10 text-gray-400">
             <PricingIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
             <p className="text-sm">No pricing tiers yet</p>
-            <p className="text-xs mt-1">Click "Add Tier" to get started</p>
+            <p className="text-xs mt-1">Click "Add Pricing Tier" to get started</p>
           </div>
         )}
-        {sorted.map((p, i) => (
-          <div key={i} className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tier {i + 1}</span>
-              <button onClick={() => removePriceTier(i)} type="button"
-                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors">
-                <Icons.Trash className="w-3.5 h-3.5" />
-                Remove
-              </button>
+
+        {sorted.map((p, i) => {
+          const isEditing = editingIdx === i;
+          return (
+            <div key={i} className={`rounded-xl border transition-all ${isEditing ? "border-teal-300 bg-teal-50/40" : "border-gray-100 bg-gray-50"}`}>
+              {isEditing ? (
+                /* ── Edit mode ── */
+                <div className="p-4 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-semibold text-teal-700 uppercase tracking-wide">Editing Tier {i + 1}</span>
+                    <button onClick={() => removeTier(i)} type="button"
+                      className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors">
+                      <Icons.Trash className="w-3.5 h-3.5" />
+                      Remove
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Duration Type</label>
+                      <input value={draft.durationType} placeholder="e.g. 24 Hours"
+                        onChange={e => setDraft(d => ({ ...d, durationType: e.target.value }))}
+                        list="dur-suggestions"
+                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Price (₱)</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 text-sm text-gray-400 font-medium">₱</span>
+                        <input type="number" value={draft.price} min={0} placeholder="0.00"
+                          onChange={e => setDraft(d => ({ ...d, price: e.target.value }))}
+                          className="w-full border rounded-xl pl-8 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => saveEdit(i)} type="button"
+                      className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 transition-colors">
+                      <Icons.Edit className="w-3.5 h-3.5" />
+                      Save
+                    </button>
+                    <button onClick={cancelEdit} type="button"
+                      className="px-4 py-2 border rounded-xl text-xs text-gray-600 hover:bg-gray-100 transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* ── Read-only mode ── */
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-400 font-medium w-12">Tier {i + 1}</span>
+                    <span className="bg-teal-50 border border-teal-100 text-teal-700 text-xs font-semibold px-3 py-1 rounded-full">
+                      ₱{Number(p.price).toLocaleString()} / {p.durationType}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => removeTier(i)} type="button"
+                      className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                      <Icons.Trash className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => startEdit(i)} type="button"
+                      disabled={editingIdx !== null}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40">
+                      <Icons.Edit className="w-3.5 h-3.5" />
+                      Edit
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+          );
+        })}
+
+        {/* New tier form */}
+        {editingIdx === "new" && (
+          <div className="rounded-xl border border-teal-300 bg-teal-50/40 p-4 space-y-3">
+            <span className="text-xs font-semibold text-teal-700 uppercase tracking-wide">New Tier</span>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Duration Type</label>
-                <input value={p.durationType} placeholder="e.g. 24 Hours / Full Day"
-                  onChange={e => handlePriceChange(i, "durationType", e.target.value)}
-                  list={`dur-suggestions-${i}`}
+                <input value={draft.durationType} placeholder="e.g. 24 Hours"
+                  onChange={e => setDraft(d => ({ ...d, durationType: e.target.value }))}
+                  list="dur-suggestions"
                   className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
-                <datalist id={`dur-suggestions-${i}`}>
-                  {DURATION_SUGGESTIONS.map(s => <option key={s} value={s} />)}
-                </datalist>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Price (₱)</label>
                 <div className="relative">
                   <span className="absolute left-3 top-2.5 text-sm text-gray-400 font-medium">₱</span>
-                  <input type="number" value={p.price} min={0}
-                    onChange={e => handlePriceChange(i, "price", e.target.value)}
-                    placeholder="0.00"
+                  <input type="number" value={draft.price} min={0} placeholder="0.00"
+                    onChange={e => setDraft(d => ({ ...d, price: e.target.value }))}
                     className="w-full border rounded-xl pl-8 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
                 </div>
               </div>
             </div>
-            {/* Preview pill */}
-            {p.durationType && p.price && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-400">Preview:</span>
-                <span className="bg-teal-50 border border-teal-100 text-teal-700 text-xs font-semibold px-3 py-1 rounded-full">
-                  ₱{Number(p.price).toLocaleString()} / {p.durationType}
-                </span>
-              </div>
-            )}
+            <div className="flex gap-2 pt-1">
+              <button onClick={saveNew} type="button"
+                disabled={!draft.durationType || draft.price === ""}
+                className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 disabled:opacity-40 transition-colors">
+                <Icons.Edit className="w-3.5 h-3.5" />
+                Save
+              </button>
+              <button onClick={cancelEdit} type="button"
+                className="px-4 py-2 border rounded-xl text-xs text-gray-600 hover:bg-gray-100 transition-colors">
+                Cancel
+              </button>
+            </div>
           </div>
-        ))}
+        )}
       </div>
 
-      {/* Add tier button */}
-      <button onClick={addPriceTier} type="button"
-        className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-teal-200 rounded-xl text-sm text-teal-600 hover:border-teal-400 hover:bg-teal-50 transition-colors font-medium">
-        <Icons.Plus className="w-4 h-4" />
-        Add Pricing Tier
-      </button>
+      <datalist id="dur-suggestions">
+        {DURATION_SUGGESTIONS.map(s => <option key={s} value={s} />)}
+      </datalist>
+
+      {/* Add tier button — hidden while editing */}
+      {editingIdx === null && (
+        <button onClick={startAdd} type="button"
+          className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-teal-200 rounded-xl text-sm text-teal-600 hover:border-teal-400 hover:bg-teal-50 transition-colors font-medium">
+          <Icons.Plus className="w-4 h-4" />
+          Add Pricing Tier
+        </button>
+      )}
     </div>
   );
 }
