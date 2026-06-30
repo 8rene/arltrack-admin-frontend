@@ -166,15 +166,6 @@ function LoginForm() {
                 }
             />
 
-            <div className="flex justify-end">
-                <button
-                    type="button"
-                    className="text-sm text-arl-primary font-medium hover:underline"
-                >
-                    Forgot password?
-                </button>
-            </div>
-
             {error && (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
                     {error}
