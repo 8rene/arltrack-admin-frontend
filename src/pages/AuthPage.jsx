@@ -230,6 +230,7 @@ export default function AuthPage() {
                 />
                 <div id="heroOverlay" className="absolute bg-hero-overlay" />
             </section>
+            
         </div>
     );
 }
