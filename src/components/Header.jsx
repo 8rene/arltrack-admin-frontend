@@ -307,17 +307,6 @@ export default function Header({ title = "Dashboard", onNewBooking }) {
 
           <div className="w-px h-6 bg-gray-200" />
 
-          {/* New Booking */}
-          <button
-            onClick={onNewBooking}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-arl-primary text-white text-sm font-semibold"
-          >
-            <PlusIcon />
-            New Booking
-          </button>
-
-          <div className="w-px h-6 bg-gray-200" />
-
           {/* PROFILE */}
           <div className="relative" ref={dropdownRef}>
             <button
