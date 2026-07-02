@@ -1,8 +1,25 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../fireabase";
 
 const AuthContext = createContext(null);
+
+// Decode JWT payload without a library
+const decodeToken = (token) => {
+  try {
+    const payload = token.split(".")[1];
+    return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+  } catch {
+    return null;
+  }
+};
+
+// Returns ms until token expires, or 0 if already expired / invalid
+const msUntilExpiry = (token) => {
+  const decoded = decodeToken(token);
+  if (!decoded?.exp) return 0;
+  return decoded.exp * 1000 - Date.now();
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
@@ -14,6 +31,49 @@ export function AuthProvider({ children }) {
     }
   });
 
+  const logoutTimerRef = useRef(null);
+
+  // ── Logout helper (clears storage + state) ──────────────────────
+  const logout = useCallback(async () => {
+    clearTimeout(logoutTimerRef.current);
+    try { await signOut(auth); } catch {}
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setUser(null);
+  }, []);
+
+  // ── Schedule auto-logout when token expires ──────────────────────
+  const scheduleAutoLogout = useCallback((token) => {
+    clearTimeout(logoutTimerRef.current);
+    const ms = msUntilExpiry(token);
+    if (ms <= 0) {
+      // Already expired — log out immediately
+      logout();
+      return;
+    }
+    logoutTimerRef.current = setTimeout(() => {
+      logout();
+      // Small UX hint so the admin knows why they were logged out
+      alert("Your session has expired. Please log in again.");
+    }, ms);
+  }, [logout]);
+
+  // ── On mount: check existing token and schedule auto-logout ─────
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      const ms = msUntilExpiry(token);
+      if (ms <= 0) {
+        // Token already expired while the tab was closed
+        logout();
+      } else {
+        scheduleAutoLogout(token);
+      }
+    }
+    return () => clearTimeout(logoutTimerRef.current);
+  }, [logout, scheduleAutoLogout]);
+
+  // ── Login ────────────────────────────────────────────────────────
   const login = async (email, password) => {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -37,6 +97,7 @@ export function AuthProvider({ children }) {
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
       setUser(data.user);
+      scheduleAutoLogout(data.token);
 
       return { success: true, user: data.user };
 
@@ -80,13 +141,6 @@ export function AuthProvider({ children }) {
         message: "An unexpected error occurred. Please try again in a moment.",
       };
     }
-  };
-
-  const logout = async () => {
-    await signOut(auth);
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    setUser(null);
   };
 
   const getToken = () => localStorage.getItem("token");
