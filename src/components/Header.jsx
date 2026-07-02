@@ -118,11 +118,6 @@ function NotificationDropdown({ notifications }) {
       <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-gray-800 text-sm">Notifications</span>
-          {notifications.length > 0 && (
-            <span className="bg-teal-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-              {notifications.length}
-            </span>
-          )}
         </div>
       </div>
 
