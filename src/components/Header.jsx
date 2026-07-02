@@ -147,11 +147,16 @@ function NotificationDropdown({ notifications }) {
   );
 }
 
+const SEEN_KEY = "arl_admin_seen_notifs";
+const loadSeen  = () => { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || "[]")); } catch { return new Set(); } };
+const saveSeen  = (set) => { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])); } catch {} };
+
 /* ── Main Header ── */
 export default function Header({ title = "Dashboard", onNewBooking }) {
   const [profileOpen, setProfileOpen]     = useState(false);
   const [notifOpen, setNotifOpen]         = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [seenIds, setSeenIds]             = useState(loadSeen);
   const [user, setUser]                   = useState(null);
 
   const dropdownRef = useRef(null);
@@ -265,7 +270,22 @@ export default function Header({ title = "Dashboard", onNewBooking }) {
     .join("")
     .toUpperCase();
 
-  const hasNew = notifications.length > 0;
+  // Unseen = notifications whose ID is not in seenIds yet
+  const unseenCount = notifications.filter(n => !seenIds.has(n.id)).length;
+  const hasNew      = unseenCount > 0;
+
+  const handleBellClick = () => {
+    const opening = !notifOpen;
+    setNotifOpen(opening);
+    setProfileOpen(false);
+    if (opening) {
+      // Mark all currently loaded notifications as seen
+      const updated = new Set(seenIds);
+      notifications.forEach(n => { if (n.id) updated.add(n.id); });
+      setSeenIds(updated);
+      saveSeen(updated);
+    }
+  };
 
   return (
     <header className="w-full bg-white border-b border-gray-100 shadow-soft px-6 py-4 relative z-50">
@@ -283,7 +303,7 @@ export default function Header({ title = "Dashboard", onNewBooking }) {
           {/* 🔔 Notification Bell */}
           <div className="relative" ref={notifRef}>
             <button
-              onClick={() => { setNotifOpen(!notifOpen); setProfileOpen(false); }}
+              onClick={handleBellClick}
               className="relative w-10 h-10 flex items-center justify-center rounded-full bg-arl-light border hover:bg-teal-50 transition-colors"
             >
               <BellIcon />
@@ -291,9 +311,9 @@ export default function Header({ title = "Dashboard", onNewBooking }) {
                 <>
                   <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full animate-ping" />
                   <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
-                  {notifications.length > 1 && (
+                  {unseenCount > 1 && (
                     <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
-                      {notifications.length > 9 ? "9+" : notifications.length}
+                      {unseenCount > 9 ? "9+" : unseenCount}
                     </span>
                   )}
                 </>
