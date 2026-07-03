@@ -74,9 +74,23 @@ function NotifRow({ n }) {
   const meta = notifMeta(n);
   const isInventory = n.type === "before_trip_damage" || n.type === "after_trip_damage";
   const isBooking   = !isInventory && n.type !== "damaged_part" && !n._type;
+  const isDamaged   = n._type === "damaged_part";
+
+  const handleClick = () => {
+    if (isBooking) {
+      window.location.href = `/bookings?id=${n.bookingID || n.id}`;
+    } else if (isInventory) {
+      window.location.href = `/maintenance`;
+    } else if (isDamaged) {
+      window.location.href = `/inventory`;
+    }
+  };
 
   return (
-    <div className="flex items-start gap-3 px-5 py-3.5 hover:bg-teal-50 transition-colors">
+    <div
+      onClick={handleClick}
+      className="flex items-start gap-3 px-5 py-3.5 hover:bg-teal-50 transition-colors cursor-pointer"
+    >
       <div className={`w-9 h-9 rounded-full ${meta.bg} flex items-center justify-center shrink-0 mt-0.5 text-base`}>
         {meta.emoji}
       </div>
@@ -89,7 +103,7 @@ function NotifRow({ n }) {
         )}
 
         {/* Legacy damaged part */}
-        {n._type === "damaged_part" && (
+        {isDamaged && (
           <>
             <p className="text-xs text-gray-500 mt-0.5">{n.carPartName || "Unknown Part"}</p>
             <p className="text-xs text-gray-400">Car: {n.carName || n.carID || "—"}</p>
