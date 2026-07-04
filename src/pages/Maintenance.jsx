@@ -5,7 +5,75 @@ import {
 } from "firebase/firestore";
 import { db } from "../fireabase";
 
-/* ── helpers ── */
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+
+const IconAlertCircle = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <line x1="12" y1="8" x2="12" y2="12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="16" x2="12.01" y2="16" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWarning = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWrench = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconCheck = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClipboard = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCalendar = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconKey = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="8" cy="12" r="4" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 12h8M18 12v3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconSiren = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 2v2M4.22 4.22l1.42 1.42M2 12h2M20 12h2M18.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M7 13a5 5 0 0110 0v1H7v-1z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
+    <rect x="5" y="14" width="14" height="3" rx="1" stroke="currentColor" strokeWidth="1.75" />
+  </svg>
+);
+
+const IconX = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
 const toDate = (val) => {
   if (!val) return null;
   if (val?.toDate) return val.toDate();
@@ -44,6 +112,7 @@ const STATUS_BG = {
   Cancelled:    "bg-gray-100 border border-gray-200",
   Overdue:      "bg-red-50 border border-red-200",
 };
+
 function MainStatusBadge({ status }) {
   const dot = STATUS_DOT[status] || "bg-gray-400";
   const bg  = STATUS_BG[status]  || "bg-gray-50 border border-gray-200";
@@ -54,88 +123,31 @@ function MainStatusBadge({ status }) {
     </span>
   );
 }
-const STATUS_STYLE = Object.fromEntries(Object.keys(STATUS_BG).map(k => [k, STATUS_BG[k]]));
 
 const MAINTENANCE_STATUSES = ["Scheduled", "In Progress", "Completed", "Cancelled", "Overdue"];
-
-const MAINTENANCE_BASIS = [
-  { value: "post_rental",  label: "🔄 Post-Rental" },
-  { value: "monthly",      label: "📅 Monthly" },
-  { value: "mileage",      label: "📍 Mileage-based" },
-  { value: "annual",       label: "📆 Annual" },
-  { value: "repair",       label: "🔧 Repair / Unplanned" },
-];
-
-const SERVICES_CATEGORIES = [
-  {
-    category: "Post-Rental Check",
-    services: [
-      "Exterior wash & clean",
-      "Interior cleaning / vacuuming",
-      "Fuel level check / top-up",
-      "Tire pressure check",
-      "Scratch / dent inspection",
-      "Dashboard warning lights check",
-      "Wiper condition check",
-    ],
-  },
-  {
-    category: "Routine Maintenance",
-    services: [
-      "Oil level check",
-      "Brake fluid check",
-      "Coolant level check",
-      "Battery condition check",
-      "Tire tread depth check",
-      "Lights check",
-      "Air filter check",
-      "Windshield condition",
-    ],
-  },
-  {
-    category: "Scheduled Service",
-    services: [
-      "Oil & filter change",
-      "Tire rotation",
-      "Brake inspection",
-      "Transmission fluid check",
-      "Spark plug check",
-      "Belt & hose inspection",
-      "Wheel alignment check",
-    ],
-  },
-  {
-    category: "Major / Annual",
-    services: [
-      "LTO registration renewal",
-      "Comprehensive engine inspection",
-      "Suspension check",
-      "Exhaust system check",
-      "AC system check",
-      "Full brake system overhaul check",
-    ],
-  },
-];
+const MAINTENANCE_TYPES    = ["Routine Maintenance", "Oil Change", "Brake Inspection", "Tire Rotation", "Battery Check", "Engine Check", "Transmission Service", "Suspension Check", "Electrical Check", "Other"];
 
 const EMPTY_FORM = {
-  carID: "", basis: "", services: [], otherService: "", description: "", cost: "",
+  carID: "", type: "", description: "", cost: "",
   maintenanceDate: "", nextMaintenanceDate: "", status: "Scheduled",
 };
 
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
+
 export default function Maintenance() {
-  const [records, setRecords]           = useState([]);
-  const [cars, setCars]                 = useState([]);
-  const [loading, setLoading]           = useState(true);
-  const [search, setSearch]             = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
-  const [editRecord, setEditRecord]     = useState(null);
-  const [showAdd, setShowAdd]           = useState(false);
-  const [form, setForm]                 = useState(EMPTY_FORM);
-  const [saving, setSaving]             = useState(false);
-  const [toast, setToast]               = useState(null);
-  const [view, setView]                 = useState("table");
-  const [calMonth, setCalMonth]         = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
-  const [damagedParts, setDamagedParts] = useState([]);
+  const [records, setRecords]             = useState([]);
+  const [cars, setCars]                   = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const [search, setSearch]               = useState("");
+  const [statusFilter, setStatusFilter]   = useState("All");
+  const [editRecord, setEditRecord]       = useState(null);
+  const [showAdd, setShowAdd]             = useState(false);
+  const [form, setForm]                   = useState(EMPTY_FORM);
+  const [saving, setSaving]               = useState(false);
+  const [toast, setToast]                 = useState(null);
+  const [view, setView]                   = useState("table");
+  const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [damagedParts, setDamagedParts]   = useState([]);
   const [replacedParts, setReplacedParts] = useState([]);
 
   const showToast = (msg, type = "success") => {
@@ -170,7 +182,7 @@ export default function Maintenance() {
     const brandMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data()]));
     const modelMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, d.data()]));
     return carsSnap.docs.map(d => {
-      const c = { id: d.id, ...d.data() };
+      const c     = { id: d.id, ...d.data() };
       const model = modelMap[c.modelID] || {};
       const brand = brandMap[model.brandID] || {};
       return { ...c, label: `${brand.brandName || ""} ${model.modelName || ""}`.trim() || d.id };
@@ -223,7 +235,7 @@ export default function Maintenance() {
       carIDsWithRecords.forEach(carID => {
         const afterRec  = afterByCarID[carID];
         const beforeRec = beforeByCarID[carID];
-        const record = afterRec || beforeRec;
+        const record    = afterRec || beforeRec;
         if (!record) return;
         const carLabel = carMap[carID]?.label || "Unknown Car";
         const source   = afterRec ? "after_trip" : "before_trip";
@@ -256,23 +268,14 @@ export default function Maintenance() {
   const completed = records.filter(r => r.status === "Completed").length;
 
   const handleSave = async () => {
-    if (!form.carID || !form.basis || !form.maintenanceDate) {
-      showToast("Car, maintenance basis, and date are required.", "error"); return;
-    }
-    if (form.services.length === 0 && !form.otherService.trim()) {
-      showToast("Please select at least one service performed.", "error"); return;
+    if (!form.carID || !form.type || !form.maintenanceDate) {
+      showToast("Car, type, and maintenance date are required.", "error"); return;
     }
     setSaving(true);
     try {
-      const allServices = [
-        ...form.services,
-        ...(form.otherService.trim() ? [`Other: ${form.otherService.trim()}`] : []),
-      ];
       const payload = {
         carID:               form.carID,
-        basis:               form.basis,
-        type:                form.basis, // keep backward-compat
-        services:            allServices,
+        type:                form.type,
         description:         form.description,
         cost:                Number(form.cost) || 0,
         maintenanceDate:     form.maintenanceDate ? new Date(form.maintenanceDate) : null,
@@ -296,9 +299,7 @@ export default function Maintenance() {
   const openEdit = (r) => {
     setForm({
       carID:               r.carID || "",
-      basis:               r.basis || r.type || "",
-      services:            r.services || [],
-      otherService:        "",
+      type:                r.type || "",
       description:         r.description || "",
       cost:                r.cost || "",
       maintenanceDate:     isoDate(r.maintenanceDate),
@@ -357,12 +358,12 @@ export default function Maintenance() {
             className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">↺</button>
           <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
             <button onClick={() => setView("table")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${view === "table" ? "bg-white text-arl-dark shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
-              📋 Table
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${view === "table" ? "bg-white text-arl-dark shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+              <IconClipboard className="w-3.5 h-3.5" /> Table
             </button>
             <button onClick={() => setView("calendar")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${view === "calendar" ? "bg-white text-arl-dark shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
-              📅 Calendar
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${view === "calendar" ? "bg-white text-arl-dark shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+              <IconCalendar className="w-3.5 h-3.5" /> Calendar
             </button>
           </div>
           <button onClick={openAdd}
@@ -374,13 +375,13 @@ export default function Maintenance() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard icon="🔴" value={overdue}   label="Overdue"        color="red" />
-        <StatCard icon="⚠️" value={dueSoon}   label="Due This Week"  color="yellow" />
-        <StatCard icon="🔧" value={inService} label="In Progress"    color="blue" />
-        <StatCard icon="✅" value={completed} label="Completed"      color="green" />
+        <StatCard icon={<IconAlertCircle className="w-5 h-5" />} value={overdue}   label="Overdue"       color="red" />
+        <StatCard icon={<IconWarning     className="w-5 h-5" />} value={dueSoon}   label="Due This Week" color="yellow" />
+        <StatCard icon={<IconWrench      className="w-5 h-5" />} value={inService} label="In Progress"   color="blue" />
+        <StatCard icon={<IconCheck       className="w-5 h-5" />} value={completed} label="Completed"     color="green" />
       </div>
 
-      {/* ── Parts Attention Panel ── */}
+      {/* Parts Attention Panel */}
       {(damagedParts.length > 0 || replacedParts.length > 0) && (
         <div className="space-y-3">
           {damagedParts.length > 0 && (() => {
@@ -391,7 +392,8 @@ export default function Maintenance() {
                 {damagedOnly.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-2xl p-4 space-y-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-red-500 font-bold text-sm">🔴 Damaged Parts Require Attention</span>
+                      <IconAlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                      <span className="text-red-500 font-bold text-sm">Damaged Parts Require Attention</span>
                       <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">{damagedOnly.length}</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -413,7 +415,8 @@ export default function Maintenance() {
                 {stolenOnly.length > 0 && (
                   <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 space-y-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-purple-600 font-bold text-sm">🚨 Stolen Parts Require Attention</span>
+                      <IconSiren className="w-4 h-4 text-purple-600 shrink-0" />
+                      <span className="text-purple-600 font-bold text-sm">Stolen Parts Require Attention</span>
                       <span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full font-semibold">{stolenOnly.length}</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -439,13 +442,14 @@ export default function Maintenance() {
           {replacedParts.filter(p => p.status !== "Stolen").length > 0 && (
             <div className="bg-green-50 border border-green-200 rounded-2xl p-4 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-green-600 font-bold text-sm">🔧 Replaced Damaged Car Parts</span>
+                <IconWrench className="w-4 h-4 text-green-600 shrink-0" />
+                <span className="text-green-600 font-bold text-sm">Replaced Damaged Car Parts</span>
                 <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">{replacedParts.filter(p => p.status !== "Stolen").length}</span>
               </div>
               <div className="flex flex-wrap gap-2">
                 {replacedParts.filter(p => p.status !== "Stolen").map(p => (
                   <span key={p.id} className="flex items-center gap-1.5 bg-green-100 text-green-700 px-3 py-1.5 rounded-xl text-xs font-medium">
-                    <span className="text-green-500">✅</span>
+                    <IconCheck className="w-3.5 h-3.5 text-green-500 shrink-0" />
                     <span>{p.carPartName} — {p.carLabel}</span>
                     <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-200 text-green-800">Replaced</span>
                     {p.replacedAt && (
@@ -463,13 +467,14 @@ export default function Maintenance() {
           {replacedParts.filter(p => p.status === "Stolen").length > 0 && (
             <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-blue-600 font-bold text-sm">🔑 Replaced Stolen Car Parts</span>
+                <IconKey className="w-4 h-4 text-blue-600 shrink-0" />
+                <span className="text-blue-600 font-bold text-sm">Replaced Stolen Car Parts</span>
                 <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">{replacedParts.filter(p => p.status === "Stolen").length}</span>
               </div>
               <div className="flex flex-wrap gap-2">
                 {replacedParts.filter(p => p.status === "Stolen").map(p => (
                   <span key={p.id} className="flex items-center gap-1.5 bg-blue-100 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-medium">
-                    <span className="text-blue-500">✅</span>
+                    <IconCheck className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                     <span>{p.carPartName} — {p.carLabel}</span>
                     <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-200 text-blue-800">Replaced</span>
                     {p.replacedAt && (
@@ -486,7 +491,7 @@ export default function Maintenance() {
         </div>
       )}
 
-      {/* ── CALENDAR VIEW ── */}
+      {/* CALENDAR VIEW */}
       {view === "calendar" && (
         <MaintenanceCalendar
           records={records}
@@ -496,7 +501,7 @@ export default function Maintenance() {
         />
       )}
 
-      {/* ── TABLE VIEW ── */}
+      {/* TABLE VIEW */}
       {view === "table" && <div className="flex gap-5 items-start">
         <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
           <table className="w-full text-sm table-fixed">
@@ -565,7 +570,9 @@ export default function Maintenance() {
                 {editRecord ? "Edit Record" : "Schedule Maintenance"}
               </h2>
               <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
-                className="text-gray-400 hover:text-gray-600">✕</button>
+                className="text-gray-400 hover:text-gray-600">
+                <IconX className="w-4 h-4" />
+              </button>
             </div>
             <Field label="Vehicle *">
               <select value={form.carID} onChange={e => setForm(f => ({...f, carID: e.target.value}))}
@@ -574,61 +581,12 @@ export default function Maintenance() {
                 {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.platenumber ? `· ${c.platenumber}` : ""}</option>)}
               </select>
             </Field>
-            <Field label="Maintenance Basis *">
-              <div className="grid grid-cols-1 gap-1.5">
-                {MAINTENANCE_BASIS.map(b => (
-                  <label key={b.value} className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer transition-all text-sm ${
-                    form.basis === b.value
-                      ? "border-teal-500 bg-teal-50 text-teal-700 font-semibold"
-                      : "border-gray-200 text-gray-600 hover:border-gray-300"
-                  }`}>
-                    <input type="radio" name="basis" value={b.value}
-                      checked={form.basis === b.value}
-                      onChange={() => setForm(f => ({ ...f, basis: b.value }))}
-                      className="accent-teal-600" />
-                    {b.label}
-                  </label>
-                ))}
-              </div>
-            </Field>
-
-            <Field label="Services Performed *">
-              <div className="space-y-4">
-                {SERVICES_CATEGORIES.map(cat => (
-                  <div key={cat.category}>
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">{cat.category}</p>
-                    <div className="space-y-1">
-                      {cat.services.map(svc => (
-                        <label key={svc} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:text-teal-700">
-                          <input type="checkbox"
-                            checked={form.services.includes(svc)}
-                            onChange={(e) => {
-                              setForm(f => ({
-                                ...f,
-                                services: e.target.checked
-                                  ? [...f.services, svc]
-                                  : f.services.filter(s => s !== svc),
-                              }));
-                            }}
-                            className="accent-teal-600 w-4 h-4" />
-                          {svc}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                {/* Other (free text) */}
-                <div>
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Other</p>
-                  <input
-                    type="text"
-                    value={form.otherService}
-                    onChange={e => setForm(f => ({ ...f, otherService: e.target.value }))}
-                    placeholder="Describe other service…"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none"
-                  />
-                </div>
-              </div>
+            <Field label="Maintenance Type *">
+              <select value={form.type} onChange={e => setForm(f => ({...f, type: e.target.value}))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
+                <option value="">Select type…</option>
+                {MAINTENANCE_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
             </Field>
             <Field label="Description">
               <textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
@@ -679,11 +637,16 @@ export default function Maintenance() {
   );
 }
 
+// ─── STAT CARD ────────────────────────────────────────────────────────────────
+
 function StatCard({ icon, value, label, color }) {
-  const colors = { red:"text-red-500", yellow:"text-yellow-600", blue:"text-blue-600", green:"text-green-600" };
+  const colors = { red: "text-red-500", yellow: "text-yellow-600", blue: "text-blue-600", green: "text-green-600" };
+  const bgColors = { red: "bg-red-50 text-red-500", yellow: "bg-yellow-50 text-yellow-600", blue: "bg-blue-50 text-blue-600", green: "bg-green-50 text-green-600" };
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4 flex items-center gap-3">
-      <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-100 text-lg">{icon}</div>
+      <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>
+        {icon}
+      </div>
       <div>
         <div className={`text-2xl font-bold ${colors[color] || "text-gray-800"}`}>{value}</div>
         <div className="text-xs text-gray-500">{label}</div>
@@ -691,6 +654,8 @@ function StatCard({ icon, value, label, color }) {
     </div>
   );
 }
+
+// ─── FIELD ────────────────────────────────────────────────────────────────────
 
 function Field({ label, children }) {
   return (
@@ -701,7 +666,8 @@ function Field({ label, children }) {
   );
 }
 
-/* ── Maintenance Calendar ── */
+// ─── MAINTENANCE CALENDAR ────────────────────────────────────────────────────
+
 function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
   const { y, m } = calMonth;
   const monthName = new Date(y, m, 1).toLocaleString("en-PH", { month: "long", year: "numeric" });
@@ -809,7 +775,9 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
             <h3 className="font-bold text-gray-800 text-sm">
               {new Date(y, m, selected.day).toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
             </h3>
-            <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+            <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
+              <IconX className="w-4 h-4" />
+            </button>
           </div>
           <div className="space-y-2">
             {selected.recs.map((r, i) => (
