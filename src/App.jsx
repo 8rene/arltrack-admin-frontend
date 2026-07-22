@@ -9,7 +9,8 @@ import Dashboard from "./pages/Dashboard";
 import Bookings from "./pages/Bookings";
 import Fleet from "./pages/Fleet";
 import Customers from "./pages/Customers";
-import GPS from "./pages/GPS";
+import CarTracking from "./pages/CarTracking";
+import DeviceTrack from "./pages/DeviceTrack";
 import Maintenance from "./pages/Maintenance";
 import Inventory from "./pages/Inventory";
 import Analytics from "./pages/Analytics";
@@ -83,9 +84,14 @@ function AppRoutes() {
                     <DashboardLayout><Customers /></DashboardLayout>
                 </ProtectedRoute>
             } />
-            <Route path="/gps" element={
+            <Route path="/car-tracking" element={
                 <ProtectedRoute>
-                    <DashboardLayout><GPS /></DashboardLayout>
+                    <DashboardLayout><CarTracking /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/gps-setup" element={
+                <ProtectedRoute>
+                    <DashboardLayout><DeviceTrack /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/maintenance" element={

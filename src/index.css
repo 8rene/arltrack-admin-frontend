@@ -48,6 +48,18 @@ main.flex-1 > * {
   min-height: 100%;
 }
 
+/* Floating pill confirmation — rises slightly and fades, matching the
+   floating "Car Information" / "Logs" pill-button language used over maps. */
+@keyframes float-fade {
+  0%   { opacity: 0;   transform: translateY(4px)  scale(0.96); }
+  15%  { opacity: 1;   transform: translateY(0)     scale(1);    }
+  80%  { opacity: 1;   transform: translateY(-2px)  scale(1);    }
+  100% { opacity: 0;   transform: translateY(-10px) scale(0.98); }
+}
+.animate-float-fade {
+  animation: float-fade 1.8s ease-out forwards;
+}
+
 /* Hide scrollbar but keep scroll functional */
 .scrollbar-hide {
   -ms-overflow-style: none;  /* IE / Edge */
@@ -266,4 +278,21 @@ main.flex-1 > * {
 .dark .cursor-not-allowed.bg-gray-50 {
   background-color: #181b27 !important;
   color: #475569 !important;
+}
+/* ── Geofence / coding-restriction pulsing banner (Car Tracking: Live,
+   Traceback, History review, Review upload) ─────────────────────────── */
+@keyframes geofencePulse {
+  0%   { transform: scale(1);    opacity: 1; }
+  50%  { transform: scale(1.05); opacity: 0.85; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+.geofence-pulse-banner {
+  animation: geofencePulse 1.2s ease-in-out infinite;
+}
+.geofence-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #ffffff;
+  display: inline-block;
 }
