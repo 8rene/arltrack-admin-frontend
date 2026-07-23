@@ -529,7 +529,11 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
             .addTo(leafletMap.current)
             .on("click", () => handleCarClick(car.id));
         }
-        entry.current.bindPopup(`<b>${car.name}</b><br>${fmtTime(cur)}`);
+        entry.current.bindPopup(
+          `<b>${car.name}</b><br>${fmtTime(cur)}<br>` +
+          `Speed: ${typeof cur.speed === "number" ? cur.speed.toFixed(1) : "0.0"} km/h` +
+          (cur.offline ? `<br><span style="color:#d97706">📦 Offline flush</span>` : "")
+        );
       } else if (entry.current) {
         entry.current.remove();
         entry.current = null;
@@ -637,7 +641,10 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
                 <p className="text-[10px] text-gray-300 italic mt-1 ml-6">No data for this date</p>
               )}
               {on && cur && (
-                <p className="text-[10px] text-gray-500 mt-0.5 ml-6 font-mono">▶ {fmtTime(cur)}</p>
+                <p className="text-[10px] text-gray-500 mt-0.5 ml-6 font-mono">
+                  ▶ {fmtTime(cur)} · {typeof cur.speed === "number" ? cur.speed.toFixed(1) : "0.0"} km/h
+                  {cur.offline && <span className="text-amber-600 ml-1">📦</span>}
+                </p>
               )}
             </button>
           );
@@ -691,7 +698,17 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
             <div className="px-4 py-3 border-t border-gray-100">
               <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1.5">
                 <span>{fmtTime(firstRec)}</span>
-                <span className="font-mono text-sm text-gray-700 font-semibold">{fmtTime(curRec)}</span>
+                <span className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-gray-700 font-semibold">{fmtTime(curRec)}</span>
+                  {curRec && (
+                    <span className="font-mono text-gray-500">
+                      {typeof curRec.speed === "number" ? curRec.speed.toFixed(1) : "0.0"} km/h
+                    </span>
+                  )}
+                  {curRec?.offline && (
+                    <span className="text-amber-600 font-medium">📦 Offline flush</span>
+                  )}
+                </span>
                 <span>{fmtTime(lastRec)}</span>
               </div>
               <input

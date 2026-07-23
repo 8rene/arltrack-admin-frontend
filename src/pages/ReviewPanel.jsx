@@ -24,14 +24,24 @@ function groupRows(rows, fallbackName) {
   const hasCarId = rows.some(r => r.carId !== undefined && r.carId !== "");
   const byCar = {};
 
+  // speed/offline are optional on either shape — default to 0/false so
+  // older exports without these fields still work, same as the backend.
+  const withExtras = (r) => ({
+    lat: r.lat,
+    lng: r.lng,
+    at: r.at,
+    speed: typeof r.speed === "number" && !Number.isNaN(r.speed) ? r.speed : 0,
+    offline: r.offline === true || r.offline === "true" || r.offline === "TRUE",
+  });
+
   if (hasCarId) {
     rows.forEach(r => {
       if (!r.carId || Number.isNaN(r.lat) || Number.isNaN(r.lng) || !r.at) return;
-      (byCar[r.carId] = byCar[r.carId] || []).push({ lat: r.lat, lng: r.lng, at: r.at });
+      (byCar[r.carId] = byCar[r.carId] || []).push(withExtras(r));
     });
   } else {
     const clean = rows.filter(r => !Number.isNaN(r.lat) && !Number.isNaN(r.lng) && r.at);
-    if (clean.length) byCar[fallbackName] = clean.map(r => ({ lat: r.lat, lng: r.lng, at: r.at }));
+    if (clean.length) byCar[fallbackName] = clean.map(withExtras);
   }
 
   const cars = Object.keys(byCar).map(id => ({

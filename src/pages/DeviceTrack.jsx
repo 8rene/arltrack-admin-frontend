@@ -23,23 +23,25 @@ function timeAgo(iso) {
   return `${Math.floor(diff / 3600)}h ago`;
 }
 
-function makeDeviceIcon(online) {
+function makeDeviceIcon(online, focused = false) {
+  const size = focused ? 38 : 30;
   return L.divIcon({
     className: "",
     html: `<div style="
       background:${online ? "#0d9488" : "#9ca3af"};
-      color:white;border-radius:50%;width:30px;height:30px;
+      color:white;border-radius:50%;width:${size}px;height:${size}px;
       display:flex;align-items:center;justify-content:center;
-      box-shadow:0 2px 8px rgba(0,0,0,0.3);
-      border:2px solid white;">
+      box-shadow:0 2px 10px rgba(0,0,0,${focused ? "0.5" : "0.3"});
+      border:${focused ? "3px solid #134e4a" : "2px solid white"};
+      transition:all .15s;">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="white" stroke-width="2">
         <ellipse cx="12" cy="12" rx="3" ry="3"/>
         <path d="M6.3 6.3a8 8 0 000 11.4M17.7 6.3a8 8 0 010 11.4"/>
       </svg>
     </div>`,
-    iconSize:   [30, 30],
-    iconAnchor: [15, 15],
-    popupAnchor:[0, -18],
+    iconSize:   [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor:[0, -(size / 2 + 3)],
   });
 }
 
@@ -119,6 +121,7 @@ export default function DeviceTrack() {
   const [assignDraft, setAssignDraft] = useState({}); // { [deviceId]: carId }
   const [copiedId,    setCopiedId]    = useState(null);
   const [locations,   setLocations]   = useState({}); // { [gpsDeviceID]: { lat, lng, updatedAt } }
+  const [focusedDeviceId, setFocusedDeviceId] = useState(null);
 
   const token       = localStorage.getItem("token");
   const mapRef      = useRef(null);
@@ -166,7 +169,13 @@ export default function DeviceTrack() {
       const map = {};
       (json.data || []).forEach(loc => {
         if (loc.deviceId && loc.lat && loc.lng) {
-          map[loc.deviceId] = { lat: loc.lat, lng: loc.lng, updatedAt: loc.updatedAt };
+          map[loc.deviceId] = {
+            lat: loc.lat,
+            lng: loc.lng,
+            updatedAt: loc.updatedAt,
+            speed: typeof loc.speed === "number" ? loc.speed : 0,
+            offline: loc.offline === true,
+          };
         }
       });
       setLocations(map);
@@ -211,6 +220,7 @@ export default function DeviceTrack() {
       seenIds.add(device.gpsDeviceID);
 
       const online = loc.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < ONLINE_WINDOW_MS);
+      const focused = focusedDeviceId === device.gpsDeviceID;
       const assignedCar = allCars.find(c => c.id === device.carID);
       const carLabel = assignedCar
         ? [brandMap[assignedCar.brandID], modelMap[assignedCar.modelID]].filter(Boolean).join(" ") || assignedCar.id
@@ -219,17 +229,20 @@ export default function DeviceTrack() {
       const popupHtml = `<b>${device.gpsName}</b><br>
         ${carLabel ? `Car: ${carLabel}<br>` : `<span style="color:#9ca3af">Not assigned to a car</span><br>`}
         <span style="color:${online ? "#0d9488" : "#9ca3af"}">${online ? "● Online" : "○ Offline"}</span>
-        · <span style="color:#9ca3af;font-size:11px">${timeAgo(loc.updatedAt)}</span>`;
+        · <span style="color:#9ca3af;font-size:11px">${timeAgo(loc.updatedAt)}</span><br>
+        Speed: ${typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h
+        ${loc.offline ? `<br><span style="color:#d97706;font-size:11px">📦 Buffered ping</span>` : ""}`;
 
       const existing = markersRef.current[device.gpsDeviceID];
       if (existing) {
         existing.setLatLng([loc.lat, loc.lng]);
-        existing.setIcon(makeDeviceIcon(online));
+        existing.setIcon(makeDeviceIcon(online, focused));
         existing.setPopupContent(popupHtml);
       } else {
-        markersRef.current[device.gpsDeviceID] = L.marker([loc.lat, loc.lng], { icon: makeDeviceIcon(online) })
+        markersRef.current[device.gpsDeviceID] = L.marker([loc.lat, loc.lng], { icon: makeDeviceIcon(online, focused) })
           .addTo(leafletMap.current)
-          .bindPopup(popupHtml);
+          .bindPopup(popupHtml)
+          .on("click", () => setFocusedDeviceId(device.gpsDeviceID));
       }
     });
 
@@ -240,7 +253,16 @@ export default function DeviceTrack() {
         delete markersRef.current[id];
       }
     });
-  }, [gpsDevices, locations, allCars, brandMap, modelMap]);
+  }, [gpsDevices, locations, allCars, brandMap, modelMap, focusedDeviceId]);
+
+  // ── Fly the map to whichever device was just clicked (card or marker) ─────
+  useEffect(() => {
+    if (!focusedDeviceId || !leafletMap.current) return;
+    const loc = locations[focusedDeviceId];
+    if (!loc) return;
+    leafletMap.current.flyTo([loc.lat, loc.lng], 15, { duration: 0.6 });
+    markersRef.current[focusedDeviceId]?.openPopup();
+  }, [focusedDeviceId, locations]);
 
   const onlineCount = gpsDevices.filter(d => {
     const loc = locations[d.gpsDeviceID];
@@ -443,14 +465,28 @@ export default function DeviceTrack() {
             const isBusy       = busyId === device.id;
             const assignedCar  = allCars.find(c => c.id === device.carID);
             const isCopied     = copiedId === device.gpsDeviceID;
+            const loc          = locations[device.gpsDeviceID];
+            const online       = !!(loc?.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < ONLINE_WINDOW_MS));
 
             return (
-              <div key={device.id} className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4">
+              <div
+                key={device.id}
+                onClick={() => {
+                  if (loc) {
+                    setFocusedDeviceId(device.gpsDeviceID);
+                  } else {
+                    setNotice({ type: "warn", msg: `${device.gpsName} has no GPS ping to focus on yet.` });
+                  }
+                }}
+                className={`bg-white rounded-2xl border-2 shadow-soft p-4 transition-all cursor-pointer ${
+                  focusedDeviceId === device.gpsDeviceID ? "border-teal-500 ring-1 ring-teal-200" : "border-gray-100 hover:border-teal-300"
+                }`}
+              >
                 <div className="flex items-start justify-between gap-3">
                   {/* Name / rename */}
                   <div className="flex-1 min-w-0">
                     {isEditing ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                         <input
                           value={editName}
                           onChange={(e) => setEditName(e.target.value)}
@@ -468,7 +504,11 @@ export default function DeviceTrack() {
                       <div className="flex items-center gap-2">
                         <Icons.Satellite className="w-4 h-4 text-teal-600 shrink-0" />
                         <p className="font-bold text-gray-800 text-sm truncate">{device.gpsName}</p>
-                        <button onClick={() => startEdit(device)} className="text-gray-300 hover:text-teal-600 shrink-0">
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${online ? "bg-teal-500" : "bg-gray-300"}`}
+                          title={online ? "Online — reported within 5 min" : "Offline / stale"}
+                        />
+                        <button onClick={(e) => { e.stopPropagation(); startEdit(device); }} className="text-gray-300 hover:text-teal-600 shrink-0">
                           <Icons.Edit className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -480,7 +520,7 @@ export default function DeviceTrack() {
                         {device.gpsDeviceID}
                       </code>
                       <button
-                        onClick={() => handleCopyId(device.gpsDeviceID)}
+                        onClick={(e) => { e.stopPropagation(); handleCopyId(device.gpsDeviceID); }}
                         title="Copy device ID for IoT setup"
                         className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
                           isCopied ? "text-green-600" : "text-gray-400 hover:text-teal-600"
@@ -502,11 +542,35 @@ export default function DeviceTrack() {
                     ) : (
                       <p className="text-xs text-gray-400 italic mt-1.5">Not assigned to a car</p>
                     )}
+
+                    {/* Last GPS ping — the device reports this anyway, so surface it here
+                        instead of only on the map marker's popup. */}
+                    {loc ? (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                        <span className={`font-medium flex items-center gap-1 ${online ? "text-teal-600" : "text-gray-400"}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${online ? "bg-teal-500" : "bg-gray-300"}`} />
+                          {online ? "Online" : "Offline"} · {timeAgo(loc.updatedAt)}
+                        </span>
+                        <span className="text-gray-400 font-mono">
+                          {loc.speed.toFixed(1)} km/h
+                        </span>
+                        {loc.offline && (
+                          <span className="text-amber-600 font-medium bg-amber-50 rounded px-1.5 py-0.5">
+                            📦 Buffered ping
+                          </span>
+                        )}
+                        <span className="w-full text-gray-300 font-mono text-[11px]">
+                          {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-300 italic mt-1.5">No GPS ping received yet</p>
+                    )}
                   </div>
 
                   {/* Delete */}
                   <button
-                    onClick={() => handleDelete(device.id, device.gpsName)}
+                    onClick={(e) => { e.stopPropagation(); handleDelete(device.id, device.gpsName); }}
                     disabled={isBusy}
                     title="Delete device"
                     className="text-gray-300 hover:text-red-500 shrink-0 disabled:opacity-40"
@@ -516,7 +580,7 @@ export default function DeviceTrack() {
                 </div>
 
                 {/* Assign / Unassign controls */}
-                <div className="mt-3 pt-3 border-t border-gray-50">
+                <div className="mt-3 pt-3 border-t border-gray-50" onClick={(e) => e.stopPropagation()}>
                   {device.assigned ? (
                     <button
                       onClick={() => handleUnassign(device.id)}

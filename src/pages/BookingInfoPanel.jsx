@@ -3,19 +3,39 @@ import PlaceLabel from "../components/PlaceLabel";
 
 const API = process.env.REACT_APP_API_URL;
 
+function fmtDateTime(val) {
+  if (!val) return "—";
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else d = new Date(val);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch { return "—"; }
+}
+
 /**
- * "Car Information" floating panel — right side of the Live map.
+ * "Booking Information" floating panel — right side of the Live map.
+ * (Renamed from "Car Information" — this is genuinely about the car's
+ * booking-related data, not the car as a physical object; that's what
+ * Fleet Management covers.)
  *
- * Two modes, same UI:
- *  - Active trip: edits THIS session's zones (PATCH /api/gps/:carId/geofence)
- *    — what's saved here only ever applies to the trip in progress.
- *  - No active trip: edits the CAR's standing default zones
- *    (PATCH /api/gps/:carId/geofence-defaults) — these aren't tied to any
- *    session, can be set up anytime, and auto-copy onto the next new
- *    session's own zones at pickup (unless that session already has zones
- *    of its own — see bookingSession.service.js's markSessionActive).
+ * Two sections:
+ *  - Read-only summary of the current/upcoming booking(s) for this car —
+ *    same data the bottom panel shows, just without the Pickup/Return/
+ *    Stolen buttons, which stay put there since those are frequent,
+ *    always-visible actions that shouldn't require an extra click to reach.
+ *  - Geofence zones, in two modes:
+ *     - Active trip: edits THIS session's zones (PATCH /api/gps/:carId/geofence)
+ *       — what's saved here only ever applies to the trip in progress.
+ *     - No active trip: edits the CAR's standing default zones
+ *       (PATCH /api/gps/:carId/geofence-defaults) — these aren't tied to any
+ *       session, can be set up anytime, and auto-copy onto the next new
+ *       session's own zones at pickup (unless that session already has zones
+ *       of its own — see bookingSession.service.js's markSessionActive).
  */
-export default function CarInfoPanel({ carId, carLabel, sessionInfo, lastKnownPosition, token, onClose, onSaved, onFocusZone, onZonesChange }) {
+export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKnownPosition, ongoingBooking, upcomingBookings = [], token, onClose, onSaved, onFocusZone, onZonesChange }) {
   const hasActiveSession = !!sessionInfo?.hasActiveSession;
   const [zones, setZones]     = useState(sessionInfo?.geofenceZones || []);
   const [saving, setSaving]   = useState(false);
@@ -96,12 +116,48 @@ export default function CarInfoPanel({ carId, carLabel, sessionInfo, lastKnownPo
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
         <div className="min-w-0">
           <p className="font-bold text-arl-dark text-sm truncate">{carLabel}</p>
-          <p className="text-[11px] text-gray-400">{hasActiveSession ? "Geofence zones — this trip" : "Geofence zones — car default"}</p>
+          <p className="text-[11px] text-gray-400">Booking Information</p>
         </div>
         <button onClick={onClose} className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:bg-gray-50">✕</button>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide p-3 space-y-2">
+        {/* Read-only booking summary — same data as the bottom Pickup/Return/
+            Stolen panel, just without the action buttons, which stay down
+            there since they're frequent enough to want always-visible,
+            no-extra-click access. */}
+        {ongoingBooking ? (
+          <div className="bg-teal-50 border border-teal-100 rounded-xl p-3">
+            <p className="text-xs font-semibold text-teal-800 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
+              Current trip — {ongoingBooking.customerName || "—"}
+            </p>
+            <p className="text-xs text-teal-600 mt-1">
+              {fmtDateTime(ongoingBooking.startDateTime)} → {fmtDateTime(ongoingBooking.endDateTime)}
+            </p>
+          </div>
+        ) : upcomingBookings.length === 0 ? (
+          <p className="text-xs text-gray-400 italic px-1">No upcoming bookings for this car.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {upcomingBookings.slice(0, 3).map((b) => (
+              <div key={b.id} className="bg-blue-50 border border-blue-100 rounded-xl p-2.5">
+                <p className="text-xs font-semibold text-blue-800 truncate">{b.customerName || "—"}</p>
+                <p className="text-xs text-blue-600 mt-0.5">
+                  {fmtDateTime(b.startDateTime)} → {fmtDateTime(b.endDateTime)}
+                </p>
+              </div>
+            ))}
+            {upcomingBookings.length > 3 && (
+              <p className="text-[11px] text-gray-400 italic px-1">+{upcomingBookings.length - 3} more — see the panel below to pick up.</p>
+            )}
+          </div>
+        )}
+
+        <p className="text-[11px] font-semibold text-gray-500 pt-1 px-1">
+          {hasActiveSession ? "Geofence zones — this trip" : "Geofence zones — car default"}
+        </p>
+
         {!hasActiveSession && (
           <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700">
             <p className="font-semibold mb-0.5">No trip in progress</p>

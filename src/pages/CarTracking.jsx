@@ -7,7 +7,7 @@ import { db } from "../fireabase";
 import TracebackPanel from "./TracebackPanel";
 import HistoryPanel from "./HistoryPanel";
 import ReviewPanel from "./ReviewPanel";
-import CarInfoPanel from "./CarInfoPanel";
+import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
 import GeofenceBanner from "../components/GeofenceBanner";
 import PlaceLabel from "../components/PlaceLabel";
@@ -229,16 +229,16 @@ export default function CarTracking() {
 
   const mapRef      = useRef(null);
   const [sessionInfo,    setSessionInfo]    = useState(null); // active session for the focused car: zones + alerts
-  // Live preview of whatever's currently being dragged/typed in CarInfoPanel,
+  // Live preview of whatever's currently being dragged/typed in BookingInfoPanel,
   // before Save — null means "nothing being edited, draw the saved zones".
   // Lets the map circle resize in real time as the radius slider moves,
   // instead of only updating once the edit is actually saved.
   const [draftZones,     setDraftZones]     = useState(null);
   useEffect(() => { setDraftZones(null); }, [selected]);
   const [sessionLoading, setSessionLoading] = useState(false);
-  const [showCarInfo,    setShowCarInfo]    = useState(false);
+  const [showBookingInfo, setShowBookingInfo] = useState(false);
   const [showLogs,       setShowLogs]       = useState(false);
-  useEffect(() => { if (!showCarInfo) setDraftZones(null); }, [showCarInfo]);
+  useEffect(() => { if (!showBookingInfo) setDraftZones(null); }, [showBookingInfo]);
   const zoneLayersRef = useRef([]); // leaflet Circle/Marker layers for the current geofence zones
   const leafletMap  = useRef(null);
   const markersRef  = useRef({}); // { [carId]: L.Marker }
@@ -389,7 +389,7 @@ export default function CarTracking() {
   }, [token]);
 
   useEffect(() => {
-    setShowCarInfo(false);
+    setShowBookingInfo(false);
     setShowLogs(false);
     if (tab === "live" && selected) fetchCarSession(selected);
     else setSessionInfo(null);
@@ -462,6 +462,8 @@ export default function CarTracking() {
       const isSelected = selected === car.id;
       const popupHtml = `<b>${getCarLabel(car)}</b><br>
         ${loc.lastLocation ? `${loc.lastLocation}<br>` : ""}
+        Speed: ${typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h<br>
+        ${loc.offline ? `<span style="color:#f59e0b;font-size:11px">📦 Offline flush</span><br>` : ""}
         <span style="color:#9ca3af;font-size:11px">${timeAgo(loc.updatedAt)}</span>`;
 
       const existing = markersRef.current[car.id];
@@ -588,7 +590,7 @@ export default function CarTracking() {
     runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
   };
 
-  // Flies the Live map to a geofence zone's location — used by CarInfoPanel
+  // Flies the Live map to a geofence zone's location — used by BookingInfoPanel
   // so clicking a zone entry focuses it, same idea as clicking a car marker.
   function flyToZone(zone) {
     if (!leafletMap.current || typeof zone?.lat !== "number" || typeof zone?.lng !== "number") return;
@@ -767,10 +769,17 @@ export default function CarTracking() {
 
                     {/* Location */}
                     {loc ? (
-                      <p className="text-xs text-green-500 mt-0.5 font-medium flex items-center gap-1">
-                        <Icons.Clock className="w-3 h-3" />
-                        {timeAgo(loc.updatedAt)}
-                      </p>
+                      <>
+                        <p className="text-xs text-green-500 mt-0.5 font-medium flex items-center gap-1">
+                          <Icons.Clock className="w-3 h-3" />
+                          {timeAgo(loc.updatedAt)} · {typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h
+                        </p>
+                        {loc.offline && (
+                          <p className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2 py-0.5 mt-1 font-medium inline-flex items-center gap-1">
+                            📦 Offline flush — buffered ping, not live
+                          </p>
+                        )}
+                      </>
                     ) : device ? (
                       <p className="text-xs text-gray-400 mt-0.5 italic">No live location yet</p>
                     ) : null}
@@ -835,7 +844,7 @@ export default function CarTracking() {
             <p className="text-gray-400">Click a car to focus on it — click "Show all cars" to zoom back out.</p>
           </div>
 
-          {/* Floating "Car Information" / "Logs" buttons — always shown once a car
+          {/* Floating "Booking Information" / "Logs" buttons — always shown once a car
               is focused. Previously gated on sessionInfo.hasActiveSession, which
               hid these entirely for any car whose booking is "ongoing" but has no
               linked bookingSessions doc (e.g. older bookings created before that
@@ -844,16 +853,16 @@ export default function CarTracking() {
           {selected && (
             <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 items-end">
               <button
-                onClick={() => { setShowCarInfo(v => !v); setShowLogs(false); }}
+                onClick={() => { setShowBookingInfo(v => !v); setShowLogs(false); }}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
-                  showCarInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                  showBookingInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                 }`}
               >
                 <Icons.Info className="w-3.5 h-3.5" />
-                Car Information
+                Booking Information
               </button>
               <button
-                onClick={() => { setShowLogs(v => !v); setShowCarInfo(false); }}
+                onClick={() => { setShowLogs(v => !v); setShowBookingInfo(false); }}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
                   showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                 }`}
@@ -864,14 +873,16 @@ export default function CarTracking() {
             </div>
           )}
 
-          {showCarInfo && selected && (
-            <CarInfoPanel
+          {showBookingInfo && selected && (
+            <BookingInfoPanel
               carId={selected}
               carLabel={getCarLabel(allCars.find(c => c.id === selected) || {})}
               sessionInfo={sessionInfo}
               lastKnownPosition={locationForCar(selected)}
+              ongoingBooking={ongoingBooking(selected)}
+              upcomingBookings={bookingsByCar[selected]?.upcoming || []}
               token={token}
-              onClose={() => setShowCarInfo(false)}
+              onClose={() => setShowBookingInfo(false)}
               onSaved={() => fetchCarSession(selected)}
               onFocusZone={flyToZone}
               onZonesChange={setDraftZones}
