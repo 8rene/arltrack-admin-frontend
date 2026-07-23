@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import TracebackPanel from "./TracebackPanel";
 
 const API = process.env.REACT_APP_API_URL;
@@ -28,13 +28,39 @@ const STATUS_STYLES = {
  * a "No GPS record" fallback when the list comes back empty. "Review" loads
  * that trip's archive JSON and hands off to TracebackPanel in review mode.
  */
-export default function HistoryPanel({ cars, token, refreshTick = 0 }) {
+export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = null }) {
   const [selectedCar, setSelectedCar] = useState(null);
   const [history, setHistory]         = useState([]);
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
   const [reviewData, setReviewData]   = useState(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [deepLinkNotice, setDeepLinkNotice] = useState(null);
+
+  // Deep-link from Bookings' "Trip History" button: select the car once —
+  // guarded so it doesn't fight the user if they click a different car
+  // afterward (only runs while nothing else is selected yet).
+  useEffect(() => {
+    if (autoOpen?.carID && !selectedCar) {
+      setSelectedCar(autoOpen.carID);
+    }
+  }, [autoOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const autoOpenedRef = useRef(false);
+  // Once that car's history has actually loaded, auto-open the matching
+  // trip's Review — one-shot only, so switching tabs away and back doesn't
+  // keep re-opening the same trip.
+  useEffect(() => {
+    if (!autoOpen?.bookingID || autoOpenedRef.current) return;
+    if (loading || selectedCar !== autoOpen.carID) return;
+    autoOpenedRef.current = true;
+    const match = history.find(h => h.bookingID === autoOpen.bookingID);
+    if (match) {
+      handleReview(match);
+    } else {
+      setDeepLinkNotice("Couldn't find that trip's archived record for this car.");
+    }
+  }, [history, loading, selectedCar, autoOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchHistory = useCallback(async (carId) => {
     setLoading(true);
@@ -135,6 +161,12 @@ export default function HistoryPanel({ cars, token, refreshTick = 0 }) {
             <p className="font-bold text-arl-dark text-sm mb-3">
               {cars.find(c => c.id === selectedCar)?.name} — Trip History
             </p>
+
+            {deepLinkNotice && (
+              <div className="mb-3 bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-700">
+                {deepLinkNotice}
+              </div>
+            )}
 
             {loading ? (
               <div className="space-y-2">

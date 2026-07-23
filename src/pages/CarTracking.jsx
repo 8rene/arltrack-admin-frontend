@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
@@ -9,6 +10,7 @@ import ReviewPanel from "./ReviewPanel";
 import CarInfoPanel from "./CarInfoPanel";
 import LogsPanel from "./LogsPanel";
 import GeofenceBanner from "../components/GeofenceBanner";
+import PlaceLabel from "../components/PlaceLabel";
 import { isGeofenceBreachedNow, isCodingRestrictedNow } from "../utils/geofenceAlerts";
 
 // ── Fix Leaflet default marker icons ─────────────────────────────────────────
@@ -214,15 +216,29 @@ export default function CarTracking() {
   const [lastPoll,     setLastPoll]     = useState(null);
   const [notice,       setNotice]       = useState(null);
   const [actionBusyId, setActionBusyId] = useState(null); // booking doc id currently being acted on
-  const [tab,          setTab]          = useState("live"); // "live" | "traceback" | "history"
+  // Deep-link from Bookings' "Trip History" button — { tab: "history", carID, bookingID }.
+  // Only consumed once; switching tabs away and back won't re-trigger it since
+  // React Router keeps the same location.state for the life of this page visit,
+  // but HistoryPanel's own one-shot ref guards against re-opening on remount.
+  const location = useLocation();
+  const historyDeepLink = location.state?.tab === "history" ? location.state : null;
+
+  const [tab,          setTab]          = useState(historyDeepLink ? "history" : "live"); // "live" | "traceback" | "history"
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [refreshTick,  setRefreshTick]  = useState(0);
 
   const mapRef      = useRef(null);
   const [sessionInfo,    setSessionInfo]    = useState(null); // active session for the focused car: zones + alerts
+  // Live preview of whatever's currently being dragged/typed in CarInfoPanel,
+  // before Save — null means "nothing being edited, draw the saved zones".
+  // Lets the map circle resize in real time as the radius slider moves,
+  // instead of only updating once the edit is actually saved.
+  const [draftZones,     setDraftZones]     = useState(null);
+  useEffect(() => { setDraftZones(null); }, [selected]);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [showCarInfo,    setShowCarInfo]    = useState(false);
   const [showLogs,       setShowLogs]       = useState(false);
+  useEffect(() => { if (!showCarInfo) setDraftZones(null); }, [showCarInfo]);
   const zoneLayersRef = useRef([]); // leaflet Circle/Marker layers for the current geofence zones
   const leafletMap  = useRef(null);
   const markersRef  = useRef({}); // { [carId]: L.Marker }
@@ -479,7 +495,7 @@ export default function CarTracking() {
     zoneLayersRef.current.forEach(layer => layer.remove());
     zoneLayersRef.current = [];
 
-    const zones = sessionInfo?.geofenceZones || [];
+    const zones = draftZones ?? (sessionInfo?.geofenceZones || []);
     if (!selected || !zones.length) return;
 
     zones.forEach((zone, i) => {
@@ -503,7 +519,7 @@ export default function CarTracking() {
 
       zoneLayersRef.current.push(circle, marker);
     });
-  }, [sessionInfo, selected]);
+  }, [sessionInfo, selected, draftZones]);
 
   // ── Focus behavior: clicking a car hides the rest and zooms in; clearing shows all ──
   useEffect(() => {
@@ -532,7 +548,7 @@ export default function CarTracking() {
         leafletMap.current.fitBounds(bounds, { padding: [40, 40] });
       }
     }
-  }, [selected, locations, gpsDevices]);
+  }, [selected, locations, gpsDevices, allCars]);
 
   // ── Pickup / Return / Stolen actions ───────────────────────────────────────
   const runBookingAction = async (bookingDocId, status, successMsg) => {
@@ -548,6 +564,13 @@ export default function CarTracking() {
       if (json.success) {
         setNotice({ type: "ok", msg: successMsg });
         await fetchBookings();
+        // Pickup/Return/Stolen change the *session's* active state, but that's
+        // only ever fetched by the [selected, tab] effect above — which never
+        // re-fires just because a booking action ran. Without this, Car
+        // Info/Logs keeps showing whatever sessionInfo was fetched before the
+        // action (correctly "no active session" back then), forever, until
+        // the user re-clicks the car.
+        if (selected) fetchCarSession(selected);
       } else {
         setNotice({ type: "error", msg: json.message || "Action failed." });
       }
@@ -661,7 +684,12 @@ export default function CarTracking() {
       )}
 
       {tab === "history" && (
-        <HistoryPanel cars={allCars.map(c => ({ id: c.id, name: getCarLabel(c) }))} token={token} refreshTick={refreshTick} />
+        <HistoryPanel
+          cars={allCars.map(c => ({ id: c.id, name: getCarLabel(c) }))}
+          token={token}
+          refreshTick={refreshTick}
+          autoOpen={historyDeepLink ? { carID: historyDeepLink.carID, bookingID: historyDeepLink.bookingID } : null}
+        />
       )}
 
       {tab === "review" && (
@@ -807,8 +835,13 @@ export default function CarTracking() {
             <p className="text-gray-400">Click a car to focus on it — click "Show all cars" to zoom back out.</p>
           </div>
 
-          {/* Floating "Car Information" / "Logs" buttons — only once a focused car has an active trip */}
-          {selected && sessionInfo?.hasActiveSession && (
+          {/* Floating "Car Information" / "Logs" buttons — always shown once a car
+              is focused. Previously gated on sessionInfo.hasActiveSession, which
+              hid these entirely for any car whose booking is "ongoing" but has no
+              linked bookingSessions doc (e.g. older bookings created before that
+              doc was reliably created at booking time) — now the panels
+              themselves say "no active session" instead of vanishing. */}
+          {selected && (
             <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 items-end">
               <button
                 onClick={() => { setShowCarInfo(v => !v); setShowLogs(false); }}
@@ -836,10 +869,12 @@ export default function CarTracking() {
               carId={selected}
               carLabel={getCarLabel(allCars.find(c => c.id === selected) || {})}
               sessionInfo={sessionInfo}
+              lastKnownPosition={locationForCar(selected)}
               token={token}
               onClose={() => setShowCarInfo(false)}
               onSaved={() => fetchCarSession(selected)}
               onFocusZone={flyToZone}
+              onZonesChange={setDraftZones}
             />
           )}
 
@@ -884,6 +919,12 @@ export default function CarTracking() {
                   <p className="text-xs text-teal-600 mt-1">
                     {fmtDateTime(ongoing.startDateTime)} → {fmtDateTime(ongoing.endDateTime)}
                   </p>
+                  {locationForCar(selected) && (
+                    <p className="text-[11px] text-teal-500 mt-1 flex items-center gap-1">
+                      <Icons.MapPin className="w-3 h-3 shrink-0" />
+                      <PlaceLabel lat={locationForCar(selected).lat} lng={locationForCar(selected).lng} />
+                    </p>
+                  )}
                   <div className="flex items-center gap-2 mt-3">
                     <button
                       onClick={() => handleReturn(ongoing)}

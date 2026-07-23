@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
@@ -302,12 +303,24 @@ function EditModal({ booking, onClose, onSave }) {
 
 function ViewModal({ booking, onClose }) {
   const { fmt } = useCurrency();
+  const navigate = useNavigate();
   const row = (label, value) => (
     <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
       <span className="text-gray-500 font-medium w-36 shrink-0">{label}</span>
       <span className="text-gray-800 text-right">{value || "—"}</span>
     </div>
   );
+
+  const goToHistory = () => {
+    navigate("/car-tracking", {
+      state: {
+        tab: "history",
+        carID: booking.carID,
+        bookingID: booking.bookingID || booking.id,
+      },
+    });
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto">
@@ -339,6 +352,28 @@ function ViewModal({ booking, onClose }) {
           {row("Notes (User)",    booking.notesUser)}
           {row("Notes (Admin)",   booking.notesAdmin)}
         </div>
+
+        {/* Trip History — always shown, not just when history exists, so it's
+            clear whether this booking's GPS trail was ever archived. */}
+        <div className="flex justify-between items-center py-2.5 px-3 rounded-xl bg-gray-50 border border-gray-100">
+          <div>
+            <p className="text-sm font-medium text-gray-700">Trip History</p>
+            <p className="text-xs text-gray-400">
+              {booking.hasHistory ? "GPS trail available for playback" : "No archived GPS trail for this booking"}
+            </p>
+          </div>
+          {booking.hasHistory ? (
+            <button
+              onClick={goToHistory}
+              className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-3 py-1.5 transition-colors shrink-0"
+            >
+              View in Car Tracking →
+            </button>
+          ) : (
+            <span className="text-xs text-gray-300 shrink-0">—</span>
+          )}
+        </div>
+
         <button onClick={onClose} className="w-full mt-2 py-2 border rounded-xl text-sm">Close</button>
       </div>
     </div>
