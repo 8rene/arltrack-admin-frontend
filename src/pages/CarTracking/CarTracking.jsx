@@ -3,15 +3,16 @@ import { useLocation } from "react-router-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
-import { db } from "../fireabase";
+import { db } from "../../fireabase";
 import TracebackPanel from "./TracebackPanel";
 import HistoryPanel from "./HistoryPanel";
 import ReviewPanel from "./ReviewPanel";
+import SimulatePanel from "./SimulatePanel";
 import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
-import GeofenceBanner from "../components/GeofenceBanner";
-import PlaceLabel from "../components/PlaceLabel";
-import { isGeofenceBreachedNow, isCodingRestrictedNow } from "../utils/geofenceAlerts";
+import GeofenceBanner from "../../components/GeofenceBanner";
+import PlaceLabel from "../../components/PlaceLabel";
+import { isGeofenceBreachedNow, isCodingRestrictedNow } from "../../utils/geofenceAlerts";
 
 // ── Fix Leaflet default marker icons ─────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -245,8 +246,17 @@ export default function CarTracking() {
   const token       = localStorage.getItem("token");
 
   // ── Init Leaflet map ──────────────────────────────────────────────────────
+  // Runs whenever the Live tab becomes active, not just once on mount: the
+  // Live tab's whole subtree (including this map div) is conditionally
+  // unmounted while another tab is open (`{tab === "live" && (...)}` below),
+  // so mapRef.current is a brand-new DOM node every time the user comes back
+  // to Live. With an empty dep array this effect only ever ran on the very
+  // first mount, so the map stayed attached to the old, now-detached div and
+  // the "new" Live tab showed a blank/broken map. Depending on `tab` — and
+  // tearing the map down in the cleanup when leaving Live — makes it
+  // reinitialize against the current div every time.
   useEffect(() => {
-    if (!mapRef.current || leafletMap.current) return;
+    if (tab !== "live" || !mapRef.current || leafletMap.current) return;
     leafletMap.current = L.map(mapRef.current, { zoomControl: true })
       .setView([14.5995, 120.9842], 12);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -260,7 +270,7 @@ export default function CarTracking() {
         markersRef.current = {};
       }
     };
-  }, []);
+  }, [tab]);
 
   // ── Fetch all cars + brand/model + photos from Firestore ──────────────────
   const fetchAllCars = useCallback(async () => {
@@ -488,7 +498,7 @@ export default function CarTracking() {
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allCars, gpsDevices, locations]);
+  }, [allCars, gpsDevices, locations, tab]);
 
   // ── Geofence zones for the focused car — circles + numbered markers ───────
   useEffect(() => {
@@ -521,7 +531,7 @@ export default function CarTracking() {
 
       zoneLayersRef.current.push(circle, marker);
     });
-  }, [sessionInfo, selected, draftZones]);
+  }, [sessionInfo, selected, draftZones, tab]);
 
   // ── Focus behavior: clicking a car hides the rest and zooms in; clearing shows all ──
   useEffect(() => {
@@ -610,7 +620,7 @@ export default function CarTracking() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="font-bold text-arl-dark text-sm">
-              Car Tracking — {tab === "live" ? "Live" : tab === "traceback" ? "Traceback" : tab === "history" ? "History" : "Review"}
+              Car Tracking — {tab === "live" ? "Live" : tab === "traceback" ? "Traceback" : tab === "history" ? "History" : tab === "simulate" ? "Simulate" : "Review"}
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
               {allCars.length} car{allCars.length !== 1 ? "s" : ""} total
@@ -636,7 +646,7 @@ export default function CarTracking() {
                 Refresh
               </button>
             )}
-            {tab !== "live" && tab !== "review" && (
+            {tab !== "live" && tab !== "review" && tab !== "simulate" && (
               <button
                 onClick={() => setRefreshTick(t => t + 1)}
                 className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50"
@@ -655,6 +665,7 @@ export default function CarTracking() {
             { id: "traceback",  label: "Traceback" },
             { id: "history",    label: "History" },
             { id: "review",     label: "Review" },
+            { id: "simulate",   label: "Simulate" },
           ].map(t => (
             <button
               key={t.id}
@@ -697,6 +708,8 @@ export default function CarTracking() {
       {tab === "review" && (
         <ReviewPanel cars={allCars.map(c => ({ id: c.id, name: getCarLabel(c) }))} token={token} />
       )}
+
+      {tab === "simulate" && <SimulatePanel />}
 
       {tab === "live" && (
       <div className="flex flex-1 min-h-0 gap-4">

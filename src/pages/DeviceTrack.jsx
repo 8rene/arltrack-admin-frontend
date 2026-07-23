@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
 import L from "leaflet";
@@ -107,6 +108,19 @@ const Icons = {
 const API = process.env.REACT_APP_API_URL;
 
 export default function DeviceTrack() {
+  const routerLocation = useLocation();
+  const navigate       = useNavigate();
+
+  // If we got here from "No GPS device assigned" on the Car Tracking page,
+  // this holds the car we're trying to link a device to. Kept in state
+  // (rather than read straight from routerLocation.state) so we can clear
+  // it locally once the assignment succeeds without another navigation.
+  const [assignForCar, setAssignForCar] = useState(
+    routerLocation.state?.assignCarId
+      ? { id: routerLocation.state.assignCarId, label: routerLocation.state.assignCarLabel }
+      : null
+  );
+
   const [allCars,      setAllCars]      = useState([]);
   const [brandMap,     setBrandMap]     = useState({});
   const [modelMap,     setModelMap]     = useState({});
@@ -351,6 +365,35 @@ export default function DeviceTrack() {
     }
   };
 
+  // Used when a device card is clicked while we're in "assign this car" mode
+  // (i.e. the user arrived here via "No GPS device assigned" on Car Tracking).
+  // Skips the manual select-a-car dropdown and assigns directly.
+  const handleQuickAssign = async (deviceId) => {
+    if (!assignForCar) return;
+    setBusyId(deviceId);
+    try {
+      const res = await fetch(`${API}/api/gps/devices/${deviceId}/assign`, {
+        method:  "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ carID: assignForCar.id }),
+      });
+      const json = await res.json();
+      if (json.status === "ok") {
+        await fetchGpsDevices();
+        setNotice({ type: "ok", msg: `${assignForCar.label} linked to this GPS device.` });
+        setAssignForCar(null);
+        // Clear the router state so refreshing this page doesn't re-trigger assign mode.
+        navigate(routerLocation.pathname, { replace: true, state: {} });
+      } else {
+        setNotice({ type: "error", msg: json.message || "Failed to assign car." });
+      }
+    } catch (e) {
+      setNotice({ type: "error", msg: "Failed to assign car." });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleUnassign = async (deviceId) => {
     setBusyId(deviceId);
     try {
@@ -433,6 +476,25 @@ export default function DeviceTrack() {
         </button>
       </div>
 
+      {/* Assign-mode banner — shown when we arrived here to link a specific car */}
+      {assignForCar && (
+        <div className="rounded-2xl px-4 py-3 text-xs font-medium border bg-teal-50 border-teal-200 text-teal-700 flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <Icons.Satellite className="w-3.5 h-3.5 shrink-0" />
+            Pick an available GPS device below to link it to <strong>{assignForCar.label}</strong>.
+          </span>
+          <button
+            onClick={() => {
+              setAssignForCar(null);
+              navigate(routerLocation.pathname, { replace: true, state: {} });
+            }}
+            className="text-teal-600 hover:text-teal-800 font-semibold shrink-0"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* Notice */}
       {notice && (
         <div className={`rounded-2xl px-4 py-3 text-xs font-medium border flex items-start gap-2 ${
@@ -468,18 +530,31 @@ export default function DeviceTrack() {
             const loc          = locations[device.gpsDeviceID];
             const online       = !!(loc?.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < ONLINE_WINDOW_MS));
 
+            // While assigning a specific car, unassigned devices become the
+            // pickable targets — clicking one assigns immediately instead of
+            // just focusing the map.
+            const isAssignTarget = !!assignForCar && !device.assigned;
+
             return (
               <div
                 key={device.id}
                 onClick={() => {
-                  if (loc) {
+                  if (isAssignTarget) {
+                    if (!isBusy) handleQuickAssign(device.id);
+                  } else if (loc) {
                     setFocusedDeviceId(device.gpsDeviceID);
                   } else {
                     setNotice({ type: "warn", msg: `${device.gpsName} has no GPS ping to focus on yet.` });
                   }
                 }}
                 className={`bg-white rounded-2xl border-2 shadow-soft p-4 transition-all cursor-pointer ${
-                  focusedDeviceId === device.gpsDeviceID ? "border-teal-500 ring-1 ring-teal-200" : "border-gray-100 hover:border-teal-300"
+                  isAssignTarget
+                    ? "border-amber-400 ring-2 ring-amber-200 animate-pulse"
+                    : assignForCar
+                    ? "border-gray-100 opacity-50"
+                    : focusedDeviceId === device.gpsDeviceID
+                    ? "border-teal-500 ring-1 ring-teal-200"
+                    : "border-gray-100 hover:border-teal-300"
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -539,6 +614,11 @@ export default function DeviceTrack() {
                       </p>
                     ) : device.assigned ? (
                       <p className="text-xs text-gray-300 italic mt-1.5">Assigned car not found</p>
+                    ) : isAssignTarget ? (
+                      <p className="text-xs text-amber-600 font-semibold mt-1.5 flex items-center gap-1">
+                        <Icons.Car className="w-3 h-3" />
+                        {isBusy ? "Linking…" : `Click to link ${assignForCar.label}`}
+                      </p>
                     ) : (
                       <p className="text-xs text-gray-400 italic mt-1.5">Not assigned to a car</p>
                     )}
@@ -589,6 +669,10 @@ export default function DeviceTrack() {
                     >
                       {isBusy ? "Unassigning…" : "Unassign car"}
                     </button>
+                  ) : isAssignTarget ? (
+                    <p className="text-xs text-amber-600 italic">
+                      ↑ Click this card to link it to {assignForCar.label}
+                    </p>
                   ) : (
                     <div className="flex items-center gap-2">
                       <select

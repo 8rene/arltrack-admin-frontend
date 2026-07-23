@@ -9,7 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import Bookings from "./pages/Bookings";
 import Fleet from "./pages/Fleet";
 import Customers from "./pages/Customers";
-import CarTracking from "./pages/CarTracking";
+import CarTracking from "./pages/CarTracking/CarTracking";
 import DeviceTrack from "./pages/DeviceTrack";
 import Maintenance from "./pages/Maintenance";
 import Inventory from "./pages/Inventory";

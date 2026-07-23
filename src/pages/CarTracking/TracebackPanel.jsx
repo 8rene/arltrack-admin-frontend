@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import GeofenceBanner from "../components/GeofenceBanner";
-import { isGeofenceBreachedAt, isCodingRestrictedAt } from "../utils/geofenceAlerts";
+import GeofenceBanner from "../../components/GeofenceBanner";
+import { isGeofenceBreachedAt, isCodingRestrictedAt } from "../../utils/geofenceAlerts";
+import LogsPanel from "./LogsPanel";
+import TracebackBookingInfoPanel from "./TracebackBookingInfoPanel";
+import TripSummaryPanel from "./TripSummaryPanel";
 
 const API = process.env.REACT_APP_API_URL;
 
@@ -158,16 +161,19 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
     return scale.toMs(rect.width ? (x / rect.width) * 100 : 0);
   }
   function handlePointerDown(e, carId, trackEl) {
+    // Pointer Events (not mouse-only) so this drags correctly with touch and
+    // trackpad/pen input, not just a physical mouse.
+    trackEl.setPointerCapture?.(e.pointerId);
     draggingRef.current = carId;
     onScrub(carId, msFromEvent(e, trackEl));
     const onMove = ev => { if (draggingRef.current === carId) onScrub(carId, msFromEvent(ev, trackEl)); };
     const onUp = () => {
       draggingRef.current = null;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   }
 
   return (
@@ -187,9 +193,9 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
             </span>
             <div
               ref={el => { trackEl = el; }}
-              onMouseDown={e => handlePointerDown(e, car.id, e.currentTarget)}
+              onPointerDown={e => handlePointerDown(e, car.id, e.currentTarget)}
               className="flex-1 h-2 relative bg-gray-100 rounded cursor-pointer"
-              style={{ boxShadow: isFocused ? `0 0 0 1px ${color}` : "none" }}
+              style={{ boxShadow: isFocused ? `0 0 0 1px ${color}` : "none", touchAction: "none" }}
             >
               {segments.map((seg, segIdx) => {
                 const segStartMs = gpsMs(seg[0]), segEndMs = gpsMs(seg[seg.length - 1]);
@@ -243,6 +249,15 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   // reviewData.zonesAlerts (set by History/Review from the archive JSON) and
   // marks a car unavailable when that data isn't present.
   const [zonesAlerts, setZonesAlerts] = useState({});
+  // { [carId]: { bookingSessionID, bookingID, status, pickupTime, returnTime } | null } —
+  // whichever session owns the currently-viewed date, per car. Live mode gets
+  // this from the traceback endpoint (which already looks the session up for
+  // geofence data); review mode reads it off reviewData.sessionMeta (set by
+  // HistoryPanel from the archived trip's own record — raw uploaded files
+  // won't have this, and that's fine, the panels handle it being absent).
+  const [sessionByCar, setSessionByCar] = useState({});
+  const [showBookingInfo, setShowBookingInfo] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(null);
   const [visible, setVisible] = useState({});
@@ -256,6 +271,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   const mapRef = useRef(null);
   const leafletMap = useRef(null);
   const layersRef = useRef({}); // { [carId]: { start, current, ghost, active } }
+  const zoneLayersRef = useRef([]); // geofence-zone Circle/Marker layers currently drawn
 
   const date = getDateDaysAgo(daysAgo);
 
@@ -303,10 +319,11 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
           geofenceZones:  json?.data?.geofenceZones  || [],
           geofenceAlerts: json?.data?.geofenceAlerts || [],
           codingAlerts:   json?.data?.codingAlerts   || [],
+          session:        json?.data?.session || null,
         };
       })
     );
-    const map = {}, vis = {}, zones = {};
+    const map = {}, vis = {}, zones = {}, sessions = {};
     let firstError = null;
     results.forEach(r => {
       if (r.status === "fulfilled") {
@@ -319,6 +336,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
           codingAlerts:   r.value.codingAlerts,
           available: true,
         };
+        sessions[r.value.id] = r.value.session;
       } else if (!firstError) {
         firstError = r.reason?.message || "Failed to load traceback.";
       }
@@ -326,6 +344,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
     setTraceData(map);
     setVisible(vis);
     setZonesAlerts(zones);
+    setSessionByCar(sessions);
     if (firstError) setFetchError(firstError);
     setLoading(false);
   }, [cars, token]);
@@ -335,7 +354,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   useEffect(() => {
     if (!isReview) return;
     setScrubIdx(0); setPlaying(false); setFocusedCar(null); setFlyPos(null);
-    const map = {}, vis = {}, zones = {};
+    const map = {}, vis = {}, zones = {}, sessions = {};
     effectiveCars.forEach(car => {
       const sorted = [...(reviewData.records[car.id] || [])].sort((a, b) => gpsMs(a) - gpsMs(b));
       map[car.id] = sorted;
@@ -344,10 +363,12 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
       zones[car.id] = carZoneData
         ? { ...carZoneData, available: true }
         : { geofenceZones: [], geofenceAlerts: [], codingAlerts: [], available: false };
+      sessions[car.id] = reviewData.sessionMeta?.[car.id] || null;
     });
     setTraceData(map);
     setVisible(vis);
     setZonesAlerts(zones);
+    setSessionByCar(sessions);
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewData, isReview]);
@@ -542,6 +563,44 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [traceData, visible, focusedCar, currentTimeMs, effectiveCars]);
 
+  // ── Geofence zones (pickup/dropoff/custom, i.e. the designated destination)
+  // for the shown car(s) — same circles + numbered markers the Live tab
+  // draws, just fed from zonesAlerts instead of sessionInfo. Scoped the same
+  // way as the breach/restricted banner: only the focused car if one is
+  // focused, otherwise every currently-visible car. ───────────────────────
+  useEffect(() => {
+    if (!leafletMap.current) return;
+    zoneLayersRef.current.forEach(layer => layer.remove());
+    zoneLayersRef.current = [];
+
+    const carsToShow = focusedCar ? effectiveCars.filter(c => c.id === focusedCar) : effectiveCars.filter(c => visible[c.id]);
+    carsToShow.forEach(car => {
+      const zones = zonesAlerts[car.id]?.geofenceZones || [];
+      zones.forEach((zone, i) => {
+        if (typeof zone.lat !== "number" || typeof zone.lng !== "number") return;
+        const circle = L.circle([zone.lat, zone.lng], {
+          radius: zone.radius || 500,
+          color: "#0d9488",
+          fillColor: "#0d9488",
+          fillOpacity: 0.12,
+          weight: 2,
+          dashArray: "6 4",
+        }).addTo(leafletMap.current).bindPopup(`<b>${zone.label || `Zone ${i + 1}`}</b><br>Radius: ${zone.radius || 500} m`);
+
+        const numberIcon = L.divIcon({
+          className: "",
+          html: `<div style="background:#0d9488;color:white;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${i + 1}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        });
+        const marker = L.marker([zone.lat, zone.lng], { icon: numberIcon }).addTo(leafletMap.current).bindPopup(zone.label || `Zone ${i + 1}`);
+
+        zoneLayersRef.current.push(circle, marker);
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zonesAlerts, focusedCar, visible, effectiveCars]);
+
   // ── Fit bounds / fly-to ─────────────────────────────────────────────────
   useEffect(() => {
     if (!leafletMap.current) return;
@@ -659,6 +718,26 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
           <GeofenceBanner banners={mapBanners} />
 
           <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 items-end">
+            {focusedCar && (
+              <>
+                <button
+                  onClick={() => { setShowBookingInfo(v => !v); setShowLogs(false); }}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
+                    showBookingInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                  }`}
+                >
+                  ℹ {isReview ? "Trip Summary" : "Booking Information"}
+                </button>
+                <button
+                  onClick={() => { setShowLogs(v => !v); setShowBookingInfo(false); }}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
+                    showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                  }`}
+                >
+                  🗒 Logs
+                </button>
+              </>
+            )}
             <button
               onClick={handleDownload}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm bg-white/95 text-gray-700 hover:bg-white transition-all"
@@ -676,6 +755,47 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
             )}
           </div>
 
+          {showBookingInfo && focusedCar && (
+            isReview ? (
+              <TripSummaryPanel
+                bookingID={sessionByCar[focusedCar]?.bookingID}
+                carLabel={effectiveCars.find(c => c.id === focusedCar)?.name || focusedCar}
+                tripLabel={reviewData?.label}
+                token={token}
+                onClose={() => setShowBookingInfo(false)}
+              />
+            ) : (
+              <TracebackBookingInfoPanel
+                carId={focusedCar}
+                carLabel={effectiveCars.find(c => c.id === focusedCar)?.name || focusedCar}
+                date={date}
+                session={sessionByCar[focusedCar] || null}
+                zones={zonesAlerts[focusedCar]?.geofenceZones || []}
+                canEdit={daysAgo === 0 && sessionByCar[focusedCar]?.status === "active"}
+                currentPosition={(() => {
+                  const recs = traceData[focusedCar] || [];
+                  return recs.length ? { lat: recs[recs.length - 1].lat, lng: recs[recs.length - 1].lng } : null;
+                })()}
+                token={token}
+                onClose={() => setShowBookingInfo(false)}
+                onSaved={() => fetchAll(date)}
+                onFocusZone={zone => setFlyPos([zone.lat, zone.lng])}
+              />
+            )
+          )}
+
+          {showLogs && focusedCar && (
+            <LogsPanel
+              sessionInfo={{
+                hasActiveSession: !!zonesAlerts[focusedCar]?.available,
+                geofenceAlerts: zonesAlerts[focusedCar]?.geofenceAlerts || [],
+                codingAlerts:   zonesAlerts[focusedCar]?.codingAlerts   || [],
+              }}
+              loading={loading}
+              onClose={() => setShowLogs(false)}
+            />
+          )}
+
           {!hasData && !loading && (
             <div className="absolute inset-0 flex items-center justify-center z-[999] pointer-events-none">
               <div className="bg-white/95 rounded-2xl border border-gray-100 shadow-lg p-6 text-center max-w-xs">
@@ -686,6 +806,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
             </div>
           )}
         </div>
+
 
         {hasData && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-soft shrink-0">

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import PlaceLabel from "../components/PlaceLabel";
+import PlaceLabel from "../../components/PlaceLabel";
 
 const API = process.env.REACT_APP_API_URL;
 

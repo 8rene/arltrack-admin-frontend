@@ -95,8 +95,20 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
     const car = cars.find(c => c.id === selectedCar);
     setReviewLoading(true);
     try {
-      const res = await fetch(item.archiveUrl);
-      if (!res.ok) throw new Error("Could not load this trip's archive file.");
+      if (!item.archiveUrl) throw new Error("This trip hasn't been archived yet — check back once it's finished.");
+      let res;
+      try {
+        res = await fetch(item.archiveUrl);
+      } catch (networkErr) {
+        // A thrown TypeError here (the browser's generic "Failed to fetch")
+        // means the request never got a response at all — almost always the
+        // Storage bucket blocking cross-origin reads (no CORS config for
+        // this frontend's origin), not a "file isn't ready" situation, since
+        // getCarHistory only ever returns sessions that already have an
+        // archiveUrl. Surface that instead of the opaque browser message.
+        throw new Error("Couldn't reach the archive file (likely a CORS/network issue on the storage bucket) — this isn't about the trip not being ready. Try again, or check the bucket's CORS settings.");
+      }
+      if (!res.ok) throw new Error(`Could not load this trip's archive file (server returned ${res.status}).`);
       const parsed = await res.json();
       // New archives are { points, geofenceZones, geofenceAlerts, codingAlerts };
       // older archives already sitting in Storage are still a bare array of
@@ -112,6 +124,15 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
             geofenceZones:  parsed.geofenceZones  || [],
             geofenceAlerts: parsed.geofenceAlerts || [],
             codingAlerts:   parsed.codingAlerts   || [],
+          },
+        },
+        sessionMeta: {
+          [selectedCar]: {
+            bookingSessionID: item.bookingSessionID,
+            bookingID:        item.bookingID,
+            status:           item.status,
+            pickupTime:       item.pickupTime,
+            returnTime:       item.returnTime,
           },
         },
       });
