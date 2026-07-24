@@ -770,7 +770,11 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
                 date={date}
                 session={sessionByCar[focusedCar] || null}
                 zones={zonesAlerts[focusedCar]?.geofenceZones || []}
-                canEdit={daysAgo === 0 && sessionByCar[focusedCar]?.status === "active"}
+                // Traceback is a review/inspection view, not a place to steer an
+                // in-progress trip — zone editing (labels, radius, add/remove,
+                // Save) now only happens from the Live tab's BookingInfoPanel.
+                // Always read-only here, regardless of date or session status.
+                canEdit={false}
                 currentPosition={(() => {
                   const recs = traceData[focusedCar] || [];
                   return recs.length ? { lat: recs[recs.length - 1].lat, lng: recs[recs.length - 1].lng } : null;
