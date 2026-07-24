@@ -72,20 +72,22 @@ const IconX = ({ className = "w-5 h-5" }) => (
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
-const STATUS_TABS = ["All", "Pending", "Active", "Cancelled", "Completed"];
+const STATUS_TABS = ["All", "Upcoming", "Ongoing", "Cancelled", "Completed"];
 
 const STATUS_DOT = {
-  pending:   "bg-yellow-400",
-  approved:  "bg-blue-500",
+  upcoming:  "bg-yellow-400",
+  ongoing:   "bg-blue-500",
   completed: "bg-green-500",
   cancelled: "bg-red-500",
+  stolen:    "bg-red-700",
 };
 
 const STATUS_BG = {
-  pending:   "bg-yellow-50 border border-yellow-200",
-  approved:  "bg-blue-50 border border-blue-200",
+  upcoming:  "bg-yellow-50 border border-yellow-200",
+  ongoing:   "bg-blue-50 border border-blue-200",
   completed: "bg-green-50 border border-green-200",
   cancelled: "bg-red-50 border border-red-200",
+  stolen:    "bg-red-100 border border-red-300",
 };
 
 function StatusBadge({ status }) {
@@ -112,8 +114,8 @@ const fmtDate = (val) => {
   } catch { return "—"; }
 };
 
-const canEdit  = (status) => ["pending", "approved"].includes(status?.toLowerCase());
-const isLocked = (status) => ["completed", "cancelled"].includes(status?.toLowerCase());
+const canEdit  = (status) => ["upcoming", "ongoing"].includes(status?.toLowerCase());
+const isLocked = (status) => ["completed", "cancelled", "stolen"].includes(status?.toLowerCase());
 
 // ─── NEW BOOKING ALERT BANNER ─────────────────────────────────────────────────
 
@@ -185,7 +187,7 @@ function DeleteModal({ booking, onClose, onConfirm, deleting }) {
 
 function EditModal({ booking, onClose, onSave }) {
   const currentStatus     = booking.status?.toLowerCase() || "";
-  const defaultNextStatus = currentStatus === "pending" ? "approved" : "completed";
+  const defaultNextStatus = currentStatus === "upcoming" ? "ongoing" : "completed";
   const [form, setForm] = useState({
     location:   booking.location || "",
     notesAdmin: booking.notesAdmin || "",
@@ -199,7 +201,7 @@ function EditModal({ booking, onClose, onSave }) {
 
   useEffect(() => {
     const bID = booking.bookingID || booking.id;
-    if (!bID || currentStatus !== "pending") return;
+    if (!bID || currentStatus !== "upcoming") return;
     setPaymentLoading(true);
     fetch(`${process.env.REACT_APP_API_URL}/api/payments?bookingID=${encodeURIComponent(bID)}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
@@ -216,8 +218,8 @@ function EditModal({ booking, onClose, onSave }) {
 
   const approvedStatuses = ["approved", "paid"];
   const isApprovingWithUnpaidPayment =
-    form.status === "approved" &&
-    currentStatus === "pending" &&
+    form.status === "ongoing" &&
+    currentStatus === "upcoming" &&
     !paymentLoading &&
     (paymentStatus === null || !approvedStatuses.includes(paymentStatus?.toLowerCase()));
 
@@ -242,7 +244,7 @@ function EditModal({ booking, onClose, onSave }) {
         <h2 className="font-bold text-lg text-gray-800">Edit Booking</h2>
         <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
         {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
-        {form.status === "approved" && currentStatus === "pending" && (
+        {form.status === "ongoing" && currentStatus === "upcoming" && (
           paymentLoading ? (
             <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 border border-gray-200 p-3 rounded-xl">
               <IconClock className="w-4 h-4 shrink-0" />
@@ -253,13 +255,13 @@ function EditModal({ booking, onClose, onSave }) {
               <IconBlock className="w-5 h-5 shrink-0 text-red-500 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-red-700">No payment record found</p>
-                <p className="text-xs text-red-600 mt-0.5">Cannot approve — no payment has been submitted for this booking yet.</p>
+                <p className="text-xs text-red-600 mt-0.5">Cannot mark as picked up / ongoing — no payment has been submitted for this booking yet.</p>
               </div>
             </div>
           ) : approvedStatuses.includes(paymentStatus?.toLowerCase()) ? (
             <div className="flex items-center gap-2 bg-green-50 border border-green-200 p-3 rounded-xl">
               <IconCheck className="w-5 h-5 text-green-600 shrink-0" />
-              <p className="text-sm text-green-700 font-medium">Payment is <span className="font-bold">{paymentStatus}</span> — booking can be approved.</p>
+              <p className="text-sm text-green-700 font-medium">Payment is <span className="font-bold">{paymentStatus}</span> — booking can be marked as picked up (ongoing).</p>
             </div>
           ) : (
             <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 p-3 rounded-xl">
@@ -280,8 +282,8 @@ function EditModal({ booking, onClose, onSave }) {
           </label>
           <label className="block text-sm font-medium text-gray-700">Status
             <select className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-              {booking.status?.toLowerCase() === "pending" ? (
-                <><option value="approved">Approved</option><option value="cancelled">Cancelled</option></>
+              {booking.status?.toLowerCase() === "upcoming" ? (
+                <><option value="ongoing">Ongoing (Picked Up)</option><option value="cancelled">Cancelled</option></>
               ) : (
                 <><option value="completed">Completed</option><option value="cancelled">Cancelled</option></>
               )}
@@ -438,7 +440,7 @@ export default function Bookings() {
     setNewBookingNotifs([]);
   };
 
-  const viewPending = () => { setActiveTab("Pending"); dismissAlert(); };
+  const viewPending = () => { setActiveTab("Upcoming"); dismissAlert(); };
 
   const handleDeleteConfirm = async () => {
     if (!deleteBooking) return;
@@ -459,16 +461,15 @@ export default function Bookings() {
 
   const counts = {
     All:       allBookings.length,
-    Pending:   allBookings.filter((b) => b.status?.toLowerCase() === "pending").length,
-    Active:    allBookings.filter((b) => b.status?.toLowerCase() === "approved").length,
+    Upcoming:  allBookings.filter((b) => b.status?.toLowerCase() === "upcoming").length,
+    Ongoing:   allBookings.filter((b) => b.status?.toLowerCase() === "ongoing").length,
     Cancelled: allBookings.filter((b) => b.status?.toLowerCase() === "cancelled").length,
     Completed: allBookings.filter((b) => b.status?.toLowerCase() === "completed").length,
   };
 
-  const tabStatusMap = { Active: "approved" };
   const tabFiltered  = activeTab === "All"
     ? allBookings
-    : allBookings.filter((b) => b.status?.toLowerCase() === (tabStatusMap[activeTab] || activeTab.toLowerCase()));
+    : allBookings.filter((b) => b.status?.toLowerCase() === activeTab.toLowerCase());
 
   const filtered = tabFiltered.filter((b) => {
     if (!search) return true;
@@ -507,7 +508,7 @@ export default function Bookings() {
             <div className={`text-2xl font-bold ${activeTab === tab ? "text-teal-600" : "text-gray-800"}`}>{loading ? "…" : counts[tab] ?? 0}</div>
             <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
               {tab === "All" ? "All Bookings" : tab}
-              {tab === "Pending" && !alertDismissed && newBookingNotifs.length > 0 && <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />}
+              {tab === "Upcoming" && !alertDismissed && newBookingNotifs.length > 0 && <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />}
             </div>
           </button>
         ))}

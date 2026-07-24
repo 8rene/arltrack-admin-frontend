@@ -1137,7 +1137,7 @@ export default function CarTracking() {
                 <p className="text-xs text-gray-400 italic">No upcoming bookings for this car.</p>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {(showAllUpcoming ? upcoming : upcoming.slice(0, 2)).map(b => (
+                  {(showAllUpcoming ? upcoming : upcoming.slice(0, 2)).map((b, i) => (
                     <div key={b.id} className="flex items-center justify-between gap-2 bg-blue-50 border border-blue-100 rounded-xl p-3">
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-blue-800 truncate">{b.customerName || "—"}</p>
@@ -1145,14 +1145,21 @@ export default function CarTracking() {
                           {fmtDateTime(b.startDateTime)} → {fmtDateTime(b.endDateTime)}
                         </p>
                       </div>
-                      <button
-                        onClick={() => handlePickup(b)}
-                        disabled={actionBusyId === b.id}
-                        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        <Icons.Play className="w-3 h-3" />
-                        {actionBusyId === b.id ? "…" : "Pickup"}
-                      </button>
+                      {i === 0 ? (
+                        <button
+                          onClick={() => handlePickup(b)}
+                          disabled={actionBusyId === b.id}
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50"
+                        >
+                          <Icons.Play className="w-3 h-3" />
+                          {actionBusyId === b.id ? "…" : "Pickup"}
+                        </button>
+                      ) : (
+                        // Only the nearest upcoming booking can be picked up — a
+                        // later one shows as informational only, so staff can't
+                        // start a future trip while skipping the immediate one.
+                        <span className="shrink-0 text-[11px] text-blue-300 italic px-1">Upcoming</span>
+                      )}
                     </div>
                   ))}
 
