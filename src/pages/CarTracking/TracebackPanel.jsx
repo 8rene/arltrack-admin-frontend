@@ -6,14 +6,13 @@ import { isGeofenceBreachedAt, isCodingRestrictedAt } from "../../utils/geofence
 import LogsPanel from "./LogsPanel";
 import TracebackBookingInfoPanel from "./TracebackBookingInfoPanel";
 import TripSummaryPanel from "./TripSummaryPanel";
+import { colorForCar } from "../../utils/carColors";
 
 const API = process.env.REACT_APP_API_URL;
 
 // Palette assigned to cars in order — stable per render since `cars` order is stable.
-const CAR_COLORS = ["#0d9488", "#2563eb", "#f97316", "#db2777", "#7c3aed", "#65a30d", "#dc2626", "#0891b2"];
-function colorForCar(idx) {
-  return CAR_COLORS[idx % CAR_COLORS.length];
-}
+// Shared with the Live tab (see ../../utils/carColors.js) so the same car
+// reads as the same color no matter which tab you're on.
 
 function makeCarIcon(color, focused = false) {
   const size = focused ? 40 : 32;

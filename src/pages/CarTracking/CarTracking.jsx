@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
@@ -12,7 +12,9 @@ import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
 import GeofenceBanner from "../../components/GeofenceBanner";
 import PlaceLabel from "../../components/PlaceLabel";
-import { isGeofenceBreachedNow, isCodingRestrictedNow } from "../../utils/geofenceAlerts";
+import { isGeofenceBreachedNow, isCodingRestrictedNow, activeCodingAlertNow } from "../../utils/geofenceAlerts";
+import { colorForCar } from "../../utils/carColors";
+import { fetchCityBoundary } from "../../utils/cityBoundary";
 
 // ── Fix Leaflet default marker icons ─────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -222,7 +224,18 @@ export default function CarTracking() {
   // React Router keeps the same location.state for the life of this page visit,
   // but HistoryPanel's own one-shot ref guards against re-opening on remount.
   const location = useLocation();
+  const navigate = useNavigate();
   const historyDeepLink = location.state?.tab === "history" ? location.state : null;
+
+  // Deep-link BACK from GPS Setup after assigning a device to a car — see
+  // the "No GPS device assigned" button below and DeviceTrack.jsx's
+  // handleQuickAssign. Re-selects that car so its (now-assigned) device
+  // shows up immediately instead of landing back on an unselected Live tab.
+  const selectCarDeepLink = location.state?.selectCarId || null;
+  useEffect(() => {
+    if (selectCarDeepLink) setSelected(selectCarDeepLink);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectCarDeepLink]);
 
   const [tab,          setTab]          = useState(historyDeepLink ? "history" : "live"); // "live" | "traceback" | "history"
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
@@ -240,7 +253,7 @@ export default function CarTracking() {
   const [showBookingInfo, setShowBookingInfo] = useState(false);
   const [showLogs,       setShowLogs]       = useState(false);
   useEffect(() => { if (!showBookingInfo) setDraftZones(null); }, [showBookingInfo]);
-  const zoneLayersRef = useRef([]); // leaflet Circle/Marker layers for the current geofence zones
+  const zoneLayersRef = useRef({}); // { [carId]: { geofence: Layer[], destCircle, destMarker, codingShape, codingLabel } }
   const leafletMap  = useRef(null);
   const markersRef  = useRef({}); // { [carId]: L.Marker }
   const token       = localStorage.getItem("token");
@@ -265,6 +278,13 @@ export default function CarTracking() {
     }).addTo(leafletMap.current);
     return () => {
       if (leafletMap.current) {
+        // A flyTo/setView animation can still be mid-transition when this
+        // fires (e.g. switching tabs right after focusing a car). Removing
+        // the map while animated pan/zoom is in flight leaves Leaflet's own
+        // transitionend handler reading pane positions that .remove() just
+        // nulled out — "Cannot read properties of undefined (reading
+        // '_leaflet_pos')". .stop() cancels any in-progress animation first.
+        leafletMap.current.stop();
         leafletMap.current.remove();
         leafletMap.current = null;
         markersRef.current = {};
@@ -361,7 +381,13 @@ export default function CarTracking() {
   // idle cars), listen directly to Firestore for sessions where
   // status == "active" — only real trips cost a read, and Firestore only
   // bills again when something actually changes, not on a fixed clock.
-  const [liveSessionsByCar, setLiveSessionsByCar] = useState({}); // { [carID]: { geofenceAlerts, codingAlerts } }
+  //
+  // This also now carries geofenceZones + dropoffLocation through (the
+  // listener already receives the whole doc — these were just being
+  // discarded before), which is what lets the map draw every car's zones/
+  // destination/coding-restriction at once without firing one
+  // /api/gps/:carId/session request per car.
+  const [liveSessionsByCar, setLiveSessionsByCar] = useState({}); // { [carID]: { geofenceAlerts, codingAlerts, geofenceZones, dropoffLocation } }
   useEffect(() => {
     const q = query(collection(db, "bookingSessions"), where("status", "==", "active"));
     const unsub = onSnapshot(
@@ -372,8 +398,10 @@ export default function CarTracking() {
           const data = d.data();
           if (!data.carID) return;
           map[data.carID] = {
-            geofenceAlerts: data.geofenceAlerts || [],
-            codingAlerts:   data.codingAlerts   || [],
+            geofenceAlerts:  data.geofenceAlerts  || [],
+            codingAlerts:    data.codingAlerts    || [],
+            geofenceZones:   data.geofenceZones   || [],
+            dropoffLocation: data.dropoffLocation || null,
           };
         });
         setLiveSessionsByCar(map);
@@ -382,6 +410,46 @@ export default function CarTracking() {
     );
     return () => unsub();
   }, []);
+
+  // ── Real city boundary for whichever city(ies) currently have an active
+  // coding restriction — keyed by city name (lowercased), not by car, so two
+  // cars restricted in the same city at once share one fetch. Sequential
+  // with a short pause between requests, same ~1 req/sec courtesy the
+  // Simulate tab already follows for Nominatim's usage policy. A `null`
+  // cache entry means "tried and failed" (falls back to a circle around the
+  // car's current position) — never retried in this session.
+  const [zoneBoundaries, setZoneBoundaries] = useState({}); // { [cityLower]: {geometry,lat,lng} | null }
+  const boundaryInFlightRef = useRef(new Set());
+  useEffect(() => {
+    const citiesNeeded = new Set();
+    Object.values(liveSessionsByCar).forEach((s) => {
+      const alert = activeCodingAlertNow(s.codingAlerts);
+      if (alert?.city) citiesNeeded.add(alert.city);
+    });
+    const toFetch = [...citiesNeeded].filter((city) => {
+      const key = city.toLowerCase();
+      return !(key in zoneBoundaries) && !boundaryInFlightRef.current.has(key);
+    });
+    if (!toFetch.length) return;
+
+    let cancelled = false;
+    (async () => {
+      for (const city of toFetch) {
+        if (cancelled) return;
+        const key = city.toLowerCase();
+        boundaryInFlightRef.current.add(key);
+        try {
+          const boundary = await fetchCityBoundary(city);
+          if (!cancelled) setZoneBoundaries((z) => ({ ...z, [key]: boundary }));
+        } catch {
+          if (!cancelled) setZoneBoundaries((z) => ({ ...z, [key]: null }));
+        }
+        await new Promise((r) => setTimeout(r, 1100));
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSessionsByCar]);
 
   // ── Active session for the focused car — geofence zones + alert logs ──────
   const fetchCarSession = useCallback(async (carId) => {
@@ -500,38 +568,127 @@ export default function CarTracking() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCars, gpsDevices, locations, tab]);
 
-  // ── Geofence zones for the focused car — circles + numbered markers ───────
+  // ── Zones for every effectively-visible car — geofence zones, destination
+  // pin, and coding-restriction area, all colored per car (colorForCar) and
+  // clickable to focus that car + show whose zone/restriction it is (same
+  // click-to-select behavior as the car markers). Focusing one car hides
+  // every other car's zones/restriction, same as it already does for
+  // markers. Full clear + rebuild each run — infrequent enough (only on
+  // real Firestore session changes, not per animation frame) that this is
+  // simpler and safer than diffing individual layers in place. ─────────────
   useEffect(() => {
     if (!leafletMap.current) return;
 
-    zoneLayersRef.current.forEach(layer => layer.remove());
-    zoneLayersRef.current = [];
-
-    const zones = draftZones ?? (sessionInfo?.geofenceZones || []);
-    if (!selected || !zones.length) return;
-
-    zones.forEach((zone, i) => {
-      if (typeof zone.lat !== "number" || typeof zone.lng !== "number") return;
-      const circle = L.circle([zone.lat, zone.lng], {
-        radius: zone.radius || 500, // meters — matches geofence.service.js's haversine comparison
-        color: "#0d9488",
-        fillColor: "#0d9488",
-        fillOpacity: 0.12,
-        weight: 2,
-        dashArray: "6 4",
-      }).addTo(leafletMap.current).bindPopup(`<b>${zone.label || `Zone ${i + 1}`}</b><br>Radius: ${zone.radius || 500} m`);
-
-      const numberIcon = L.divIcon({
-        className: "",
-        html: `<div style="background:#0d9488;color:white;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${i + 1}</div>`,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
-      });
-      const marker = L.marker([zone.lat, zone.lng], { icon: numberIcon }).addTo(leafletMap.current).bindPopup(zone.label || `Zone ${i + 1}`);
-
-      zoneLayersRef.current.push(circle, marker);
+    Object.values(zoneLayersRef.current).forEach(entry => {
+      entry.geofence.forEach(l => l.remove());
+      entry.destCircle?.remove();
+      entry.destMarker?.remove();
+      entry.codingShape?.remove();
+      entry.codingLabel?.remove();
     });
-  }, [sessionInfo, selected, draftZones, tab]);
+    zoneLayersRef.current = {};
+
+    allCars.forEach((car, idx) => {
+      const effectivelyVisible = !selected || selected === car.id;
+      if (!effectivelyVisible) return;
+
+      const session = liveSessionsByCar[car.id];
+      const color = colorForCar(idx);
+      const entry = { geofence: [], destCircle: null, destMarker: null, codingShape: null, codingLabel: null };
+      const selectThisCar = () => setSelected(selectedRef.current === car.id ? null : car.id);
+
+      // ── Geofence zones (pickup / destination / extra stops from the booking) ──
+      const zones = car.id === selected ? (draftZones ?? session?.geofenceZones ?? []) : (session?.geofenceZones ?? []);
+      zones.forEach((zone, i) => {
+        if (typeof zone.lat !== "number" || typeof zone.lng !== "number") return;
+        const circle = L.circle([zone.lat, zone.lng], {
+          radius: zone.radius || 500, // meters — matches geofence.service.js's haversine comparison
+          color, fillColor: color, fillOpacity: 0.12, weight: 2, dashArray: "6 4",
+        })
+          .addTo(leafletMap.current)
+          .on("click", selectThisCar)
+          .bindPopup(`<b>${getCarLabel(car)}</b><br>${zone.label || `Zone ${i + 1}`}<br>Radius: ${zone.radius || 500} m`);
+
+        const numberIcon = L.divIcon({
+          className: "",
+          html: `<div style="background:${color};color:white;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${i + 1}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        });
+        const marker = L.marker([zone.lat, zone.lng], { icon: numberIcon })
+          .addTo(leafletMap.current)
+          .on("click", selectThisCar)
+          .bindPopup(`<b>${getCarLabel(car)}</b><br>${zone.label || `Zone ${i + 1}`}`);
+
+        entry.geofence.push(circle, marker);
+      });
+
+      // ── Destination pin (the session's actual dropoffLocation) ─────────
+      const dest = session?.dropoffLocation;
+      if (dest && typeof dest.lat === "number" && typeof dest.lng === "number") {
+        entry.destCircle = L.circle([dest.lat, dest.lng], {
+          radius: 400, color, fillColor: color, fillOpacity: 0.15, weight: 2, dashArray: "2 6",
+        }).addTo(leafletMap.current).on("click", selectThisCar);
+
+        const flagIcon = L.divIcon({
+          className: "",
+          html: `<div style="width:28px;height:28px;background:${color};border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;"><span style="transform:rotate(45deg);font-size:12px;">🏁</span></div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 28],
+        });
+        entry.destMarker = L.marker([dest.lat, dest.lng], { icon: flagIcon })
+          .addTo(leafletMap.current)
+          .on("click", selectThisCar)
+          .bindPopup(`<b>${getCarLabel(car)} — Destination</b><br>${dest.address || "Drop-off point"}`);
+      }
+
+      // ── Coding-restriction area — only exists while the car is actually
+      // under an active restriction right now (transient, not a saved
+      // zone). Uses the real city boundary once Nominatim resolves it;
+      // falls back to an approximate circle around the car's current
+      // position if the boundary fetch failed or hasn't resolved yet. ────
+      const codingAlert = activeCodingAlertNow(session?.codingAlerts);
+      if (codingAlert?.city) {
+        const boundary = zoneBoundaries[codingAlert.city.toLowerCase()];
+        const style = { color, fillColor: color, fillOpacity: 0.28, weight: 3 };
+        const carLoc = locationForCar(car.id);
+
+        let shapeLayer = null, labelLatLng = null;
+        if (boundary?.geometry) {
+          shapeLayer = L.geoJSON(boundary.geometry, { style });
+          labelLatLng = [boundary.lat, boundary.lng];
+        } else if (carLoc?.lat && carLoc?.lng) {
+          shapeLayer = L.circle([carLoc.lat, carLoc.lng], { radius: 2500, ...style });
+          labelLatLng = [carLoc.lat, carLoc.lng];
+        }
+
+        if (shapeLayer) {
+          shapeLayer
+            .addTo(leafletMap.current)
+            .on("click", selectThisCar)
+            .bindPopup(
+              `<b>${getCarLabel(car)} — coding-restricted</b><br>${codingAlert.city}` +
+              (boundary?.geometry
+                ? `<br><span style="font-size:11px;color:#6b7280">Real city boundary (OpenStreetMap)</span>`
+                : `<br><span style="font-size:11px;color:#6b7280">Approximate — real boundary unavailable, showing the car's current area</span>`)
+            );
+          entry.codingShape = shapeLayer;
+
+          entry.codingLabel = L.marker(labelLatLng, {
+            icon: L.divIcon({
+              className: "",
+              html: `<div style="background:${color};color:white;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.3);transform:translateY(-26px);">🚫 ${codingAlert.city}</div>`,
+              iconSize: [0, 0],
+              iconAnchor: [0, 0],
+            }),
+          }).addTo(leafletMap.current).on("click", selectThisCar);
+        }
+      }
+
+      zoneLayersRef.current[car.id] = entry;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSessionsByCar, selected, draftZones, tab, allCars, zoneBoundaries, locations, gpsDevices]);
 
   // ── Focus behavior: clicking a car hides the rest and zooms in; clearing shows all ──
   useEffect(() => {
@@ -605,7 +762,7 @@ export default function CarTracking() {
   function flyToZone(zone) {
     if (!leafletMap.current || typeof zone?.lat !== "number" || typeof zone?.lng !== "number") return;
     leafletMap.current.flyTo([zone.lat, zone.lng], 17, { animate: true });
-    const marker = zoneLayersRef.current.find(
+    const marker = (zoneLayersRef.current[selected]?.geofence || []).find(
       l => l instanceof L.Marker && l.getLatLng().lat === zone.lat && l.getLatLng().lng === zone.lng
     );
     marker?.openPopup();
@@ -774,10 +931,18 @@ export default function CarTracking() {
                         {device.gpsName}
                       </p>
                     ) : (
-                      <p className="text-xs text-red-400 mt-0.5 italic flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation(); // don't also toggle this card's selection
+                          navigate("/gps-setup", { state: { assignCarId: car.id, assignCarLabel: getCarLabel(car) } });
+                        }}
+                        title="Go to GPS Setup and assign a device to this car"
+                        className="text-xs text-red-400 mt-0.5 italic flex items-center gap-1 hover:text-red-600 hover:not-italic"
+                      >
                         <Icons.AlertTriangle className="w-3 h-3" />
                         No GPS device assigned
-                      </p>
+                      </button>
                     )}
 
                     {/* Location */}

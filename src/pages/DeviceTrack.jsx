@@ -215,6 +215,12 @@ export default function DeviceTrack() {
     }).addTo(leafletMap.current);
     return () => {
       if (leafletMap.current) {
+        // See CarTracking.jsx's identical comment: flyTo (used above when
+        // focusing a device) can still be mid-animation when this runs —
+        // e.g. handleQuickAssign navigates away right after a click that
+        // was still flying to a marker. .stop() cancels it before .remove()
+        // tears the map down, avoiding Leaflet's "_leaflet_pos" crash.
+        leafletMap.current.stop();
         leafletMap.current.remove();
         leafletMap.current = null;
         markersRef.current = {};
@@ -380,10 +386,11 @@ export default function DeviceTrack() {
       const json = await res.json();
       if (json.status === "ok") {
         await fetchGpsDevices();
-        setNotice({ type: "ok", msg: `${assignForCar.label} linked to this GPS device.` });
-        setAssignForCar(null);
-        // Clear the router state so refreshing this page doesn't re-trigger assign mode.
-        navigate(routerLocation.pathname, { replace: true, state: {} });
+        // Job's done — go back to Car Tracking and re-select this car so
+        // its now-assigned device shows up immediately, rather than leaving
+        // the admin to navigate back and re-find it manually.
+        navigate("/car-tracking", { state: { selectCarId: assignForCar.id } });
+        return;
       } else {
         setNotice({ type: "error", msg: json.message || "Failed to assign car." });
       }

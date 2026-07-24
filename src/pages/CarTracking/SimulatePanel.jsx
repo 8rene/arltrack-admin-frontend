@@ -32,9 +32,34 @@ function haversineKm(lat1, lng1, lat2, lng2) {
 function windowActiveAt(zone, curSec) {
   return curSec >= timeToSec(zone.windowStart) && curSec <= timeToSec(zone.windowEnd);
 }
-function isViolatingAt(zone, point, curSec) {
-  if (!windowActiveAt(zone, curSec)) return false;
-  return haversineKm(point.lat, point.lng, zone.lat, zone.lng) <= zone.radius;
+// Standard ray-casting point-in-polygon, run per ring. GeoJSON rings are
+// [lng, lat] pairs, first ring = outer boundary, any further rings = holes.
+function pointInRing(lat, lng, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [lngI, latI] = ring[i], [lngJ, latJ] = ring[j];
+    const intersect = (latI > lat) !== (latJ > lat) &&
+      lng < ((lngJ - lngI) * (lat - latI)) / (latJ - latI) + lngI;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+function pointInGeometry(lat, lng, geometry) {
+  if (!geometry) return false;
+  const polys = geometry.type === "MultiPolygon" ? geometry.coordinates : [geometry.coordinates];
+  return polys.some(rings => {
+    if (!pointInRing(lat, lng, rings[0])) return false; // outside outer ring
+    for (let h = 1; h < rings.length; h++) if (pointInRing(lat, lng, rings[h])) return false; // inside a hole
+    return true;
+  });
+}
+// The shape-aware violation check: uses the real Nominatim city boundary
+// once it's loaded for that car, falls back to the circle if it isn't
+// loaded yet (still loading) or the fetch failed.
+function isViolatingShape(car, point, curSec, boundary) {
+  if (!windowActiveAt(car.restrictedZone, curSec)) return false;
+  if (boundary?.geometry) return pointInGeometry(point.lat, point.lng, boundary.geometry);
+  return haversineKm(point.lat, point.lng, car.restrictedZone.lat, car.restrictedZone.lng) <= car.restrictedZone.radius;
 }
 // Destination arrival isn't time-gated like the coding zone — it's just
 // "is the car currently within its destination's radius," any time of day.
@@ -84,6 +109,22 @@ function makeDestinationIcon(color) {
     iconSize: [DESTINATION_ICON_SIZE, DESTINATION_ICON_SIZE],
     iconAnchor: [DESTINATION_ICON_SIZE / 2, DESTINATION_ICON_SIZE],
   });
+}
+
+// Fetches the real municipal boundary for a Philippine city/municipality
+// from Nominatim (OpenStreetMap's public geocoder), asking for its GeoJSON
+// polygon. Returns { geometry, lat, lng, displayName } or null on failure —
+// callers must have a circle fallback ready, since this can fail or be slow.
+async function fetchCityBoundary(cityName) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&polygon_geojson=1&limit=1&q=${encodeURIComponent(`${cityName}, Philippines`)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Nominatim HTTP ${res.status} for ${cityName}`);
+  const results = await res.json();
+  const hit = results?.[0];
+  if (!hit?.geojson || (hit.geojson.type !== "Polygon" && hit.geojson.type !== "MultiPolygon")) {
+    throw new Error(`No polygon boundary found for ${cityName}`);
+  }
+  return { geometry: hit.geojson, lat: parseFloat(hit.lat), lng: parseFloat(hit.lon), displayName: hit.display_name };
 }
 
 /**
@@ -142,7 +183,44 @@ export default function SimulatePanel() {
     return () => { cancelled = true; };
   }, []);
 
+  // ── Fetch each car's real city boundary from Nominatim once cars are
+  // loaded — sequential with a short pause between requests (Nominatim's
+  // usage policy asks for ~1 req/sec, and this is a small, fixed set of 6
+  // cities so it only ever runs once). Any city that fails just falls back
+  // to the circle everywhere it's used below — never blocks the rest. ─────
+  const [zoneBoundaries, setZoneBoundaries] = useState({}); // { [carId]: {geometry,lat,lng,displayName} }
+  const [boundaryStatus, setBoundaryStatus] = useState({}); // { [carId]: "loading" | "ok" | "error" }
+  useEffect(() => {
+    if (!cars.length) return;
+    let cancelled = false;
+    (async () => {
+      for (const car of cars) {
+        if (cancelled) return;
+        setBoundaryStatus(s => ({ ...s, [car.id]: "loading" }));
+        try {
+          const boundary = await fetchCityBoundary(car.restrictedZone.city);
+          if (cancelled) return;
+          setZoneBoundaries(z => ({ ...z, [car.id]: boundary }));
+          setBoundaryStatus(s => ({ ...s, [car.id]: "ok" }));
+        } catch {
+          // Falls back to the circle for this city — not treated as fatal.
+          if (!cancelled) setBoundaryStatus(s => ({ ...s, [car.id]: "error" }));
+        }
+        await new Promise(r => setTimeout(r, 1100)); // stay under ~1 req/sec
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [cars]);
+
+
   const curSec = idx * STEP_SECONDS;
+
+  // Guards every flyTo/panTo/fitBounds call below — Leaflet throws the
+  // same "_leaflet_pos" error if you animate a map that's been torn down
+  // or hasn't finished its own initial load yet.
+  function mapReady() {
+    return !!(leafletMap.current && leafletMap.current._loaded);
+  }
 
   // While a car is focused, every other car (and its zone/destination) is
   // hidden from the map — "select one, follow it, hide the rest."
@@ -150,18 +228,21 @@ export default function SimulatePanel() {
     return !!visible[carId] && (!focusedCar || focusedCar === carId);
   }
 
-  // ── Derive every enter/exit/arrival log for the full day, once per car load ──
+  // ── Derive every enter/exit/arrival log for the full day. Recomputes once
+  // more when each city's real boundary finishes loading, so logs upgrade
+  // from circle-based to polygon-based accuracy without a page reload. ─────
   const [logs, setLogs] = useState([]); // [{id, carId, carName, color, type, sec}]
   useEffect(() => {
     if (!cars.length) return;
     const out = [];
     cars.forEach(car => {
+      const boundary = zoneBoundaries[car.id];
       let wasViolating = false;
       let wasAtDestination = false;
       car.points.forEach((p, i) => {
         const sec = i * STEP_SECONDS;
 
-        const violating = isViolatingAt(car.restrictedZone, p, sec);
+        const violating = isViolatingShape(car, p, sec, boundary);
         if (violating && !wasViolating) {
           out.push({ id: `${car.id}-enter-${sec}`, carId: car.id, carName: car.name, color: car.color, type: "entered", city: car.restrictedZone.city, sec });
         } else if (!violating && wasViolating) {
@@ -182,18 +263,37 @@ export default function SimulatePanel() {
     });
     out.sort((a, b) => a.sec - b.sec);
     setLogs(out);
-  }, [cars]);
+  }, [cars, zoneBoundaries]);
 
   // ── Init Leaflet map ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!mapRef.current || leafletMap.current) return;
+    // React 18 StrictMode (dev only) mounts → unmounts → remounts every
+    // component once as an intentional check. Leaflet leaves a marker on
+    // the DOM node from the first mount — if we see it, this is that
+    // remount, so skip creating a second map on the same container.
+    if (mapRef.current._leaflet_id) return;
+
     leafletMap.current = L.map(mapRef.current, { zoomControl: true }).setView([14.58, 121.02], 11);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "© OpenStreetMap contributors",
       maxZoom: 19,
     }).addTo(leafletMap.current);
-    return () => { if (leafletMap.current) { leafletMap.current.remove(); leafletMap.current = null; } };
+
+    return () => {
+      if (leafletMap.current) {
+        // Cancel any in-progress flyTo/panTo animation first — tearing the
+        // map down mid-animation is exactly what produces the
+        // "Cannot read properties of undefined (reading '_leaflet_pos')"
+        // error, since the pending animation frame fires after the pane
+        // it needs is already gone.
+        leafletMap.current.stop();
+        leafletMap.current.remove();
+        leafletMap.current = null;
+      }
+    };
   }, []);
+
 
   // ── Playback interval ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -223,7 +323,7 @@ export default function SimulatePanel() {
   // current position) and pops its label, same idea as the Traceback tab's
   // onFocusZone. Doesn't touch focusedCar/follow — the car stays followed.
   function flyToPlace(lat, lng, layerEntry) {
-    if (!leafletMap.current) return;
+    if (!mapReady()) return;
     setPlaying(false); // otherwise the next tick's follow-pan snaps straight back to the car
     leafletMap.current.flyTo([lat, lng], 16, { animate: true });
     layerEntry?.circle?.openPopup();
@@ -254,7 +354,7 @@ export default function SimulatePanel() {
       if (!effectiveVisible(car.id)) return;
       const positions = car.points.map(p => [p.lat, p.lng]);
       const cur = car.points[idx];
-      const violating = isViolatingAt(car.restrictedZone, cur, curSec);
+      const violating = isViolatingShape(car, cur, curSec, zoneBoundaries[car.id]);
       const isFocused = focusedCar === car.id;
 
       let entry = layersRef.current[car.id];
@@ -281,16 +381,18 @@ export default function SimulatePanel() {
       );
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cars, visible, focusedCar, idx]);
+  }, [cars, visible, focusedCar, idx, zoneBoundaries]);
 
-  // ── Sync restricted-zone circles — shown only for effectively-visible cars,
-  // clickable to focus/follow that car, style flips active/inactive by time ──
+  // ── Sync restricted-zone shapes — real city boundary (Nominatim) when
+  // loaded, circle fallback otherwise; shown only for effectively-visible
+  // cars, clickable to focus/follow that car, style flips active/inactive
+  // by time. Swaps circle → real polygon in place once the fetch resolves. ──
   useEffect(() => {
     if (!leafletMap.current || !cars.length) return;
 
     Object.keys(zoneLayersRef.current).forEach(carId => {
       if (!effectiveVisible(carId)) {
-        Object.values(zoneLayersRef.current[carId]).forEach(l => l?.remove());
+        Object.values(zoneLayersRef.current[carId]).forEach(l => l?.remove?.());
         delete zoneLayersRef.current[carId];
       }
     });
@@ -298,21 +400,43 @@ export default function SimulatePanel() {
     cars.forEach(car => {
       if (!effectiveVisible(car.id)) return;
       const zone = car.restrictedZone;
+      const boundary = zoneBoundaries[car.id];
+      const usePolygon = !!boundary;
       const active = windowActiveAt(zone, curSec);
       let entry = zoneLayersRef.current[car.id];
       const style = active
         ? { color: car.color, fillColor: car.color, fillOpacity: 0.28, weight: 3, dashArray: null }
         : { color: car.color, fillColor: car.color, fillOpacity: 0.08, weight: 1.5, dashArray: "5 5" };
+      const labelLat = boundary?.lat ?? zone.lat;
+      const labelLng = boundary?.lng ?? zone.lng;
+
+      // The real boundary just finished loading (or, in theory, failed
+      // after having loaded) — swap the shape out rather than restyle it.
+      if (entry && entry.isPolygon !== usePolygon) {
+        Object.values(entry).forEach(l => l?.remove?.());
+        entry = null;
+        delete zoneLayersRef.current[car.id];
+      }
 
       if (!entry) {
+        const shapeLayer = usePolygon
+          ? L.geoJSON(boundary.geometry, { style })
+          : L.circle([zone.lat, zone.lng], { radius: zone.radius * 1000, ...style });
+        shapeLayer
+          .addTo(leafletMap.current)
+          .on("click", () => handleCarClick(car.id))
+          .bindPopup(
+            `<b>${zone.city}</b><br>Coding-restricted ${zone.windowStart.slice(0, 5)}–${zone.windowEnd.slice(0, 5)}` +
+            (usePolygon
+              ? `<br><span style="font-size:11px;color:#6b7280">Real city boundary (OpenStreetMap)</span>`
+              : `<br><span style="font-size:11px;color:#6b7280">Approximate radius — real boundary unavailable</span>`)
+          );
         entry = {
-          circle: L.circle([zone.lat, zone.lng], { radius: zone.radius * 1000, ...style })
-            .addTo(leafletMap.current)
-            .on("click", () => handleCarClick(car.id))
-            .bindPopup(`<b>${zone.city}</b><br>Coding-restricted ${zone.windowStart.slice(0, 5)}–${zone.windowEnd.slice(0, 5)}`),
-          label: L.marker([zone.lat, zone.lng], { icon: makeZoneLabelIcon(zone.city, car.color, active) })
+          circle: shapeLayer, // kept as "circle" for compatibility even when it's a polygon layer
+          label: L.marker([labelLat, labelLng], { icon: makeZoneLabelIcon(zone.city, car.color, active) })
             .addTo(leafletMap.current)
             .on("click", () => handleCarClick(car.id)),
+          isPolygon: usePolygon,
         };
         zoneLayersRef.current[car.id] = entry;
       } else {
@@ -321,7 +445,7 @@ export default function SimulatePanel() {
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cars, curSec, visible, focusedCar]);
+  }, [cars, curSec, visible, focusedCar, zoneBoundaries]);
 
 
   // ── Destination markers + arrival circles — drawn once per car (the
@@ -359,7 +483,7 @@ export default function SimulatePanel() {
 
   // ── Fit bounds / fly-to (only runs when nothing is focused) ───────────────
   useEffect(() => {
-    if (!leafletMap.current) return;
+    if (!mapReady()) return;
     if (flyPos) { leafletMap.current.flyTo(flyPos, 15, { animate: true }); return; }
     const shown = cars.filter(c => visible[c.id]);
     if (shown.length) {
@@ -373,7 +497,7 @@ export default function SimulatePanel() {
   // moves, tick by tick — a gentle panTo rather than a fresh flyTo animation
   // every 30s of sim-time, so playback doesn't feel jerky. ─────────────────
   useEffect(() => {
-    if (!leafletMap.current || !focusedCar) return;
+    if (!mapReady() || !focusedCar) return;
     const car = cars.find(c => c.id === focusedCar);
     if (!car) return;
     const cur = car.points[idx];
@@ -387,7 +511,7 @@ export default function SimulatePanel() {
   // coding-restricted zone right now (window active AND physically inside it).
   const mapBanners = cars
     .filter(car => visible[car.id])
-    .filter(car => isViolatingAt(car.restrictedZone, car.points[idx], curSec))
+    .filter(car => isViolatingShape(car, car.points[idx], curSec, zoneBoundaries[car.id]))
     .map(car => ({ id: `banner-${car.id}`, tone: "restricted", text: `🚫 ${car.name} is coding-restricted (${car.restrictedZone.city})` }));
 
   return (
@@ -404,7 +528,7 @@ export default function SimulatePanel() {
         {cars.map(car => {
           const on = visible[car.id];
           const cur = car.points[idx];
-          const violating = isViolatingAt(car.restrictedZone, cur, curSec);
+          const violating = isViolatingShape(car, cur, curSec, zoneBoundaries[car.id]);
           const isFocused = focusedCar === car.id;
 
           return (
@@ -429,6 +553,9 @@ export default function SimulatePanel() {
               </div>
               <p className="text-[10px] text-gray-400 mt-1 ml-6">
                 Zone: {car.restrictedZone.city} · {car.restrictedZone.windowStart.slice(0, 5)}–{car.restrictedZone.windowEnd.slice(0, 5)}
+                {boundaryStatus[car.id] === "loading" && <span className="text-gray-300 italic"> · fetching boundary…</span>}
+                {boundaryStatus[car.id] === "error" && <span className="text-amber-500 italic"> · using circle (boundary unavailable)</span>}
+                {boundaryStatus[car.id] === "ok" && <span className="italic" style={{ color: car.color }}> · real boundary</span>}
               </p>
               {on && (
                 <p className="text-[10px] text-gray-500 mt-0.5 ml-6 font-mono">
