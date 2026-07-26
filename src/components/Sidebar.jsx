@@ -229,6 +229,8 @@ const nav = [
   },
 ];
 
+export const NAV_SECTIONS = nav;
+
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   return (

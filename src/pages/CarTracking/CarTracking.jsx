@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -477,6 +477,17 @@ export default function CarTracking() {
   const getCarLabel = (car) =>
     [brandMap[car.brandID], modelMap[car.modelID]].filter(Boolean).join(" ") || car.id;
 
+  // Stable { id, name } list handed to Traceback/History/Review — see the
+  // note above the useMemo import. Without this, those panels' data-fetch
+  // effects re-fire (and re-hit the Sheets/Firestore-backed traceback
+  // endpoint) on every unrelated re-render of this component, not just when
+  // the car list, the selected date, or the Refresh button actually changes.
+  const trackingCars = useMemo(
+    () => allCars.map((c) => ({ id: c.id, name: getCarLabel(c) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allCars, brandMap, modelMap]
+  );
+
   const deviceForCar = (carId) => gpsDevices.find(d => d.carID === carId && d.assigned);
   const locationForCar = (carId) => {
     const device = deviceForCar(carId);
@@ -850,12 +861,12 @@ export default function CarTracking() {
       )}
 
       {tab === "traceback" && (
-        <TracebackPanel cars={allCars.map(c => ({ id: c.id, name: getCarLabel(c) }))} token={token} refreshTick={refreshTick} />
+        <TracebackPanel cars={trackingCars} token={token} refreshTick={refreshTick} />
       )}
 
       {tab === "history" && (
         <HistoryPanel
-          cars={allCars.map(c => ({ id: c.id, name: getCarLabel(c) }))}
+          cars={trackingCars}
           token={token}
           refreshTick={refreshTick}
           autoOpen={historyDeepLink ? { carID: historyDeepLink.carID, bookingID: historyDeepLink.bookingID } : null}
@@ -863,7 +874,7 @@ export default function CarTracking() {
       )}
 
       {tab === "review" && (
-        <ReviewPanel cars={allCars.map(c => ({ id: c.id, name: getCarLabel(c) }))} token={token} />
+        <ReviewPanel cars={trackingCars} token={token} />
       )}
 
       {tab === "simulate" && <SimulatePanel />}

@@ -292,7 +292,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
     return () => { if (leafletMap.current) { leafletMap.current.remove(); leafletMap.current = null; } };
   }, []);
 
-  const fetchAll = useCallback(async (targetDate) => {
+  const fetchAll = useCallback(async (targetDate, force = false) => {
     setLoading(true);
     setFetchError(null);
     setScrubIdx(0); setPlaying(false); setFocusedCar(null); setFlyPos(null);
@@ -305,7 +305,8 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
 
     const results = await Promise.allSettled(
       cars.map(async car => {
-        const r = await fetch(`${API}/api/gps/${car.id}/traceback?date=${targetDate}`, { headers: { Authorization: `Bearer ${token}` } });
+        const forceParam = force ? "&force=true" : "";
+        const r = await fetch(`${API}/api/gps/${car.id}/traceback?date=${targetDate}${forceParam}`, { headers: { Authorization: `Bearer ${token}` } });
         const contentType = r.headers.get("content-type") || "";
         if (!contentType.includes("application/json")) {
           throw new Error(`Backend returned ${r.status} (non-JSON) for ${car.name} — is REACT_APP_API_URL correct and is the backend deployed with the traceback route?`);
@@ -348,7 +349,18 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
     setLoading(false);
   }, [cars, token]);
 
-  useEffect(() => { if (!isReview && cars.length) fetchAll(date); }, [date, cars.length, isReview, fetchAll, refreshTick]);
+  // `cars` (from CarTracking) is memoized so its identity is stable across
+  // unrelated re-renders — otherwise this effect (via fetchAll's own [cars,
+  // token] dependency) would refire, and re-hit the Sheets-backed traceback
+  // endpoint for every car, on every re-render of the parent page (e.g. the
+  // Live tab's location poller ticking in the background), not just on an
+  // actual date change or a deliberate click of the Refresh button.
+  const prevTickRef = useRef(refreshTick);
+  useEffect(() => {
+    const isManualRefresh = refreshTick !== prevTickRef.current;
+    prevTickRef.current = refreshTick;
+    if (!isReview && cars.length) fetchAll(date, isManualRefresh);
+  }, [date, cars.length, isReview, fetchAll, refreshTick]);
 
   useEffect(() => {
     if (!isReview) return;

@@ -1,9 +1,9 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { CurrencyProvider } from "./context/CurrencyContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import AuthPage from "./pages/AuthPage";
-import Sidebar from "./components/Sidebar";
+import Sidebar, { NAV_SECTIONS } from "./components/Sidebar";
 import Header from "./components/Header";
 import Dashboard from "./pages/Dashboard";
 import Bookings from "./pages/Bookings";
@@ -35,13 +35,28 @@ function ProtectedRoute({ children }) {
     return children;
 }
 
+// Path -> { label, group } built straight from the sidebar's own nav
+// structure, so header titles can never drift out of sync with it.
+const PAGE_META = Object.fromEntries(
+    NAV_SECTIONS.flatMap((section) =>
+        section.items.map((item) => [item.path, { label: item.label, group: section.group }])
+    )
+);
+
 // The main dashboard shell (sidebar + header + page content)
 function DashboardLayout({ children }) {
+    const { pathname } = useLocation();
+    const meta = PAGE_META[pathname];
+    // Main pages show their own name (Dashboard, Bookings, ...). Everything
+    // else (Operations, Reports, System, Archives) shows the section name,
+    // since those pages are sub-items of that section rather than top-level.
+    const title = !meta ? "Dashboard" : meta.group === "Main" ? meta.label : meta.group;
+
     return (
         <div className="flex min-h-screen bg-arl-light">
             <Sidebar />
             <div className="flex-1 flex flex-col overflow-hidden">
-                <Header />
+                <Header title={title} />
                 <main className="flex-1 overflow-auto p-6">
                     {children}
                 </main>
