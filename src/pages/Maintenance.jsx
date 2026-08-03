@@ -128,7 +128,7 @@ const MAINTENANCE_STATUSES = ["Scheduled", "In Progress", "Completed", "Cancelle
 const MAINTENANCE_TYPES    = ["Routine Maintenance", "Oil Change", "Brake Inspection", "Tire Rotation", "Battery Check", "Engine Check", "Transmission Service", "Suspension Check", "Electrical Check", "Other"];
 
 const EMPTY_FORM = {
-  carID: "", type: "", description: "", cost: "",
+  carID: "", types: [], description: "", cost: "",
   maintenanceDate: "", nextMaintenanceDate: "", status: "Scheduled",
 };
 
@@ -149,6 +149,7 @@ export default function Maintenance() {
   const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [damagedParts, setDamagedParts]   = useState([]);
   const [replacedParts, setReplacedParts] = useState([]);
+  const [customType, setCustomType]       = useState("");
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -268,14 +269,13 @@ export default function Maintenance() {
   const completed = records.filter(r => r.status === "Completed").length;
 
   const handleSave = async () => {
-    if (!form.carID || !form.type || !form.maintenanceDate) {
-      showToast("Car, type, and maintenance date are required.", "error"); return;
+    if (!form.carID || form.types.length === 0 || !form.maintenanceDate) {
+      showToast("Car, at least one maintenance type, and maintenance date are required.", "error"); return;
     }
     setSaving(true);
     try {
-      const payload = {
+      const basePayload = {
         carID:               form.carID,
-        type:                form.type,
         description:         form.description,
         cost:                Number(form.cost) || 0,
         maintenanceDate:     form.maintenanceDate ? new Date(form.maintenanceDate) : null,
@@ -283,14 +283,22 @@ export default function Maintenance() {
         status:              form.status,
       };
       if (editRecord) {
-        await updateDoc(doc(db, "carMaintenance", editRecord.id), { ...payload, updatedAt: serverTimestamp() });
+        // Editing one existing record — keep it as a single record, just save the
+        // (possibly multiple) chosen types together on that one entry.
+        await updateDoc(doc(db, "carMaintenance", editRecord.id), {
+          ...basePayload, type: form.types.join(", "), updatedAt: serverTimestamp(),
+        });
         showToast("Record updated.");
       } else {
-        const ref = await addDoc(collection(db, "carMaintenance"), { ...payload, createdAt: serverTimestamp() });
-        await updateDoc(ref, { maintenanceID: ref.id });
-        showToast("Maintenance scheduled.");
+        // Scheduling new — one maintenance record per selected type, so choosing
+        // 1, 2, or more types adds that many rows automatically.
+        await Promise.all(form.types.map(async (t) => {
+          const ref = await addDoc(collection(db, "carMaintenance"), { ...basePayload, type: t, createdAt: serverTimestamp() });
+          await updateDoc(ref, { maintenanceID: ref.id });
+        }));
+        showToast(form.types.length > 1 ? `${form.types.length} maintenance records scheduled.` : "Maintenance scheduled.");
       }
-      setEditRecord(null); setShowAdd(false); setForm(EMPTY_FORM);
+      setEditRecord(null); setShowAdd(false); setForm(EMPTY_FORM); setCustomType("");
       fetchAll();
     } catch (e) { showToast(e.message, "error"); }
     finally { setSaving(false); }
@@ -299,7 +307,7 @@ export default function Maintenance() {
   const openEdit = (r) => {
     setForm({
       carID:               r.carID || "",
-      type:                r.type || "",
+      types:               r.type ? r.type.split(",").map(t => t.trim()).filter(Boolean) : [],
       description:         r.description || "",
       cost:                r.cost || "",
       maintenanceDate:     isoDate(r.maintenanceDate),
@@ -312,8 +320,23 @@ export default function Maintenance() {
 
   const openAdd = () => {
     setForm(EMPTY_FORM);
+    setCustomType("");
     setEditRecord(null);
     setShowAdd(true);
+  };
+
+  const toggleType = (t) => {
+    setForm(f => ({
+      ...f,
+      types: f.types.includes(t) ? f.types.filter(x => x !== t) : [...f.types, t],
+    }));
+  };
+
+  const addCustomType = () => {
+    const t = customType.trim();
+    if (!t) return;
+    setForm(f => f.types.includes(t) ? f : { ...f, types: [...f.types, t] });
+    setCustomType("");
   };
 
   const ALL_STATUSES = ["All", ...MAINTENANCE_STATUSES];
@@ -581,12 +604,50 @@ export default function Maintenance() {
                 {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.platenumber ? `· ${c.platenumber}` : ""}</option>)}
               </select>
             </Field>
-            <Field label="Maintenance Type *">
-              <select value={form.type} onChange={e => setForm(f => ({...f, type: e.target.value}))}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
-                <option value="">Select type…</option>
-                {MAINTENANCE_TYPES.map(t => <option key={t}>{t}</option>)}
-              </select>
+            <Field label={`Maintenance Type${form.types.length > 1 ? "s" : ""} *`}>
+              <div className="flex flex-wrap gap-1.5">
+                {MAINTENANCE_TYPES.map(t => {
+                  const active = form.types.includes(t);
+                  return (
+                    <button key={t} type="button" onClick={() => toggleType(t)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
+                        active ? "border-teal-500 bg-teal-50 text-teal-700" : "border-gray-100 text-gray-600 hover:border-gray-300"
+                      }`}>
+                      {active ? "✓ " : ""}{t}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Custom type not in the list above */}
+              <div className="flex gap-1.5 mt-2">
+                <input type="text" value={customType} onChange={e => setCustomType(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addCustomType(); } }}
+                  placeholder="Other type…"
+                  className="flex-1 border border-gray-200 rounded-xl px-3 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                <button type="button" onClick={addCustomType}
+                  className="px-3 py-1.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-600 hover:border-teal-400 hover:text-teal-600">
+                  + Add
+                </button>
+              </div>
+              {/* Selected types summary — remove individually, or clear all */}
+              {form.types.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
+                  <span className="text-xs text-gray-400">{form.types.length} selected:</span>
+                  {form.types.map(t => (
+                    <span key={t} className="inline-flex items-center gap-1 bg-teal-50 text-teal-700 border border-teal-200 rounded-full pl-2.5 pr-1.5 py-0.5 text-xs font-medium">
+                      {t}
+                      <button type="button" onClick={() => toggleType(t)} className="hover:text-teal-900">
+                        <IconX className="w-2.5 h-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {!editRecord && form.types.length > 1 && (
+                <p className="text-xs text-gray-400 mt-1.5">
+                  This will create {form.types.length} separate maintenance records for this vehicle — one per type.
+                </p>
+              )}
             </Field>
             <Field label="Description">
               <textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
@@ -627,7 +688,13 @@ export default function Maintenance() {
               </button>
               <button onClick={handleSave} disabled={saving}
                 className="flex-1 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
-                {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
+                {saving
+                  ? "Saving…"
+                  : editRecord
+                    ? "Update"
+                    : form.types.length > 1
+                      ? `Schedule (${form.types.length})`
+                      : "Schedule"}
               </button>
             </div>
           </div>
