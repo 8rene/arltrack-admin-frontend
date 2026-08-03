@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { useCurrency } from "../context/CurrencyContext";
 
@@ -91,10 +91,10 @@ const IconPackage = ({ className = "w-4 h-4" }) => (
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
 const PERIODS = [
-  { key: "daily",   label: "Daily",   Icon: IconCalendarDay,   desc: "Today's report" },
-  { key: "weekly",  label: "Weekly",  Icon: IconCalendarWeek,  desc: "This week" },
-  { key: "monthly", label: "Monthly", Icon: IconCalendarMonth, desc: "This month" },
-  { key: "yearly",  label: "Yearly",  Icon: IconBarChart,      desc: "This year" },
+  { key: "daily",   label: "Daily",   Icon: IconCalendarDay,   desc: "Pick a day" },
+  { key: "weekly",  label: "Weekly",  Icon: IconCalendarWeek,  desc: "Pick a week" },
+  { key: "monthly", label: "Monthly", Icon: IconCalendarMonth, desc: "Pick a month" },
+  { key: "yearly",  label: "Yearly",  Icon: IconBarChart,      desc: "Pick a year" },
 ];
 
 const TABS = [
@@ -130,9 +130,26 @@ function fmtDateTime(iso) {
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
+const MONTH_NAMES = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
+];
+
+const now = new Date();
+const YEAR_OPTIONS = Array.from({ length: 6 }, (_, i) => now.getFullYear() - i); // this year + past 5
+const WEEK_OPTIONS = [1, 2, 3, 4, 5];
+
+function daysInMonth(year, month /* 1-12 */) {
+  return new Date(Number(year), Number(month), 0).getDate();
+}
+
 export default function Reports() {
   const { fmt, currency } = useCurrency();
   const [period, setPeriod]       = useState("monthly");
+  const [selYear, setSelYear]     = useState(now.getFullYear());
+  const [selMonth, setSelMonth]   = useState(now.getMonth() + 1); // 1-12
+  const [selWeek, setSelWeek]     = useState(1);
+  const [selDay, setSelDay]       = useState(now.getDate());
   const [report, setReport]       = useState(null);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState(null);
@@ -140,10 +157,23 @@ export default function Reports() {
   const printRef = useRef(null);
   const token = localStorage.getItem("token");
 
-  const generate = useCallback(async (p) => {
+  // Keep the day selector valid whenever the year/month changes (e.g. Feb 30 → 28).
+  const maxDay = daysInMonth(selYear, selMonth);
+  useEffect(() => {
+    if (selDay > maxDay) setSelDay(maxDay);
+  }, [maxDay, selDay]);
+
+  const generate = useCallback(async () => {
     setLoading(true); setError(null); setReport(null);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/reports?period=${p}`, {
+      const params = new URLSearchParams({ period, year: String(selYear) });
+      if (period === "monthly" || period === "weekly" || period === "daily") {
+        params.set("month", String(selMonth));
+      }
+      if (period === "weekly") params.set("week", String(selWeek));
+      if (period === "daily")  params.set("day", String(selDay));
+
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/reports?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();
@@ -152,7 +182,7 @@ export default function Reports() {
       setActiveTab("summary");
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [token]);
+  }, [token, period, selYear, selMonth, selWeek, selDay]);
 
   // ── Excel Export ──
   const exportCSV = () => {
@@ -308,8 +338,59 @@ export default function Reports() {
             </button>
           ))}
         </div>
+
+        {/* WHICH WEEK / MONTH / YEAR */}
+        <div className="mt-5 pt-5 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Which {period === "daily" ? "day" : period === "weekly" ? "week" : period === "monthly" ? "month" : "year"}?
+          </p>
+          <div className="flex flex-wrap gap-3">
+            {/* Year — always shown */}
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-400">Year</span>
+              <select value={selYear} onChange={(e) => setSelYear(Number(e.target.value))}
+                className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                {YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </label>
+
+            {/* Month — for daily / weekly / monthly */}
+            {(period === "daily" || period === "weekly" || period === "monthly") && (
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-400">Month</span>
+                <select value={selMonth} onChange={(e) => setSelMonth(Number(e.target.value))}
+                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                  {MONTH_NAMES.map((name, i) => <option key={name} value={i + 1}>{name}</option>)}
+                </select>
+              </label>
+            )}
+
+            {/* Week — for weekly only */}
+            {period === "weekly" && (
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-400">Week</span>
+                <select value={selWeek} onChange={(e) => setSelWeek(Number(e.target.value))}
+                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                  {WEEK_OPTIONS.map((w) => <option key={w} value={w}>Week {w}</option>)}
+                </select>
+              </label>
+            )}
+
+            {/* Day — for daily only */}
+            {period === "daily" && (
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-400">Day</span>
+                <select value={selDay} onChange={(e) => setSelDay(Number(e.target.value))}
+                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                  {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+        </div>
+
         <div className="mt-4 flex justify-end">
-          <button onClick={() => generate(period)} disabled={loading}
+          <button onClick={generate} disabled={loading}
             className="px-6 py-2.5 bg-arl-dark text-white rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50 flex items-center gap-2">
             {loading ? (
               <><svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
