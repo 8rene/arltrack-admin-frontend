@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useCurrency } from "../context/CurrencyContext";
 import { useTheme } from "../context/ThemeContext";
 import { auth } from "../fireabase";
 import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
@@ -11,13 +10,6 @@ const IconUser = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
     <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.75" />
-  </svg>
-);
-
-const IconCurrency = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M15 8.5c-.83-.83-2-1.35-3.29-1.35-2.57 0-4.71 2.14-4.71 4.71s2.14 4.71 4.71 4.71c1.29 0 2.46-.52 3.29-1.35M16 12H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 );
 
@@ -73,10 +65,6 @@ const IconEyeOff = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-// ─── CONSTANTS ────────────────────────────────────────────────────────────────
-
-const SUPPORTED_CURRENCIES = ["PHP", "USD", "EUR"];
-
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -88,10 +76,8 @@ export default function Settings() {
   const [saving, setSaving]   = useState(false);
   const [toast, setToast]     = useState(null);
 
-  const { currency, setCurrency, rates, ratesLoading, SYMBOLS } = useCurrency();
   const { isDark, toggleDark } = useTheme();
 
-  const [stagedCurrency,      setStagedCurrency]      = useState(null);
   const [stagedNotifications, setStagedNotifications] = useState(null);
   const [stagedDark,          setStagedDark]          = useState(null);
 
@@ -99,12 +85,10 @@ export default function Settings() {
     () => localStorage.getItem("notifications") !== "false"
   );
 
-  const activeCurrency      = stagedCurrency      !== null ? stagedCurrency      : currency;
   const activeNotifications = stagedNotifications !== null ? stagedNotifications : savedNotifications;
   const activeDark          = stagedDark          !== null ? stagedDark          : isDark;
 
   const hasUnsaved =
-    (stagedCurrency      !== null && stagedCurrency      !== currency) ||
     (stagedNotifications !== null && stagedNotifications !== savedNotifications) ||
     (stagedDark          !== null && stagedDark          !== isDark);
 
@@ -151,7 +135,6 @@ export default function Settings() {
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
 
   const handleDiscard = () => {
-    setStagedCurrency(null);
     setStagedNotifications(null);
     setStagedDark(null);
     showToast("Changes discarded.");
@@ -160,15 +143,11 @@ export default function Settings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      if (stagedCurrency !== null && stagedCurrency !== currency) {
-        setCurrency(stagedCurrency);
-      }
       if (stagedDark !== null && stagedDark !== isDark) {
         toggleDark();
       }
       const notifValue = stagedNotifications !== null ? stagedNotifications : savedNotifications;
       localStorage.setItem("notifications", notifValue ? "true" : "false");
-      setStagedCurrency(null);
       setStagedNotifications(null);
       setStagedDark(null);
       showToast("Preferences saved.");
@@ -209,14 +188,6 @@ export default function Settings() {
   };
 
   const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || profile.username || "—";
-
-  const previewAmounts = [100, 1000, 5000];
-  const convertFromPHP = (php) => {
-    if (activeCurrency === "PHP") return `₱${php.toLocaleString("en-PH")}`;
-    const rate = rates[activeCurrency];
-    if (!rate) return "—";
-    return `${SYMBOLS[activeCurrency]}${Number((php * rate).toFixed(2)).toLocaleString()}`;
-  };
 
   // ── shared card class ──
   const card = `rounded-2xl border p-6 space-y-4 ${
@@ -288,79 +259,6 @@ export default function Settings() {
             <Locked   label="Role"         value={profile.role}      isDark={isDark} />
           </div>
         )}
-      </div>
-
-      {/* CURRENCY */}
-      <div className={card}>
-        <div className="flex items-center justify-between">
-          <h2 className={heading}>
-            <IconCurrency className={`w-4 h-4 ${iconCls}`} /> Currency
-          </h2>
-          {stagedCurrency !== null && stagedCurrency !== currency && (
-            <span className={`text-xs font-medium ${isDark ? "text-[#4FC3F7]" : "text-amber-500"}`}>Unsaved</span>
-          )}
-        </div>
-
-        <div className="flex gap-3 flex-wrap">
-          {SUPPORTED_CURRENCIES.map((c) => (
-            <button key={c} onClick={() => setStagedCurrency(c)}
-              className={`px-5 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                activeCurrency === c
-                  ? isDark
-                    ? "bg-[#4FC3F7] text-[#212121] border-[#4FC3F7]"
-                    : "bg-arl-dark text-white border-arl-dark"
-                  : isDark
-                    ? "bg-[#212121]/40 text-[#F5F5F5]/80 border-[#4FC3F7]/20 hover:border-[#4FC3F7]"
-                    : "bg-white text-gray-600 border-gray-200 hover:border-arl-dark"
-              }`}>
-              {SYMBOLS[c]} {c}
-            </button>
-          ))}
-        </div>
-
-        <div className={`rounded-xl p-4 space-y-2 ${isDark ? "bg-[#212121]/40" : "bg-gray-50"}`}>
-          <p className={`text-xs font-semibold uppercase tracking-wider ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-            Live Exchange Rates (base: PHP)
-          </p>
-          {ratesLoading ? (
-            <p className={`text-xs animate-pulse ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-              Fetching live rates…
-            </p>
-          ) : (
-            <div className="flex gap-6 flex-wrap">
-              <p className={`text-xs ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>
-                <span className="font-semibold">1 PHP</span> ={" "}
-                <span className={`font-semibold ${isDark ? "text-[#4FC3F7]" : "text-blue-600"}`}>
-                  {rates.USD ? `$${rates.USD.toFixed(4)}` : "—"} USD
-                </span>
-              </p>
-              <p className={`text-xs ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>
-                <span className="font-semibold">1 PHP</span> ={" "}
-                <span className={`font-semibold ${isDark ? "text-[#4FC3F7]" : "text-purple-600"}`}>
-                  {rates.EUR ? `€${rates.EUR.toFixed(4)}` : "—"} EUR
-                </span>
-              </p>
-            </div>
-          )}
-        </div>
-
-        <div>
-          <p className={`text-xs font-semibold uppercase tracking-wider mb-2 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-            Preview ({activeCurrency})
-          </p>
-          <div className="flex gap-3 flex-wrap">
-            {previewAmounts.map((amt) => (
-              <div key={amt} className={`rounded-xl px-4 py-2 text-center ${isDark ? "bg-[#212121]/40" : "bg-gray-50"}`}>
-                <p className={`text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-                  ₱{amt.toLocaleString()}
-                </p>
-                <p className={`text-sm font-bold ${isDark ? "text-[#4FC3F7]" : "text-arl-dark"}`}>
-                  {convertFromPHP(amt)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* NOTIFICATIONS */}
