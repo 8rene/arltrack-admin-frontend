@@ -116,6 +116,15 @@ const nav = [
         ),
       },
       {
+        label: "Refund Requests",
+        path: "/refund-requests",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 10a9 9 0 1 1 2.6 6.36M3 4v6h6" />
+          </svg>
+        ),
+      },
+      {
         label: "Reports",
         path: "/reports",
         icon: (

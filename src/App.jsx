@@ -15,6 +15,7 @@ import Maintenance from "./pages/Maintenance";
 import Inventory from "./pages/Inventory";
 import Analytics from "./pages/Analytics";
 import Payments from "./pages/Payments";
+import RefundRequests from "./pages/RefundRequests";
 import Reports from "./pages/Reports";
 import AuditLog from "./pages/AuditLog";
 import UserLogs from "./pages/UserLogs";
@@ -132,6 +133,11 @@ function AppRoutes() {
             <Route path="/payments" element={
                 <ProtectedRoute>
                     <DashboardLayout><Payments /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/refund-requests" element={
+                <ProtectedRoute>
+                    <DashboardLayout><RefundRequests /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/reports" element={
