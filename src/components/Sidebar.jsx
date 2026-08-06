@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { canAccess } from "../config/pagePermissions";
 
 const nav = [
   {
@@ -33,8 +35,8 @@ const nav = [
         ),
       },
       {
-        label: "Customers",
-        path: "/customers",
+        label: "Users",
+        path: "/users",
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m10-4a4 4 0 11-8 0 4 4 0 018 0zM7 10a4 4 0 110-8 4 4 0 010 8z" />
@@ -236,12 +238,60 @@ const nav = [
       },
     ],
   },
+  {
+    group: "Driver",
+    items: [
+      {
+        label: "My Trip",
+        path: "/my-trips",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 16l2.5-2.5M8 16l7-7m-7 7l-3 1 1-3 9-9 2 2-9 9z" />
+          </svg>
+        ),
+      },
+      {
+        label: "History",
+        path: "/my-trips/history",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+      },
+    ],
+  },
+  {
+    group: "Account",
+    items: [
+      {
+        label: "Profile",
+        path: "/profile",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        ),
+      },
+    ],
+  },
 ];
 
 export const NAV_SECTIONS = nav;
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
+  const { user } = useAuth();
+
+  // Only show nav items this role can actually access, and drop any
+  // section left with zero items (e.g. "Archives" for a Driver).
+  const visibleNav = nav
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => canAccess(user?.role, item.path)),
+    }))
+    .filter((section) => section.items.length > 0);
+
   return (
     <aside
       id="sidebar"
@@ -317,7 +367,7 @@ export default function Sidebar() {
         id="sidebarNav"
         className="flex flex-col gap-6 flex-1 overflow-y-auto scrollbar-hide"
       >
-        {nav.map((section) => (
+        {visibleNav.map((section) => (
           <div key={section.group}>
             {/* Group Label */}
             {!collapsed && (

@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
-import {
-  collection, getDocs, query, where, doc,
-  updateDoc, addDoc, serverTimestamp, orderBy
-} from "firebase/firestore";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { collection, getDocs, doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../fireabase";
+
+const API_URL = process.env.REACT_APP_API_URL;
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
@@ -97,6 +96,7 @@ const isSoon = (val) => {
   const diff = (d - new Date()) / (1000 * 60 * 60 * 24);
   return diff >= 0 && diff <= 7;
 };
+const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
 
 const STATUS_DOT = {
   Completed:    "bg-green-500",
@@ -124,19 +124,39 @@ function MainStatusBadge({ status }) {
   );
 }
 
-const MAINTENANCE_STATUSES = ["Scheduled", "In Progress", "Completed", "Cancelled", "Overdue"];
-const MAINTENANCE_TYPES    = ["Routine Maintenance", "Oil Change", "Brake Inspection", "Tire Rotation", "Battery Check", "Engine Check", "Transmission Service", "Suspension Check", "Electrical Check", "Other"];
+// Emoji shown next to each basis option — purely cosmetic, not stored.
+const BASIS_ICON = {
+  "Post-Rental":      "🔄",
+  "Monthly":          "📅",
+  "Mileage-based":    "📍",
+  "Annual":           "📆",
+  "Repair/Unplanned": "🔧",
+};
+
+// Fallbacks used only if /api/maintenance/config hasn't loaded yet —
+// the real source of truth is always the backend response.
+const FALLBACK_STATUSES = ["Scheduled", "In Progress", "Completed", "Cancelled", "Overdue"];
+const FALLBACK_BASIS    = ["Post-Rental", "Monthly", "Mileage-based", "Annual", "Repair/Unplanned"];
 
 const EMPTY_FORM = {
-  carID: "", types: [], description: "", cost: "",
+  carID: "", basis: "",
+  services: [],        // [{ serviceID, serviceName, price }] — from the catalog
+  customServices: [],  // [{ name, price }] — free-text "Other" entries
+  useManualTotal: false, // false = auto-compute from itemized services; true = use overrideTotal
+  overrideTotal: "",
+  description: "",
   maintenanceDate: "", nextMaintenanceDate: "", status: "Scheduled",
+  useToday: false,      // true = maintenanceDate always mirrors today's date
 };
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function Maintenance() {
+  const token = localStorage.getItem("token");
+
   const [records, setRecords]             = useState([]);
   const [cars, setCars]                   = useState([]);
+  const [config, setConfig]               = useState({ basisOptions: FALLBACK_BASIS, statusOptions: FALLBACK_STATUSES, serviceCatalog: [] });
   const [loading, setLoading]             = useState(true);
   const [search, setSearch]               = useState("");
   const [statusFilter, setStatusFilter]   = useState("All");
@@ -149,13 +169,28 @@ export default function Maintenance() {
   const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [damagedParts, setDamagedParts]   = useState([]);
   const [replacedParts, setReplacedParts] = useState([]);
-  const [customType, setCustomType]       = useState("");
+  const [customName, setCustomName]       = useState("");
+  const [customPrice, setCustomPrice]     = useState("");
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   };
 
+  const authedFetch = useCallback((path, options = {}) => {
+    return fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+    });
+  }, [token]);
+
+  // Damaged/stolen part tracking still reads Firestore directly — this
+  // belongs to the inventory/carParts domain, not maintenance, so it's
+  // left as-is here.
   const markAsReplaced = async (part) => {
     try {
       await updateDoc(doc(db, "carParts", part.carPartID), {
@@ -174,39 +209,36 @@ export default function Maintenance() {
     }
   };
 
-  const fetchCars = useCallback(async () => {
-    const [carsSnap, brandsSnap, modelsSnap] = await Promise.all([
-      getDocs(collection(db, "cars")),
-      getDocs(collection(db, "brand")),
-      getDocs(collection(db, "model")),
-    ]);
-    const brandMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data()]));
-    const modelMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, d.data()]));
-    return carsSnap.docs.map(d => {
-      const c     = { id: d.id, ...d.data() };
-      const model = modelMap[c.modelID] || {};
-      const brand = brandMap[model.brandID] || {};
-      return { ...c, label: `${brand.brandName || ""} ${model.modelName || ""}`.trim() || d.id };
-    });
-  }, []);
-
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [carList, maintSnap, beforeSnap, afterSnap, partsSnap] = await Promise.all([
-        fetchCars(),
-        getDocs(query(collection(db, "carMaintenance"), orderBy("maintenanceDate", "desc"))),
+      const [maintRes, carsRes, configRes, beforeSnap, afterSnap, partsSnap] = await Promise.all([
+        authedFetch("/api/maintenance"),
+        authedFetch("/api/fleet/cars"),
+        authedFetch("/api/maintenance/config"),
         getDocs(collection(db, "inventoryBeforeTrip")),
         getDocs(collection(db, "inventoryAfterTrip")),
         getDocs(collection(db, "carParts")),
       ]);
+
+      const maintJson = await maintRes.json();
+      if (!maintRes.ok) throw new Error(maintJson.message || "Failed to load maintenance records.");
+      setRecords((maintJson.data || []).map(r => ({
+        ...r,
+        carLabel: [r.brandName, r.modelName].filter(Boolean).join(" ") || "—",
+      })));
+
+      const carsJson = await carsRes.json();
+      if (!carsRes.ok) throw new Error(carsJson.message || "Failed to load vehicles.");
+      const carList = (carsJson.data || []).map(c => ({
+        ...c,
+        label: [c.brandName, c.modelName].filter(Boolean).join(" ") || c.id,
+      }));
       setCars(carList);
       const carMap = Object.fromEntries(carList.map(c => [c.id, c]));
-      setRecords(maintSnap.docs.map(d => ({
-        id: d.id, ...d.data(),
-        carLabel:    carMap[d.data().carID]?.label || "—",
-        plateNumber: carMap[d.data().carID]?.platenumber || carMap[d.data().carID]?.plateNumber || "—",
-      })));
+
+      const configJson = await configRes.json();
+      if (configRes.ok) setConfig(configJson.data);
 
       const partsMap = Object.fromEntries(partsSnap.docs.map(d => [d.id, d.data()]));
       const pickLatestByCarID = (snap) => {
@@ -257,9 +289,9 @@ export default function Maintenance() {
       });
 
       setDamagedParts(damaged);
-    } catch (e) { console.error(e); showToast("Failed to load data.", "error"); }
+    } catch (e) { console.error(e); showToast(e.message || "Failed to load data.", "error"); }
     finally { setLoading(false); }
-  }, [fetchCars]);
+  }, [authedFetch]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -268,51 +300,63 @@ export default function Maintenance() {
   const inService = records.filter(r => r.status === "In Progress").length;
   const completed = records.filter(r => r.status === "Completed").length;
 
+  const computedTotal = useMemo(() => {
+    const catalogSum = form.services.reduce((s, x) => s + (Number(x.price) || 0), 0);
+    const customSum  = form.customServices.reduce((s, x) => s + (Number(x.price) || 0), 0);
+    return catalogSum + customSum;
+  }, [form.services, form.customServices]);
+
   const handleSave = async () => {
-    if (!form.carID || form.types.length === 0 || !form.maintenanceDate) {
-      showToast("Car, at least one maintenance type, and maintenance date are required.", "error"); return;
+    if (!form.carID || !form.basis || !form.maintenanceDate) {
+      showToast("Vehicle, basis, and maintenance date are required.", "error"); return;
     }
     setSaving(true);
     try {
-      const basePayload = {
+      const services = [
+        ...form.services.map(s => ({ serviceID: s.serviceID, price: Number(s.price) || 0 })),
+        ...form.customServices
+          .filter(c => c.name.trim())
+          .map(c => ({ serviceID: "other", serviceName: c.name.trim(), price: Number(c.price) || 0 })),
+      ];
+
+      const payload = {
         carID:               form.carID,
-        description:         form.description,
-        cost:                Number(form.cost) || 0,
-        maintenanceDate:     form.maintenanceDate ? new Date(form.maintenanceDate) : null,
-        nextMaintenanceDate: form.nextMaintenanceDate ? new Date(form.nextMaintenanceDate) : null,
-        status:              form.status,
+        basis:                form.basis,
+        services,
+        overrideTotal:        form.useManualTotal && form.overrideTotal !== "" ? Number(form.overrideTotal) : null,
+        description:          form.description,
+        maintenanceDate:      form.maintenanceDate,
+        nextMaintenanceDate:  form.nextMaintenanceDate || null,
+        status:               form.status,
       };
-      if (editRecord) {
-        // Editing one existing record — keep it as a single record, just save the
-        // (possibly multiple) chosen types together on that one entry.
-        await updateDoc(doc(db, "carMaintenance", editRecord.id), {
-          ...basePayload, type: form.types.join(", "), updatedAt: serverTimestamp(),
-        });
-        showToast("Record updated.");
-      } else {
-        // Scheduling new — one maintenance record per selected type, so choosing
-        // 1, 2, or more types adds that many rows automatically.
-        await Promise.all(form.types.map(async (t) => {
-          const ref = await addDoc(collection(db, "carMaintenance"), { ...basePayload, type: t, createdAt: serverTimestamp() });
-          await updateDoc(ref, { maintenanceID: ref.id });
-        }));
-        showToast(form.types.length > 1 ? `${form.types.length} maintenance records scheduled.` : "Maintenance scheduled.");
-      }
-      setEditRecord(null); setShowAdd(false); setForm(EMPTY_FORM); setCustomType("");
+
+      const res = editRecord
+        ? await authedFetch(`/api/maintenance/${editRecord.id}`, { method: "PUT", body: JSON.stringify(payload) })
+        : await authedFetch("/api/maintenance", { method: "POST", body: JSON.stringify(payload) });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to save maintenance record.");
+
+      showToast(editRecord ? "Record updated." : "Maintenance scheduled.");
+      setEditRecord(null); setShowAdd(false); setForm(EMPTY_FORM); setCustomName(""); setCustomPrice("");
       fetchAll();
     } catch (e) { showToast(e.message, "error"); }
     finally { setSaving(false); }
   };
 
   const openEdit = (r) => {
+    const allServices = r.services || [];
     setForm({
       carID:               r.carID || "",
-      types:               r.type ? r.type.split(",").map(t => t.trim()).filter(Boolean) : [],
-      description:         r.description || "",
-      cost:                r.cost || "",
-      maintenanceDate:     isoDate(r.maintenanceDate),
-      nextMaintenanceDate: isoDate(r.nextMaintenanceDate),
-      status:              r.status || "Scheduled",
+      basis:                r.basis || "",
+      services:             allServices.filter(s => s.serviceID !== "other"),
+      customServices:       allServices.filter(s => s.serviceID === "other").map(s => ({ name: s.serviceName, price: s.price })),
+      useManualTotal:       r.overrideTotal !== null && r.overrideTotal !== undefined,
+      overrideTotal:        r.overrideTotal ?? "",
+      description:          r.description || "",
+      maintenanceDate:      isoDate(r.maintenanceDate),
+      nextMaintenanceDate:  isoDate(r.nextMaintenanceDate),
+      status:               r.status || "Scheduled",
     });
     setEditRecord(r);
     setShowAdd(false);
@@ -320,33 +364,45 @@ export default function Maintenance() {
 
   const openAdd = () => {
     setForm(EMPTY_FORM);
-    setCustomType("");
+    setCustomName(""); setCustomPrice("");
     setEditRecord(null);
     setShowAdd(true);
   };
 
-  const toggleType = (t) => {
-    setForm(f => ({
-      ...f,
-      types: f.types.includes(t) ? f.types.filter(x => x !== t) : [...f.types, t],
-    }));
+  const toggleService = (serviceID, serviceName) => {
+    setForm(f => {
+      const exists = f.services.find(s => s.serviceID === serviceID);
+      return exists
+        ? { ...f, services: f.services.filter(s => s.serviceID !== serviceID) }
+        : { ...f, services: [...f.services, { serviceID, serviceName, price: 0 }] };
+    });
   };
 
-  const addCustomType = () => {
-    const t = customType.trim();
-    if (!t) return;
-    setForm(f => f.types.includes(t) ? f : { ...f, types: [...f.types, t] });
-    setCustomType("");
+  const updateServicePrice = (serviceID, price) => {
+    setForm(f => ({ ...f, services: f.services.map(s => s.serviceID === serviceID ? { ...s, price } : s) }));
   };
 
-  const ALL_STATUSES = ["All", ...MAINTENANCE_STATUSES];
+  const addCustomService = () => {
+    const name = customName.trim();
+    if (!name) return;
+    setForm(f => ({ ...f, customServices: [...f.customServices, { name, price: Number(customPrice) || 0 }] }));
+    setCustomName(""); setCustomPrice("");
+  };
+
+  const removeCustomService = (idx) => {
+    setForm(f => ({ ...f, customServices: f.customServices.filter((_, i) => i !== idx) }));
+  };
+
+  const ALL_STATUSES = ["All", ...config.statusOptions];
   const filtered = records.filter(r => {
     const q = search.toLowerCase();
+    const serviceNames = (r.services || []).map(s => s.serviceName).join(" ").toLowerCase();
     const matchQ = !q
       || (r.carLabel || "").toLowerCase().includes(q)
       || (r.plateNumber || "").toLowerCase().includes(q)
-      || (r.type || "").toLowerCase().includes(q)
-      || (r.description || "").toLowerCase().includes(q);
+      || (r.basis || "").toLowerCase().includes(q)
+      || (r.description || "").toLowerCase().includes(q)
+      || serviceNames.includes(q);
     const matchS = statusFilter === "All" || r.status === statusFilter;
     return matchQ && matchS;
   });
@@ -370,9 +426,9 @@ export default function Maintenance() {
           <p className="text-xs text-gray-400 mt-0.5">{loading ? "Loading…" : `${records.length} records`}</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <input type="text" placeholder="Search car, type…"
+          <input type="text" placeholder="Search car, basis, service…"
             value={search} onChange={e => setSearch(e.target.value)}
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light w-44" />
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light w-48" />
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
             className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
             {ALL_STATUSES.map(s => <option key={s}>{s}</option>)}
@@ -529,14 +585,14 @@ export default function Maintenance() {
         <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
           <table className="w-full text-sm table-fixed">
             <colgroup>
-              <col style={{width:"20%"}} /><col style={{width:"16%"}} /><col style={{width:"14%"}} />
-              <col style={{width:"14%"}} /><col style={{width:"8%"}} /><col style={{width:"14%"}} />
+              <col style={{width:"20%"}} /><col style={{width:"18%"}} /><col style={{width:"13%"}} />
+              <col style={{width:"13%"}} /><col style={{width:"10%"}} /><col style={{width:"12%"}} />
               <col style={{width:"14%"}} />
             </colgroup>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
                 <th className="px-4 py-3 text-left font-semibold">Vehicle</th>
-                <th className="px-4 py-3 text-left font-semibold">Type</th>
+                <th className="px-4 py-3 text-left font-semibold">Basis</th>
                 <th className="px-4 py-3 text-left font-semibold">Date</th>
                 <th className="px-4 py-3 text-left font-semibold">Next Due</th>
                 <th className="px-4 py-3 text-left font-semibold">Cost</th>
@@ -562,13 +618,18 @@ export default function Maintenance() {
                     <div className="font-semibold text-gray-800 text-xs truncate">{r.carLabel}</div>
                     <div className="text-xs text-gray-400">{r.plateNumber}</div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-700 truncate">{r.type || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 truncate">
+                    {r.basis ? `${BASIS_ICON[r.basis] || ""} ${r.basis}` : "—"}
+                    {r.services?.length > 0 && (
+                      <div className="text-[10px] text-gray-400">{r.services.length} service{r.services.length > 1 ? "s" : ""}</div>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtDate(r.maintenanceDate)}</td>
                   <td className={`px-4 py-3 text-xs whitespace-nowrap font-semibold ${isPast(r.nextMaintenanceDate) && r.status !== "Completed" ? "text-red-500" : isSoon(r.nextMaintenanceDate) ? "text-yellow-600" : "text-gray-500"}`}>
                     {fmtDate(r.nextMaintenanceDate)}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700">
-                    {r.cost ? `₱${Number(r.cost).toLocaleString()}` : "—"}
+                    {r.totalCost ? peso(r.totalCost) : "—"}
                   </td>
                   <td className="px-4 py-3">
                     <MainStatusBadge status={r.status || "—"} />
@@ -587,7 +648,7 @@ export default function Maintenance() {
 
         {/* Edit / Add Panel */}
         {isOpen && (
-          <div className="w-80 shrink-0 bg-white rounded-2xl border border-gray-100 shadow-soft p-5 space-y-4 sticky top-4">
+          <div className="w-96 shrink-0 bg-white rounded-2xl border border-gray-100 shadow-soft p-5 space-y-4 sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h2 className="font-bold text-gray-800 text-sm">
                 {editRecord ? "Edit Record" : "Schedule Maintenance"}
@@ -597,79 +658,130 @@ export default function Maintenance() {
                 <IconX className="w-4 h-4" />
               </button>
             </div>
+
             <Field label="Vehicle *">
               <select value={form.carID} onChange={e => setForm(f => ({...f, carID: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
                 <option value="">Select vehicle…</option>
-                {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.platenumber ? `· ${c.platenumber}` : ""}</option>)}
+                {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.plateNumber ? `· ${c.plateNumber}` : ""}</option>)}
               </select>
             </Field>
-            <Field label={`Maintenance Type${form.types.length > 1 ? "s" : ""} *`}>
+
+            <Field label="Maintenance Basis *">
               <div className="flex flex-wrap gap-1.5">
-                {MAINTENANCE_TYPES.map(t => {
-                  const active = form.types.includes(t);
-                  return (
-                    <button key={t} type="button" onClick={() => toggleType(t)}
-                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
-                        active ? "border-teal-500 bg-teal-50 text-teal-700" : "border-gray-100 text-gray-600 hover:border-gray-300"
-                      }`}>
-                      {active ? "✓ " : ""}{t}
-                    </button>
-                  );
-                })}
+                {config.basisOptions.map(b => (
+                  <button key={b} type="button" onClick={() => setForm(f => ({...f, basis: b}))}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
+                      form.basis === b ? "border-teal-500 bg-teal-50 text-teal-700" : "border-gray-100 text-gray-600 hover:border-gray-300"
+                    }`}>
+                    {BASIS_ICON[b] || ""} {b}
+                  </button>
+                ))}
               </div>
-              {/* Custom type not in the list above */}
-              <div className="flex gap-1.5 mt-2">
-                <input type="text" value={customType} onChange={e => setCustomType(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addCustomType(); } }}
-                  placeholder="Other type…"
-                  className="flex-1 border border-gray-200 rounded-xl px-3 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
-                <button type="button" onClick={addCustomType}
-                  className="px-3 py-1.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-600 hover:border-teal-400 hover:text-teal-600">
-                  + Add
-                </button>
-              </div>
-              {/* Selected types summary — remove individually, or clear all */}
-              {form.types.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
-                  <span className="text-xs text-gray-400">{form.types.length} selected:</span>
-                  {form.types.map(t => (
-                    <span key={t} className="inline-flex items-center gap-1 bg-teal-50 text-teal-700 border border-teal-200 rounded-full pl-2.5 pr-1.5 py-0.5 text-xs font-medium">
-                      {t}
-                      <button type="button" onClick={() => toggleType(t)} className="hover:text-teal-900">
-                        <IconX className="w-2.5 h-2.5" />
+            </Field>
+
+            <Field label="Services Performed">
+              <div className="max-h-72 overflow-y-auto pr-1 space-y-3 border border-gray-100 rounded-xl p-3">
+                {config.serviceCatalog.map(group => (
+                  <div key={group.group}>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">{group.group}</p>
+                    <div className="space-y-1.5">
+                      {group.services.map(s => {
+                        const selected = form.services.find(x => x.serviceID === s.serviceID);
+                        return (
+                          <div key={s.serviceID} className="flex items-center gap-2">
+                            <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                              <input type="checkbox" checked={!!selected}
+                                onChange={() => toggleService(s.serviceID, s.serviceName)}
+                                className="accent-teal-600 shrink-0" />
+                              <span className="text-xs text-gray-700 truncate">{s.serviceName}</span>
+                            </label>
+                            {selected && !form.useManualTotal && (
+                              <input type="number" placeholder="₱0" value={selected.price || ""}
+                                onChange={e => updateServicePrice(s.serviceID, e.target.value)}
+                                className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Custom / "Other" services */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Other</p>
+                  {form.customServices.map((c, idx) => (
+                    <div key={idx} className="flex items-center gap-2 mb-1.5">
+                      <span className="text-xs text-gray-700 flex-1 truncate">{c.name}</span>
+                      {!form.useManualTotal && <span className="text-xs text-gray-500">{peso(c.price)}</span>}
+                      <button type="button" onClick={() => removeCustomService(idx)} className="text-gray-400 hover:text-red-500">
+                        <IconX className="w-3 h-3" />
                       </button>
-                    </span>
+                    </div>
                   ))}
+                  <div className="flex gap-1.5">
+                    <input type="text" value={customName} onChange={e => setCustomName(e.target.value)}
+                      placeholder="Custom service…"
+                      className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                    {!form.useManualTotal && (
+                      <input type="number" value={customPrice} onChange={e => setCustomPrice(e.target.value)}
+                        placeholder="₱0"
+                        className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                    )}
+                    <button type="button" onClick={addCustomService}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-teal-400 hover:text-teal-600">
+                      +
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Field>
+
+            <Field label="Total Cost">
+              <label className="flex items-center gap-2 mb-2 cursor-pointer">
+                <input type="checkbox" checked={form.useManualTotal}
+                  onChange={e => setForm(f => ({...f, useManualTotal: e.target.checked}))}
+                  className="accent-teal-600" />
+                <span className="text-xs text-gray-600">Enter total manually instead of itemizing</span>
+              </label>
+
+              {form.useManualTotal ? (
+                <input type="number" value={form.overrideTotal} onChange={e => setForm(f => ({...f, overrideTotal: e.target.value}))}
+                  placeholder="₱0"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
+              ) : (
+                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 border border-gray-100">
+                  <span className="text-xs text-gray-500">Auto-computed from services</span>
+                  <span className="text-sm font-bold text-gray-800">{peso(computedTotal)}</span>
                 </div>
               )}
-              {!editRecord && form.types.length > 1 && (
-                <p className="text-xs text-gray-400 mt-1.5">
-                  This will create {form.types.length} separate maintenance records for this vehicle — one per type.
-                </p>
-              )}
             </Field>
+
             <Field label="Description">
               <textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
                 rows={3} placeholder="Details of the maintenance…"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none resize-none" />
             </Field>
-            <Field label="Cost (₱)">
-              <input type="number" value={form.cost} onChange={e => setForm(f => ({...f, cost: e.target.value}))}
-                placeholder="0"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
-            </Field>
             <Field label="Maintenance Date *">
-              <input type="date" value={form.maintenanceDate} onChange={e => setForm(f => ({...f, maintenanceDate: e.target.value}))}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
+              <label className="flex items-center gap-2 mb-1.5 cursor-pointer">
+                <input type="checkbox" checked={form.useToday}
+                  onChange={e => setForm(f => ({...f, useToday: e.target.checked, maintenanceDate: e.target.checked ? isoDate(new Date()) : f.maintenanceDate}))}
+                  className="accent-teal-600" />
+                <span className="text-xs text-gray-600">Today</span>
+              </label>
+              <input type="date" value={form.maintenanceDate} disabled={form.useToday}
+                onChange={e => setForm(f => ({...f, maintenanceDate: e.target.value}))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none disabled:bg-gray-50 disabled:text-gray-400" />
             </Field>
             <Field label="Next Maintenance Date">
               <input type="date" value={form.nextMaintenanceDate} onChange={e => setForm(f => ({...f, nextMaintenanceDate: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
+              <p className="text-[10px] text-gray-400 mt-1">Optional — leave blank if this maintenance has no follow-up scheduled.</p>
             </Field>
             <Field label="Status">
               <div className="grid grid-cols-2 gap-1.5">
-                {MAINTENANCE_STATUSES.map(s => (
+                {config.statusOptions.map(s => (
                   <button key={s} onClick={() => setForm(f => ({...f, status: s}))}
                     className={`px-2 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
                       form.status === s
@@ -688,13 +800,7 @@ export default function Maintenance() {
               </button>
               <button onClick={handleSave} disabled={saving}
                 className="flex-1 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
-                {saving
-                  ? "Saving…"
-                  : editRecord
-                    ? "Update"
-                    : form.types.length > 1
-                      ? `Schedule (${form.types.length})`
-                      : "Schedule"}
+                {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
               </button>
             </div>
           </div>
@@ -745,14 +851,14 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
 
   const dayMap = {};
   records.forEach(r => {
-    const d = r.maintenanceDate?.toDate?.() || (r.maintenanceDate?._seconds ? new Date(r.maintenanceDate._seconds * 1000) : r.maintenanceDate ? new Date(r.maintenanceDate) : null);
+    const d = toDate(r.maintenanceDate);
     if (!d || isNaN(d)) return;
     if (d.getFullYear() === y && d.getMonth() === m) {
       const k = d.getDate();
       if (!dayMap[k]) dayMap[k] = [];
       dayMap[k].push(r);
     }
-    const nd = r.nextMaintenanceDate?.toDate?.() || (r.nextMaintenanceDate?._seconds ? new Date(r.nextMaintenanceDate._seconds * 1000) : r.nextMaintenanceDate ? new Date(r.nextMaintenanceDate) : null);
+    const nd = toDate(r.nextMaintenanceDate);
     if (!nd || isNaN(nd)) return;
     if (nd.getFullYear() === y && nd.getMonth() === m) {
       const k = `next_${nd.getDate()}`;
@@ -811,10 +917,10 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
                 <span className={`text-xs font-semibold ${isToday ? "text-teal-600" : "text-gray-700"}`}>{day}</span>
                 <div className="flex flex-wrap gap-0.5 mt-1">
                   {dayRecs.slice(0, 3).map((r, ri) => (
-                    <span key={ri} className={`w-2 h-2 rounded-full ${DOT[r.status] || "bg-gray-300"}`} title={`${r.type} — ${r.status}`} />
+                    <span key={ri} className={`w-2 h-2 rounded-full ${DOT[r.status] || "bg-gray-300"}`} title={`${r.basis} — ${r.status}`} />
                   ))}
                   {nextRecs.slice(0, 2).map((r, ri) => (
-                    <span key={`n${ri}`} className="w-2 h-2 rounded-full bg-purple-400 border border-purple-300" title={`Next: ${r.type}`} />
+                    <span key={`n${ri}`} className="w-2 h-2 rounded-full bg-purple-400 border border-purple-300" title={`Next: ${r.basis}`} />
                   ))}
                   {allRecs.length > 3 && (
                     <span className="text-xs text-gray-400 leading-none">+{allRecs.length - 3}</span>
@@ -855,7 +961,7 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
                   <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${r._isNext ? "bg-purple-400" : DOT[r.status] || "bg-gray-300"}`}/>
                   <div>
                     <p className="text-xs font-semibold text-gray-800">{r.carLabel}</p>
-                    <p className="text-xs text-gray-500">{r.type}{r._isNext ? " (Next Due)" : ""}</p>
+                    <p className="text-xs text-gray-500">{r.basis}{r._isNext ? " (Next Due)" : ""}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

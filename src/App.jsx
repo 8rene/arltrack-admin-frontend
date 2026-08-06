@@ -8,7 +8,7 @@ import Header from "./components/Header";
 import Dashboard from "./pages/Dashboard";
 import Bookings from "./pages/Bookings";
 import Fleet from "./pages/Fleet";
-import Customers from "./pages/Customers";
+import Users from "./pages/Users";
 import CarTracking from "./pages/CarTracking/CarTracking";
 import DeviceTrack from "./pages/DeviceTrack";
 import Maintenance from "./pages/Maintenance";
@@ -28,11 +28,22 @@ import BookingArchivePage from "./pages/BookingArchivePage";
 import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
 import ReviewsArchivePage from "./pages/ReviewsArchivePage";
+import MyTrips from "./pages/MyTrips";
+import TripHistory from "./pages/TripHistory";
+import Profile from "./pages/Profile";
+import { canAccess, homePathFor } from "./config/pagePermissions";
 
-// Wraps any route — redirects to /login if not authenticated
+// Wraps any route — redirects to /login if not authenticated, and to the
+// user's own home page if they're logged in but their role can't access
+// this particular path (so a hidden sidebar link can't be bypassed by
+// just typing the URL directly).
 function ProtectedRoute({ children }) {
     const { user } = useAuth();
+    const { pathname } = useLocation();
     if (!user) return <Navigate to="/login" replace />;
+    if (!canAccess(user.role, pathname)) {
+        return <Navigate to={homePathFor(user.role)} replace />;
+    }
     return children;
 }
 
@@ -74,11 +85,14 @@ function AppRoutes() {
             {/* Public route */}
             <Route
                 path="/login"
-                element={user ? <Navigate to="/dashboard" replace /> : <AuthPage />}
+                element={user ? <Navigate to={homePathFor(user.role)} replace /> : <AuthPage />}
             />
 
             {/* Protected routes */}
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route
+                path="/"
+                element={<Navigate to={user ? homePathFor(user.role) : "/login"} replace />}
+            />
 
             <Route path="/dashboard" element={
                 <ProtectedRoute>
@@ -95,9 +109,9 @@ function AppRoutes() {
                     <DashboardLayout><Fleet /></DashboardLayout>
                 </ProtectedRoute>
             } />
-            <Route path="/customers" element={
+            <Route path="/users" element={
                 <ProtectedRoute>
-                    <DashboardLayout><Customers /></DashboardLayout>
+                    <DashboardLayout><Users /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/car-tracking" element={
@@ -198,8 +212,27 @@ function AppRoutes() {
                 </ProtectedRoute>
             } />
 
+            {/* Driver routes */}
+            <Route path="/my-trips" element={
+                <ProtectedRoute>
+                    <DashboardLayout><MyTrips /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/my-trips/history" element={
+                <ProtectedRoute>
+                    <DashboardLayout><TripHistory /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+
+            {/* Shared by every role */}
+            <Route path="/profile" element={
+                <ProtectedRoute>
+                    <DashboardLayout><Profile /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+
             {/* Fallback */}
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<Navigate to={user ? homePathFor(user.role) : "/login"} replace />} />
         </Routes>
     );
 }

@@ -1,17 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
-import { db } from "../fireabase";
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  updateDoc,
-  doc,
-} from "firebase/firestore";
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
@@ -117,32 +107,6 @@ const fmtDate = (val) => {
 const canEdit  = (status) => ["upcoming", "ongoing"].includes(status?.toLowerCase());
 const isLocked = (status) => ["completed", "cancelled", "stolen"].includes(status?.toLowerCase());
 
-// ─── NEW BOOKING ALERT BANNER ─────────────────────────────────────────────────
-
-function NewBookingAlert({ notifications, onDismiss, onView }) {
-  if (notifications.length === 0) return null;
-  const latest = notifications[0];
-  const count  = notifications.length;
-  return (
-    <div className="flex items-start gap-4 bg-teal-600 text-white px-5 py-4 rounded-2xl shadow-lg">
-      <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0 mt-0.5">
-        <IconBell className="w-5 h-5" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="font-bold text-sm leading-tight">
-          {count === 1 ? "New booking request!" : `${count} new booking requests!`}
-        </p>
-        <p className="text-white/80 text-xs mt-0.5 truncate">{latest.body}</p>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <button onClick={onView} className="px-3 py-1.5 bg-white text-teal-700 text-xs font-bold rounded-xl hover:bg-teal-50 transition-colors">View Pending</button>
-        <button onClick={onDismiss} className="text-white/70 hover:text-white transition-colors">
-          <IconX className="w-5 h-5" />
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // ─── DELETE CONFIRM MODAL ─────────────────────────────────────────────────────
 
@@ -397,8 +361,7 @@ export default function Bookings() {
   const [deleteBooking, setDeleteBooking]   = useState(null);
   const [deleting, setDeleting]             = useState(false);
   const [deleteToast, setDeleteToast]       = useState(null);
-  const [newBookingNotifs, setNewBookingNotifs] = useState([]);
-  const [alertDismissed, setAlertDismissed]     = useState(false);
+  const [searchParams, setSearchParams]     = useSearchParams();
 
   const showToast = (msg, type = "success") => {
     setDeleteToast({ msg, type });
@@ -418,29 +381,17 @@ export default function Bookings() {
 
   useEffect(() => { fetchBookings(); }, [fetchBookings]);
 
+  // Opens the exact booking a notification click pointed to (?open=<refID>,
+  // set by Header.jsx). Runs once bookings are loaded so the record is
+  // actually there to find; strips the param afterward so refreshing/
+  // navigating away doesn't keep re-opening it.
   useEffect(() => {
-    const q = query(
-      collection(db, "notifications"),
-      where("type", "==", "new_booking"),
-      where("isRead", "==", false),
-      orderBy("createdAt", "desc")
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      if (docs.length > 0) { setNewBookingNotifs(docs); setAlertDismissed(false); fetchBookings(); }
-    });
-    return () => unsub();
-  }, [fetchBookings]);
-
-  const dismissAlert = async () => {
-    setAlertDismissed(true);
-    for (const n of newBookingNotifs) {
-      try { await updateDoc(doc(db, "notifications", n.id), { isRead: true }); } catch {}
-    }
-    setNewBookingNotifs([]);
-  };
-
-  const viewPending = () => { setActiveTab("Upcoming"); dismissAlert(); };
+    const openID = searchParams.get("open");
+    if (!openID || loading || allBookings.length === 0) return;
+    const match = allBookings.find((b) => b.id === openID || b.bookingID === openID);
+    if (match) setViewBooking(match);
+    setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
+  }, [searchParams, allBookings, loading, setSearchParams]);
 
   const handleDeleteConfirm = async () => {
     if (!deleteBooking) return;
@@ -466,6 +417,7 @@ export default function Bookings() {
     Cancelled: allBookings.filter((b) => b.status?.toLowerCase() === "cancelled").length,
     Completed: allBookings.filter((b) => b.status?.toLowerCase() === "completed").length,
   };
+  const cancellationRequestCount = allBookings.filter((b) => b.status?.toLowerCase() === "cancellation_request").length;
 
   const tabFiltered  = activeTab === "All"
     ? allBookings
@@ -494,11 +446,6 @@ export default function Bookings() {
         </div>
       )}
 
-      {/* NEW BOOKING ALERT */}
-      {!alertDismissed && newBookingNotifs.length > 0 && (
-        <NewBookingAlert notifications={newBookingNotifs} onDismiss={dismissAlert} onView={viewPending} />
-      )}
-
       {/* STAT TABS */}
       <div className="grid grid-cols-5 gap-3">
         {STATUS_TABS.map((tab) => (
@@ -508,7 +455,7 @@ export default function Bookings() {
             <div className={`text-2xl font-bold ${activeTab === tab ? "text-teal-600" : "text-gray-800"}`}>{loading ? "…" : counts[tab] ?? 0}</div>
             <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
               {tab === "All" ? "All Bookings" : tab}
-              {tab === "Upcoming" && !alertDismissed && newBookingNotifs.length > 0 && <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />}
+              {tab === "Cancelled" && cancellationRequestCount > 0 && <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />}
             </div>
           </button>
         ))}
@@ -578,9 +525,9 @@ export default function Bookings() {
                 <tr><td colSpan={9} className="text-center text-gray-400 py-12">No bookings found</td></tr>
               ) : (
                 filtered.map((b) => {
-                  const isNew = newBookingNotifs.some((n) => n.bookingID === (b.bookingID || b.id));
+                  const needsAction = b.status?.toLowerCase() === "cancellation_request";
                   return (
-                    <tr key={b.id} className={`border-t hover:bg-gray-50 transition-colors ${isNew ? "bg-teal-50 border-l-4 border-l-teal-500" : ""}`}>
+                    <tr key={b.id} className={`border-t hover:bg-gray-50 transition-colors ${needsAction ? "bg-orange-50 border-l-4 border-l-orange-500" : ""}`}>
                       <td className="px-4 py-3 text-gray-700 text-xs">
                         {b.bookingID || b.id}
                         {isNew && <span className="ml-2 text-[10px] font-bold bg-teal-500 text-white px-1.5 py-0.5 rounded-full">NEW</span>}

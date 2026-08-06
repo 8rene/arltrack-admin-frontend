@@ -182,18 +182,13 @@ export default function Dashboard() {
   const [metrics, setMetrics]                 = useState(null);
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState(null);
-  const [pendingBookings, setPendingBookings]  = useState([]);
   const [cancelBookings, setCancelBookings]    = useState([]);
   const [damagedParts, setDamagedParts]        = useState([]);
 
-  // REAL-TIME — pending bookings
-  useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, "bookings"), where("status", "==", "pending")),
-      (snap) => setPendingBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    );
-    return () => unsub();
-  }, []);
+  // "pending" was retired as a booking status — bookings land straight in
+  // "upcoming" now, which isn't alert-worthy (every normal booking passes
+  // through it). The only booking-side alert left is a cancellation
+  // request, already covered by cancelBookings below.
 
   // REAL-TIME — cancellation_request bookings
   useEffect(() => {
@@ -233,7 +228,7 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  const alerts = [...pendingBookings, ...cancelBookings, ...damagedParts].sort((a, b) => {
+  const alerts = [...cancelBookings, ...damagedParts].sort((a, b) => {
     const ta = a.createdAt?._seconds ?? a.updatedAt?._seconds ?? 0;
     const tb = b.createdAt?._seconds ?? b.updatedAt?._seconds ?? 0;
     return tb - ta;

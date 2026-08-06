@@ -1,11 +1,30 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
-  collection, getDocs, query, where, doc, updateDoc,
-  deleteDoc, serverTimestamp
+  collection, getDocs, doc, updateDoc,
+  serverTimestamp
 } from "firebase/firestore";
 import { db } from "../fireabase";
+import { useAuth } from "../context/AuthContext";
+import { ROLES } from "../config/pagePermissions";
 
-const CUSTOMER_ROLE_ID = "9vD6ZU1s2qUtmyu0RXKD";
+// ─── ROLE TABS ───────────────────────────────────────────────────────────────
+// Role IDs are no longer resolved here at all (previously: hardcoded, then
+// briefly a broken dynamic Firestore lookup). The list itself is now
+// fetched via GET /api/users?role=<key> — the backend
+// (utils/roles/role.util.js's resolveRoleID) owns turning a role name into
+// a Firestore roleID, so this file doesn't need to know IDs at all anymore.
+//
+// visibleTo below must stay in sync with the backend's
+// ROLE_LIST_VIEWABLE_BY (same file) — that's the second, and now only
+// other, place this permission is expressed. The backend enforces it
+// regardless of what this array says; this just controls what's shown.
+const ROLE_TABS = [
+  { key: "customer",   apiRole: "Customer",       label: "Customers",   labelSingular: "Customer",   visibleTo: [ROLES.OWNER, ROLES.ADMIN],                   hasDocsSubTab: true, hasEditRequestSubTab: true },
+  { key: "driver",     apiRole: ROLES.DRIVER,     label: "Drivers",     labelSingular: "Driver",     visibleTo: [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR], hasDocsSubTab: true, hasEditRequestSubTab: true },
+  { key: "supervisor", apiRole: ROLES.SUPERVISOR, label: "Supervisors", labelSingular: "Supervisor", visibleTo: [ROLES.OWNER, ROLES.ADMIN],                   hasDocsSubTab: true, hasEditRequestSubTab: true },
+  { key: "admin",      apiRole: ROLES.ADMIN,      label: "Admins",      labelSingular: "Admin",      visibleTo: [ROLES.OWNER],                                hasDocsSubTab: false, hasEditRequestSubTab: false },
+];
 
 // ─── SVG ICONS ────────────────────────────────────────────────────────────────
 const Icons = {
@@ -97,7 +116,81 @@ const Icons = {
       <polyline points="10 9 9 9 8 9" />
     </svg>
   ),
+  Steering: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="2.2" />
+      <path d="M12 5.5V9.8M6.2 15.5l3.7-2.2M17.8 15.5l-3.7-2.2" />
+    </svg>
+  ),
+  Shield: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5z" />
+    </svg>
+  ),
+  Star: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15 9 22 9.3 16.5 14 18.3 21 12 17 5.7 21 7.5 14 2 9.3 9 9" />
+    </svg>
+  ),
 };
+
+const ROLE_ICON = { customer: Icons.Users, driver: Icons.Steering, supervisor: Icons.Shield, admin: Icons.Star };
+
+const PAGE_SIZE = 10;
+
+// ─── PAGINATION ───────────────────────────────────────────────────────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  // Clamp if the list shrinks (filter/search/refresh) and we were on a now-empty page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+
+  const rangeEnd = Math.min(start + pageSize, count);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function fmtDate(val) {
   if (!val) return "—";
@@ -105,22 +198,62 @@ function fmtDate(val) {
   return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function getDocImages(docu) {
+  if (!docu) return {};
+  return {
+    driverLicense: docu.driverLicenseUrl || "",
+    governmentId:  docu.governmentIdUrl  || "",
+    documentImage: docu.documentImageUrl || "",
+    selfieWithId:  docu.selfieWithIdUrl  || "",
+  };
+}
+
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
-export default function Customers() {
-  const [tab, setTab]         = useState("customers");
+export default function Users() {
+  const { user: viewer } = useAuth();
+  const viewerRole = viewer?.role;
+
+  // Which role-tabs this logged-in account is allowed to see.
+  const availableRoleTabs = useMemo(
+    () => ROLE_TABS.filter(t => t.visibleTo.includes(viewerRole)),
+    [viewerRole]
+  );
+
+  const [roleTab, setRoleTab] = useState(null);
+  useEffect(() => {
+    if (availableRoleTabs.length && !roleTab) setRoleTab(availableRoleTabs[0].key);
+  }, [availableRoleTabs, roleTab]);
+
+  const activeRole = availableRoleTabs.find(t => t.key === roleTab) || availableRoleTabs[0];
+
+  const [subTab, setSubTab]   = useState("directory"); // "directory" (List) | "documents" (Document Request) | "editRequests" (Edit Request) — customers only
   const [users, setUsers]     = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Only Admin accounts get 200s from DELETE /api/users/:uid today (see
+  // user.routes.js). Hiding the action for everyone else avoids a button
+  // that always ends in a 403 — this is a UI guard only, not the real gate.
+  const canDelete = viewerRole === ROLES.ADMIN;
+
   const fetchUsers = useCallback(async () => {
+    if (!activeRole?.apiRole) { setUsers([]); setLoading(false); return; }
     setLoading(true);
     try {
-      const [userSnap, detailsSnap, addressSnap, docSnap, bookingsSnap] = await Promise.all([
-        getDocs(query(collection(db, "user"), where("roleID", "==", CUSTOMER_ROLE_ID))),
+      const [listRes, detailsSnap, addressSnap, docSnap, bookingsSnap] = await Promise.all([
+        fetch(`${process.env.REACT_APP_API_URL}/api/users?role=${encodeURIComponent(activeRole.apiRole)}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        }),
         getDocs(collection(db, "userDetails")),
         getDocs(collection(db, "userAddress")),
         getDocs(collection(db, "userDocument")),
         getDocs(collection(db, "bookings")),
       ]);
+
+      if (!listRes.ok) {
+        const err = await listRes.json().catch(() => ({}));
+        throw new Error(err.message || `Failed to load ${activeRole.label} list.`);
+      }
+      const { data: baseUsers } = await listRes.json();
 
       const detailsMap = Object.fromEntries(detailsSnap.docs.map(d => [d.data().userID || d.id, { docId: d.id, ...d.data() }]));
       const addressMap = Object.fromEntries(addressSnap.docs.map(d => [d.data().userID || d.id, { docId: d.id, ...d.data() }]));
@@ -131,23 +264,45 @@ export default function Customers() {
         if (uid) bookingCount[uid] = (bookingCount[uid] || 0) + 1;
       });
 
-      const merged = userSnap.docs.map(d => ({
-        id: d.id, ...d.data(),
-        details:      detailsMap[d.id] || {},
-        address:      addressMap[d.id] || {},
-        document:     docMap[d.id]     || {},
-        bookingCount: bookingCount[d.id] || 0,
+      const merged = baseUsers.map(u => ({
+        ...u,
+        details:      detailsMap[u.id] || {},
+        address:      addressMap[u.id] || {},
+        document:     docMap[u.id]     || {},
+        bookingCount: bookingCount[u.id] || 0,
       }));
 
       setUsers(merged);
     } catch (e) {
-      console.error("Customers fetch error:", e);
+      console.error("Users fetch error:", e);
+      setUsers([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeRole]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  // Reset to the directory sub-tab whenever the role-tab changes (e.g. the
+  // "Documents" sub-tab only exists under Customers).
+  useEffect(() => { setSubTab("directory"); }, [roleTab]);
+
+  if (availableRoleTabs.length && !activeRole) {
+    return (
+      <div className="p-4">
+        <div className="bg-white rounded-2xl border p-8 text-center text-gray-400">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!activeRole) {
+    return (
+      <div className="p-4">
+        <div className="bg-white rounded-2xl border p-8 text-center text-gray-400">
+          Your account role doesn't have access to this page.
+        </div>
+      </div>
+    );
+  }
 
   const pendingDocs = users
     .filter(u => u.isVerified !== true)
@@ -158,6 +313,7 @@ export default function Customers() {
     });
   const verifiedCount = users.filter(u => u.isVerified === true).length;
   const flaggedCount  = users.filter(u => u.isFlagged === true).length;
+  const showVerification = activeRole.hasDocsSubTab; // ID verification stat cards apply to any role with a Document Request tab
 
   const RefreshBtn = () => (
     <button onClick={fetchUsers}
@@ -169,30 +325,55 @@ export default function Customers() {
 
   return (
     <div className="p-4 space-y-5 font-sans">
-      {/* STAT CARDS */}
-      <div className="grid grid-cols-5 gap-4">
-        <StatCard title="Total"       value={users.length}  Icon={Icons.Users}       color="teal" />
-        <StatCard title="Active"      value={users.filter(u => u.status?.toLowerCase() === "active").length}   Icon={Icons.CheckCircle} color="green" />
-        <StatCard title="Inactive"    value={users.filter(u => u.status?.toLowerCase() === "inactive").length} Icon={Icons.Moon}        color="gray" />
-        <StatCard title="ID Verified" value={verifiedCount} Icon={Icons.IdCard}      color="blue" />
-        <StatCard title="Flagged"     value={flaggedCount}  Icon={Icons.Flag}        color="red" />
+      {/* ROLE TABS */}
+      <div className="flex gap-2 flex-wrap">
+        {availableRoleTabs.map(t => {
+          const Icon = ROLE_ICON[t.key] || Icons.Users;
+          return (
+            <button key={t.key} onClick={() => setRoleTab(t.key)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                roleTab === t.key ? "bg-gray-900 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"
+              }`}>
+              <Icon className="w-4 h-4" />
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
-      {/* TABS + REFRESH */}
+      {/* STAT CARDS */}
+      <div className={`grid gap-4 ${showVerification ? "grid-cols-5" : "grid-cols-3"}`}>
+        <StatCard title="Total"    value={users.length} Icon={Icons.Users}       color="teal" />
+        <StatCard title="Active"   value={users.filter(u => u.status?.toLowerCase() === "active").length}   Icon={Icons.CheckCircle} color="green" />
+        <StatCard title="Inactive" value={users.filter(u => u.status?.toLowerCase() === "inactive").length} Icon={Icons.Moon}        color="gray" />
+        {showVerification && <StatCard title="ID Verified" value={verifiedCount} Icon={Icons.IdCard} color="blue" />}
+        {showVerification && <StatCard title="Flagged"     value={flaggedCount}  Icon={Icons.Flag}   color="red" />}
+      </div>
+
+      {/* SUB-TABS + REFRESH */}
       <div className="flex justify-between items-center">
         <div className="flex gap-2">
-          <button onClick={() => setTab("customers")}
-            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${tab === "customers" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
+          <button onClick={() => setSubTab("directory")}
+            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "directory" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
             <Icons.Users className="w-4 h-4" />
-            Customers
+            List
             <span className="ml-1 opacity-70">{users.length}</span>
           </button>
-          <button onClick={() => setTab("documents")}
-            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${tab === "documents" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
-            <Icons.IdCard className="w-4 h-4" />
-            Customer Document
-            <span className="ml-1 opacity-70 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{pendingDocs.length}</span>
-          </button>
+          {activeRole.hasDocsSubTab && (
+            <button onClick={() => setSubTab("documents")}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "documents" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
+              <Icons.IdCard className="w-4 h-4" />
+              Document Request
+              <span className="ml-1 opacity-70 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{pendingDocs.length}</span>
+            </button>
+          )}
+          {activeRole.hasEditRequestSubTab && (
+            <button onClick={() => setSubTab("editRequests")}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "editRequests" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
+              <Icons.Edit className="w-4 h-4" />
+              Edit Request
+            </button>
+          )}
         </div>
         <RefreshBtn />
       </div>
@@ -202,22 +383,42 @@ export default function Customers() {
         <div className="bg-white rounded-2xl border p-8 space-y-3">
           {[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}
         </div>
-      ) : tab === "customers" ? (
-        <CustomersTab users={users} onRefresh={fetchUsers} />
+      ) : subTab === "directory" ? (
+        <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showBookings={activeRole.key === "customer"} />
+      ) : subTab === "documents" ? (
+        <DocumentsTab users={pendingDocs} onRefresh={fetchUsers} roleLabel={activeRole.label} />
       ) : (
-        <DocumentsTab users={pendingDocs} onRefresh={fetchUsers} />
+        <EditRequestsTab />
       )}
     </div>
   );
 }
 
-// ─── CUSTOMERS TAB ────────────────────────────────────────────────────────────
-function CustomersTab({ users, onRefresh }) {
+// ─── DIRECTORY TAB (used for Customers, Drivers, Supervisors, Admins) ─────────
+function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showBookings }) {
   const [search, setSearch]       = useState("");
   const [filterStatus, setFilter] = useState("All");
   const [detailUser, setDetailUser]       = useState(null);
   const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [searchParams, setSearchParams]   = useSearchParams();
+
+  // Opens the exact user a notification click pointed to (?open=<refID>,
+  // set by Header.jsx). Runs once this tab's users are loaded so the
+  // record is there to find; strips the param afterward. Since this
+  // DirectoryTab is now shared across Customer/Driver/Supervisor/Admin
+  // role-tabs (not just Customers), this only finds a match if the
+  // notification's refID belongs to whichever role-tab happens to be
+  // active when the param is read — e.g. a new-signup notification
+  // (refCollection: "user") opens correctly if you're on the Customer
+  // tab already, since userWatcher.js only fires that type for customers.
+  useEffect(() => {
+    const openID = searchParams.get("open");
+    if (!openID || users.length === 0) return;
+    const match = users.find((u) => u.id === openID);
+    if (match) setDetailUser(match);
+    setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
+  }, [searchParams, users, setSearchParams]);
 
   const handleDelete = async (user) => {
     try {
@@ -242,6 +443,10 @@ function CustomersTab({ users, onRefresh }) {
     return matchSearch && matchStatus;
   });
 
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(filtered);
+  // Jump back to page 1 whenever the visible set changes shape (new search/filter/role tab).
+  useEffect(() => { setPage(1); }, [search, filterStatus, users]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <>
       <div className="flex flex-wrap gap-3 items-center">
@@ -258,26 +463,26 @@ function CustomersTab({ users, onRefresh }) {
 
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
         <div className="px-5 py-4 border-b">
-          <h2 className="font-bold text-lg text-gray-800">All Customers <span className="text-gray-400 text-sm font-normal">({filtered.length})</span></h2>
+          <h2 className="font-bold text-lg text-gray-800">All {roleLabel} <span className="text-gray-400 text-sm font-normal">({filtered.length})</span></h2>
         </div>
         {filtered.length === 0 ? (
-          <div className="text-center text-gray-400 py-16">No customers found.</div>
+          <div className="text-center text-gray-400 py-16">No {roleLabel.toLowerCase()} found.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-gray-400 text-xs uppercase bg-gray-50">
                 <tr>
-                  <th className="px-5 py-3 text-left">Customer</th>
+                  <th className="px-5 py-3 text-left">{roleLabelSingular}</th>
                   <th className="px-5 py-3 text-left">Contact</th>
                   <th className="px-5 py-3 text-left">ID Status</th>
-                  <th className="px-5 py-3 text-left">Bookings</th>
+                  {showBookings && <th className="px-5 py-3 text-left">Bookings</th>}
                   <th className="px-5 py-3 text-left">Account</th>
                   <th className="px-5 py-3 text-left">Joined</th>
                   <th className="px-5 py-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(u => {
+                {pageItems.map(u => {
                   const fn = u.details?.firstName || "";
                   const ln = u.details?.lastName  || "";
                   const fullName = `${fn} ${ln}`.trim() || u.username || u.email || "—";
@@ -314,7 +519,7 @@ function CustomersTab({ users, onRefresh }) {
                             </span>
                         }
                       </td>
-                      <td className="px-5 py-3 font-semibold text-gray-700">{u.bookingCount}</td>
+                      {showBookings && <td className="px-5 py-3 font-semibold text-gray-700">{u.bookingCount}</td>}
                       <td className="px-5 py-3">
                         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium capitalize text-black ${
                           u.status?.toLowerCase() === "active"   ? "bg-blue-50 border border-blue-200" :
@@ -325,10 +530,12 @@ function CustomersTab({ users, onRefresh }) {
                       <td className="px-5 py-3 text-gray-500">{fmtDate(u.createdAt)}</td>
                       <td className="px-5 py-3">
                         <div className="flex gap-2 justify-end">
-                          <button onClick={() => setConfirmDelete(u)}
-                            className="p-1.5 border border-red-200 rounded-lg text-red-500 hover:bg-red-50">
-                            <Icons.Trash className="w-4 h-4" />
-                          </button>
+                          {canDelete && (
+                            <button onClick={() => setConfirmDelete(u)}
+                              className="p-1.5 border border-red-200 rounded-lg text-red-500 hover:bg-red-50">
+                              <Icons.Trash className="w-4 h-4" />
+                            </button>
+                          )}
                           <button onClick={() => setEditUser(u)}
                             className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
                             <Icons.Edit className="w-3.5 h-3.5" />
@@ -348,17 +555,148 @@ function CustomersTab({ users, onRefresh }) {
             </table>
           </div>
         )}
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
-      {detailUser    && <ViewDetailsModal user={detailUser} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
-      {editUser      && <EditUserModal   user={editUser}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }} />}
-      {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)} />}
+      {detailUser    && <ViewDetailsModal user={detailUser} roleLabelSingular={roleLabelSingular} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
+      {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }} />}
+      {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)} />}
     </>
   );
 }
 
-// ─── DOCUMENTS TAB ────────────────────────────────────────────────────────────
-function DocumentsTab({ users, onRefresh }) {
+// ─── VIEW DETAILS MODAL (Information / Documents sub-tabs) ────────────────────
+function ViewDetailsModal({ user, roleLabelSingular, onClose, onEdit }) {
+  const [tab, setTab] = useState("information"); // "information" | "documents"
+  const det  = user.details  || {};
+  const addr = user.address  || {};
+  const docu = user.document || {};
+  const fullName = `${det.firstName || ""} ${det.middleName ? det.middleName + " " : ""}${det.lastName || ""}${det.suffix ? " " + det.suffix : ""}`.trim() || user.username || "—";
+  const imgs = getDocImages(docu);
+  const hasImgs = Object.values(imgs).some(v => v && v.trim() !== "");
+
+  const Field = ({ label, value }) => (
+    <div className="bg-gray-50 rounded-xl p-3">
+      <p className="text-xs text-gray-400">{label}</p>
+      <p className="font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</p>
+    </div>
+  );
+  const Section = ({ title, children }) => (
+    <div>
+      <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">{title}</h3>
+      <div className="grid grid-cols-2 gap-3">{children}</div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
+          <div>
+            <h2 className="font-bold text-xl text-gray-800 flex items-center gap-2">
+              {fullName}
+              {user.isFlagged && <Icons.Flag className="w-4 h-4 text-red-500 fill-red-500 stroke-red-500" />}
+            </h2>
+            <p className="text-sm text-gray-400">{roleLabelSingular} · @{user.username || "—"} · {user.email}</p>
+          </div>
+          <div className="flex gap-2 items-center">
+            <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
+              <Icons.Edit className="w-4 h-4" />
+              Edit
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+              <Icons.Close className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Information / Documents sub-tabs */}
+        <div className="flex gap-2 px-5 pt-4">
+          <button onClick={() => setTab("information")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${tab === "information" ? "bg-teal-600 text-white shadow" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"}`}>
+            <Icons.Users className="w-4 h-4" /> Information
+          </button>
+          <button onClick={() => setTab("documents")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${tab === "documents" ? "bg-teal-600 text-white shadow" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"}`}>
+            <Icons.Document className="w-4 h-4" /> Documents
+          </button>
+        </div>
+
+        <div className="p-5 space-y-6">
+          {tab === "information" ? (
+            <>
+              <Section title="Account">
+                <Field label="Email"     value={user.email} />
+                <Field label="Phone"     value={user.phone} />
+                <Field label="Username"  value={user.username} />
+                <Field label="Status"    value={user.status} />
+                <Field label="ID Status" value={user.isVerified ? "✓ Verified" : "Pending"} />
+                <Field label="Flagged"   value={user.isFlagged ? "Yes" : "No"} />
+                <Field label="Joined"    value={fmtDate(user.createdAt)} />
+              </Section>
+              <Section title="Personal Details">
+                <Field label="First Name"  value={det.firstName} />
+                <Field label="Middle Name" value={det.middleName} />
+                <Field label="Last Name"   value={det.lastName} />
+                <Field label="Suffix"      value={det.suffix} />
+                <Field label="Birth Date"  value={det.birthDate ? fmtDate(det.birthDate) : "—"} />
+              </Section>
+              <Section title="Address">
+                <Field label="Street"       value={addr.street} />
+                <Field label="Barangay"     value={addr.barangay} />
+                <Field label="Municipality" value={addr.municipality} />
+                <Field label="City"         value={addr.city} />
+                <Field label="Province"     value={addr.province} />
+                <Field label="Postal Code"  value={addr.postalCode} />
+                <Field label="Village"      value={addr.village} />
+                <Field label="Zip Code"     value={addr.zipCode} />
+              </Section>
+            </>
+          ) : (
+            <>
+              <Section title="Document Info">
+                <Field label="Document Type"   value={docu.documentType} />
+                <Field label="Document Number" value={docu.documentNumber} />
+                <Field label="ID Status"       value={user.isVerified ? "✓ Verified" : "Pending"} />
+              </Section>
+              {hasImgs ? (
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Uploaded Documents</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <DocImg label="Driver License"  url={imgs.driverLicense} />
+                    <DocImg label="Government ID"   url={imgs.governmentId} />
+                    <DocImg label="Document Image"  url={imgs.documentImage} />
+                    <DocImg label="Selfie with ID"  url={imgs.selfieWithId} />
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No documents uploaded yet</p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DocImg({ label, url }) {
+  if (!url || (typeof url === "string" && url.trim() === "")) return null;
+  return (
+    <div>
+      <p className="text-xs text-gray-400 mb-1">{label}</p>
+      <img src={url} alt={label} className="w-full h-36 object-cover rounded-xl border"
+        onError={e => { e.target.style.display="none"; e.target.nextSibling && (e.target.nextSibling.style.display="flex"); }}
+      />
+      <div style={{display:"none"}} className="w-full h-36 border rounded-xl items-center justify-center text-xs text-gray-400 bg-gray-50">
+        Could not load image
+      </div>
+    </div>
+  );
+}
+
+// ─── DOCUMENTS TAB (customer ID verification queue) ───────────────────────────
+function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
   const [detailUser, setDetailUser] = useState(null);
   const [loadingId, setLoadingId]   = useState(null);
 
@@ -376,12 +714,15 @@ function DocumentsTab({ users, onRefresh }) {
     return Object.values(imgs).some(v => v && v.trim() !== "");
   };
 
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(users);
+  useEffect(() => { setPage(1); }, [users]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <>
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
         <div className="px-5 py-4 border-b">
           <h2 className="font-bold text-lg text-gray-800">Pending ID Verifications <span className="text-gray-400 text-sm font-normal">({users.length})</span></h2>
-          <p className="text-xs text-gray-400 mt-0.5">Customers awaiting ID approval</p>
+          <p className="text-xs text-gray-400 mt-0.5">{roleLabel} awaiting ID approval</p>
         </div>
         {users.length === 0 ? (
           <div className="text-center text-gray-400 py-16">
@@ -397,7 +738,7 @@ function DocumentsTab({ users, onRefresh }) {
             <table className="w-full text-sm">
               <thead className="text-gray-400 text-xs uppercase bg-gray-50">
                 <tr>
-                  <th className="px-5 py-3 text-left">Customer</th>
+                  <th className="px-5 py-3 text-left">{roleLabel.replace(/s$/, "")}</th>
                   <th className="px-5 py-3 text-left">Document Type</th>
                   <th className="px-5 py-3 text-left">Document No.</th>
                   <th className="px-5 py-3 text-left">ID Status</th>
@@ -407,7 +748,7 @@ function DocumentsTab({ users, onRefresh }) {
                 </tr>
               </thead>
               <tbody>
-                {users.map(u => {
+                {pageItems.map(u => {
                   const fn = u.details?.firstName || "";
                   const ln = u.details?.lastName  || "";
                   const fullName = `${fn} ${ln}`.trim() || u.username || u.email || "—";
@@ -469,6 +810,7 @@ function DocumentsTab({ users, onRefresh }) {
             </table>
           </div>
         )}
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
       {detailUser && (
@@ -483,127 +825,30 @@ function DocumentsTab({ users, onRefresh }) {
   );
 }
 
-// ─── VIEW DETAILS MODAL ───────────────────────────────────────────────────────
-function ViewDetailsModal({ user, onClose, onEdit }) {
-  const det  = user.details  || {};
-  const addr = user.address  || {};
-  const docu = user.document || {};
-  const fullName = `${det.firstName || ""} ${det.middleName ? det.middleName + " " : ""}${det.lastName || ""}${det.suffix ? " " + det.suffix : ""}`.trim() || user.username || "—";
-
-  const Field = ({ label, value }) => (
-    <div className="bg-gray-50 rounded-xl p-3">
-      <p className="text-xs text-gray-400">{label}</p>
-      <p className="font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</p>
-    </div>
-  );
-  const Section = ({ title, children }) => (
-    <div>
-      <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">{title}</h3>
-      <div className="grid grid-cols-2 gap-3">{children}</div>
-    </div>
-  );
-
+// ─── EDIT REQUEST TAB (placeholder) ────────────────────────────────────────
+// Blank on purpose — this is a new feature (profile-info changes AND
+// expired/renewed ID re-submissions from customers) with no existing data
+// model yet. It's created from a separate customer-facing app writing to
+// Firestore, whose collection/field shape isn't known from this codebase.
+// Wired up just far enough to show the tab and test navigation; plug the
+// real query in here once the customer app's collection is confirmed.
+function EditRequestsTab() {
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
-          <div>
-            <h2 className="font-bold text-xl text-gray-800 flex items-center gap-2">
-              {fullName}
-              {user.isFlagged && <Icons.Flag className="w-4 h-4 text-red-500 fill-red-500 stroke-red-500" />}
-            </h2>
-            <p className="text-sm text-gray-400">@{user.username || "—"} · {user.email}</p>
-          </div>
-          <div className="flex gap-2 items-center">
-            <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
-              <Icons.Edit className="w-4 h-4" />
-              Edit
-            </button>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-              <Icons.Close className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-        <div className="p-5 space-y-6">
-          <Section title="Account">
-            <Field label="Email"     value={user.email} />
-            <Field label="Phone"     value={user.phone} />
-            <Field label="Username"  value={user.username} />
-            <Field label="Status"    value={user.status} />
-            <Field label="ID Status" value={user.isVerified ? "✓ Verified" : "Pending"} />
-            <Field label="Flagged"   value={user.isFlagged ? "Yes" : "No"} />
-            <Field label="Joined"    value={fmtDate(user.createdAt)} />
-          </Section>
-          <Section title="Personal Details">
-            <Field label="First Name"  value={det.firstName} />
-            <Field label="Middle Name" value={det.middleName} />
-            <Field label="Last Name"   value={det.lastName} />
-            <Field label="Suffix"      value={det.suffix} />
-            <Field label="Birth Date"  value={det.birthDate ? fmtDate(det.birthDate) : "—"} />
-          </Section>
-          <Section title="Address">
-            <Field label="Street"       value={addr.street} />
-            <Field label="Barangay"     value={addr.barangay} />
-            <Field label="Municipality" value={addr.municipality} />
-            <Field label="City"         value={addr.city} />
-            <Field label="Province"     value={addr.province} />
-            <Field label="Postal Code"  value={addr.postalCode} />
-            <Field label="Village"      value={addr.village} />
-            <Field label="Zip Code"     value={addr.zipCode} />
-          </Section>
-          <Section title="Document Info">
-            <Field label="Document Type"   value={docu.documentType} />
-            <Field label="Document Number" value={docu.documentNumber} />
-            <Field label="ID Status"       value={user.isVerified ? "✓ Verified" : "Pending"} />
-          </Section>
-          {(() => {
-            const imgs = getDocImages(docu);
-            const hasAny = Object.values(imgs).some(v => v && v.trim() !== "");
-            if (!hasAny) return null;
-            return (
-              <div>
-                <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Uploaded Documents</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <DocImg label="Driver License"  url={imgs.driverLicense} />
-                  <DocImg label="Government ID"   url={imgs.governmentId} />
-                  <DocImg label="Document Image"  url={imgs.documentImage} />
-                  <DocImg label="Selfie with ID"  url={imgs.selfieWithId} />
-                </div>
-              </div>
-            );
-          })()}
-        </div>
+    <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+      <div className="px-5 py-4 border-b">
+        <h2 className="font-bold text-lg text-gray-800">Edit Requests</h2>
+        <p className="text-xs text-gray-400 mt-0.5">
+          Profile info changes and renewed/expired ID re-submissions from customers
+        </p>
+      </div>
+      <div className="text-center text-gray-400 py-16">
+        Not built yet — waiting on the customer app's request collection.
       </div>
     </div>
   );
 }
 
-function DocImg({ label, url }) {
-  if (!url || (typeof url === "string" && url.trim() === "")) return null;
-  return (
-    <div>
-      <p className="text-xs text-gray-400 mb-1">{label}</p>
-      <img src={url} alt={label} className="w-full h-36 object-cover rounded-xl border"
-        onError={e => { e.target.style.display="none"; e.target.nextSibling && (e.target.nextSibling.style.display="flex"); }}
-      />
-      <div style={{display:"none"}} className="w-full h-36 border rounded-xl items-center justify-center text-xs text-gray-400 bg-gray-50">
-        Could not load image
-      </div>
-    </div>
-  );
-}
 
-function getDocImages(docu) {
-  if (!docu) return {};
-  return {
-    driverLicense: docu.driverLicenseUrl || "",
-    governmentId:  docu.governmentIdUrl  || "",
-    documentImage: docu.documentImageUrl || "",
-    selfieWithId:  docu.selfieWithIdUrl  || "",
-  };
-}
-
-// ─── DOC DETAIL MODAL ─────────────────────────────────────────────────────────
 function DocDetailModal({ user, onClose, onApprove, onReject }) {
   const det  = user.details  || {};
   const docu = user.document || {};
@@ -667,7 +912,7 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
 }
 
 // ─── EDIT USER MODAL ──────────────────────────────────────────────────────────
-function EditUserModal({ user, onClose, onSaved }) {
+function EditUserModal({ user, roleLabelSingular, onClose, onSaved }) {
   const [form, setForm] = useState({
     status:    user.status    || "active",
     isFlagged: user.isFlagged || false,
@@ -687,7 +932,7 @@ function EditUserModal({ user, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b">
-          <h2 className="font-bold text-lg text-gray-800">Edit Customer</h2>
+          <h2 className="font-bold text-lg text-gray-800">Edit {roleLabelSingular}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
             <Icons.Close className="w-5 h-5" />
           </button>
@@ -717,7 +962,7 @@ function EditUserModal({ user, onClose, onSaved }) {
             <div className="flex items-center gap-2">
               <Icons.Flag className={`w-4 h-4 ${form.isFlagged ? "text-red-500 fill-red-500 stroke-red-500" : "text-gray-400"}`} />
               <div>
-                <p className="text-sm font-medium text-gray-700">Flag this customer</p>
+                <p className="text-sm font-medium text-gray-700">Flag this {roleLabelSingular.toLowerCase()}</p>
                 <p className="text-xs text-gray-400">Mark as suspicious or problematic</p>
               </div>
             </div>
@@ -744,7 +989,7 @@ function EditUserModal({ user, onClose, onSaved }) {
 }
 
 // ─── CONFIRM DELETE ───────────────────────────────────────────────────────────
-function ConfirmDeleteModal({ name, onConfirm, onCancel }) {
+function ConfirmDeleteModal({ name, roleLabelSingular, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
@@ -754,7 +999,7 @@ function ConfirmDeleteModal({ name, onConfirm, onCancel }) {
               <Icons.Trash className="w-7 h-7 text-red-500" />
             </div>
           </div>
-          <h3 className="font-bold text-gray-800 text-lg">Delete Customer?</h3>
+          <h3 className="font-bold text-gray-800 text-lg">Delete {roleLabelSingular}?</h3>
           <p className="text-sm text-gray-500 mt-1">
             Delete <strong>{name}</strong>? Their data will be moved to the archive and cannot be undone.
           </p>

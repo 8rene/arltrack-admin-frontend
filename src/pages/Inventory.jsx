@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   collection, getDocs, addDoc, query, where,
-  doc, updateDoc, orderBy, serverTimestamp, getDoc, deleteDoc
+  doc, updateDoc, orderBy, serverTimestamp, getDoc
 } from "firebase/firestore";
 import { db } from "../fireabase";
 
@@ -51,131 +51,6 @@ const BOOKING_STATUS_STYLE = {
   completed:            "bg-blue-50 border border-blue-200",
   cancelled:            "bg-red-100 text-red-600",
   cancellation_request: "bg-orange-100 text-orange-700",
-};
-
-/* ══════════════════════════════════════════════
-   NOTIFICATION HELPERS
-══════════════════════════════════════════════ */
-
-/**
- * RULE 1 — Before Trip damage
- * Sends ONE notification per bookingID (idempotent). If all parts become Good, deletes the notif.
- */
-const sendBeforeTripNotification = async (carName, carID, bookingID) => {
-  try {
-    // One-time: check if a notif for this booking already exists
-    const existing = await getDocs(query(
-      collection(db, "notifications"),
-      where("type",      "==", "before_trip_damage"),
-      where("bookingID", "==", bookingID)
-    ));
-    if (!existing.empty) return; // already notified, skip
-    await addDoc(collection(db, "notifications"), {
-      type:      "before_trip_damage",
-      title:     "Pre-Trip Damage Detected",
-      message:   `The car ${carName} has damage before trip. Please schedule a repair.`,
-      carID,
-      bookingID,
-      isRead:    false,
-      createdAt: serverTimestamp(),
-    });
-    console.log("[NOTIF] Before-trip damage notification sent for", carName);
-  } catch (e) {
-    console.error("[NOTIF] Failed to send before-trip notification:", e);
-  }
-};
-
-/**
- * Auto-dismiss before-trip notifs for a bookingID when overall status becomes "good".
- */
-const dismissBeforeTripNotification = async (bookingID) => {
-  try {
-    const snap = await getDocs(query(
-      collection(db, "notifications"),
-      where("type",      "==", "before_trip_damage"),
-      where("bookingID", "==", bookingID)
-    ));
-    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, "notifications", d.id))));
-    if (!snap.empty) console.log("[NOTIF] Before-trip notifs auto-dismissed for", bookingID);
-  } catch (e) {
-    console.error("[NOTIF] Failed to dismiss before-trip notifications:", e);
-  }
-};
-
-/**
- * RULE 2 — After Trip damage / stolen
- * Sends ONE notification per part per bookingID (idempotent).
- * If all parts become Good, deletes existing after-trip notifs.
- * Fetches user name from bookingID → userID → userDetails collection.
- */
-const sendAfterTripNotification = async (damagedParts, carName, carID, bookingID, userID) => {
-  try {
-    // Resolve user full name from userDetails collection
-    let fullName = "the customer";
-    try {
-      const detailDoc = await getDoc(doc(db, "userDetails", userID));
-      if (detailDoc.exists()) {
-        const { firstName = "", lastName = "" } = detailDoc.data();
-        fullName = [firstName, lastName].filter(Boolean).join(" ").trim() || fullName;
-      } else {
-        const userDoc = await getDoc(doc(db, "user", userID));
-        if (userDoc.exists()) {
-          const { firstName = "", lastName = "", username = "" } = userDoc.data();
-          fullName = [firstName, lastName].filter(Boolean).join(" ").trim() || username || fullName;
-        }
-      }
-    } catch (e) {
-      console.warn("[NOTIF] Could not resolve user name:", e);
-    }
-
-    // Fetch already-existing after_trip_damage notifs for this booking
-    const existingSnap = await getDocs(query(
-      collection(db, "notifications"),
-      where("type",      "==", "after_trip_damage"),
-      where("bookingID", "==", bookingID)
-    ));
-    const existingPartNames = new Set(existingSnap.docs.map(d => d.data().partName));
-
-    // Only write notif for parts that haven't been notified yet
-    const newParts = damagedParts.filter(p => !existingPartNames.has(p.carPartName));
-    await Promise.all(
-      newParts.map(part => {
-        const condition = part.status === "Stolen" ? "stolen" : "damaged";
-        return addDoc(collection(db, "notifications"), {
-          type:      "after_trip_damage",
-          title:     "Post-Trip Damage Reported",
-          message:   `The part ${part.carPartName} on ${carName} was ${condition} by ${fullName}. Please contact him/her and arrange payment.`,
-          carID,
-          bookingID,
-          userID,
-          partName:  part.carPartName,
-          partStatus: part.status,
-          isRead:    false,
-          createdAt: serverTimestamp(),
-        });
-      })
-    );
-    if (newParts.length > 0) console.log("[NOTIF] After-trip notifications sent for", newParts.length, "new part(s)");
-  } catch (e) {
-    console.error("[NOTIF] Failed to send after-trip notifications:", e);
-  }
-};
-
-/**
- * Auto-dismiss after-trip notifs for a bookingID when overall status becomes "good".
- */
-const dismissAfterTripNotification = async (bookingID) => {
-  try {
-    const snap = await getDocs(query(
-      collection(db, "notifications"),
-      where("type",      "==", "after_trip_damage"),
-      where("bookingID", "==", bookingID)
-    ));
-    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, "notifications", d.id))));
-    if (!snap.empty) console.log("[NOTIF] After-trip notifs auto-dismissed for", bookingID);
-  } catch (e) {
-    console.error("[NOTIF] Failed to dismiss after-trip notifications:", e);
-  }
 };
 
 /* ══════════════════════════════════════════════
@@ -398,12 +273,9 @@ export default function Inventory() {
         });
       }
 
-      // RULE 1 — notify if damage before trip; dismiss if now clean
-      if (hasDamage) {
-        await sendBeforeTripNotification(carName, selectedCar.id, bookingID);
-      } else {
-        await dismissBeforeTripNotification(bookingID);
-      }
+      // Damage is now visible directly on this record — no separate
+      // self-notification, since the admin filling this form is the same
+      // person who'd receive the alert.
 
       // Reload records
       await loadInventoryRecords(bookingID);
@@ -459,12 +331,8 @@ export default function Inventory() {
         });
       }
 
-      // RULE 2 — notify if damage after trip (charges user); dismiss if now clean
-      if (hasDamage && userID) {
-        await sendAfterTripNotification(damageParts, carName, selectedCar.id, bookingID, userID);
-      } else if (!hasDamage) {
-        await dismissAfterTripNotification(bookingID);
-      }
+      // Same as before-trip — the record itself is the source of truth,
+      // no self-notification for the admin who just entered it.
 
       await loadInventoryRecords(bookingID);
       setAfterEdits({});
@@ -1007,4 +875,3 @@ function CarCard({ car, selected, compact, onClick }) {
     </button>
   );
 }
-
