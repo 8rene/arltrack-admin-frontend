@@ -1,5 +1,6 @@
 import { useCurrency } from "../context/CurrencyContext";
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
 import {
@@ -76,14 +77,6 @@ const IconBellOff = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
-const IconClipboard = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
 const IconWarning = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
@@ -142,9 +135,18 @@ function StatusBadge({ status }) {
 
 // ─── STAT CARD ────────────────────────────────────────────────────────────────
 
-function StatCard({ title, value, icon, color, loading }) {
+function StatCard({ title, value, icon, color, loading, onClick }) {
+  const clickable = typeof onClick === "function";
   return (
-    <div className="bg-white p-5 rounded-2xl border shadow-sm flex items-center gap-4">
+    <div
+      onClick={onClick}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      className={`bg-white p-5 rounded-2xl border shadow-sm flex items-center gap-4 transition-all ${
+        clickable ? "cursor-pointer hover:shadow-md hover:border-teal-200" : ""
+      }`}
+    >
       <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
         {icon}
       </div>
@@ -179,11 +181,14 @@ function SkeletonRow() {
 export default function Dashboard() {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
+  const navigate = useNavigate();
   const [metrics, setMetrics]                 = useState(null);
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState(null);
   const [cancelBookings, setCancelBookings]    = useState([]);
   const [damagedParts, setDamagedParts]        = useState([]);
+  const [upcomingBookings, setUpcomingBookings]       = useState([]);
+  const [upcomingMaintenance, setUpcomingMaintenance] = useState([]);
 
   // "pending" was retired as a booking status — bookings land straight in
   // "upcoming" now, which isn't alert-worthy (every normal booking passes
@@ -234,6 +239,65 @@ export default function Dashboard() {
     return tb - ta;
   });
 
+  // REAL-TIME — bookings not yet started (pickup coming up)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, "bookings"), where("status", "==", "upcoming")),
+      (snap) => setUpcomingBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+
+  // REAL-TIME — maintenance not yet done (still Scheduled or In Progress)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, "carMaintenance"), where("status", "in", ["Scheduled", "In Progress"])),
+      (snap) => setUpcomingMaintenance(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+
+  // How far ahead each type counts as "coming up" — tune these as needed.
+  // Bookings get a tighter window since a pickup is a handoff someone has
+  // to physically be there for; maintenance gets more lead time since it's
+  // usually pre-plannable.
+  const BOOKING_WARNING_HOURS     = 6;
+  const MAINTENANCE_WARNING_HOURS = 24;
+
+  const toJsDate = (val) => {
+    if (!val) return null;
+    if (typeof val?.toDate === "function") return val.toDate();
+    if (val?._seconds !== undefined) return new Date(val._seconds * 1000);
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const withinHours = (date, hours) => {
+    if (!date) return false;
+    const diffMs = date.getTime() - Date.now();
+    return diffMs >= 0 && diffMs <= hours * 60 * 60 * 1000;
+  };
+
+  const timeUntilLabel = (date) => {
+    const diffMs = date.getTime() - Date.now();
+    if (diffMs <= 0) return "due now";
+    const totalMin = Math.round(diffMs / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    if (h === 0) return `in ${m}m`;
+    if (m === 0) return `in ${h}h`;
+    return `in ${h}h ${m}m`;
+  };
+
+  const warnings = [
+    ...upcomingBookings
+      .map((b) => ({ ...b, _type: "booking", _due: toJsDate(b.startDateTime) }))
+      .filter((b) => withinHours(b._due, BOOKING_WARNING_HOURS)),
+    ...upcomingMaintenance
+      .map((m) => ({ ...m, _type: "maintenance", _due: toJsDate(m.maintenanceDate) }))
+      .filter((m) => withinHours(m._due, MAINTENANCE_WARNING_HOURS)),
+  ].sort((a, b) => a._due - b._due); // soonest first — this list is a countdown, not a feed
+
   const fetchMetrics = useCallback(async () => {
     try {
       setLoading(true);
@@ -283,20 +347,27 @@ export default function Dashboard() {
 
       {/* STATS ROW */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Vehicles"   value={metrics?.totalVehicles ?? "—"}   icon={<IconCar className="w-6 h-6" />}      color="bg-blue-50 text-blue-600"    loading={loading} />
-        <StatCard title="Active Bookings"  value={metrics?.activeBookings ?? "—"}  icon={<IconCheck className="w-6 h-6" />}    color="bg-green-50 text-green-600"  loading={loading} />
-        <StatCard title="Pending Bookings" value={metrics?.pendingBookings ?? "—"} icon={<IconClock className="w-6 h-6" />}    color="bg-yellow-50 text-yellow-600" loading={loading} />
-        <StatCard title="Vehicles In Use"  value={metrics?.vehiclesInUse ?? "—"}   icon={<IconKey className="w-6 h-6" />}      color="bg-purple-50 text-purple-600" loading={loading} />
+        <StatCard title="Total Vehicles"       value={metrics?.totalVehicles ?? "—"}   icon={<IconCar className="w-6 h-6" />}      color="bg-blue-50 text-blue-600"    loading={loading}
+          onClick={() => navigate("/fleet")} />
+        <StatCard title="Upcoming Bookings"    value={metrics?.activeBookings ?? "—"}  icon={<IconCheck className="w-6 h-6" />}    color="bg-green-50 text-green-600"  loading={loading}
+          onClick={() => navigate("/bookings?tab=Upcoming")} />
+        <StatCard title="Cancellation Requests" value={metrics?.pendingBookings ?? "—"} icon={<IconClock className="w-6 h-6" />}    color="bg-yellow-50 text-yellow-600" loading={loading}
+          onClick={() => navigate("/bookings?tab=All")} />
+        <StatCard title="Vehicles In Use"      value={metrics?.vehiclesInUse ?? "—"}   icon={<IconKey className="w-6 h-6" />}      color="bg-purple-50 text-purple-600" loading={loading}
+          onClick={() => navigate("/car-tracking")} />
       </div>
 
       {/* REVENUE ROW */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard title="Revenue Today"   value={loading ? "—" : fmt(metrics?.revenueToday)}   icon={<IconMoney className="w-6 h-6" />}    color="bg-teal-50 text-teal-600"    loading={loading} />
-        <StatCard title="Monthly Revenue" value={loading ? "—" : fmt(metrics?.monthlyRevenue)} icon={<IconCalendar className="w-6 h-6" />} color="bg-orange-50 text-orange-600" loading={loading} />
-        <StatCard title="Yearly Revenue"  value={loading ? "—" : fmt(metrics?.yearlyRevenue)}  icon={<IconBarChart className="w-6 h-6" />} color="bg-indigo-50 text-indigo-600" loading={loading} />
+        <StatCard title="Revenue Today"   value={loading ? "—" : fmt(metrics?.revenueToday)}   icon={<IconMoney className="w-6 h-6" />}    color="bg-teal-50 text-teal-600"    loading={loading}
+          onClick={() => navigate("/payments")} />
+        <StatCard title="Monthly Revenue" value={loading ? "—" : fmt(metrics?.monthlyRevenue)} icon={<IconCalendar className="w-6 h-6" />} color="bg-orange-50 text-orange-600" loading={loading}
+          onClick={() => navigate("/payments")} />
+        <StatCard title="Yearly Revenue"  value={loading ? "—" : fmt(metrics?.yearlyRevenue)}  icon={<IconBarChart className="w-6 h-6" />} color="bg-indigo-50 text-indigo-600" loading={loading}
+          onClick={() => navigate("/payments")} />
       </div>
 
-      {/* BOTTOM: ALERTS + RECENT BOOKINGS */}
+      {/* BOTTOM: ALERTS + WARNING */}
       <div className="grid lg:grid-cols-2 gap-4">
 
         {/* ALERTS */}
@@ -320,15 +391,23 @@ export default function Dashboard() {
               alerts.map((a) => {
                 const isDamaged = a._type === "damaged_part";
                 const isCancel  = a.status === "cancellation_request";
+                const goTo = () => {
+                  if (isDamaged) navigate("/maintenance");
+                  else navigate(`/bookings?open=${a.bookingID || a.id}`);
+                };
                 return (
                   <div
                     key={a.id}
-                    className={`flex items-start gap-3 p-3 rounded-xl border ${
+                    onClick={goTo}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
                       isDamaged
-                        ? "bg-red-50 border-red-100"
+                        ? "bg-red-50 border-red-100 hover:bg-red-100"
                         : isCancel
-                        ? "bg-orange-50 border-orange-100"
-                        : "bg-yellow-50 border-yellow-100"
+                        ? "bg-orange-50 border-orange-100 hover:bg-orange-100"
+                        : "bg-yellow-50 border-yellow-100 hover:bg-yellow-100"
                     }`}
                   >
                     <span className={`shrink-0 mt-0.5 ${isDamaged ? "text-red-500" : isCancel ? "text-orange-500" : "text-yellow-500"}`}>
@@ -364,44 +443,64 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* RECENT BOOKINGS PREVIEW */}
+        {/* WARNING — things coming up soon, not wrong yet */}
         <div className="bg-white p-5 rounded-2xl border shadow-sm">
           <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <IconClipboard className="w-4 h-4 text-gray-600" />
-            Recent Bookings
-            {!loading && (
-              <span className="text-xs font-normal bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full ml-auto">
-                {metrics?.recentBookings?.length ?? 0} entries
+            <IconClock className="w-4 h-4 text-gray-600" />
+            Warning
+            {warnings.length > 0 && (
+              <span className="bg-yellow-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                {warnings.length}
               </span>
             )}
           </h2>
           <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-            {loading
-              ? Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="flex justify-between items-center py-2 border-b border-gray-50">
-                    <div className="space-y-1">
-                      <div className="h-4 w-32 bg-gray-200 rounded animate-pulse" />
-                      <div className="h-3 w-20 bg-gray-100 rounded animate-pulse" />
+            {warnings.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-28 text-gray-400 text-sm gap-2">
+                <IconClock className="w-8 h-8 text-gray-300" />
+                Nothing coming up soon
+              </div>
+            ) : (
+              warnings.map((w) => {
+                const isMaint = w._type === "maintenance";
+                const goTo = () => {
+                  if (isMaint) navigate("/maintenance");
+                  else navigate(`/bookings?open=${w.bookingID || w.id}`);
+                };
+                return (
+                  <div
+                    key={`${w._type}-${w.id}`}
+                    onClick={goTo}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                    className="flex items-start gap-3 p-3 rounded-xl border bg-yellow-50 border-yellow-100 hover:bg-yellow-100 cursor-pointer transition-colors"
+                  >
+                    <span className="shrink-0 mt-0.5 text-yellow-600">
+                      {isMaint ? <IconWrench className="w-5 h-5" /> : <IconClock className="w-5 h-5" />}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 leading-snug">
+                        {isMaint ? "Pending Maintenance" : "Pending Booking"} · {timeUntilLabel(w._due)}
+                      </p>
+                      {isMaint ? (
+                        <>
+                          <p className="text-xs text-gray-500 mt-0.5 font-medium">{w.carID || "—"}</p>
+                          <p className="text-xs text-gray-400">{w.description || "Scheduled service"}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-xs text-gray-500 mt-0.5">Booking ID: {w.bookingID || w.id}</p>
+                          <p className="text-xs text-gray-400">
+                            Pickup: {w._due.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                          </p>
+                        </>
+                      )}
                     </div>
-                    <div className="h-6 w-16 bg-gray-200 rounded-full animate-pulse" />
                   </div>
-                ))
-              : metrics?.recentBookings?.length === 0
-              ? <div className="text-center text-gray-400 text-sm py-8">No recent bookings found</div>
-              : metrics?.recentBookings?.slice(0, 6).map((b) => (
-                  <div key={b.id} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
-                    <div>
-                      <div className="font-medium text-sm text-gray-800">
-                        {b.customerName || b.userName || b.name || "—"}
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {b.carID || b.carId || b.car || "—"} · {fmtDate(b.createdAt)}
-                      </div>
-                    </div>
-                    <StatusBadge status={b.status} />
-                  </div>
-                ))
-            }
+                );
+              })
+            )}
           </div>
         </div>
       </div>
@@ -438,8 +537,9 @@ export default function Dashboard() {
                     <td colSpan={5} className="text-center text-gray-400 py-10">No bookings found</td>
                   </tr>
                 )
-                : metrics?.recentBookings?.map((b) => (
-                  <tr key={b.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                : metrics?.recentBookings?.slice(0, 8).map((b) => (
+                  <tr key={b.id} onClick={() => navigate(`/bookings?open=${b.bookingID || b.id}`)}
+                    className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer">
                     <td className="px-4 py-3 text-gray-600">{b.bookingID || b.id}</td>
                     <td className="px-4 py-3 font-medium text-gray-800">{b.customerName || b.userName || b.name || "—"}</td>
                     <td className="px-4 py-3 text-gray-600">{b.carID || b.carId || b.car || "—"}</td>
@@ -451,6 +551,14 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
+        {!loading && (metrics?.recentBookings?.length ?? 0) > 0 && (
+          <div className="flex justify-center py-4 border-t border-gray-100">
+            <button onClick={() => navigate("/bookings")}
+              className="px-5 py-2 rounded-xl text-sm font-medium border text-teal-700 border-teal-200 bg-teal-50 hover:bg-teal-100 transition-colors">
+              See More
+            </button>
+          </div>
+        )}
       </div>
 
     </div>

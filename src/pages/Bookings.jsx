@@ -5,12 +5,6 @@ import { useAuth } from "../context/AuthContext";
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
-const IconBell = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 const IconTrash = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <polyline points="3 6 5 6 21 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
@@ -106,6 +100,61 @@ const fmtDate = (val) => {
 
 const canEdit  = (status) => ["upcoming", "ongoing"].includes(status?.toLowerCase());
 const isLocked = (status) => ["completed", "cancelled", "stolen"].includes(status?.toLowerCase());
+
+const PAGE_SIZE = 10;
+
+// ─── PAGINATION ───────────────────────────────────────────────────────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  // Clamp if the list shrinks (filter/search/refresh) and we were on a now-empty page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+
+  const rangeEnd = Math.min(start + pageSize, count);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
 
 
 // ─── DELETE CONFIRM MODAL ─────────────────────────────────────────────────────
@@ -381,6 +430,17 @@ export default function Bookings() {
 
   useEffect(() => { fetchBookings(); }, [fetchBookings]);
 
+  // Opens a specific status tab when linked in via ?tab=<Upcoming|Ongoing|...>
+  // (used by Dashboard's stat cards). Runs once, on mount — doesn't need to
+  // wait on bookings to load like ?open= below does.
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (!tabParam) return;
+    const match = STATUS_TABS.find((t) => t.toLowerCase() === tabParam.toLowerCase());
+    if (match) setActiveTab(match);
+    setSearchParams((prev) => { prev.delete("tab"); return prev; }, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   // Opens the exact booking a notification click pointed to (?open=<refID>,
   // set by Header.jsx). Runs once bookings are loaded so the record is
   // actually there to find; strips the param afterward so refreshing/
@@ -433,6 +493,10 @@ export default function Bookings() {
       (b.phone || "").toLowerCase().includes(q)
     );
   });
+
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(filtered);
+  // Jump back to page 1 whenever the visible set changes shape (new search/filter/tab).
+  useEffect(() => { setPage(1); }, [search, activeTab, allBookings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmtDuration = (days) => { if (days == null) return "—"; return days <= 1 ? `${days} day` : `${days} days`; };
 
@@ -524,13 +588,12 @@ export default function Bookings() {
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={9} className="text-center text-gray-400 py-12">No bookings found</td></tr>
               ) : (
-                filtered.map((b) => {
+                pageItems.map((b) => {
                   const needsAction = b.status?.toLowerCase() === "cancellation_request";
                   return (
                     <tr key={b.id} className={`border-t hover:bg-gray-50 transition-colors ${needsAction ? "bg-orange-50 border-l-4 border-l-orange-500" : ""}`}>
                       <td className="px-4 py-3 text-gray-700 text-xs">
                         {b.bookingID || b.id}
-                        {isNew && <span className="ml-2 text-[10px] font-bold bg-teal-500 text-white px-1.5 py-0.5 rounded-full">NEW</span>}
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-gray-800">{b.customerName}</div>
@@ -569,6 +632,7 @@ export default function Bookings() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
       {viewBooking   && <ViewModal booking={viewBooking} onClose={() => setViewBooking(null)} />}

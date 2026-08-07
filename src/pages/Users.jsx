@@ -194,8 +194,21 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
 
 function fmtDate(val) {
   if (!val) return "—";
-  const d = val?.toDate ? val.toDate() : new Date(val);
-  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+  try {
+    let d;
+    // Live Firestore Timestamp (has .toDate())
+    if (typeof val?.toDate === "function") d = val.toDate();
+    // Timestamp that went through JSON over the API — becomes a plain
+    // {_seconds, _nanoseconds} object and loses .toDate(), which is what
+    // was hitting the `new Date(val)` fallback below and producing
+    // "Invalid Date" for things like a user's "Joined" date.
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else d = new Date(val);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+  } catch {
+    return "—";
+  }
 }
 
 function getDocImages(docu) {
@@ -230,10 +243,17 @@ export default function Users() {
   const [users, setUsers]     = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Only Admin accounts get 200s from DELETE /api/users/:uid today (see
-  // user.routes.js). Hiding the action for everyone else avoids a button
-  // that always ends in a 403 — this is a UI guard only, not the real gate.
-  const canDelete = viewerRole === ROLES.ADMIN;
+  // Lifted up (rather than local to DirectoryTab) so the stat cards above
+  // can double as quick filters — clicking one needs to reach into the
+  // same state DirectoryTab's search bar / status pills already use.
+  const [directoryFilter, setDirectoryFilter] = useState("All");
+  useEffect(() => { setDirectoryFilter("All"); }, [roleTab]);
+
+  // Only Admin and Owner accounts get 200s from DELETE /api/users/:uid
+  // today (see user.routes.js). Hiding the action for everyone else avoids
+  // a button that always ends in a 403 — this is a UI guard only, not the
+  // real gate.
+  const canDelete = viewerRole === ROLES.ADMIN || viewerRole === ROLES.OWNER;
 
   const fetchUsers = useCallback(async () => {
     if (!activeRole?.apiRole) { setUsers([]); setLoading(false); return; }
@@ -341,13 +361,18 @@ export default function Users() {
         })}
       </div>
 
-      {/* STAT CARDS */}
+      {/* STAT CARDS — also act as quick filters for the List tab below */}
       <div className={`grid gap-4 ${showVerification ? "grid-cols-5" : "grid-cols-3"}`}>
-        <StatCard title="Total"    value={users.length} Icon={Icons.Users}       color="teal" />
-        <StatCard title="Active"   value={users.filter(u => u.status?.toLowerCase() === "active").length}   Icon={Icons.CheckCircle} color="green" />
-        <StatCard title="Inactive" value={users.filter(u => u.status?.toLowerCase() === "inactive").length} Icon={Icons.Moon}        color="gray" />
-        {showVerification && <StatCard title="ID Verified" value={verifiedCount} Icon={Icons.IdCard} color="blue" />}
-        {showVerification && <StatCard title="Flagged"     value={flaggedCount}  Icon={Icons.Flag}   color="red" />}
+        <StatCard title="Total"    value={users.length} Icon={Icons.Users}       color="teal"
+          selected={directoryFilter === "All"}      onClick={() => { setDirectoryFilter("All");      setSubTab("directory"); }} />
+        <StatCard title="Active"   value={users.filter(u => u.status?.toLowerCase() === "active").length}   Icon={Icons.CheckCircle} color="green"
+          selected={directoryFilter === "active"}   onClick={() => { setDirectoryFilter("active");   setSubTab("directory"); }} />
+        <StatCard title="Inactive" value={users.filter(u => u.status?.toLowerCase() === "inactive").length} Icon={Icons.Moon}        color="gray"
+          selected={directoryFilter === "inactive"} onClick={() => { setDirectoryFilter("inactive"); setSubTab("directory"); }} />
+        {showVerification && <StatCard title="ID Verified" value={verifiedCount} Icon={Icons.IdCard} color="blue"
+          selected={directoryFilter === "verified"} onClick={() => { setDirectoryFilter("verified"); setSubTab("directory"); }} />}
+        {showVerification && <StatCard title="Flagged"     value={flaggedCount}  Icon={Icons.Flag}   color="red"
+          selected={directoryFilter === "flagged"}  onClick={() => { setDirectoryFilter("flagged");  setSubTab("directory"); }} />}
       </div>
 
       {/* SUB-TABS + REFRESH */}
@@ -384,7 +409,8 @@ export default function Users() {
           {[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}
         </div>
       ) : subTab === "directory" ? (
-        <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showBookings={activeRole.key === "customer"} />
+        <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showBookings={activeRole.key === "customer"}
+          filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole} />
       ) : subTab === "documents" ? (
         <DocumentsTab users={pendingDocs} onRefresh={fetchUsers} roleLabel={activeRole.label} />
       ) : (
@@ -395,9 +421,9 @@ export default function Users() {
 }
 
 // ─── DIRECTORY TAB (used for Customers, Drivers, Supervisors, Admins) ─────────
-function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showBookings }) {
+function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showBookings, filterStatus, setFilterStatus, viewerRole, currentRoleName }) {
   const [search, setSearch]       = useState("");
-  const [filterStatus, setFilter] = useState("All");
+  const setFilter = setFilterStatus;
   const [detailUser, setDetailUser]       = useState(null);
   const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -439,7 +465,11 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
     const q = search.toLowerCase();
     const fullName = `${u.details?.firstName || ""} ${u.details?.lastName || ""}`.toLowerCase();
     const matchSearch = !search || fullName.includes(q) || (u.email || "").toLowerCase().includes(q) || (u.username || "").toLowerCase().includes(q);
-    const matchStatus = filterStatus === "All" || (u.status || "").toLowerCase() === filterStatus || (filterStatus === "flagged" && u.isFlagged);
+    const matchStatus =
+      filterStatus === "All" ||
+      (filterStatus === "flagged"  && u.isFlagged) ||
+      (filterStatus === "verified" && u.isVerified === true) ||
+      (filterStatus !== "flagged" && filterStatus !== "verified" && (u.status || "").toLowerCase() === filterStatus);
     return matchSearch && matchStatus;
   });
 
@@ -559,7 +589,8 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
       </div>
 
       {detailUser    && <ViewDetailsModal user={detailUser} roleLabelSingular={roleLabelSingular} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
-      {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }} />}
+      {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }}
+        viewerRole={viewerRole} currentRoleName={currentRoleName} />}
       {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)} />}
     </>
   );
@@ -912,11 +943,26 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
 }
 
 // ─── EDIT USER MODAL ──────────────────────────────────────────────────────────
-function EditUserModal({ user, roleLabelSingular, onClose, onSaved }) {
+// Role change is a separate, higher-stakes action, so it's kept out of
+// `form` (which maps 1:1 onto a plain updateDoc) and only offered when
+// viewerRole is Admin — both here (hides the field) and on the backend
+// (PATCH /api/users/:uid/role is gated to Admin only, see user.routes.js).
+// Owner is intentionally excluded from the options: promoting someone to
+// Owner isn't something this modal should be able to do.
+const ASSIGNABLE_ROLES = [
+  { value: "Customer",        label: "Customer" },
+  { value: ROLES.DRIVER,      label: "Driver" },
+  { value: ROLES.SUPERVISOR,  label: "Supervisor" },
+  { value: ROLES.ADMIN,       label: "Admin" },
+];
+
+function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, currentRoleName }) {
   const [form, setForm] = useState({
     status:    user.status    || "active",
     isFlagged: user.isFlagged || false,
   });
+  const canEditRole = viewerRole === ROLES.ADMIN;
+  const [role, setRole] = useState(currentRoleName || "");
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
 
@@ -924,6 +970,22 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved }) {
     setSaving(true); setError(null);
     try {
       await updateDoc(doc(db, "user", user.id), { ...form, updatedAt: serverTimestamp() });
+
+      if (canEditRole && role && role !== currentRoleName) {
+        const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/role`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+          body: JSON.stringify({ role }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message || "Role update failed.");
+        }
+      }
+
       onSaved();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
@@ -956,6 +1018,22 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved }) {
               <option value="locked">Locked</option>
             </select>
           </div>
+
+          {/* Role — Admin only */}
+          {canEditRole && (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Role</label>
+              <select value={role} onChange={e => setRole(e.target.value)}
+                className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
+                {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+              {role !== currentRoleName && (
+                <p className="text-xs text-amber-600 mt-1">
+                  This will move {user.details?.firstName || user.username || "this user"} out of the {roleLabelSingular} list into {role}.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Flagged toggle */}
           <div className="flex items-center justify-between p-3 border rounded-xl">
@@ -1014,7 +1092,7 @@ function ConfirmDeleteModal({ name, roleLabelSingular, onConfirm, onCancel }) {
 }
 
 // ─── STAT CARD ────────────────────────────────────────────────────────────────
-function StatCard({ title, value, Icon, color }) {
+function StatCard({ title, value, Icon, color, selected, onClick }) {
   const colors = {
     teal:  "bg-teal-50 text-teal-600",
     green: "bg-green-50 text-green-600",
@@ -1022,8 +1100,17 @@ function StatCard({ title, value, Icon, color }) {
     blue:  "bg-blue-50 text-blue-600",
     red:   "bg-red-50 text-red-500",
   };
+  const clickable = typeof onClick === "function";
   return (
-    <div className="bg-white rounded-2xl shadow-sm border p-4 flex items-center gap-3">
+    <div
+      onClick={onClick}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      className={`bg-white rounded-2xl shadow-sm border p-4 flex items-center gap-3 transition-all ${
+        clickable ? "cursor-pointer hover:shadow-md hover:border-teal-200" : ""
+      } ${selected ? "border-teal-500 ring-2 ring-teal-100" : ""}`}
+    >
       <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${colors[color] || colors.gray}`}>
         <Icon className="w-5 h-5" />
       </div>

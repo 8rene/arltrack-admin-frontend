@@ -94,6 +94,15 @@ const nav = [
           </svg>
         ),
       },
+      {
+        label: "Refund Requests",
+        path: "/refund-requests",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 10a9 9 0 1 1 2.6 6.36M3 4v6h6" />
+          </svg>
+        ),
+      },
     ],
   },
   {
@@ -114,15 +123,6 @@ const nav = [
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-          </svg>
-        ),
-      },
-      {
-        label: "Refund Requests",
-        path: "/refund-requests",
-        icon: (
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 10a9 9 0 1 1 2.6 6.36M3 4v6h6" />
           </svg>
         ),
       },
