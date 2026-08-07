@@ -68,6 +68,17 @@ const nav = [
         ),
       },
       {
+        label: "Driver Dispatch",
+        path: "/driver-dispatch",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <circle cx="12" cy="12" r="9" />
+            <circle cx="12" cy="12" r="2.5" />
+            <path strokeLinecap="round" d="M12 3v6.5M12 14.5V21M4.2 7.5l5.6 3.2M14.2 13.3l5.6 3.2M19.8 7.5l-5.6 3.2M9.8 13.3l-5.6 3.2" />
+          </svg>
+        ),
+      },
+      {
         label: "Maintenance",
         path: "/maintenance",
         icon: (

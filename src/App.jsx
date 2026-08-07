@@ -11,6 +11,7 @@ import Fleet from "./pages/Fleet";
 import Users from "./pages/Users";
 import CarTracking from "./pages/CarTracking/CarTracking";
 import DeviceTrack from "./pages/DeviceTrack";
+import DriverDispatch from "./pages/DriverDispatch";
 import Maintenance from "./pages/Maintenance";
 import Inventory from "./pages/Inventory";
 import Analytics from "./pages/Analytics";
@@ -122,6 +123,11 @@ function AppRoutes() {
             <Route path="/gps-setup" element={
                 <ProtectedRoute>
                     <DashboardLayout><DeviceTrack /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/driver-dispatch" element={
+                <ProtectedRoute>
+                    <DashboardLayout><DriverDispatch /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/maintenance" element={

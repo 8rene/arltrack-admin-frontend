@@ -94,6 +94,20 @@ const Icons = {
       <line x1="4" y1="22" x2="4" y2="15" />
     </svg>
   ),
+  SteeringWheel: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="2.3" />
+      <path d="M12 3v6.7M12 14.3V21M4.2 7.5l5.6 3.2M14.2 13.3l5.6 3.2M19.8 7.5l-5.6 3.2M9.8 13.3l-5.6 3.2" />
+    </svg>
+  ),
+  UserCheck: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 20c1-3.3 3.6-5.2 5.5-5.2s4.5 1.9 5.5 5.2" />
+      <polyline points="16 10 18 12 22 7" />
+    </svg>
+  ),
   Siren: (props) => (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 2a7 7 0 00-7 7v6h14V9a7 7 0 00-7-7z" />
@@ -1148,31 +1162,97 @@ export default function CarTracking() {
                 <p className="text-xs text-gray-400 italic">No upcoming bookings for this car.</p>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {(showAllUpcoming ? upcoming : upcoming.slice(0, 2)).map((b, i) => (
-                    <div key={b.id} className="flex items-center justify-between gap-2 bg-blue-50 border border-blue-100 rounded-xl p-3">
+                  {(showAllUpcoming ? upcoming : upcoming.slice(0, 2)).map((b, i) => {
+                    const isChauffeur = b.modeOfDriving === "With Chauffeur";
+                    const hasDriver   = !!b.driverID;
+                    return (
+                    <div
+                      key={b.id}
+                      className={`flex items-center justify-between gap-2 rounded-xl p-3 border ${
+                        isChauffeur ? "bg-indigo-50 border-indigo-100" : "bg-blue-50 border-blue-100"
+                      }`}
+                    >
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-blue-800 truncate">{b.customerName || "—"}</p>
-                        <p className="text-xs text-blue-600 mt-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className={`text-xs font-semibold truncate ${isChauffeur ? "text-indigo-800" : "text-blue-800"}`}>
+                            {b.customerName || "—"}
+                          </p>
+                          {isChauffeur && (
+                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-600 text-white">
+                              <Icons.SteeringWheel className="w-2.5 h-2.5" /> Chauffeur
+                            </span>
+                          )}
+                        </div>
+                        <p className={`text-xs mt-0.5 ${isChauffeur ? "text-indigo-600" : "text-blue-600"}`}>
                           {fmtDateTime(b.startDateTime)} → {fmtDateTime(b.endDateTime)}
                         </p>
                       </div>
+
                       {i === 0 ? (
-                        <button
-                          onClick={() => handlePickup(b)}
-                          disabled={actionBusyId === b.id}
-                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50"
-                        >
-                          <Icons.Play className="w-3 h-3" />
-                          {actionBusyId === b.id ? "…" : "Pickup"}
-                        </button>
+                        isChauffeur && !hasDriver ? (
+                          // Chauffeur trip with nobody assigned yet — pickup is blocked
+                          // until dispatch happens, so this sends staff there instead
+                          // of letting them start a trip with no driver.
+                          <button
+                            onClick={() => navigate("/driver-dispatch")}
+                            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold hover:bg-amber-600 active:scale-95 transition-all"
+                          >
+                            <Icons.SteeringWheel className="w-3 h-3" />
+                            Assign Driver First
+                          </button>
+                        ) : (
+                          <div className="shrink-0 flex items-center gap-1.5">
+                            {isChauffeur && hasDriver && (
+                              <button
+                                onClick={() => navigate(`/driver-dispatch?driver=${b.driverID}`)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg text-xs font-semibold hover:bg-indigo-100 active:scale-95 transition-all"
+                              >
+                                <Icons.UserCheck className="w-3 h-3" />
+                                View Driver
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handlePickup(b)}
+                              disabled={actionBusyId === b.id}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 text-white rounded-lg text-xs font-semibold active:scale-95 transition-all disabled:opacity-50 ${
+                                isChauffeur ? "bg-indigo-600 hover:bg-indigo-700" : "bg-blue-600 hover:bg-blue-700"
+                              }`}
+                            >
+                              <Icons.Play className="w-3 h-3" />
+                              {actionBusyId === b.id ? "…" : "Pickup"}
+                            </button>
+                          </div>
+                        )
                       ) : (
-                        // Only the nearest upcoming booking can be picked up — a
-                        // later one shows as informational only, so staff can't
-                        // start a future trip while skipping the immediate one.
-                        <span className="shrink-0 text-[11px] text-blue-300 italic px-1">Upcoming</span>
+                        // Only the nearest upcoming booking can be picked up — that
+                        // restriction stays. But dispatch isn't tied to pickup order:
+                        // a chauffeur trip further down the queue can still be
+                        // assigned (or its assigned driver reviewed) ahead of time.
+                        <div className="shrink-0 flex items-center gap-2">
+                          {isChauffeur && !hasDriver && (
+                            <button
+                              onClick={() => navigate("/driver-dispatch")}
+                              className="flex items-center gap-1 px-2 py-1 border border-amber-300 text-amber-700 rounded-lg text-[11px] font-semibold hover:bg-amber-50 active:scale-95 transition-all"
+                            >
+                              <Icons.SteeringWheel className="w-3 h-3" />
+                              Assign Driver
+                            </button>
+                          )}
+                          {isChauffeur && hasDriver && (
+                            <button
+                              onClick={() => navigate(`/driver-dispatch?driver=${b.driverID}`)}
+                              className="flex items-center gap-1 px-2 py-1 border border-indigo-200 text-indigo-600 rounded-lg text-[11px] font-semibold hover:bg-indigo-50 active:scale-95 transition-all"
+                            >
+                              <Icons.UserCheck className="w-3 h-3" />
+                              View Driver
+                            </button>
+                          )}
+                          <span className={`text-[11px] italic px-1 ${isChauffeur ? "text-indigo-300" : "text-blue-300"}`}>Upcoming</span>
+                        </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
 
                   {upcoming.length > 2 && (
                     <button

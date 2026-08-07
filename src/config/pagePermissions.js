@@ -34,6 +34,7 @@ export const PAGE_ACCESS = {
   "/users": [OWNER, ADMIN, SUPERVISOR],
   "/car-tracking": [OWNER, ADMIN, SUPERVISOR],
   "/gps-setup": [OWNER, ADMIN, SUPERVISOR],
+  "/driver-dispatch": [OWNER, ADMIN, SUPERVISOR],
   "/maintenance": [OWNER, ADMIN, SUPERVISOR],
   "/inventory": [OWNER, ADMIN, SUPERVISOR],
   "/vehicle-documentation": [OWNER, ADMIN, SUPERVISOR],
