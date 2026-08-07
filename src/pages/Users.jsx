@@ -944,11 +944,14 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
 
 // ─── EDIT USER MODAL ──────────────────────────────────────────────────────────
 // Role change is a separate, higher-stakes action, so it's kept out of
-// `form` (which maps 1:1 onto a plain updateDoc) and only offered when
-// viewerRole is Admin — both here (hides the field) and on the backend
-// (PATCH /api/users/:uid/role is gated to Admin only, see user.routes.js).
+// `form` (which maps 1:1 onto a plain updateDoc) and only offered to Owner
+// and Admin — both here (hides the field otherwise) and on the backend
+// (PATCH /api/users/:uid/role is gated to Owner+Admin, see user.routes.js).
 // Owner is intentionally excluded from the options: promoting someone to
-// Owner isn't something this modal should be able to do.
+// Owner isn't something this modal should be able to do, and — separately
+// — an Owner account can never be the *target* of this modal in the first
+// place, since it has no tab in ROLE_TABS/ROLE_LIST_VIEWABLE_BY. The
+// backend also enforces that on the target side (see updateUserRole).
 const ASSIGNABLE_ROLES = [
   { value: "Customer",        label: "Customer" },
   { value: ROLES.DRIVER,      label: "Driver" },
@@ -961,8 +964,13 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
     status:    user.status    || "active",
     isFlagged: user.isFlagged || false,
   });
-  const canEditRole = viewerRole === ROLES.ADMIN;
-  const [role, setRole] = useState(currentRoleName || "");
+  const canEditRole = viewerRole === ROLES.OWNER || viewerRole === ROLES.ADMIN;
+  // Starts empty (not currentRoleName) — the dropdown shows a disabled
+  // "Currently: X" placeholder plus only the OTHER roles as real choices,
+  // so re-picking the role someone is already in isn't an option at all,
+  // rather than being an option that happens to be a no-op on save.
+  const [role, setRole] = useState("");
+  const assignableRoleOptions = ASSIGNABLE_ROLES.filter(r => r.value !== currentRoleName);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
 
@@ -971,7 +979,10 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
     try {
       await updateDoc(doc(db, "user", user.id), { ...form, updatedAt: serverTimestamp() });
 
-      if (canEditRole && role && role !== currentRoleName) {
+      // role can only ever be "" (placeholder, untouched) or one of the
+      // OTHER roles now — currentRoleName was filtered out of the options
+      // entirely, so there's no "picked the same role" case to guard against.
+      if (canEditRole && role) {
         const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/role`, {
           method: "PATCH",
           headers: {
@@ -1019,15 +1030,16 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
             </select>
           </div>
 
-          {/* Role — Admin only */}
+          {/* Role — Owner and Admin only */}
           {canEditRole && (
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Role</label>
               <select value={role} onChange={e => setRole(e.target.value)}
                 className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
-                {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                <option value="" disabled>Currently: {roleLabelSingular}</option>
+                {assignableRoleOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
-              {role !== currentRoleName && (
+              {role && (
                 <p className="text-xs text-amber-600 mt-1">
                   This will move {user.details?.firstName || user.username || "this user"} out of the {roleLabelSingular} list into {role}.
                 </p>
