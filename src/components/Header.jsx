@@ -128,13 +128,11 @@ function NotificationDropdown({ notifications, onOpen, onDelete }) {
 /* ── Main Header ── */
 export default function Header({ title = "Dashboard" }) {
   const navigate = useNavigate();
-  const [profileOpen, setProfileOpen]     = useState(false);
   const [notifOpen, setNotifOpen]         = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [user, setUser]                   = useState(null);
 
-  const dropdownRef = useRef(null);
-  const notifRef    = useRef(null);
+  const notifRef = useRef(null);
 
   useEffect(() => {
     const storedUser = localStorage.getItem("user");
@@ -162,8 +160,7 @@ export default function Header({ title = "Dashboard" }) {
   // Close dropdowns on outside click
   useEffect(() => {
     const handleClick = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setProfileOpen(false);
-      if (notifRef.current    && !notifRef.current.contains(e.target))    setNotifOpen(false);
+      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -183,7 +180,6 @@ export default function Header({ title = "Dashboard" }) {
   const handleBellClick = () => {
     const opening = !notifOpen;
     setNotifOpen(opening);
-    setProfileOpen(false);
     if (opening) {
       // Mark all currently loaded notifications as read IN FIRESTORE, not
       // localStorage — so the badge state is the same on every device/
@@ -264,49 +260,18 @@ export default function Header({ title = "Dashboard" }) {
           <div className="w-px h-6 bg-gray-200" />
 
           {/* PROFILE */}
-          <div className="relative" ref={dropdownRef}>
-            <button
-              onClick={() => { setProfileOpen(!profileOpen); setNotifOpen(false); }}
-              className="flex items-center gap-2 px-3 py-1 rounded-full border"
-            >
-              <div className="w-8 h-8 rounded-full bg-arl-primary flex items-center justify-center text-white text-xs font-bold">
-                {initials}
-              </div>
-              <div className="flex flex-col items-start">
-                <span className="text-xs font-semibold text-arl-dark">{user.username || "User"}</span>
-                <span className="text-xs text-gray-400">{user.role}</span>
-              </div>
-            </button>
-
-            {profileOpen && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-card border">
-                <div className="bg-arl-primary px-5 py-4">
-                  <p className="text-white font-semibold">{user.username}</p>
-                  <p className="text-white/70 text-xs">{user.email}</p>
-                  <span className="text-xs text-white/80">{user.role}</span>
-                </div>
-                <div className="px-5 py-4">
-                  <div className="text-sm">
-                    <p>Email: {user.email}</p>
-                    <p>Role: {user.role}</p>
-                  </div>
-                  <p className="text-xs text-gray-300 mt-2">Connected to Firebase Auth + JWT</p>
-                </div>
-                <div className="px-5 py-3 bg-gray-50 border-t">
-                  <button
-                    onClick={() => {
-                      localStorage.removeItem("user");
-                      localStorage.removeItem("token");
-                      window.location.href = "/";
-                    }}
-                    className="text-red-500 text-xs font-semibold"
-                  >
-                    Sign Out
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          <button
+            onClick={() => navigate("/profile")}
+            className="flex items-center gap-2 px-3 py-1 rounded-full border hover:bg-teal-50 transition-colors"
+          >
+            <div className="w-8 h-8 rounded-full bg-arl-primary flex items-center justify-center text-white text-xs font-bold">
+              {initials}
+            </div>
+            <div className="flex flex-col items-start">
+              <span className="text-xs font-semibold text-arl-dark">{user.username || "User"}</span>
+              <span className="text-xs text-gray-400">{user.role}</span>
+            </div>
+          </button>
 
         </div>
       </div>

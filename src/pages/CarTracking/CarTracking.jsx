@@ -775,8 +775,40 @@ export default function CarTracking() {
     }
   };
 
-  const handlePickup  = (b) => runBookingAction(b.id, "ongoing",   "Car marked picked up — GPS tracking is now active.");
+  // Pickup no longer marks the booking "ongoing" directly — it routes to
+  // Vehicle Documentation first. The before-trip photos (front/side/back)
+  // are required there, and that page is what actually calls the PATCH to
+  // "ongoing" once they're saved. booking.service.js enforces this
+  // server-side too, so this redirect is about the right flow, not the
+  // only thing stopping a bypass.
+  const handlePickup  = (b) => navigate(`/vehicle-documentation?carID=${b.carID}&action=pickup`);
   const handleReturn  = (b) => runBookingAction(b.id, "completed", "Car marked returned — trip history saved.");
+
+  // Chauffeur-only, separate from Return/runBookingAction above — this
+  // hits its own endpoint (PATCH /:id/dropoff) since it doesn't change
+  // booking.status at all, just stamps a timestamp on the session.
+  const handleDropoff = async (b) => {
+    setActionBusyId(b.id);
+    setNotice(null);
+    try {
+      const res  = await fetch(`${API}/api/bookings/${b.id}/dropoff`, {
+        method:  "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (json.success) {
+        setNotice({ type: "ok", msg: "Marked dropped off." });
+        await fetchBookings();
+      } else {
+        setNotice({ type: "error", msg: json.message || "Action failed." });
+      }
+    } catch (e) {
+      setNotice({ type: "error", msg: "Action failed — check your connection." });
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
   const handleStolen  = (b) => {
     if (!window.confirm("Flag this car as stolen? This is logged permanently and the booking will be locked.")) return;
     runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
@@ -1139,6 +1171,29 @@ export default function CarTracking() {
                       <PlaceLabel lat={locationForCar(selected).lat} lng={locationForCar(selected).lng} />
                     </p>
                   )}
+
+                  {/* Chauffeur-only: drop-off is tracked separately from Return —
+                      the driver may still be en route home with the car. */}
+                  {ongoing.modeOfDriving === "With Chauffeur" && (
+                    <div className="mt-2 flex items-center justify-between gap-2 bg-white/60 border border-indigo-100 rounded-lg px-2.5 py-1.5">
+                      <span className="text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
+                        <Icons.MapPin className="w-3 h-3" />
+                        {ongoing.customerDroppedOffAt
+                          ? `Dropped off ${fmtDateTime(ongoing.customerDroppedOffAt)}`
+                          : "Not dropped off yet"}
+                      </span>
+                      {!ongoing.customerDroppedOffAt && (
+                        <button
+                          onClick={() => handleDropoff(ongoing)}
+                          disabled={actionBusyId === ongoing.id}
+                          className="shrink-0 px-2 py-1 border border-indigo-300 text-indigo-700 rounded-lg text-[11px] font-semibold hover:bg-indigo-50 active:scale-95 transition-all disabled:opacity-50"
+                        >
+                          {actionBusyId === ongoing.id ? "…" : "Mark Dropped Off"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2 mt-3">
                     <button
                       onClick={() => handleReturn(ongoing)}

@@ -21,7 +21,7 @@ const { OWNER, ADMIN, SUPERVISOR, DRIVER } = ROLES;
 
 // path -> roles allowed to access that page.
 export const PAGE_ACCESS = {
-  "/dashboard": [OWNER, ADMIN, SUPERVISOR],
+  "/dashboard": [OWNER, ADMIN, SUPERVISOR, DRIVER],
   "/bookings": [OWNER, ADMIN, SUPERVISOR],
   "/fleet": [ADMIN, SUPERVISOR],
 
@@ -29,7 +29,7 @@ export const PAGE_ACCESS = {
   // Admins under one page with per-role sub-tabs. This entry must stay the
   // UNION of every tab's visibleTo in pages/Users.jsx's buildRoleTabs() —
   // ProtectedRoute only gates by pathname, it can't see individual tabs.
-  // Currently: Customer tab=[Admin], Driver tab=[Owner,Admin,Supervisor],
+  // Currently: Customer tab=[Owner,Admin,Supervisor], Driver tab=[Owner,Admin,Supervisor],
   // Supervisor tab=[Owner,Admin], Admin tab=[Owner].
   "/users": [OWNER, ADMIN, SUPERVISOR],
   "/car-tracking": [OWNER, ADMIN, SUPERVISOR],
@@ -37,14 +37,14 @@ export const PAGE_ACCESS = {
   "/driver-dispatch": [OWNER, ADMIN, SUPERVISOR],
   "/maintenance": [OWNER, ADMIN, SUPERVISOR],
   "/inventory": [OWNER, ADMIN, SUPERVISOR],
-  "/vehicle-documentation": [OWNER, ADMIN, SUPERVISOR],
+  "/vehicle-documentation": [OWNER, ADMIN, SUPERVISOR, DRIVER],
   "/analytics": [OWNER, ADMIN, SUPERVISOR],
   "/payments": [OWNER, ADMIN, SUPERVISOR],
   "/refund-requests": [OWNER, ADMIN, SUPERVISOR],
   "/reports": [OWNER, ADMIN, SUPERVISOR],
-  "/audit-log": [ADMIN, SUPERVISOR],
-  "/user-logs": [ADMIN, SUPERVISOR],
-  "/transaction-logs": [ADMIN, SUPERVISOR],
+  "/audit-log": [ADMIN],
+  "/user-logs": [ADMIN],
+  "/transaction-logs": [ADMIN],
   "/settings": [ADMIN],
 
   // Archives — Owner keeps access, Admin added per this round's decision.
@@ -55,10 +55,10 @@ export const PAGE_ACCESS = {
   "/archives/audit-log": [OWNER, ADMIN],
   "/archives/reviews": [OWNER, ADMIN],
 
-  // Driver-only pages. Blank/placeholder content for now — wired up just
-  // far enough to test role-switching and page access.
+  // Driver-only page. Trips + History are tabs on this one page now
+  // (pages/MyTrips.jsx) — /my-trips/history is a redirect, not a
+  // separately-gated route, see App.jsx.
   "/my-trips": [DRIVER],
-  "/my-trips/history": [DRIVER],
 
   // Shared by every role.
   "/profile": [OWNER, ADMIN, SUPERVISOR, DRIVER],
@@ -72,7 +72,7 @@ export const HOME_PATH = {
   [OWNER]: "/dashboard",
   [ADMIN]: "/dashboard",
   [SUPERVISOR]: "/dashboard",
-  [DRIVER]: "/my-trips",
+  [DRIVER]: "/dashboard",
 };
 
 export function canAccess(role, path) {

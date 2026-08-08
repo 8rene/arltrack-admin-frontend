@@ -6,6 +6,7 @@ import AuthPage from "./pages/AuthPage";
 import Sidebar, { NAV_SECTIONS } from "./components/Sidebar";
 import Header from "./components/Header";
 import Dashboard from "./pages/Dashboard";
+import DriverDashboard from "./pages/DriverDashboard";
 import Bookings from "./pages/Bookings";
 import Fleet from "./pages/Fleet";
 import Users from "./pages/Users";
@@ -30,7 +31,6 @@ import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
 import ReviewsArchivePage from "./pages/ReviewsArchivePage";
 import MyTrips from "./pages/MyTrips";
-import TripHistory from "./pages/TripHistory";
 import Profile from "./pages/Profile";
 import { canAccess, homePathFor } from "./config/pagePermissions";
 
@@ -97,7 +97,9 @@ function AppRoutes() {
 
             <Route path="/dashboard" element={
                 <ProtectedRoute>
-                    <DashboardLayout><Dashboard /></DashboardLayout>
+                    <DashboardLayout>
+                        {user?.role === "Driver" ? <DriverDashboard /> : <Dashboard />}
+                    </DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/bookings" element={
@@ -224,11 +226,9 @@ function AppRoutes() {
                     <DashboardLayout><MyTrips /></DashboardLayout>
                 </ProtectedRoute>
             } />
-            <Route path="/my-trips/history" element={
-                <ProtectedRoute>
-                    <DashboardLayout><TripHistory /></DashboardLayout>
-                </ProtectedRoute>
-            } />
+            {/* History is now a tab on /my-trips (?tab=history) — this just
+                catches old bookmarks/links to the page that used to live here. */}
+            <Route path="/my-trips/history" element={<Navigate to="/my-trips?tab=history" replace />} />
 
             {/* Shared by every role */}
             <Route path="/profile" element={

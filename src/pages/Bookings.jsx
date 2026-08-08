@@ -98,6 +98,59 @@ const fmtDate = (val) => {
   } catch { return "—"; }
 };
 
+// Same Firestore-Timestamp-or-string-or-seconds handling as fmtDate above,
+// but returns a raw millisecond number (or -Infinity for unparsable/empty
+// values) so sort() has something numeric to compare rather than strings.
+const toMillis = (val) => {
+  if (!val) return -Infinity;
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else d = new Date(val);
+    const ms = d.getTime();
+    return isNaN(ms) ? -Infinity : ms;
+  } catch { return -Infinity; }
+};
+
+// ─── SORT HEADER ────────────────────────────────────────────────────────────
+// Clickable <th> that toggles asc/desc on the given sortKey. Shows a neutral
+// up/down chevrons icon when the column isn't the active sort (so it reads
+// as "sortable" even before you've clicked it), and a bold single arrow in
+// the active color once it is. Keeps Bookings/Users sort UI visually and
+// behaviorally identical.
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg
+    className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`}
+    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-4 py-3 text-left select-none ${className}`}>
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
 const canEdit  = (status) => ["upcoming", "ongoing"].includes(status?.toLowerCase());
 const isLocked = (status) => ["completed", "cancelled", "stolen"].includes(status?.toLowerCase());
 
@@ -411,6 +464,17 @@ export default function Bookings() {
   const [deleting, setDeleting]             = useState(false);
   const [deleteToast, setDeleteToast]       = useState(null);
   const [searchParams, setSearchParams]     = useSearchParams();
+  const [sortKey, setSortKey]               = useState(null);  // null = default/unsorted (API order)
+  const [sortDir, setSortDir]               = useState("asc");
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
 
   const showToast = (msg, type = "success") => {
     setDeleteToast({ msg, type });
@@ -494,7 +558,19 @@ export default function Bookings() {
     );
   });
 
-  const { page, setPage, totalPages, pageItems, start, count } = usePagination(filtered);
+  // Sort (dates/fee only — everything else stays in API/insertion order).
+  // Applied after search+tab filtering, before pagination, so page counts
+  // reflect the sorted set and Page 1 always shows the "top" of the sort.
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sortKey) return 0;
+    let av, bv;
+    if (sortKey === "dates") { av = toMillis(a.startDateTime); bv = toMillis(b.startDateTime); }
+    else if (sortKey === "fee") { av = a.totalFee ?? -Infinity; bv = b.totalFee ?? -Infinity; }
+    else return 0;
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   // Jump back to page 1 whenever the visible set changes shape (new search/filter/tab).
   useEffect(() => { setPage(1); }, [search, activeTab, allBookings]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -568,9 +644,9 @@ export default function Bookings() {
                 <th className="px-4 py-3 text-left">Booking ID</th>
                 <th className="px-4 py-3 text-left">Customer</th>
                 <th className="px-4 py-3 text-left">Vehicle</th>
-                <th className="px-4 py-3 text-left">Dates</th>
+                <SortableTh label="Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Duration</th>
-                <th className="px-4 py-3 text-left">Total Fee</th>
+                <SortableTh label="Total Fee" sortKey="fee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Payment</th>
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3"></th>

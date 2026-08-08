@@ -20,7 +20,7 @@ import { ROLES } from "../config/pagePermissions";
 // other, place this permission is expressed. The backend enforces it
 // regardless of what this array says; this just controls what's shown.
 const ROLE_TABS = [
-  { key: "customer",   apiRole: "Customer",       label: "Customers",   labelSingular: "Customer",   visibleTo: [ROLES.OWNER, ROLES.ADMIN],                   hasDocsSubTab: true, hasEditRequestSubTab: true },
+  { key: "customer",   apiRole: "Customer",       label: "Customers",   labelSingular: "Customer",   visibleTo: [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR], hasDocsSubTab: true, hasEditRequestSubTab: true },
   { key: "driver",     apiRole: ROLES.DRIVER,     label: "Drivers",     labelSingular: "Driver",     visibleTo: [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR], hasDocsSubTab: true, hasEditRequestSubTab: true },
   { key: "supervisor", apiRole: ROLES.SUPERVISOR, label: "Supervisors", labelSingular: "Supervisor", visibleTo: [ROLES.OWNER, ROLES.ADMIN],                   hasDocsSubTab: true, hasEditRequestSubTab: true },
   { key: "admin",      apiRole: ROLES.ADMIN,      label: "Admins",      labelSingular: "Admin",      visibleTo: [ROLES.OWNER],                                hasDocsSubTab: false, hasEditRequestSubTab: false },
@@ -209,6 +209,64 @@ function fmtDate(val) {
   } catch {
     return "—";
   }
+}
+
+// Same Firestore-Timestamp-or-string-or-seconds handling as fmtDate above,
+// but returns a raw millisecond number (or -Infinity for unparsable/empty
+// values) so sort() has something numeric to compare rather than strings.
+function toMillis(val) {
+  if (!val) return -Infinity;
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else d = new Date(val);
+    const ms = d.getTime();
+    return isNaN(ms) ? -Infinity : ms;
+  } catch {
+    return -Infinity;
+  }
+}
+
+// ─── SORT HEADER ────────────────────────────────────────────────────────────
+// Clickable <th> that toggles asc/desc on the given sortKey. Shows a neutral
+// up/down chevrons icon when the column isn't the active sort (so it reads
+// as "sortable" even before you've clicked it), and a bold single arrow in
+// the active color once it is.
+function IconChevronsUpDown({ className = "w-3.5 h-3.5" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconSortArrow({ dir, className = "w-3.5 h-3.5" }) {
+  return (
+    <svg
+      className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`}
+      viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+    >
+      <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-5 py-3 text-left select-none ${className}`}>
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
 }
 
 function getDocImages(docu) {
@@ -428,6 +486,23 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
   const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [searchParams, setSearchParams]   = useSearchParams();
+  const [sortKey, setSortKey]       = useState(null); // null = default/unsorted (API order)
+  const [sortDir, setSortDir]       = useState("asc");
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const fullNameOf = (u) => {
+    const fn = u.details?.firstName || "";
+    const ln = u.details?.lastName  || "";
+    return `${fn} ${ln}`.trim() || u.username || u.email || "—";
+  };
 
   // Opens the exact user a notification click pointed to (?open=<refID>,
   // set by Header.jsx). Runs once this tab's users are loaded so the
@@ -473,7 +548,28 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
     return matchSearch && matchStatus;
   });
 
-  const { page, setPage, totalPages, pageItems, start, count } = usePagination(filtered);
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sortKey) return 0;
+    if (sortKey === "name") return sortDir === "asc"
+      ? fullNameOf(a).localeCompare(fullNameOf(b))
+      : fullNameOf(b).localeCompare(fullNameOf(a));
+    if (sortKey === "bookings") {
+      const av = a.bookingCount || 0;
+      const bv = b.bookingCount || 0;
+      return sortDir === "asc" ? av - bv : bv - av;
+    }
+    if (sortKey === "account") return sortDir === "asc"
+      ? (a.status || "").localeCompare(b.status || "")
+      : (b.status || "").localeCompare(a.status || "");
+    if (sortKey === "joined") {
+      const av = toMillis(a.createdAt);
+      const bv = toMillis(b.createdAt);
+      return sortDir === "asc" ? av - bv : bv - av;
+    }
+    return 0;
+  });
+
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   // Jump back to page 1 whenever the visible set changes shape (new search/filter/role tab).
   useEffect(() => { setPage(1); }, [search, filterStatus, users]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -502,12 +598,12 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
             <table className="w-full text-sm">
               <thead className="text-gray-400 text-xs uppercase bg-gray-50">
                 <tr>
-                  <th className="px-5 py-3 text-left">{roleLabelSingular}</th>
+                  <SortableTh label={roleLabelSingular} sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">Contact</th>
                   <th className="px-5 py-3 text-left">ID Status</th>
-                  {showBookings && <th className="px-5 py-3 text-left">Bookings</th>}
-                  <th className="px-5 py-3 text-left">Account</th>
-                  <th className="px-5 py-3 text-left">Joined</th>
+                  {showBookings && <SortableTh label="Bookings" sortKey="bookings" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />}
+                  <SortableTh label="Account" sortKey="account" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="Joined" sortKey="joined" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3"></th>
                 </tr>
               </thead>
@@ -730,6 +826,36 @@ function DocImg({ label, url }) {
 function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
   const [detailUser, setDetailUser] = useState(null);
   const [loadingId, setLoadingId]   = useState(null);
+  const [sortKey, setSortKey]       = useState(null); // null = default/unsorted (API order)
+  const [sortDir, setSortDir]       = useState("asc");
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const fullNameOf = (u) => {
+    const fn = u.details?.firstName || "";
+    const ln = u.details?.lastName  || "";
+    return `${fn} ${ln}`.trim() || u.username || u.email || "—";
+  };
+
+  const sorted = [...users].sort((a, b) => {
+    if (!sortKey) return 0;
+    if (sortKey === "name") return sortDir === "asc"
+      ? fullNameOf(a).localeCompare(fullNameOf(b))
+      : fullNameOf(b).localeCompare(fullNameOf(a));
+    if (sortKey === "submitted") {
+      const av = toMillis(a.document?.createdAt);
+      const bv = toMillis(b.document?.createdAt);
+      return sortDir === "asc" ? av - bv : bv - av;
+    }
+    return 0;
+  });
 
   const handleVerify = async (user, approve) => {
     setLoadingId(user.id);
@@ -745,7 +871,7 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
     return Object.values(imgs).some(v => v && v.trim() !== "");
   };
 
-  const { page, setPage, totalPages, pageItems, start, count } = usePagination(users);
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   useEffect(() => { setPage(1); }, [users]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -769,12 +895,12 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
             <table className="w-full text-sm">
               <thead className="text-gray-400 text-xs uppercase bg-gray-50">
                 <tr>
-                  <th className="px-5 py-3 text-left">{roleLabel.replace(/s$/, "")}</th>
+                  <SortableTh label={roleLabel.replace(/s$/, "")} sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">Document Type</th>
                   <th className="px-5 py-3 text-left">Document No.</th>
                   <th className="px-5 py-3 text-left">ID Status</th>
                   <th className="px-5 py-3 text-left">Flagged</th>
-                  <th className="px-5 py-3 text-left">Submitted</th>
+                  <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3"></th>
                 </tr>
               </thead>

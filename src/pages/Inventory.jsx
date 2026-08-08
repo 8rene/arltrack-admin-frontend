@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   collection, getDocs, addDoc, query, where,
-  doc, updateDoc, orderBy, serverTimestamp, getDoc
+  doc, updateDoc, serverTimestamp, getDoc
 } from "firebase/firestore";
 import { db } from "../fireabase";
 
@@ -46,11 +46,12 @@ const PART_STATUS_STYLE = {
 };
 
 const BOOKING_STATUS_STYLE = {
-  approved:             "bg-green-50 border border-green-200",
-  pending:              "bg-yellow-50 border border-yellow-200",
+  upcoming:             "bg-yellow-50 border border-yellow-200",
+  ongoing:              "bg-green-50 border border-green-200",
   completed:            "bg-blue-50 border border-blue-200",
   cancelled:            "bg-red-100 text-red-600",
   cancellation_request: "bg-orange-100 text-orange-700",
+  stolen:               "bg-red-900 text-white",
 };
 
 /* ══════════════════════════════════════════════
@@ -184,14 +185,18 @@ export default function Inventory() {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       const nowSec = Date.now() / 1000;
 
-      // NEAREST BOOKING: approved OR completed bookings where:
+      // NEAREST BOOKING: upcoming/ongoing OR completed bookings where:
       // - startDateTime is today or in the future, OR
       // - endDateTime hasn't passed yet (trip in progress)
       // Sort by startDateTime ascending → nearest first
+      // (Was checking for "approved", a status that no booking has ever
+      // actually had — real statuses are upcoming/ongoing/completed/
+      // cancelled/cancellation_request/stolen, see booking.model.js —
+      // same bug as VehicleDocs.jsx had.)
       const upcoming = all
         .filter(b => {
           const status = b.status?.toLowerCase();
-          if (!["approved", "completed"].includes(status)) return false;
+          if (!["upcoming", "ongoing", "completed"].includes(status)) return false;
           const startSec = toSec(b.startDateTime);
           const endSec   = toSec(b.endDateTime);
           // Include: starts in future, or end is in future (ongoing), or starts today
@@ -239,7 +244,6 @@ export default function Inventory() {
     setSaveSuccess("");
 
     const bookingID  = activeBooking.bookingID || activeBooking.id;
-    const carName    = `${selectedCar.brandName} ${selectedCar.modelName}`;
     const timestamp  = serverTimestamp();
 
     // Build damageParts list from edits
@@ -297,8 +301,6 @@ export default function Inventory() {
     setSaveSuccess("");
 
     const bookingID = activeBooking.bookingID || activeBooking.id;
-    const userID    = activeBooking.userID;
-    const carName   = `${selectedCar.brandName} ${selectedCar.modelName}`;
     const timestamp = serverTimestamp();
 
     // Build damageParts list
@@ -454,7 +456,7 @@ export default function Inventory() {
               <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-8 text-center">
                 <div className="text-3xl mb-2">📋</div>
                 <p className="text-sm font-semibold text-gray-500">No upcoming booking for this vehicle</p>
-                <p className="text-xs text-gray-400 mt-1">Inventory inspection is tied to bookings. Check back when a booking is approved.</p>
+                <p className="text-xs text-gray-400 mt-1">Inventory inspection is tied to bookings. Check back when a booking is upcoming.</p>
               </div>
             ) : (
               <InventoryPanel

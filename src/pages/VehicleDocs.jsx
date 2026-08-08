@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   collection, getDocs, query, where, doc,
   setDoc, addDoc, serverTimestamp, getDoc,
@@ -6,6 +7,8 @@ import {
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { initializeApp, getApps } from "firebase/app";
 import { db } from "../fireabase";
+
+const API_URL = process.env.REACT_APP_API_URL;
 
 /* ── Firebase Storage ── */
 const firebaseConfig = {
@@ -86,17 +89,23 @@ const STATUS_STYLE = {
 };
 
 const BOOKING_STATUS_STYLE = {
-  approved:             "bg-green-50 border border-green-200",
-  pending:              "bg-yellow-50 border border-yellow-200",
+  upcoming:             "bg-yellow-50 border border-yellow-200",
+  ongoing:              "bg-green-50 border border-green-200",
   completed:            "bg-blue-50 border border-blue-200",
   cancelled:            "bg-red-100 text-red-600",
   cancellation_request: "bg-orange-100 text-orange-700",
+  stolen:               "bg-red-900 text-white",
 };
 
 /* ═══════════════════════════════════════════════
    Main Component
 ═══════════════════════════════════════════════ */
 export default function VehicleDocs() {
+  const [searchParams] = useSearchParams();
+  const navigate        = useNavigate();
+  const deepLinkCarID    = searchParams.get("carID");
+  const pickupFlow       = searchParams.get("action") === "pickup";
+
   const [cars, setCars]               = useState([]);
   const [carsLoading, setCarsLoading] = useState(true);
   const [selectedCar, setSelectedCar] = useState(null);
@@ -122,6 +131,7 @@ export default function VehicleDocs() {
   const [uploading, setUploading] = useState({});
   const [saving, setSaving]       = useState(false);
   const [toast, setToast]         = useState(null);
+  const [completingPickup, setCompletingPickup] = useState(false);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -227,7 +237,12 @@ export default function VehicleDocs() {
       const upcoming = all
         .filter(b => {
           const status = b.status?.toLowerCase();
-          if (!["approved", "completed"].includes(status)) return false;
+          // Real booking statuses are upcoming/ongoing/completed/cancelled/
+          // cancellation_request/stolen (see booking.model.js) — this used
+          // to check for "approved", which no booking ever actually has,
+          // so a genuinely upcoming booking never matched and this always
+          // fell through to "No upcoming booking for this vehicle".
+          if (!["upcoming", "ongoing", "completed"].includes(status)) return false;
           const startSec = toSec(b.startDateTime);
           const endSec   = toSec(b.endDateTime);
           // Same as Inventory: trip ongoing OR started within last 24h OR starts in next 7 days
@@ -268,6 +283,16 @@ export default function VehicleDocs() {
       setBookingLoading(false);
     }
   }, [loadPhotoDocs]);
+
+  // ── Deep-link from Car Tracking's Pickup button (?carID=&action=pickup) ──
+  // Auto-select the matching car once the cars list has loaded, so staff
+  // land straight on the right vehicle's before-trip photos instead of
+  // having to find it again in the grid.
+  useEffect(() => {
+    if (!deepLinkCarID || carsLoading || !cars.length || selectedCar) return;
+    const match = cars.find(c => (c.carID || c.id) === deepLinkCarID);
+    if (match) selectCar(match);
+  }, [deepLinkCarID, carsLoading, cars, selectedCar, selectCar]);
 
   /* ── File pick & upload ── */
   const handleFilePick = (fieldKey, file) => {
@@ -356,6 +381,42 @@ export default function VehicleDocs() {
 
   // After Trip locked when booking not completed (same as Inventory)
   const isAfterTripLocked = tripType === "after" && activeBooking?.status?.toLowerCase() !== "completed";
+
+  // ── Pickup completion ──────────────────────────────────────────
+  // The 3 exterior shots are the only ones marked Required in the UI
+  // (part photos are shown but optional) — matches the same rule the
+  // backend enforces in booking.service.js's updateBooking, so a booking
+  // can't reach "ongoing" without this being true either way.
+  const hasRequiredBeforePhotos = !!(beforeDoc?.frontViewUrl && beforeDoc?.sideViewUrl && beforeDoc?.backViewUrl);
+  const hasUnsavedUploads       = Object.keys(uploads).length > 0;
+  const canCompletePickup =
+    activeBooking?.status?.toLowerCase() === "upcoming" &&
+    hasRequiredBeforePhotos &&
+    !hasUnsavedUploads;
+
+  const handleCompletePickup = async () => {
+    if (!activeBooking || !canCompletePickup) return;
+    setCompletingPickup(true);
+    try {
+      const res = await fetch(`${API_URL}/api/bookings/${activeBooking.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ status: "ongoing" }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message || "Pickup failed.");
+      showToast("Pickup complete — GPS tracking is now active.");
+      setActiveBooking({ ...activeBooking, status: "ongoing" });
+      if (pickupFlow) setTimeout(() => navigate("/car-tracking"), 900);
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally {
+      setCompletingPickup(false);
+    }
+  };
 
   return (
     <div className="p-4 bg-gray-50">
@@ -553,6 +614,26 @@ export default function VehicleDocs() {
                       </div>
                     )}
 
+                    {/* Pickup gate — landed here from Car Tracking's Pickup button, or
+                        the booking just hasn't been picked up yet either way */}
+                    {tripType === "before" && activeBooking.status?.toLowerCase() === "upcoming" && (
+                      <div className={`flex items-start gap-2 p-3 rounded-xl text-xs ${
+                        canCompletePickup ? "bg-green-50 border border-green-200 text-green-800" : "bg-blue-50 border border-blue-200 text-blue-800"
+                      }`}>
+                        <span className="shrink-0">{canCompletePickup ? "✅" : "📋"}</span>
+                        <p>
+                          {canCompletePickup ? (
+                            <>Front, side, and back photos are all in — this trip is ready for pickup.</>
+                          ) : (
+                            <>
+                              <span className="font-semibold">Pickup requires vehicle documentation first.</span>{" "}
+                              Fill in the front, side, and back view photos below, then Save, before this car can be marked picked up.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Last saved */}
                     {currentDoc?.updatedAt && (
                       <p className="text-xs text-gray-400">Last saved: {fmtDate(currentDoc.updatedAt)}</p>
@@ -569,6 +650,27 @@ export default function VehicleDocs() {
                               onFilePick={f => handleFilePick(slot.key, f)} onUpload={() => uploadSlot(slot.key)} required />
                           ))}
                         </div>
+
+                        {/* Complete Pickup */}
+                        {tripType === "before" && activeBooking.status?.toLowerCase() === "upcoming" && (
+                          <button
+                            onClick={handleCompletePickup}
+                            disabled={!canCompletePickup || completingPickup}
+                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                              canCompletePickup
+                                ? "bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99]"
+                                : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                            }`}
+                          >
+                            {completingPickup
+                              ? "Marking picked up…"
+                              : canCompletePickup
+                                ? "▶  Complete Pickup"
+                                : hasUnsavedUploads
+                                  ? "Save photos to continue"
+                                  : "Complete required photos to continue"}
+                          </button>
+                        )}
 
                         {/* Parts */}
                         {partsLoading ? (
@@ -701,4 +803,3 @@ function PhotoSlot({ fieldKey, label, sub, icon, image, uploading, isPending, on
     </div>
   );
 }
-

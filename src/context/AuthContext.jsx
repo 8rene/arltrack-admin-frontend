@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
-import { signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { auth } from "../fireabase";
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
+import { doc, onSnapshot } from "firebase/firestore";
+import { auth, db } from "../fireabase";
 
 const AuthContext = createContext(null);
 
@@ -72,6 +73,57 @@ export function AuthProvider({ children }) {
     }
     return () => clearTimeout(logoutTimerRef.current);
   }, [logout, scheduleAutoLogout]);
+
+  // ── Watch this user's own Firestore doc in real time. If an admin locks,
+  //    changes the role of, or deletes this account while they're logged
+  //    in, log them out immediately instead of waiting up to 8h for the
+  //    JWT to expire. Frontend-only — no backend or schema changes needed,
+  //    it just reads the same `status`/`roleID` fields that already exist.
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    let unsubDoc = null;
+
+    // Wait for Firebase Auth to actually confirm the session before
+    // subscribing — on a page refresh there's a brief moment where
+    // auth.currentUser is still null, and reading Firestore too early
+    // would look like a permission-denied (rules check request.auth) and
+    // falsely trigger a logout.
+    const unsubAuth = onAuthStateChanged(auth, (fbUser) => {
+      if (unsubDoc) { unsubDoc(); unsubDoc = null; }
+      if (!fbUser) return;
+
+      unsubDoc = onSnapshot(
+        doc(db, "user", user.uid),
+        (snap) => {
+          if (!snap.exists()) {
+            logout();
+            alert("Your account no longer exists. Please contact your administrator.");
+            return;
+          }
+          const data = snap.data();
+          if (data.status && data.status.toLowerCase() !== "active") {
+            logout();
+            alert("Your account access has been revoked. Please contact your administrator.");
+            return;
+          }
+          if (data.roleID && user.roleID && data.roleID !== user.roleID) {
+            logout();
+            alert("Your role has changed. Please log in again.");
+          }
+        },
+        () => {
+          // Firestore rules denying reads (e.g. locked account) counts as revoked too.
+          logout();
+        }
+      );
+    });
+
+    return () => {
+      unsubAuth();
+      if (unsubDoc) unsubDoc();
+    };
+  }, [user?.uid, user?.roleID, logout]);
 
   // ── Login ────────────────────────────────────────────────────────
   const login = async (email, password) => {

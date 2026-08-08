@@ -1,4 +1,3 @@
-import { useCurrency } from "../context/CurrencyContext";
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -40,27 +39,6 @@ const IconKey = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <circle cx="8" cy="12" r="4" stroke="currentColor" strokeWidth="1.75" />
     <path d="M12 12h8M18 12v3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-  </svg>
-);
-
-const IconMoney = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="2" y="6" width="20" height="13" rx="2" stroke="currentColor" strokeWidth="1.75" />
-    <circle cx="12" cy="12.5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M6 6V5M18 6V5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
-const IconCalendar = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-  </svg>
-);
-
-const IconBarChart = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3 20h18M7 20V10M12 20V4M17 20v-7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
   </svg>
 );
 
@@ -179,7 +157,6 @@ function SkeletonRow() {
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { fmt } = useCurrency();
   const { getToken } = useAuth();
   const navigate = useNavigate();
   const [metrics, setMetrics]                 = useState(null);
@@ -355,16 +332,6 @@ export default function Dashboard() {
           onClick={() => navigate("/bookings?tab=All")} />
         <StatCard title="Vehicles In Use"      value={metrics?.vehiclesInUse ?? "—"}   icon={<IconKey className="w-6 h-6" />}      color="bg-purple-50 text-purple-600" loading={loading}
           onClick={() => navigate("/car-tracking")} />
-      </div>
-
-      {/* REVENUE ROW */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard title="Revenue Today"   value={loading ? "—" : fmt(metrics?.revenueToday)}   icon={<IconMoney className="w-6 h-6" />}    color="bg-teal-50 text-teal-600"    loading={loading}
-          onClick={() => navigate("/payments")} />
-        <StatCard title="Monthly Revenue" value={loading ? "—" : fmt(metrics?.monthlyRevenue)} icon={<IconCalendar className="w-6 h-6" />} color="bg-orange-50 text-orange-600" loading={loading}
-          onClick={() => navigate("/payments")} />
-        <StatCard title="Yearly Revenue"  value={loading ? "—" : fmt(metrics?.yearlyRevenue)}  icon={<IconBarChart className="w-6 h-6" />} color="bg-indigo-50 text-indigo-600" loading={loading}
-          onClick={() => navigate("/payments")} />
       </div>
 
       {/* BOTTOM: ALERTS + WARNING */}

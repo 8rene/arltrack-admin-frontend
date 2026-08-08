@@ -97,15 +97,6 @@ const nav = [
         ),
       },
       {
-        label: "Vehicle Documentation",
-        path: "/vehicle-documentation",
-        icon: (
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z" />
-          </svg>
-        ),
-      },
-      {
         label: "Refund Requests",
         path: "/refund-requests",
         icon: (
@@ -253,7 +244,9 @@ const nav = [
     group: "Driver",
     items: [
       {
-        label: "My Trip",
+        // Trips + History live together as tabs on one page now (see
+        // pages/MyTrips.jsx) — one nav item instead of two.
+        label: "My Trips",
         path: "/my-trips",
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
@@ -262,11 +255,15 @@ const nav = [
         ),
       },
       {
-        label: "History",
-        path: "/my-trips/history",
+        // Moved here from "Operations" — that group is otherwise
+        // Owner/Admin/Supervisor-only, so a Driver used to see a whole
+        // section header for this one item. It belongs with their other
+        // trip actions anyway (this is what "Start Pickup" links to).
+        label: "Vehicle Documentation",
+        path: "/vehicle-documentation",
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z" />
           </svg>
         ),
       },
