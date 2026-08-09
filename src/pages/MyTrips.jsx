@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import TripMapModal from "../components/TripMapModal";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -31,6 +32,13 @@ const IconFlag = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path strokeLinecap="round" strokeLinejoin="round" d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
     <line x1="4" y1="22" x2="4" y2="15" strokeLinecap="round" />
+  </svg>
+);
+
+const IconMap = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 4l-6 2v14l6-2 6 2 6-2V4l-6 2-6-2z" />
+    <path strokeLinecap="round" d="M9 4v14M15 6v14" />
   </svg>
 );
 
@@ -69,6 +77,18 @@ const STATUS_STYLE = {
   stolen:    "bg-red-900 text-white",
 };
 
+// Shared: turn a trip's pickupLocation/dropoffLocation into the `stops`
+// shape TripMapModal expects. Dropoff is only included when it's a
+// genuinely different address — most bookings return to the same spot.
+const tripStops = (trip) => {
+  const stops = [];
+  if (trip.pickupLocation) stops.push({ key: "pickup", type: "pickup", ...trip.pickupLocation });
+  if (trip.dropoffLocation && trip.dropoffLocation.address !== trip.pickupLocation?.address) {
+    stops.push({ key: "dropoff", type: "dropoff", ...trip.dropoffLocation });
+  }
+  return stops;
+};
+
 // ─── ACTIVE TRIPS TAB (upcoming + ongoing, with pickup/dropoff/return actions) ──
 function ActiveTripsTab() {
   const navigate = useNavigate();
@@ -78,6 +98,7 @@ function ActiveTripsTab() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast]     = useState(null);
   const [busyID, setBusyID]   = useState(null);
+  const [mapTrip, setMapTrip] = useState(null);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -116,7 +137,12 @@ function ActiveTripsTab() {
     // not straight to "ongoing". The before-trip photos are required
     // there (server-enforced), and that page is what actually flips the
     // booking to "ongoing" once they're saved.
-    navigate(`/vehicle-documentation?carID=${trip.carID}&action=pickup`);
+    // bookingID is passed explicitly so Vehicle Documentation loads THIS
+    // exact booking rather than guessing "nearest booking for this car" —
+    // that heuristic (built for the Inventory page, which has no specific
+    // booking context) can pick a stale/wrong booking for the same car
+    // and silently block the Complete Pickup button.
+    navigate(`/vehicle-documentation?carID=${trip.carID}&bookingID=${trip.id}&action=pickup`);
   };
 
   const handleDropoff = async (trip) => {
@@ -190,9 +216,17 @@ function ActiveTripsTab() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
                 <span className="flex items-center gap-1"><IconClock /> {fmtDateTime(trip.startDateTime)} → {fmtDateTime(trip.endDateTime)}</span>
                 <span className="flex items-center gap-1"><IconPin /> {trip.location}</span>
+                {tripStops(trip).length > 0 && (
+                  <button
+                    onClick={() => setMapTrip(trip)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 ml-auto"
+                  >
+                    <IconMap /> Show Map
+                  </button>
+                )}
               </div>
 
               {isOngoing && (
@@ -229,6 +263,13 @@ function ActiveTripsTab() {
           );
         })
       )}
+
+      <TripMapModal
+        open={!!mapTrip}
+        onClose={() => setMapTrip(null)}
+        title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
+        stops={mapTrip ? tripStops(mapTrip) : []}
+      />
     </div>
   );
 }
@@ -240,6 +281,7 @@ function HistoryTab() {
   const [trips, setTrips]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
+  const [mapTrip, setMapTrip] = useState(null);
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
@@ -301,9 +343,17 @@ function HistoryTab() {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
               <span className="flex items-center gap-1"><IconClock /> {fmtDateTimeLong(trip.startDateTime)} → {fmtDateTimeLong(trip.endDateTime)}</span>
               <span className="flex items-center gap-1"><IconPin /> {trip.location}</span>
+              {tripStops(trip).length > 0 && (
+                <button
+                  onClick={() => setMapTrip(trip)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 ml-auto"
+                >
+                  <IconMap /> Show Map
+                </button>
+              )}
             </div>
 
             {trip.status === "completed" && (trip.pickupTime || trip.customerDroppedOffAt || trip.returnTime) && (
@@ -318,6 +368,13 @@ function HistoryTab() {
           </div>
         ))
       )}
+
+      <TripMapModal
+        open={!!mapTrip}
+        onClose={() => setMapTrip(null)}
+        title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
+        stops={mapTrip ? tripStops(mapTrip) : []}
+      />
     </div>
   );
 }

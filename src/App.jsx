@@ -31,7 +31,7 @@ import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
 import ReviewsArchivePage from "./pages/ReviewsArchivePage";
 import MyTrips from "./pages/MyTrips";
-import Profile from "./pages/Profile";
+import Account from "./pages/Account";
 import { canAccess, homePathFor } from "./config/pagePermissions";
 
 // Wraps any route — redirects to /login if not authenticated, and to the
@@ -230,10 +230,13 @@ function AppRoutes() {
                 catches old bookmarks/links to the page that used to live here. */}
             <Route path="/my-trips/history" element={<Navigate to="/my-trips?tab=history" replace />} />
 
+            {/* Old bookmarks/links to the page that used to live here — Profile was renamed to Account. */}
+            <Route path="/profile" element={<Navigate to="/account" replace />} />
+
             {/* Shared by every role */}
-            <Route path="/profile" element={
+            <Route path="/account" element={
                 <ProtectedRoute>
-                    <DashboardLayout><Profile /></DashboardLayout>
+                    <DashboardLayout><Account /></DashboardLayout>
                 </ProtectedRoute>
             } />
 

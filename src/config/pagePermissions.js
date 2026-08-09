@@ -45,7 +45,7 @@ export const PAGE_ACCESS = {
   "/audit-log": [ADMIN],
   "/user-logs": [ADMIN],
   "/transaction-logs": [ADMIN],
-  "/settings": [ADMIN],
+  "/settings": [OWNER, ADMIN],
 
   // Archives — Owner keeps access, Admin added per this round's decision.
   "/archives/user-log": [OWNER, ADMIN],
@@ -61,7 +61,7 @@ export const PAGE_ACCESS = {
   "/my-trips": [DRIVER],
 
   // Shared by every role.
-  "/profile": [OWNER, ADMIN, SUPERVISOR, DRIVER],
+  "/account": [OWNER, ADMIN, SUPERVISOR, DRIVER],
 };
 
 // Where to send someone right after login, or when they land on a page

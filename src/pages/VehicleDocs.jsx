@@ -7,6 +7,7 @@ import {
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { initializeApp, getApps } from "firebase/app";
 import { db } from "../fireabase";
+import { useAuth } from "../context/AuthContext";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -103,8 +104,23 @@ const BOOKING_STATUS_STYLE = {
 export default function VehicleDocs() {
   const [searchParams] = useSearchParams();
   const navigate        = useNavigate();
+  const { user }         = useAuth();
+  const isDriver         = user?.role === "Driver";
   const deepLinkCarID    = searchParams.get("carID");
+  const deepLinkBookingID = searchParams.get("bookingID");
   const pickupFlow       = searchParams.get("action") === "pickup";
+
+  // Whether we're still in the pickup "focus" state — separate from
+  // pickupFlow (which reflects the URL) because the driver can back out
+  // of the focus/lock UI (Cancel, or switching to After Trip) without us
+  // needing to touch the URL/navigate away. Resets whenever a fresh
+  // pickup deep link comes in (new carID/action=pickup on this same
+  // mounted page, e.g. navigating from one trip's "Start Pickup" to
+  // another without a full page reload).
+  const [pickupCancelled, setPickupCancelled] = useState(false);
+  useEffect(() => { setPickupCancelled(false); }, [pickupFlow, deepLinkCarID]);
+  const inPickupMode = pickupFlow && !pickupCancelled;
+  const cancelPickupFocus = () => setPickupCancelled(true);
 
   const [cars, setCars]               = useState([]);
   const [carsLoading, setCarsLoading] = useState(true);
@@ -205,7 +221,7 @@ export default function VehicleDocs() {
   }, []);
 
   /* ── Open a car — mirrors Inventory's openCar exactly ── */
-  const selectCar = useCallback(async (car) => {
+  const selectCar = useCallback(async (car, forcedBookingID) => {
     setSelectedCar(car);
     setCarParts([]);
     setActiveBooking(null);
@@ -225,39 +241,57 @@ export default function VehicleDocs() {
     } catch (e) { console.error(e); }
     finally { setPartsLoading(false); }
 
-    // Load bookings → find nearest upcoming (SAME logic as Inventory)
     setBookingLoading(true);
     try {
-      const snap = await getDocs(
-        query(collection(db, "bookings"), where("carID", "==", car.carID || car.id))
-      );
-      const all    = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const nowSec = Date.now() / 1000;
+      let target = null;
 
-      const upcoming = all
-        .filter(b => {
-          const status = b.status?.toLowerCase();
-          // Real booking statuses are upcoming/ongoing/completed/cancelled/
-          // cancellation_request/stolen (see booking.model.js) — this used
-          // to check for "approved", which no booking ever actually has,
-          // so a genuinely upcoming booking never matched and this always
-          // fell through to "No upcoming booking for this vehicle".
-          if (!["upcoming", "ongoing", "completed"].includes(status)) return false;
-          const startSec = toSec(b.startDateTime);
-          const endSec   = toSec(b.endDateTime);
-          // Same as Inventory: trip ongoing OR started within last 24h OR starts in next 7 days
-          return (!isNaN(endSec) && endSec > nowSec) ||
-                 (!isNaN(startSec) && startSec >= nowSec - 86400) ||
-                 (!isNaN(startSec) && startSec > nowSec && startSec <= nowSec + 604800);
-        })
-        .sort((a, b) => toSec(a.startDateTime) - toSec(b.startDateTime));
+      if (forcedBookingID) {
+        // Came from a specific "Start Pickup" tap on My Trips — go straight
+        // to that exact booking instead of guessing. The "nearest booking
+        // for this car" heuristic below is fine for Inventory (which has
+        // no specific booking in mind), but for a targeted pickup it can
+        // pick the wrong doc — e.g. a stale/duplicate "completed" booking
+        // for the same car with an earlier start date — which silently
+        // hides the Complete Pickup button since that only shows for
+        // status "upcoming".
+        const snap = await getDoc(doc(db, "bookings", forcedBookingID));
+        if (snap.exists()) target = { id: snap.id, ...snap.data() };
+      }
 
-      const nearest = upcoming[0] || null;
-      setActiveBooking(nearest);
+      if (!target) {
+        // Load bookings → find nearest upcoming (SAME logic as Inventory)
+        const snap = await getDocs(
+          query(collection(db, "bookings"), where("carID", "==", car.carID || car.id))
+        );
+        const all    = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const nowSec = Date.now() / 1000;
 
-      if (nearest) {
+        const upcoming = all
+          .filter(b => {
+            const status = b.status?.toLowerCase();
+            // Real booking statuses are upcoming/ongoing/completed/cancelled/
+            // cancellation_request/stolen (see booking.model.js) — this used
+            // to check for "approved", which no booking ever actually has,
+            // so a genuinely upcoming booking never matched and this always
+            // fell through to "No upcoming booking for this vehicle".
+            if (!["upcoming", "ongoing", "completed"].includes(status)) return false;
+            const startSec = toSec(b.startDateTime);
+            const endSec   = toSec(b.endDateTime);
+            // Same as Inventory: trip ongoing OR started within last 24h OR starts in next 7 days
+            return (!isNaN(endSec) && endSec > nowSec) ||
+                   (!isNaN(startSec) && startSec >= nowSec - 86400) ||
+                   (!isNaN(startSec) && startSec > nowSec && startSec <= nowSec + 604800);
+          })
+          .sort((a, b) => toSec(a.startDateTime) - toSec(b.startDateTime));
+
+        target = upcoming[0] || null;
+      }
+
+      setActiveBooking(target);
+
+      if (target) {
         // Resolve user info (same as Inventory)
-        const userID = nearest.userID;
+        const userID = target.userID;
         if (userID) {
           try {
             const [detailDoc, userDoc] = await Promise.all([
@@ -274,7 +308,7 @@ export default function VehicleDocs() {
         }
 
         // Load existing photo docs for this booking
-        const bID = nearest.bookingID || nearest.id;
+        const bID = target.bookingID || target.id;
         await loadPhotoDocs(bID);
       }
     } catch (e) {
@@ -291,8 +325,8 @@ export default function VehicleDocs() {
   useEffect(() => {
     if (!deepLinkCarID || carsLoading || !cars.length || selectedCar) return;
     const match = cars.find(c => (c.carID || c.id) === deepLinkCarID);
-    if (match) selectCar(match);
-  }, [deepLinkCarID, carsLoading, cars, selectedCar, selectCar]);
+    if (match) selectCar(match, deepLinkBookingID);
+  }, [deepLinkCarID, deepLinkBookingID, carsLoading, cars, selectedCar, selectCar]);
 
   /* ── File pick & upload ── */
   const handleFilePick = (fieldKey, file) => {
@@ -358,10 +392,75 @@ export default function VehicleDocs() {
     if (!activeBooking) { showToast("No active booking to link photos to.", "error"); return; }
     const pending = Object.keys(uploads);
     if (!pending.length) { showToast("No new photos to save.", "error"); return; }
+
     setSaving(true);
-    for (const key of pending) await uploadSlot(key);
-    setSaving(false);
-    showToast("All photos saved!");
+    setUploading(prev => { const n = { ...prev }; pending.forEach(k => n[k] = true); return n; });
+
+    const bID    = activeBooking.bookingID || activeBooking.id;
+    const phase  = PHASE[tripType];
+    // Read the existing doc ONCE, up front — this is the fix. The old
+    // version called uploadSlot() once per pending photo in a loop, and
+    // every one of those calls shared the same stale beforeDoc/afterDoc
+    // closure from the render at click-time. So slot 1 would see "no
+    // existing doc" and create one, slot 2 would ALSO see "no existing
+    // doc" (its closure never saw slot 1's write) and create a second,
+    // separate doc with only its own field, slot 3 a third — three
+    // orphaned docs instead of one merged doc, and whichever save
+    // finished last is the only one that ended up reflected on screen.
+    const existingDoc = tripType === "before" ? beforeDoc : afterDoc;
+
+    try {
+      // Upload every pending file to storage in parallel and collect
+      // { fieldKey: downloadURL } for all of them before writing anything.
+      const entries = await Promise.all(pending.map(async (fieldKey) => {
+        const { file } = uploads[fieldKey];
+        const ext = file.name.split(".").pop();
+        const storagePath = `vehicleDocs/${selectedCar.id}/${bID}/${tripType}/${fieldKey}_${Date.now()}.${ext}`;
+        await uploadBytes(ref(storage, storagePath), file);
+        const url = await getDownloadURL(ref(storage, storagePath));
+        return [fieldKey, url];
+      }));
+      const urlMap = Object.fromEntries(entries);
+
+      let savedDocId;
+      if (existingDoc?.id) {
+        savedDocId = existingDoc.id;
+        await setDoc(
+          doc(db, phase.collection, savedDocId),
+          { ...urlMap, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      } else {
+        const newRef = await addDoc(collection(db, phase.collection), {
+          bookingID:       bID,
+          carID:           selectedCar.carID || selectedCar.id,
+          [phase.idField]: "",
+          frontViewUrl:    "",
+          sideViewUrl:     "",
+          backViewUrl:     "",
+          ...urlMap,
+          createdAt:       serverTimestamp(),
+          updatedAt:       serverTimestamp(),
+        });
+        savedDocId = newRef.id;
+        await setDoc(doc(db, phase.collection, savedDocId), { [phase.idField]: savedDocId }, { merge: true });
+      }
+
+      // Single state update with ALL saved fields merged in — not one
+      // overwrite per photo.
+      const updatedDoc = { ...(existingDoc || {}), id: savedDocId, bookingID: bID, carID: selectedCar.carID || selectedCar.id, ...urlMap };
+      if (tripType === "before") setBeforeDoc(updatedDoc);
+      else setAfterDoc(updatedDoc);
+
+      setUploads({});
+      showToast("All photos saved!");
+    } catch (e) {
+      console.error(e);
+      showToast("Upload failed: " + e.message, "error");
+    } finally {
+      setUploading(prev => { const n = { ...prev }; pending.forEach(k => n[k] = false); return n; });
+      setSaving(false);
+    }
   };
 
   const getSlotImage = (fieldKey) => {
@@ -398,19 +497,34 @@ export default function VehicleDocs() {
     if (!activeBooking || !canCompletePickup) return;
     setCompletingPickup(true);
     try {
-      const res = await fetch(`${API_URL}/api/bookings/${activeBooking.id}`, {
+      // Drivers and staff hit different endpoints here — VehicleDocs is
+      // shared between both (staff via Inventory, drivers via My Trips'
+      // deep link), but PATCH /api/bookings/:id is role-gated to
+      // Supervisor/Admin/Owner only. A Driver hitting it got a 403. The
+      // driver-scoped route does an ownership check (this driver actually
+      // owns this booking) then calls the exact same underlying
+      // updateBooking(...,{status:"ongoing"}) the staff route uses, so
+      // behavior is identical either way — just correctly authorized.
+      const url = isDriver
+        ? `${API_URL}/api/driver-dispatch/my-trips/${activeBooking.id}/pickup`
+        : `${API_URL}/api/bookings/${activeBooking.id}`;
+
+      const res = await fetch(url, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
-        body: JSON.stringify({ status: "ongoing" }),
+        ...(isDriver ? {} : { body: JSON.stringify({ status: "ongoing" }) }),
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.message || "Pickup failed.");
       showToast("Pickup complete — GPS tracking is now active.");
       setActiveBooking({ ...activeBooking, status: "ongoing" });
-      if (pickupFlow) setTimeout(() => navigate("/car-tracking"), 900);
+      // Only auto-jump to Car Tracking if they're still in the guided
+      // pickup focus — if they cancelled it, they're back to browsing
+      // freely and shouldn't get yanked to another page unexpectedly.
+      if (inPickupMode) setTimeout(() => navigate("/car-tracking"), 900);
     } catch (e) {
       showToast(e.message, "error");
     } finally {
@@ -447,6 +561,23 @@ export default function VehicleDocs() {
 
         {/* Car list — same layout as Inventory */}
         <div className={`${selectedCar ? "w-72 shrink-0" : "flex-1"} transition-all duration-300`}>
+          {inPickupMode && selectedCar && (
+            <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+              <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                📍 Pending Pickup Task
+              </p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                Finish the Before Trip photos for <span className="font-semibold">{selectedCar.label}</span> — other vehicles are locked until this is done.
+              </p>
+              <button
+                onClick={cancelPickupFocus}
+                className="text-xs font-semibold text-amber-800 underline hover:text-amber-900 mt-1.5"
+              >
+                Cancel pickup task
+              </button>
+            </div>
+          )}
+
           {carsLoading ? (
             <div className="space-y-3">
               {[1,2,3].map(i => (
@@ -458,10 +589,17 @@ export default function VehicleDocs() {
               {cars.length === 0 && (
                 <p className="text-gray-400 text-sm col-span-full text-center py-8">No vehicles found.</p>
               )}
-              {cars.map(car => (
-                <button key={car.id} onClick={() => selectedCar?.id === car.id ? setSelectedCar(null) : selectCar(car)}
-                  className={`w-full text-left bg-white rounded-2xl border transition-all duration-200 shadow-soft hover:shadow-md p-4 ${
-                    selectedCar?.id === car.id ? "border-teal-400 ring-2 ring-teal-100" : "border-gray-100 hover:border-teal-200"
+              {cars.map(car => {
+                const isSelected = selectedCar?.id === car.id;
+                const isLockedOut = inPickupMode && !isSelected;
+                return (
+                <button key={car.id}
+                  disabled={isLockedOut}
+                  onClick={() => isSelected ? setSelectedCar(null) : selectCar(car)}
+                  className={`w-full text-left bg-white rounded-2xl border transition-all duration-200 shadow-soft p-4 ${
+                    isLockedOut
+                      ? "opacity-40 grayscale cursor-not-allowed border-gray-100"
+                      : `hover:shadow-md ${isSelected ? "border-teal-400 ring-2 ring-teal-100" : "border-gray-100 hover:border-teal-200"}`
                   }`}>
                   <div className="flex items-center gap-3">
                     {car.imageURL ? (
@@ -479,7 +617,7 @@ export default function VehicleDocs() {
                         {car.status}
                       </span>
                     </div>
-                    {selectedCar?.id === car.id && (
+                    {isSelected && (
                       <div className="shrink-0 w-5 h-5 rounded-full bg-teal-500 flex items-center justify-center">
                         <svg className="w-3 h-3 text-white" viewBox="0 0 20 20" fill="currentColor">
                           <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
@@ -488,7 +626,7 @@ export default function VehicleDocs() {
                     )}
                   </div>
                 </button>
-              ))}
+              );})}
             </div>
           )}
         </div>
@@ -519,7 +657,7 @@ export default function VehicleDocs() {
             </div>
 
             {/* Booking + Docs Section — same structure as Inventory */}
-            {bookingLoading ? (
+            {bookingLoading || docsLoading ? (
               <div className="bg-white rounded-2xl border border-gray-100 p-5 animate-pulse h-48" />
             ) : !activeBooking ? (
               <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-8 text-center">
@@ -580,11 +718,19 @@ export default function VehicleDocs() {
                     />
                     <TabButton
                       active={tripType === "after"}
-                      onClick={() => { setTripType("after"); setUploads({}); }}
+                      onClick={() => {
+                        // Switching away from Before Trip mid-pickup counts as
+                        // backing out of the focused pickup task — same as
+                        // hitting Cancel, just via a different door.
+                        if (inPickupMode) cancelPickupFocus();
+                        setTripType("after");
+                        setUploads({});
+                      }}
                       emoji="🏁"
                       label="After Trip"
                       badge={afterDoc ? "✓ Has Photos" : null}
                       badgeColor="bg-blue-100 text-blue-700"
+                      dimmed={inPickupMode}
                     />
                   </div>
 
@@ -739,13 +885,14 @@ function SectionTitle({ title }) {
   );
 }
 
-function TabButton({ active, onClick, emoji, label, badge, badgeColor }) {
+function TabButton({ active, onClick, emoji, label, badge, badgeColor, dimmed }) {
   return (
     <button onClick={onClick}
+      title={dimmed ? "Switching here will cancel the pending pickup task" : undefined}
       className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-sm font-semibold transition-all ${
-        active ? "bg-white shadow-sm text-gray-800" : "text-gray-500 hover:text-gray-700 hover:bg-white/60"
+        active ? "bg-white shadow-sm text-gray-800" : dimmed ? "text-gray-300 hover:text-gray-500" : "text-gray-500 hover:text-gray-700 hover:bg-white/60"
       }`}>
-      <span>{emoji}</span>
+      <span className={dimmed && !active ? "opacity-40" : ""}>{emoji}</span>
       <span>{label}</span>
       {badge && (
         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>{badge}</span>

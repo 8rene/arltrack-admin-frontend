@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  collection, getDocs, doc, updateDoc,
-  serverTimestamp
+  collection, getDocs, doc, updateDoc, addDoc,
+  serverTimestamp, query, where, orderBy
 } from "firebase/firestore";
 import { db } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
@@ -279,6 +279,73 @@ function getDocImages(docu) {
   };
 }
 
+// Stored as a plain "YYYY-MM-DD" string (matches an <input type="date">
+// directly) — same normalization whether it arrives as that string, a
+// Firestore Timestamp, or nothing yet.
+function toDateInputValue(val) {
+  if (!val) return "";
+  if (typeof val === "string") return val;
+  if (typeof val?.toDate === "function") return val.toDate().toISOString().slice(0, 10);
+  if (val?._seconds !== undefined) return new Date(val._seconds * 1000).toISOString().slice(0, 10);
+  return "";
+}
+
+// Editable driver's-license expiry field, used inside both DocDetailModal
+// (new submission review) and ViewDetailsModal's Documents tab (renewal
+// later on). Admin types/confirms the date while looking at the license
+// photo right next to it — no OCR, see earlier discussion on why.
+function ExpiryField({ userID, docId, currentValue, onSaved }) {
+  const [value, setValue] = useState(toDateInputValue(currentValue));
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const isExpired = value && value < today;
+
+  const handleSave = async () => {
+    if (!value) return;
+    setSaving(true);
+    try {
+      if (docId) {
+        await updateDoc(doc(db, "userDocument", docId), { driverLicenseExpiry: value, updatedAt: serverTimestamp() });
+      } else {
+        // No userDocument doc exists yet for this user (shouldn't normally
+        // happen if they've uploaded a license, but guards against it).
+        await addDoc(collection(db, "userDocument"), { userID, driverLicenseExpiry: value, createdAt: serverTimestamp() });
+      }
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2000);
+      onSaved?.();
+    } catch (e) {
+      console.error("Expiry save error:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-gray-50 rounded-xl p-3">
+      <p className="text-xs text-gray-400 mb-1">Driver's License Expiry</p>
+      <div className="flex items-center gap-2">
+        <input
+          type="date"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className={`flex-1 border rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400 ${isExpired ? "border-red-300 text-red-600" : ""}`}
+        />
+        <button
+          onClick={handleSave}
+          disabled={saving || !value || value === toDateInputValue(currentValue)}
+          className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {saving ? "..." : savedFlash ? "Saved ✓" : "Save"}
+        </button>
+      </div>
+      {isExpired && <p className="text-xs text-red-500 mt-1">This date is already in the past.</p>}
+    </div>
+  );
+}
+
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 export default function Users() {
   const { user: viewer } = useAuth();
@@ -298,6 +365,37 @@ export default function Users() {
   const activeRole = availableRoleTabs.find(t => t.key === roleTab) || availableRoleTabs[0];
 
   const [subTab, setSubTab]   = useState("directory"); // "directory" (List) | "documents" (Document Request) | "editRequests" (Edit Request) — customers only
+
+  // Deep-link support from Dashboard's Alert/Warning cards — e.g.
+  // /users?role=driver&tab=editRequests&open=<uid>. Only handles
+  // switching to the right role tab + sub-tab here; `open` itself is left
+  // in the URL for whichever child tab (DirectoryTab / EditRequestsTab)
+  // mounts next, since each already knows how to consume its own `open`
+  // param and clear it once handled.
+  //
+  // deepLinkTabRef exists because changing roleTab also triggers the
+  // "reset subTab to directory on role change" effect further down — the
+  // ref lets that effect know "this particular roleTab change came from a
+  // deep link, don't stomp the tab I just set" for exactly one run.
+  const deepLinkTabRef = useRef(null);
+  const [topLevelSearchParams, setTopLevelSearchParams] = useSearchParams();
+  useEffect(() => {
+    const roleParam = topLevelSearchParams.get("role");
+    const tabParam  = topLevelSearchParams.get("tab");
+    if (!roleParam && !tabParam) return;
+    if (roleParam && availableRoleTabs.some(t => t.key === roleParam)) {
+      deepLinkTabRef.current = tabParam || null;
+      setRoleTab(roleParam);
+    }
+    if (tabParam) setSubTab(tabParam);
+    setTopLevelSearchParams((prev) => {
+      prev.delete("role");
+      prev.delete("tab");
+      return prev;
+    }, { replace: true });
+  }, [topLevelSearchParams, availableRoleTabs, setTopLevelSearchParams]);
+
+
   const [users, setUsers]     = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -359,10 +457,31 @@ export default function Users() {
     }
   }, [activeRole]);
 
+  const [pendingEditReqCount, setPendingEditReqCount] = useState(0);
+  const fetchEditReqCounts = useCallback(async () => {
+    try {
+      const [editSnap, idSnap] = await Promise.all([
+        getDocs(query(collection(db, "editRequests"), where("status", "==", "pending"))),
+        getDocs(query(collection(db, "idResubmitRequests"), where("status", "==", "pending"))),
+      ]);
+      setPendingEditReqCount(editSnap.size + idSnap.size);
+    } catch (e) {
+      console.error("Edit request count fetch error:", e);
+    }
+  }, []);
+  useEffect(() => { fetchEditReqCounts(); }, [fetchEditReqCounts]);
+
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
   // Reset to the directory sub-tab whenever the role-tab changes (e.g. the
   // "Documents" sub-tab only exists under Customers).
-  useEffect(() => { setSubTab("directory"); }, [roleTab]);
+  useEffect(() => {
+    if (deepLinkTabRef.current) {
+      setSubTab(deepLinkTabRef.current);
+      deepLinkTabRef.current = null;
+      return;
+    }
+    setSubTab("directory");
+  }, [roleTab]);
 
   if (availableRoleTabs.length && !activeRole) {
     return (
@@ -455,6 +574,7 @@ export default function Users() {
               className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "editRequests" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
               <Icons.Edit className="w-4 h-4" />
               Edit Request
+              <span className="ml-1 opacity-70 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{pendingEditReqCount}</span>
             </button>
           )}
         </div>
@@ -472,7 +592,7 @@ export default function Users() {
       ) : subTab === "documents" ? (
         <DocumentsTab users={pendingDocs} onRefresh={fetchUsers} roleLabel={activeRole.label} />
       ) : (
-        <EditRequestsTab />
+        <EditRequestsTab onCountChange={fetchEditReqCounts} />
       )}
     </div>
   );
@@ -795,6 +915,11 @@ function ViewDetailsModal({ user, roleLabelSingular, onClose, onEdit }) {
                     <DocImg label="Document Image"  url={imgs.documentImage} />
                     <DocImg label="Selfie with ID"  url={imgs.selfieWithId} />
                   </div>
+                  {imgs.driverLicense && (
+                    <div className="mt-3">
+                      <ExpiryField userID={user.id} docId={docu.docId} currentValue={docu.driverLicenseExpiry} />
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No documents uploaded yet</p>
@@ -982,24 +1107,392 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
   );
 }
 
-// ─── EDIT REQUEST TAB (placeholder) ────────────────────────────────────────
-// Blank on purpose — this is a new feature (profile-info changes AND
-// expired/renewed ID re-submissions from customers) with no existing data
-// model yet. It's created from a separate customer-facing app writing to
-// Firestore, whose collection/field shape isn't known from this codebase.
-// Wired up just far enough to show the tab and test navigation; plug the
-// real query in here once the customer app's collection is confirmed.
-function EditRequestsTab() {
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-      <div className="px-5 py-4 border-b">
-        <h2 className="font-bold text-lg text-gray-800">Edit Requests</h2>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Profile info changes and renewed/expired ID re-submissions from customers
-        </p>
+// ─── EDIT REQUEST TAB ───────────────────────────────────────────────────────
+// Two request types, two sections, both driven straight off Firestore
+// (same pattern the rest of this file already uses — no backend route
+// needed, matches how Profile.jsx writes editRequests directly):
+//   1. "editRequests"      — profile field changes (Profile.jsx's EditProfileModal)
+//   2. "idResubmitRequests" — new driver's license photo submissions
+//      (Profile.jsx's "resubmit" flow, triggered from the expiry warning)
+function EditRequestsTab({ onCountChange }) {
+  const [profileReqs, setProfileReqs] = useState([]);
+  const [idReqs, setIdReqs]           = useState([]);
+  const [userLookup, setUserLookup]   = useState({}); // uid -> { name, username, email }
+  const [loading, setLoading]         = useState(true);
+  const [busyId, setBusyId]           = useState(null);
+  const [rejectTarget, setRejectTarget] = useState(null); // { kind, id }
+  const [viewUserID, setViewUserID]     = useState(null); // userID whose full request history is open
+
+  // Deep-link from Dashboard: /users?...&open=<uid> lands here once this
+  // tab is mounted (top-level Users() already switched role tab + subTab).
+  // Auto-opens that person's request history once data has actually
+  // loaded — before that, profileReqs is empty and there'd be nothing to
+  // match against yet.
+  const [highlightUserID, setHighlightUserID] = useState(null); // ID-resubmit row highlighted via deep link
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const openID = searchParams.get("open");
+    if (!openID || loading) return;
+
+    const hasProfileReq = profileReqs.some(r => r.userID === openID);
+    if (hasProfileReq) {
+      setViewUserID(openID);
+    } else {
+      // Deep-linked user only has an ID resubmit request (no profile edit
+      // request) — that section isn't grouped/modal-based like this one,
+      // so scroll to it and briefly highlight instead of opening an empty modal.
+      setHighlightUserID(openID);
+      setTimeout(() => {
+        document.getElementById(`idreq-user-${openID}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 100);
+      setTimeout(() => setHighlightUserID(null), 3000);
+    }
+    setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
+  }, [searchParams, loading, profileReqs, setSearchParams]);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [editSnap, idSnap, userSnap, detailsSnap] = await Promise.all([
+        getDocs(query(collection(db, "editRequests"), orderBy("createdAt", "desc"))),
+        getDocs(query(collection(db, "idResubmitRequests"), orderBy("createdAt", "desc"))),
+        getDocs(collection(db, "user")),
+        getDocs(collection(db, "userDetails")),
+      ]);
+
+      const detailsMap = Object.fromEntries(detailsSnap.docs.map(d => [d.data().userID || d.id, d.data()]));
+      const lookup = {};
+      userSnap.docs.forEach(d => {
+        const u = d.data();
+        const det = detailsMap[d.id] || {};
+        const name = `${det.firstName || ""} ${det.lastName || ""}`.trim();
+        lookup[d.id] = { name: name || u.username || u.email || d.id, username: u.username || "", email: u.email || "" };
+      });
+      setUserLookup(lookup);
+      setProfileReqs(editSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setIdReqs(idSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error("Edit/ID request fetch error:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Applies each changed field to the collection/doc it actually lives in —
+  // mirrors exactly what Profile.jsx's own "canEditDirectly" branch does,
+  // just running as the reviewing admin instead of the user themself.
+  const applyProfileChanges = async (req) => {
+    const byCollection = { user: {}, userDetails: {}, userAddress: {} };
+    req.changes.forEach(c => { byCollection[c.collection][c.field] = c.newValue; });
+
+    if (Object.keys(byCollection.user).length) {
+      await updateDoc(doc(db, "user", req.userID), { ...byCollection.user, updatedAt: serverTimestamp() });
+    }
+    for (const col of ["userDetails", "userAddress"]) {
+      if (!Object.keys(byCollection[col]).length) continue;
+      const existing = await getDocs(query(collection(db, col), where("userID", "==", req.userID)));
+      if (!existing.empty) {
+        await updateDoc(doc(db, col, existing.docs[0].id), { ...byCollection[col], updatedAt: serverTimestamp() });
+      } else {
+        await addDoc(collection(db, col), { userID: req.userID, ...byCollection[col], createdAt: serverTimestamp() });
+      }
+    }
+  };
+
+  const handleApproveProfile = async (req) => {
+    setBusyId(req.id);
+    try {
+      await applyProfileChanges(req);
+      await updateDoc(doc(db, "editRequests", req.id), {
+        status: "approved", reviewedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+      fetchAll();
+      onCountChange?.();
+    } catch (e) { console.error("Approve profile request failed:", e); }
+    finally { setBusyId(null); }
+  };
+
+  // ID resubmit approve: the new photo becomes the license of record.
+  // Deliberately does NOT touch driverLicenseExpiry — admin re-confirms the
+  // date against the new photo separately (ExpiryField, in the Documents
+  // tab / Document Request review), same "human looks at the actual card"
+  // principle as the original review.
+  const handleApproveId = async (req) => {
+    setBusyId(req.id);
+    try {
+      const existing = await getDocs(query(collection(db, "userDocument"), where("userID", "==", req.userID)));
+      if (!existing.empty) {
+        await updateDoc(doc(db, "userDocument", existing.docs[0].id), {
+          driverLicenseUrl: req.newLicenseUrl, updatedAt: serverTimestamp(),
+        });
+      } else {
+        await addDoc(collection(db, "userDocument"), {
+          userID: req.userID, driverLicenseUrl: req.newLicenseUrl, createdAt: serverTimestamp(),
+        });
+      }
+      await updateDoc(doc(db, "idResubmitRequests", req.id), {
+        status: "approved", reviewedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+      fetchAll();
+      onCountChange?.();
+    } catch (e) { console.error("Approve ID resubmit failed:", e); }
+    finally { setBusyId(null); }
+  };
+
+  const handleReject = async (kind, id, note) => {
+    setBusyId(id);
+    try {
+      const col = kind === "profile" ? "editRequests" : "idResubmitRequests";
+      await updateDoc(doc(db, col, id), {
+        status: "rejected", reviewNote: note || null, reviewedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+      setRejectTarget(null);
+      fetchAll();
+      onCountChange?.();
+    } catch (e) { console.error("Reject failed:", e); }
+    finally { setBusyId(null); }
+  };
+
+  // Grouped by person, not by document — a supervisor with 3 requests over
+  // time (1 pending, 2 resolved) is one row, not three. Newest-activity
+  // person first; within a person, their own requests stay newest-first.
+  const profileByUser = Object.values(
+    profileReqs.reduce((acc, req) => {
+      if (!acc[req.userID]) acc[req.userID] = { userID: req.userID, requests: [] };
+      acc[req.userID].requests.push(req);
+      return acc;
+    }, {})
+  ).sort((a, b) => {
+    const ta = a.requests[0]?.createdAt?.toMillis?.() ?? a.requests[0]?.createdAt?._seconds ?? 0;
+    const tb = b.requests[0]?.createdAt?.toMillis?.() ?? b.requests[0]?.createdAt?._seconds ?? 0;
+    return tb - ta;
+  });
+
+  const pendingProfile = profileReqs.filter(r => r.status === "pending");
+  const pendingId = idReqs.filter(r => r.status === "pending");
+  const reviewedId = idReqs.filter(r => r.status !== "pending");
+
+  const StatusPill = ({ status }) => {
+    const map = {
+      pending:   "bg-yellow-50 border-yellow-200 text-yellow-700",
+      approved:  "bg-green-50 border-green-200 text-green-700",
+      rejected:  "bg-red-50 border-red-200 text-red-600",
+      cancelled: "bg-gray-50 border-gray-200 text-gray-500",
+    };
+    return <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border capitalize ${map[status] || map.cancelled}`}>{status}</span>;
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-2xl border p-8 space-y-3">
+        {[...Array(3)].map((_, i) => <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />)}
       </div>
-      <div className="text-center text-gray-400 py-16">
-        Not built yet — waiting on the customer app's request collection.
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* PROFILE EDIT REQUESTS */}
+      <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+        <div className="px-5 py-4 border-b">
+          <h2 className="font-bold text-lg text-gray-800">Profile Edit Requests <span className="text-gray-400 text-sm font-normal">({pendingProfile.length} pending)</span></h2>
+          <p className="text-xs text-gray-400 mt-0.5">Field changes submitted from a Driver/Supervisor's own profile page</p>
+        </div>
+        {profileByUser.length === 0 ? (
+          <div className="text-center text-gray-400 py-10">No profile edit requests yet.</div>
+        ) : (
+          <div className="divide-y">
+            {profileByUser.map(({ userID, requests }) => {
+              const u = userLookup[userID] || {};
+              const pendingCount = requests.filter(r => r.status === "pending").length;
+              const latest = requests[0]; // already newest-first from the query sort
+              return (
+                <div key={userID} className="p-4 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-800 truncate">{u.name || userID}</p>
+                    <p className="text-xs text-gray-400">
+                      @{u.username || "—"} · {requests.length} request{requests.length === 1 ? "" : "s"} · last {fmtDate(latest.createdAt)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {pendingCount > 0 ? (
+                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border bg-yellow-50 border-yellow-200 text-yellow-700">
+                        {pendingCount} pending
+                      </span>
+                    ) : (
+                      <StatusPill status={latest.status} />
+                    )}
+                    <button onClick={() => setViewUserID(userID)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+                      View
+                      <Icons.ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ID RESUBMIT REQUESTS */}
+      <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+        <div className="px-5 py-4 border-b">
+          <h2 className="font-bold text-lg text-gray-800">ID Resubmit Requests <span className="text-gray-400 text-sm font-normal">({pendingId.length} pending)</span></h2>
+          <p className="text-xs text-gray-400 mt-0.5">New driver's license photos submitted for a close-to-expiring or expired ID</p>
+        </div>
+        {idReqs.length === 0 ? (
+          <div className="text-center text-gray-400 py-10">No ID resubmit requests yet.</div>
+        ) : (
+          <div className="divide-y">
+            {[...pendingId, ...reviewedId].map(req => {
+              const u = userLookup[req.userID] || {};
+              const isHighlighted = highlightUserID === req.userID;
+              return (
+                <div key={req.id} id={`idreq-user-${req.userID}`}
+                  className={`p-4 flex flex-col gap-3 transition-all ${isHighlighted ? "ring-2 ring-inset ring-orange-400 bg-orange-50/40" : ""}`}>                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-semibold text-gray-800">{u.name || req.userID}</p>
+                      <p className="text-xs text-gray-400">@{u.username || "—"} · {fmtDate(req.createdAt)}</p>
+                    </div>
+                    <StatusPill status={req.status} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <DocImg label="Current License" url={req.currentLicenseUrl} />
+                    <DocImg label="New License"     url={req.newLicenseUrl} />
+                  </div>
+                  {req.status === "rejected" && req.reviewNote && (
+                    <p className="text-xs text-red-500 bg-red-50 rounded-lg p-2">Reason: {req.reviewNote}</p>
+                  )}
+                  {req.status === "pending" && (
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => setRejectTarget({ kind: "id", id: req.id })} disabled={busyId === req.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40">
+                        <Icons.X className="w-3.5 h-3.5" /> Reject
+                      </button>
+                      <button onClick={() => handleApproveId(req)} disabled={busyId === req.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40">
+                        <Icons.Check className="w-3.5 h-3.5" /> {busyId === req.id ? "..." : "Approve"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {rejectTarget && (
+        <RejectNoteModal
+          onCancel={() => setRejectTarget(null)}
+          onConfirm={(note) => handleReject(rejectTarget.kind, rejectTarget.id, note)}
+        />
+      )}
+
+      {viewUserID && (
+        <ProfileRequestHistoryModal
+          userID={viewUserID}
+          user={userLookup[viewUserID]}
+          requests={profileByUser.find(g => g.userID === viewUserID)?.requests || []}
+          busyId={busyId}
+          onClose={() => setViewUserID(null)}
+          onApprove={(req) => handleApproveProfile(req)}
+          onReject={(req) => { setRejectTarget({ kind: "profile", id: req.id }); setViewUserID(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ProfileRequestHistoryModal({ userID, user, requests, busyId, onClose, onApprove, onReject }) {
+  const StatusPill = ({ status }) => {
+    const map = {
+      pending:   "bg-yellow-50 border-yellow-200 text-yellow-700",
+      approved:  "bg-green-50 border-green-200 text-green-700",
+      rejected:  "bg-red-50 border-red-200 text-red-600",
+      cancelled: "bg-gray-50 border-gray-200 text-gray-500",
+    };
+    return <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border capitalize ${map[status] || map.cancelled}`}>{status}</span>;
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
+          <div>
+            <h2 className="font-bold text-lg text-gray-800">{user?.name || userID}</h2>
+            <p className="text-xs text-gray-400">@{user?.username || "—"} · {requests.length} request{requests.length === 1 ? "" : "s"}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><Icons.X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {requests.map(req => (
+            <div key={req.id} className="border rounded-xl overflow-hidden">
+              <div className="flex justify-between items-center px-4 py-2.5 bg-gray-50 border-b">
+                <span className="text-xs text-gray-400">{fmtDate(req.createdAt)}</span>
+                <StatusPill status={req.status} />
+              </div>
+
+              <div>
+                <div className="grid grid-cols-[1fr_1fr_1fr] text-xs font-semibold text-gray-400 uppercase bg-gray-50/50 px-4 py-2">
+                  <span>Field</span>
+                  <span>Current</span>
+                  <span>Requested</span>
+                </div>
+                {(req.changes || []).map((c, i) => {
+                  const changed = c.newValue !== c.oldValue;
+                  return (
+                    <div key={i} className={`grid grid-cols-[1fr_1fr_1fr] px-4 py-2.5 border-t text-sm items-center ${changed ? "bg-orange-50" : ""}`}>
+                      <span className="text-gray-500">{c.label}</span>
+                      <span className="text-gray-600">{c.oldValue || "—"}</span>
+                      <span className={changed ? "font-medium text-orange-600" : "text-gray-600"}>{c.newValue || "—"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {req.status === "rejected" && req.reviewNote && (
+                <p className="text-xs text-red-500 bg-red-50 p-2 border-t">Reason: {req.reviewNote}</p>
+              )}
+
+              {req.status === "pending" && (
+                <div className="flex justify-end gap-2 p-3 border-t bg-gray-50/50">
+                  <button onClick={() => onReject(req)} disabled={busyId === req.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40">
+                    <Icons.X className="w-3.5 h-3.5" /> Reject
+                  </button>
+                  <button onClick={() => onApprove(req)} disabled={busyId === req.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40">
+                    <Icons.Check className="w-3.5 h-3.5" /> {busyId === req.id ? "..." : "Approve"}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RejectNoteModal({ onCancel, onConfirm }) {
+  const [note, setNote] = useState("");
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        <h3 className="font-bold text-gray-800">Reject request</h3>
+        <p className="text-xs text-gray-400">Optional — this note is shown to the requester so a rejection isn't a dead end.</p>
+        <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
+          placeholder="e.g. Photo is blurry, please retake"
+          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-red-300" />
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button onClick={() => onConfirm(note.trim())} className="px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-medium hover:bg-red-600">Reject</button>
+        </div>
       </div>
     </div>
   );
@@ -1045,6 +1538,9 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
                 <DocImg label="Government ID"   url={imgs.governmentId} />
                 <DocImg label="Document Image"  url={imgs.documentImage} />
                 <DocImg label="Selfie with ID"  url={imgs.selfieWithId} />
+                {imgs.driverLicense && (
+                  <ExpiryField userID={user.id} docId={docu.docId} currentValue={docu.driverLicenseExpiry} />
+                )}
               </div>
             )}
           </div>

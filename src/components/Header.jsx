@@ -261,7 +261,7 @@ export default function Header({ title = "Dashboard" }) {
 
           {/* PROFILE */}
           <button
-            onClick={() => navigate("/profile")}
+            onClick={() => navigate("/account")}
             className="flex items-center gap-2 px-3 py-1 rounded-full border hover:bg-teal-50 transition-colors"
           >
             <div className="w-8 h-8 rounded-full bg-arl-primary flex items-center justify-center text-white text-xs font-bold">

@@ -210,12 +210,6 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  const alerts = [...cancelBookings, ...damagedParts].sort((a, b) => {
-    const ta = a.createdAt?._seconds ?? a.updatedAt?._seconds ?? 0;
-    const tb = b.createdAt?._seconds ?? b.updatedAt?._seconds ?? 0;
-    return tb - ta;
-  });
-
   // REAL-TIME — bookings not yet started (pickup coming up)
   useEffect(() => {
     const unsub = onSnapshot(
@@ -266,6 +260,147 @@ export default function Dashboard() {
     return `in ${h}h ${m}m`;
   };
 
+  const [licenseWarnings, setLicenseWarnings] = useState([]); // expiring soon, not yet expired
+  const [licenseAlerts, setLicenseAlerts]     = useState([]); // already expired — needs action now, not a countdown
+
+  // Driver's-license expiry — computed on load, same pattern as the
+  // booking/maintenance "coming up" warnings below (pure date math, no
+  // write event needed to trigger it — see the earlier discussion on why
+  // this is fine for display even though enforcement needs the cron job).
+  // Not onSnapshot like the others: userDocument doesn't change often
+  // enough to need a live listener, and this needs a join against `user`
+  // for role + name anyway, which onSnapshot alone won't give cheaply.
+  //
+  // Expired goes to Alerts (already happened, needs action now — same
+  // tier as a cancellation request or a stolen part), close-to-expiry
+  // stays in Warning (a countdown, not yet urgent).
+  const fetchLicenseWarnings = useCallback(async () => {
+    try {
+      const [docSnap, userSnap, detailsSnap] = await Promise.all([
+        getDocs(collection(db, "userDocument")),
+        getDocs(collection(db, "user")),
+        getDocs(collection(db, "userDetails")),
+      ]);
+      const userMap = Object.fromEntries(userSnap.docs.map(d => [d.id, d.data()]));
+      const detailsMap = Object.fromEntries(detailsSnap.docs.map(d => [d.data().userID || d.id, d.data()]));
+
+      const toJs = (val) => {
+        if (!val) return null;
+        if (typeof val === "string") { const d = new Date(val); return isNaN(d.getTime()) ? null : d; }
+        if (typeof val?.toDate === "function") return val.toDate();
+        if (val?._seconds !== undefined) return new Date(val._seconds * 1000);
+        return null;
+      };
+
+      const now = Date.now();
+      const LICENSE_WARNING_DAYS = 14; // kept in sync by hand with Profile.jsx / admin-backend's cron threshold
+      // Firestore `user` docs store roleID (see backend/models/user/user.model.js),
+      // not a human-readable role name — these two IDs are copied by hand from
+      // backend/utils/roles/role.util.js's ROLE_IDS. No shared config between
+      // the two codebases currently, same duplication risk already flagged
+      // elsewhere in this file (pagePermissions.js's own comment about this).
+      const DRIVER_ROLE_ID     = "Na0Jpt86nldSO5SjfcLa";
+      const SUPERVISOR_ROLE_ID = "fFA8G2R2ANLbVsH00jlv";
+
+      const warningResults = [];
+      const alertResults = [];
+      docSnap.docs.forEach((d) => {
+        const data = d.data();
+        const expiry = toJs(data.driverLicenseExpiry);
+        const u = userMap[data.userID];
+        if (!expiry || !u) return;
+        // Driver/Supervisor only — matches the cron job's scope.
+        if (u.roleID !== DRIVER_ROLE_ID && u.roleID !== SUPERVISOR_ROLE_ID) return;
+
+        const daysLeft = Math.ceil((expiry.getTime() - now) / (24 * 60 * 60 * 1000));
+        if (daysLeft > LICENSE_WARNING_DAYS) return; // not close enough yet
+
+        const det = detailsMap[data.userID] || {};
+        const name = `${det.firstName || ""} ${det.lastName || ""}`.trim() || u.username || u.email || data.userID;
+        const entry = {
+          id: data.userID,
+          userID: data.userID,
+          name,
+          daysLeft,
+          isExpired: daysLeft < 0,
+          _due: expiry,
+          // Lowercase to match Users.jsx's ROLE_TABS key ("driver"/"supervisor"),
+          // not the capitalized ROLES.DRIVER/"Driver" string.
+          role: u.roleID === DRIVER_ROLE_ID ? "driver" : "supervisor",
+        };
+        if (entry.isExpired) alertResults.push(entry);
+        else warningResults.push(entry);
+      });
+
+      setLicenseWarnings(warningResults.sort((a, b) => a._due - b._due));
+      setLicenseAlerts(alertResults.sort((a, b) => a._due - b._due));
+    } catch (e) {
+      console.error("License warning fetch error:", e);
+    }
+  }, []);
+
+  useEffect(() => { fetchLicenseWarnings(); }, [fetchLicenseWarnings]);
+
+  const alerts = [
+    ...cancelBookings,
+    ...damagedParts,
+    ...licenseAlerts.map((l) => ({ ...l, _type: "license" })),
+  ].sort((a, b) => {
+    const ta = a._due?.getTime?.() ?? a.createdAt?._seconds * 1000 ?? a.updatedAt?._seconds * 1000 ?? 0;
+    const tb = b._due?.getTime?.() ?? b.createdAt?._seconds * 1000 ?? b.updatedAt?._seconds * 1000 ?? 0;
+    return tb - ta;
+  });
+
+  // Pending edit / ID-resubmit requests — surfaced in Warning as soon as
+  // submitted, same "needs admin attention" reasoning as an upcoming
+  // booking, just not time-bound. onSnapshot since these are quick, low-
+  // volume writes and benefit from showing up live without a page reload.
+  const [pendingRequestWarnings, setPendingRequestWarnings] = useState([]);
+  useEffect(() => {
+    const userMapRef = { current: {} };
+    getDocs(collection(db, "user")).then((snap) => {
+      userMapRef.current = Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
+    }).catch(() => {});
+
+    const unsubEdit = onSnapshot(
+      query(collection(db, "editRequests"), where("status", "==", "pending")),
+      (snap) => {
+        const rows = snap.docs.map((d) => {
+          const data = d.data();
+          const u = userMapRef.current[data.userID] || {};
+          return {
+            id: d.id,
+            userID: data.userID,
+            name: u.username || u.email || data.userID,
+            kind: "editRequest",
+            role: (data.role || "driver").toLowerCase(),
+            _due: toJsDate(data.createdAt) || new Date(),
+          };
+        });
+        setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "editRequest"), ...rows]);
+      }
+    );
+    const unsubId = onSnapshot(
+      query(collection(db, "idResubmitRequests"), where("status", "==", "pending")),
+      (snap) => {
+        const rows = snap.docs.map((d) => {
+          const data = d.data();
+          const u = userMapRef.current[data.userID] || {};
+          return {
+            id: d.id,
+            userID: data.userID,
+            name: u.username || u.email || data.userID,
+            kind: "idResubmit",
+            role: (data.role || "driver").toLowerCase(),
+            _due: toJsDate(data.createdAt) || new Date(),
+          };
+        });
+        setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "idResubmit"), ...rows]);
+      }
+    );
+    return () => { unsubEdit(); unsubId(); };
+  }, []);
+
   const warnings = [
     ...upcomingBookings
       .map((b) => ({ ...b, _type: "booking", _due: toJsDate(b.startDateTime) }))
@@ -273,6 +408,8 @@ export default function Dashboard() {
     ...upcomingMaintenance
       .map((m) => ({ ...m, _type: "maintenance", _due: toJsDate(m.maintenanceDate) }))
       .filter((m) => withinHours(m._due, MAINTENANCE_WARNING_HOURS)),
+    ...licenseWarnings.map((l) => ({ ...l, _type: "license" })),
+    ...pendingRequestWarnings.map((r) => ({ ...r, _type: "request" })),
   ].sort((a, b) => a._due - b._due); // soonest first — this list is a countdown, not a feed
 
   const fetchMetrics = useCallback(async () => {
@@ -357,11 +494,36 @@ export default function Dashboard() {
             ) : (
               alerts.map((a) => {
                 const isDamaged = a._type === "damaged_part";
+                const isLicense = a._type === "license";
                 const isCancel  = a.status === "cancellation_request";
                 const goTo = () => {
                   if (isDamaged) navigate("/maintenance");
+                  else if (isLicense) navigate(`/users?role=${a.role}&tab=directory&open=${a.userID}`);
                   else navigate(`/bookings?open=${a.bookingID || a.id}`);
                 };
+
+                if (isLicense) {
+                  return (
+                    <div
+                      key={`license-alert-${a.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-red-50 border-red-100 hover:bg-red-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-red-500">
+                        <IconWarning className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">Driver's License Expired</p>
+                        <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.name}</p>
+                        <p className="text-xs text-gray-400">Account auto-locked</p>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={a.id}
@@ -429,11 +591,60 @@ export default function Dashboard() {
               </div>
             ) : (
               warnings.map((w) => {
-                const isMaint = w._type === "maintenance";
+                const isMaint   = w._type === "maintenance";
+                const isLicense = w._type === "license";
+                const isRequest = w._type === "request";
                 const goTo = () => {
                   if (isMaint) navigate("/maintenance");
+                  else if (isLicense) navigate(`/users?role=${w.role}&tab=directory&open=${w.userID}`);
+                  else if (isRequest) navigate(`/users?role=${w.role}&tab=editRequests&open=${w.userID}`);
                   else navigate(`/bookings?open=${w.bookingID || w.id}`);
                 };
+                if (isLicense) {
+                  return (
+                    <div
+                      key={`license-${w.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-amber-50 border-amber-100 hover:bg-amber-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-amber-600">
+                        <IconWarning className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">Driver's License Expiring Soon</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
+                        <p className="text-xs text-gray-400">Expires in {w.daysLeft} day(s)</p>
+                      </div>
+                    </div>
+                  );
+                }
+                if (isRequest) {
+                  const isIdReq = w.kind === "idResubmit";
+                  return (
+                    <div
+                      key={`request-${w.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-blue-50 border-blue-100 hover:bg-blue-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-blue-500">
+                        <IconBell className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">
+                          {isIdReq ? "ID Resubmit Request" : "Profile Edit Request"}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
+                        <p className="text-xs text-gray-400">Awaiting review</p>
+                      </div>
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={`${w._type}-${w.id}`}
