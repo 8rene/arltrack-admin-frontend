@@ -193,7 +193,7 @@ export default function RefundRequests() {
       <div className="flex items-center justify-between pt-2">
         <div>
           <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">
-            <IconRefund className="w-5 h-5 text-arl-secondary" /> Refund Requests
+            <IconRefund className="w-5 h-5 text-arl-secondary" /> Refunds
           </h1>
           <p className="text-sm text-gray-500">
             {pendingCount > 0 ? `${pendingCount} pending review` : "No pending requests"}
