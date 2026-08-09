@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
@@ -36,6 +37,12 @@ const IconX = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+const IconChevronDown = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
@@ -97,6 +104,7 @@ export default function Payments() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [toast, setToast]                 = useState(null);
   const [updating, setUpdating]           = useState(false);
+  const [searchParams] = useSearchParams();
 
   const token = localStorage.getItem("token");
   const { fmt: fmtCurrency } = useCurrency();
@@ -118,6 +126,19 @@ export default function Payments() {
   }, [token]);
 
   useEffect(() => { fetchPayments(); }, [fetchPayments]);
+
+  // Deep-link from other pages (e.g. Car Tracking's payment modal linking
+  // here with ?bookingID=...) — pre-fill the search box so the relevant
+  // payment is right there in the filtered table, and jump straight into
+  // its detail panel if it's the only match.
+  useEffect(() => {
+    const bookingID = searchParams.get("bookingID");
+    if (!bookingID || payments.length === 0) return;
+    setSearch(bookingID);
+    const matches = payments.filter((p) => p.bookingID === bookingID);
+    if (matches.length === 1) openDetail(matches[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payments, searchParams]);
 
   const openDetail = async (id) => {
     setDetailLoading(true); setSelected(null);
@@ -274,14 +295,20 @@ export default function Payments() {
         <input type="text" placeholder="Search by customer, ref, booking…"
           value={search} onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
-        <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-xl text-sm">
-          {STATUSES.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select value={methodF} onChange={(e) => setMethodF(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-xl text-sm">
-          {methods.map((m) => <option key={m}>{m}</option>)}
-        </select>
+        <div className="relative">
+          <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
+            className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
+            {STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
+        <div className="relative">
+          <select value={methodF} onChange={(e) => setMethodF(e.target.value)}
+            className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
+            {methods.map((m) => <option key={m}>{m}</option>)}
+          </select>
+          <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
         <button onClick={fetchPayments} disabled={loading}
           className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
           {loading ? "…" : "Refresh"}

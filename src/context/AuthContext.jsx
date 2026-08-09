@@ -93,27 +93,40 @@ export function AuthProvider({ children }) {
       if (unsubDoc) { unsubDoc(); unsubDoc = null; }
       if (!fbUser) return;
 
+      let handled = false; // guards against duplicate snapshots firing the same logout twice
+
       unsubDoc = onSnapshot(
         doc(db, "user", user.uid),
         (snap) => {
+          if (handled) return;
+
           if (!snap.exists()) {
+            handled = true;
+            if (unsubDoc) { unsubDoc(); unsubDoc = null; }
             logout();
             alert("Your account no longer exists. Please contact your administrator.");
             return;
           }
           const data = snap.data();
           if (data.status && data.status.toLowerCase() !== "active") {
+            handled = true;
+            if (unsubDoc) { unsubDoc(); unsubDoc = null; }
             logout();
             alert("Your account access has been revoked. Please contact your administrator.");
             return;
           }
           if (data.roleID && user.roleID && data.roleID !== user.roleID) {
+            handled = true;
+            if (unsubDoc) { unsubDoc(); unsubDoc = null; }
             logout();
             alert("Your role has changed. Please log in again.");
           }
         },
         () => {
+          if (handled) return;
           // Firestore rules denying reads (e.g. locked account) counts as revoked too.
+          handled = true;
+          if (unsubDoc) { unsubDoc(); unsubDoc = null; }
           logout();
         }
       );

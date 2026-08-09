@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import TripMapModal from "../components/TripMapModal";
+import PaymentStatusModal from "../components/PaymentStatusModal";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -32,6 +33,12 @@ const IconFlag = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path strokeLinecap="round" strokeLinejoin="round" d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
     <line x1="4" y1="22" x2="4" y2="15" strokeLinecap="round" />
+  </svg>
+);
+
+const IconPeso = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M7 20V4h6a4 4 0 010 8H7M4 10h11M4 13h9" />
   </svg>
 );
 
@@ -99,6 +106,9 @@ function ActiveTripsTab() {
   const [toast, setToast]     = useState(null);
   const [busyID, setBusyID]   = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
+  const [paymentTrip, setPaymentTrip] = useState(null);
+  const [collectingBalance, setCollectingBalance] = useState(false);
+  const [collectBalanceError, setCollectBalanceError] = useState(null);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -175,6 +185,26 @@ function ActiveTripsTab() {
     }
   };
 
+  // Driver receiving cash/in-person payment of the remaining balance —
+  // e.g. right before Start Pickup, same as staff can do on Car Tracking.
+  const handleCollectBalance = async () => {
+    if (!paymentTrip) return;
+    setCollectingBalance(true);
+    setCollectBalanceError(null);
+    try {
+      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/collect-balance`, { method: "PATCH" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Could not mark balance as received.");
+      showToast("Balance marked as received.");
+      setPaymentTrip(null);
+      fetchTrips();
+    } catch (e) {
+      setCollectBalanceError(e.message);
+    } finally {
+      setCollectingBalance(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       {toast && (
@@ -219,7 +249,7 @@ function ActiveTripsTab() {
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
                 <span className="flex items-center gap-1"><IconClock /> {fmtDateTime(trip.startDateTime)} → {fmtDateTime(trip.endDateTime)}</span>
                 <span className="flex items-center gap-1"><IconPin /> {trip.location}</span>
-                {tripStops(trip).length > 0 && (
+                {isOngoing && tripStops(trip).length > 0 && (
                   <button
                     onClick={() => setMapTrip(trip)}
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 ml-auto"
@@ -240,10 +270,25 @@ function ActiveTripsTab() {
 
               <div className="flex gap-2">
                 {!isOngoing ? (
-                  <button onClick={() => handlePickup(trip)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all">
-                    ▶ Start Pickup
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setMapTrip(trip)}
+                      disabled={tripStops(trip).length === 0}
+                      className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      <IconMap className="w-4 h-4" /> Map
+                    </button>
+                    <button
+                      onClick={() => setPaymentTrip(trip)}
+                      className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 transition-all"
+                    >
+                      <IconPeso className="w-4 h-4" /> Payment
+                    </button>
+                    <button onClick={() => handlePickup(trip)}
+                      className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all">
+                      ▶ Start Pickup
+                    </button>
+                  </>
                 ) : (
                   <>
                     {!droppedOff && (
@@ -269,6 +314,16 @@ function ActiveTripsTab() {
         onClose={() => setMapTrip(null)}
         title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
         stops={mapTrip ? tripStops(mapTrip) : []}
+      />
+      <PaymentStatusModal
+        open={!!paymentTrip}
+        onClose={() => { setPaymentTrip(null); setCollectBalanceError(null); }}
+        customerName={paymentTrip?.customerName}
+        payment={paymentTrip?.payment}
+        onCollectBalance={handleCollectBalance}
+        collecting={collectingBalance}
+        collectError={collectBalanceError}
+        pendingApprovalNote="The initial payment hasn't been approved yet — ask an admin or supervisor to approve it before collecting the rest."
       />
     </div>
   );

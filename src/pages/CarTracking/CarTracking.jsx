@@ -10,6 +10,7 @@ import ReviewPanel from "./ReviewPanel";
 import SimulatePanel from "./SimulatePanel";
 import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
+import PaymentStatusModal from "../../components/PaymentStatusModal";
 import GeofenceBanner from "../../components/GeofenceBanner";
 import PlaceLabel from "../../components/PlaceLabel";
 import { isGeofenceBreachedNow, isCodingRestrictedNow, activeCodingAlertNow } from "../../utils/geofenceAlerts";
@@ -50,6 +51,11 @@ const Icons = {
       <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
       <line x1="8" y1="2" x2="8" y2="18" />
       <line x1="16" y1="6" x2="16" y2="22" />
+    </svg>
+  ),
+  Peso: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 20V4h6a4 4 0 010 8H7M4 10h11M4 13h9" />
     </svg>
   ),
   Refresh: (props) => (
@@ -233,6 +239,9 @@ export default function CarTracking() {
   const [lastPoll,     setLastPoll]     = useState(null);
   const [notice,       setNotice]       = useState(null);
   const [actionBusyId, setActionBusyId] = useState(null); // booking doc id currently being acted on
+  const [paymentModalBooking, setPaymentModalBooking] = useState(null);
+  const [collectingBalance,   setCollectingBalance]   = useState(false);
+  const [collectBalanceError, setCollectBalanceError] = useState(null);
   // Deep-link from Bookings' "Trip History" button — { tab: "history", carID, bookingID }.
   // Only consumed once; switching tabs away and back won't re-trigger it since
   // React Router keeps the same location.state for the life of this page visit,
@@ -781,7 +790,7 @@ export default function CarTracking() {
   // "ongoing" once they're saved. booking.service.js enforces this
   // server-side too, so this redirect is about the right flow, not the
   // only thing stopping a bypass.
-  const handlePickup  = (b) => navigate(`/vehicle-documentation?carID=${b.carID}&action=pickup`);
+  const handlePickup  = (b) => navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=pickup`);
   const handleReturn  = (b) => runBookingAction(b.id, "completed", "Car marked returned — trip history saved.");
 
   // Chauffeur-only, separate from Return/runBookingAction above — this
@@ -809,6 +818,34 @@ export default function CarTracking() {
     }
   };
 
+  // Owner/Admin/Supervisor collecting cash/in-person payment of the
+  // remaining balance — e.g. right before Pickup. Keyed by bookingID
+  // (not the booking doc id), matching the backend route.
+  const handleCollectBalance = async () => {
+    if (!paymentModalBooking) return;
+    setCollectingBalance(true);
+    setCollectBalanceError(null);
+    try {
+      const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
+      const res  = await fetch(`${API}/api/payments/booking/${bID}/collect-balance`, {
+        method:  "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (json.success) {
+        setNotice({ type: "ok", msg: "Balance marked as received." });
+        setPaymentModalBooking(null);
+        await fetchBookings();
+      } else {
+        setCollectBalanceError(json.message || "Could not mark balance as received.");
+      }
+    } catch (e) {
+      setCollectBalanceError("Action failed — check your connection.");
+    } finally {
+      setCollectingBalance(false);
+    }
+  };
+
   const handleStolen  = (b) => {
     if (!window.confirm("Flag this car as stolen? This is logged permanently and the booking will be locked.")) return;
     runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
@@ -827,6 +864,7 @@ export default function CarTracking() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
+    <>
     <div className="flex flex-col h-full min-h-0 gap-3">
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
@@ -1267,6 +1305,18 @@ export default function CarTracking() {
                               </button>
                             )}
                             <button
+                              onClick={() => setPaymentModalBooking(b)}
+                              title="View payment breakdown"
+                              className={`flex items-center gap-1 px-2.5 py-1.5 border rounded-lg text-xs font-semibold active:scale-95 transition-all ${
+                                b.balance > 0
+                                  ? "border-amber-300 text-amber-700 hover:bg-amber-50"
+                                  : "border-green-300 text-green-700 hover:bg-green-50"
+                              }`}
+                            >
+                              <Icons.Peso className="w-3 h-3" />
+                              {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
+                            </button>
+                            <button
                               onClick={() => handlePickup(b)}
                               disabled={actionBusyId === b.id}
                               className={`flex items-center gap-1.5 px-3 py-1.5 text-white rounded-lg text-xs font-semibold active:scale-95 transition-all disabled:opacity-50 ${
@@ -1330,5 +1380,23 @@ export default function CarTracking() {
       </div>
       )}
     </div>
+
+    <PaymentStatusModal
+      open={!!paymentModalBooking}
+      onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); }}
+      customerName={paymentModalBooking?.customerName}
+      payment={paymentModalBooking ? {
+        totalFee:      paymentModalBooking.totalFee,
+        amountPaid:    paymentModalBooking.amountPaid,
+        balance:       paymentModalBooking.balance,
+        payType:       paymentModalBooking.payType,
+        paymentStatus: paymentModalBooking.paymentStatus,
+      } : null}
+      onCollectBalance={handleCollectBalance}
+      collecting={collectingBalance}
+      collectError={collectBalanceError}
+      onGoToPayments={() => navigate(`/payments?bookingID=${paymentModalBooking?.bookingID || paymentModalBooking?.id || ""}`)}
+    />
+    </>
   );
 }
