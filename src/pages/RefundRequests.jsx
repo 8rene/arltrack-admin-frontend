@@ -16,13 +16,6 @@ const IconX = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-const IconRefund = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3 10a9 9 0 1 1 2.6 6.36" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    <path d="M3 4v6h6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 // ─── HELPERS ────────────────────────────────────────────────────────────────
 
 function fmtDate(val) {
@@ -193,7 +186,7 @@ export default function RefundRequests() {
       <div className="flex items-center justify-between pt-2">
         <div>
           <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">
-            <IconRefund className="w-5 h-5 text-arl-secondary" /> Refunds
+            Refunds
           </h1>
           <p className="text-sm text-gray-500">
             {pendingCount > 0 ? `${pendingCount} pending review` : "No pending requests"}
