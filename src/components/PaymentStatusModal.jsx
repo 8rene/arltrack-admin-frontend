@@ -21,24 +21,32 @@ const IconArrowRight = ({ className = "w-3.5 h-3.5" }) => (
 );
 
 /**
- * "How much is paid / how much is still owed" breakdown, with an optional
- * "Mark Balance Received" action for collecting the rest in person (cash
- * at pickup/return) — same shape everywhere it's used: Car Tracking, and
- * the driver's My Trips — all backed by the same computeAmounts() logic
- * on the server, so the numbers can never drift between screens.
+ * "How much is paid / how much is still owed" breakdown, with optional
+ * "Confirm Payment Received" and "Mark Balance Received" actions for
+ * confirming cash/in-person payments on the spot — same shape everywhere
+ * it's used: Car Tracking, and the driver's My Trips — all backed by the
+ * same computeAmounts() logic on the server, so the numbers can never
+ * drift between screens. PayMongo (GCash/Maya/QRPH) payments never need
+ * either button — the customer-side webhook already confirms those the
+ * moment they settle, so paymentStatus arrives here already
+ * approved/paid.
  *
  * @param {boolean} open
  * @param {() => void} onClose
  * @param {string} customerName
  * @param {{ totalFee: number, amountPaid: number, balance: number, payType: string, paymentStatus: string }} payment
+ * @param {() => void} [onConfirmPayment] - confirm a cash initial payment as received, right here. Omit to hide the button (e.g. read-only views).
+ * @param {boolean} [confirming] - shows a busy state on the confirm button while the request is in flight
+ * @param {string} [confirmError] - shown under the confirm button if the last attempt failed
  * @param {() => void} [onCollectBalance] - omit to hide the button entirely (read-only view)
  * @param {boolean} [collecting] - shows a busy state on the button while the request is in flight
  * @param {string} [collectError] - shown under the button if the last attempt failed
- * @param {() => void} [onGoToPayments] - shown as a link under the "must be approved" note. Omit for roles that can't reach the Payments page (e.g. drivers).
- * @param {string} [pendingApprovalNote] - override the default "must be approved" wording (e.g. for drivers, who need to ask staff rather than go approve it themselves)
+ * @param {() => void} [onGoToPayments] - fallback link shown only if onConfirmPayment isn't provided. Omit for roles that can't reach the Payments page (e.g. drivers).
+ * @param {string} [pendingApprovalNote] - override the default "must be approved" wording, used only in the onGoToPayments fallback case
  */
 export default function PaymentStatusModal({
   open, onClose, customerName, payment,
+  onConfirmPayment, confirming, confirmError,
   onCollectBalance, collecting, collectError,
   onGoToPayments, pendingApprovalNote,
 }) {
@@ -47,11 +55,15 @@ export default function PaymentStatusModal({
   const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—" };
   const isFullyPaid = p.balance <= 0 && p.totalFee > 0;
   const statusKey = (p.paymentStatus || "").toLowerCase();
+  const isConfirmed = statusKey === "approved" || statusKey === "paid";
   // Collecting cash before/at pickup only makes sense once the initial
   // portion is actually confirmed — mirrors the same gate the backend
   // enforces in collectRemainingBalance().
-  const canCollect = !!onCollectBalance && !isFullyPaid && p.totalFee > 0 && (statusKey === "approved" || statusKey === "paid");
-  const needsApprovalFirst = !isFullyPaid && p.totalFee > 0 && statusKey !== "approved" && statusKey !== "paid";
+  const canCollect = !!onCollectBalance && !isFullyPaid && p.totalFee > 0 && isConfirmed;
+  const needsApprovalFirst = !isFullyPaid && p.totalFee > 0 && !isConfirmed;
+  // Cash/in-person initial payment waiting to be confirmed — offer the
+  // button right here instead of sending anyone to the Payments page.
+  const canConfirm = !!onConfirmPayment && needsApprovalFirst && statusKey !== "rejected" && statusKey !== "cancelled";
 
   return (
     <div className="fixed inset-0 z-[2000] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -114,7 +126,20 @@ export default function PaymentStatusModal({
             </>
           )}
 
-          {!!onCollectBalance && needsApprovalFirst && (
+          {canConfirm && (
+            <>
+              <button
+                onClick={onConfirmPayment}
+                disabled={confirming}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold bg-arl-dark text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
+              >
+                {confirming ? "Confirming…" : `Confirm Payment Received`}
+              </button>
+              {confirmError && <p className="text-xs text-red-500">{confirmError}</p>}
+            </>
+          )}
+
+          {!canConfirm && !!onCollectBalance && needsApprovalFirst && (
             <div className="space-y-1.5">
               <p className="text-xs text-amber-600">{pendingApprovalNote || "The initial payment must be approved on the Payments page before the remaining balance can be collected."}</p>
               {onGoToPayments && (

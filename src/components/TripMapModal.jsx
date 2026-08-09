@@ -108,6 +108,18 @@ export default function TripMapModal({ open, onClose, title = "Trip Route", stop
       attributionControl: false,
     });
 
+    // Leaflet won't allow flyTo/getCenter/etc. until the map has had a
+    // view set at least once — calling those before that throws "Set map
+    // center and zoom first." fitAll() below is the call that would
+    // normally set the real view, but it's deliberately deferred to the
+    // next animation frame so the modal has time to finish laying out
+    // first (see the invalidateSize comment below). That leaves a short
+    // window, right after the modal opens, where the map exists but has
+    // no view yet — if a stop in the list gets clicked in that window,
+    // focusStop()'s flyTo() call crashes. Setting a provisional view here,
+    // synchronously, closes that window; fitAll() then just refines it.
+    mapRef.current.setView([validStops[0].lat, validStops[0].lng], 13);
+
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(mapRef.current);
 
     // Leaflet measures its tile grid off the container's size AT INIT TIME.

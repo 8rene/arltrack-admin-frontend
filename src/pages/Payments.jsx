@@ -89,6 +89,90 @@ function StatusBadge({ status }) {
 
 const PAGE_SIZE = 15;
 const STATUSES  = ["All", "Pending", "Approved", "Rejected", "Cancelled"];
+const TIME_RANGES = ["All Time", "Today", "Last 7 Days", "This Month", "Custom Range"];
+
+// ─── PAGINATION (same shared pattern as Bookings.jsx / Users.jsx) ─────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  // Clamp if the list shrinks (filter/search/refresh) and we were on a now-empty page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+
+  const rangeEnd = Math.min(start + pageSize, count);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Is createdAt (ISO string) within the selected time range?
+function inTimeRange(iso, range, customFrom, customTo) {
+  if (range === "All Time") return true;
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (isNaN(d)) return false;
+  const now = new Date();
+
+  if (range === "Today") {
+    return d.toDateString() === now.toDateString();
+  }
+  if (range === "Last 7 Days") {
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - 7);
+    return d >= cutoff && d <= now;
+  }
+  if (range === "This Month") {
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }
+  if (range === "Custom Range") {
+    if (!customFrom && !customTo) return true; // no bounds picked yet — don't filter anything out
+    const from = customFrom ? new Date(`${customFrom}T00:00:00`) : null;
+    const to   = customTo   ? new Date(`${customTo}T23:59:59`)   : null;
+    if (from && d < from) return false;
+    if (to   && d > to)   return false;
+    return true;
+  }
+  return true;
+}
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
@@ -99,7 +183,9 @@ export default function Payments() {
   const [search, setSearch]               = useState("");
   const [statusF, setStatusF]             = useState("All");
   const [methodF, setMethodF]             = useState("All");
-  const [page, setPage]                   = useState(1);
+  const [timeF, setTimeF]                 = useState("All Time");
+  const [customFrom, setCustomFrom]       = useState("");
+  const [customTo, setCustomTo]           = useState("");
   const [selected, setSelected]           = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [toast, setToast]                 = useState(null);
@@ -179,12 +265,12 @@ export default function Payments() {
       || (p.vehicleName || "").toLowerCase().includes(q);
     const matchS = statusF === "All" || p.status === statusF;
     const matchM = methodF === "All" || p.paymentMethod === methodF;
-    return matchQ && matchS && matchM;
+    const matchT = inTimeRange(p.createdAt, timeF, customFrom, customTo);
+    return matchQ && matchS && matchM && matchT;
   });
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  useEffect(() => setPage(1), [search, statusF, methodF]);
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
+  useEffect(() => setPage(1), [search, statusF, methodF, timeF, customFrom, customTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── stat cards ──
   const totalCollected = payments.filter(p => ["Approved","Paid"].includes(p.status)).reduce((s,p) => s + p.amountPaid, 0);
@@ -309,6 +395,24 @@ export default function Payments() {
           </select>
           <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
+        <div className="relative">
+          <select value={timeF} onChange={(e) => setTimeF(e.target.value)}
+            className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
+            {TIME_RANGES.map((t) => <option key={t}>{t}</option>)}
+          </select>
+          <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
+        {timeF === "Custom Range" && (
+          <div className="flex items-center gap-1.5">
+            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+              max={customTo || undefined}
+              className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
+            <span className="text-gray-400 text-xs">to</span>
+            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
+              min={customFrom || undefined}
+              className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
+          </div>
+        )}
         <button onClick={fetchPayments} disabled={loading}
           className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
           {loading ? "…" : "Refresh"}
@@ -319,13 +423,14 @@ export default function Payments() {
       {error && <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">{error}</div>}
 
       {/* Table */}
-      <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
+      <div className="bg-white rounded-2xl shadow-soft border border-gray-100">
         <div className="flex justify-between items-center px-5 py-4 border-b border-gray-100">
           <h2 className="font-bold text-arl-dark">
             All Payment Records{" "}
             <span className="text-gray-400 text-sm font-normal">({filtered.length} results)</span>
           </h2>
         </div>
+        <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[900px]">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
@@ -344,8 +449,8 @@ export default function Payments() {
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={10} className="text-center py-16 text-gray-400 text-sm">
-                {search || statusF !== "All" || methodF !== "All" ? "No payments match your filters." : "No payments found."}
+              <tr><td colSpan={11} className="text-center py-16 text-gray-400 text-sm">
+                {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
               </td></tr>
             ) : paginated.map((p, i) => (
               <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
@@ -385,20 +490,9 @@ export default function Payments() {
             ))}
           </tbody>
         </table>
-      </div>
-
-      {/* Pagination */}
-      {!loading && filtered.length > PAGE_SIZE && (
-        <div className="flex items-center justify-between text-sm text-gray-500">
-          <span>Page {page} of {totalPages}</span>
-          <div className="flex gap-2">
-            <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">← Prev</button>
-            <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">Next →</button>
-          </div>
         </div>
-      )}
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
+      </div>
     </div>
   );
 }

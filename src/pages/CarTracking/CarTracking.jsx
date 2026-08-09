@@ -242,6 +242,8 @@ export default function CarTracking() {
   const [paymentModalBooking, setPaymentModalBooking] = useState(null);
   const [collectingBalance,   setCollectingBalance]   = useState(false);
   const [collectBalanceError, setCollectBalanceError] = useState(null);
+  const [confirmingPayment,   setConfirmingPayment]   = useState(false);
+  const [confirmPaymentError, setConfirmPaymentError] = useState(null);
   // Deep-link from Bookings' "Trip History" button — { tab: "history", carID, bookingID }.
   // Only consumed once; switching tabs away and back won't re-trigger it since
   // React Router keeps the same location.state for the life of this page visit,
@@ -818,6 +820,34 @@ export default function CarTracking() {
     }
   };
 
+  // Owner/Admin/Supervisor confirming a cash/in-person initial payment —
+  // right here on Car Tracking, no detour to the Payments page. Keyed by
+  // bookingID (not the booking doc id), matching the backend route.
+  const handleConfirmPayment = async () => {
+    if (!paymentModalBooking) return;
+    setConfirmingPayment(true);
+    setConfirmPaymentError(null);
+    try {
+      const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
+      const res  = await fetch(`${API}/api/payments/booking/${bID}/confirm`, {
+        method:  "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (json.success) {
+        setNotice({ type: "ok", msg: "Payment marked as received." });
+        setPaymentModalBooking(null);
+        await fetchBookings();
+      } else {
+        setConfirmPaymentError(json.message || "Could not confirm payment.");
+      }
+    } catch (e) {
+      setConfirmPaymentError("Action failed — check your connection.");
+    } finally {
+      setConfirmingPayment(false);
+    }
+  };
+
   // Owner/Admin/Supervisor collecting cash/in-person payment of the
   // remaining balance — e.g. right before Pickup. Keyed by bookingID
   // (not the booking doc id), matching the backend route.
@@ -1383,7 +1413,7 @@ export default function CarTracking() {
 
     <PaymentStatusModal
       open={!!paymentModalBooking}
-      onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); }}
+      onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); setConfirmPaymentError(null); }}
       customerName={paymentModalBooking?.customerName}
       payment={paymentModalBooking ? {
         totalFee:      paymentModalBooking.totalFee,
@@ -1392,6 +1422,9 @@ export default function CarTracking() {
         payType:       paymentModalBooking.payType,
         paymentStatus: paymentModalBooking.paymentStatus,
       } : null}
+      onConfirmPayment={handleConfirmPayment}
+      confirming={confirmingPayment}
+      confirmError={confirmPaymentError}
       onCollectBalance={handleCollectBalance}
       collecting={collectingBalance}
       collectError={collectBalanceError}

@@ -109,6 +109,8 @@ function ActiveTripsTab() {
   const [paymentTrip, setPaymentTrip] = useState(null);
   const [collectingBalance, setCollectingBalance] = useState(false);
   const [collectBalanceError, setCollectBalanceError] = useState(null);
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
+  const [confirmPaymentError, setConfirmPaymentError] = useState(null);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -182,6 +184,26 @@ function ActiveTripsTab() {
       showToast(e.message, "error");
     } finally {
       setBusyID(null);
+    }
+  };
+
+  // Driver confirming a cash/in-person initial payment — right here in My
+  // Trips, no Payments page access needed (drivers can't reach it anyway).
+  const handleConfirmPayment = async () => {
+    if (!paymentTrip) return;
+    setConfirmingPayment(true);
+    setConfirmPaymentError(null);
+    try {
+      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/confirm-payment`, { method: "PATCH" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Could not confirm payment.");
+      showToast("Payment marked as received.");
+      setPaymentTrip(null);
+      fetchTrips();
+    } catch (e) {
+      setConfirmPaymentError(e.message);
+    } finally {
+      setConfirmingPayment(false);
     }
   };
 
@@ -317,9 +339,12 @@ function ActiveTripsTab() {
       />
       <PaymentStatusModal
         open={!!paymentTrip}
-        onClose={() => { setPaymentTrip(null); setCollectBalanceError(null); }}
+        onClose={() => { setPaymentTrip(null); setCollectBalanceError(null); setConfirmPaymentError(null); }}
         customerName={paymentTrip?.customerName}
         payment={paymentTrip?.payment}
+        onConfirmPayment={handleConfirmPayment}
+        confirming={confirmingPayment}
+        confirmError={confirmPaymentError}
         onCollectBalance={handleCollectBalance}
         collecting={collectingBalance}
         collectError={collectBalanceError}
