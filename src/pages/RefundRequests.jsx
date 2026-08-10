@@ -16,6 +16,13 @@ const IconX = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconCopy = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="9" y="9" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
 // ─── HELPERS ────────────────────────────────────────────────────────────────
 
 function fmtDate(val) {
@@ -47,6 +54,39 @@ function StatusBadge({ status }) {
       <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
       {status}
     </span>
+  );
+}
+
+function RefundIdCell({ id }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!id) return <span className="text-xs text-gray-300">—</span>;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard not available — ignore silently
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      title="Click to copy PayMongo refund ID"
+      className="inline-flex items-center gap-1.5 font-mono text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-100 hover:border-gray-300 transition-colors"
+    >
+      {copied ? (
+        <span className="text-green-600 font-sans font-semibold">Copied!</span>
+      ) : (
+        <>
+          <span className="max-w-[130px] truncate">{id}</span>
+          <IconCopy className="w-3 h-3 text-gray-400 shrink-0" />
+        </>
+      )}
+    </button>
   );
 }
 
@@ -98,7 +138,7 @@ export default function RefundRequests() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to approve refund.");
       showToast(data.message || "Refund approved and sent to PayMongo.");
-      setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, status: "Approved" } : r));
+      setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, status: "Approved", paymongoRefundID: data.paymongoRefundID || r.paymongoRefundID } : r));
     } catch (e) { showToast(e.message, "error"); }
     finally { setBusyId(null); }
   };
@@ -235,6 +275,7 @@ export default function RefundRequests() {
                 <th className="px-5 py-3 font-semibold">Amount</th>
                 <th className="px-5 py-3 font-semibold">Requested</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
+                <th className="px-5 py-3 font-semibold">PayMongo Refund ID</th>
                 <th className="px-5 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
@@ -256,6 +297,9 @@ export default function RefundRequests() {
                   <td className="px-5 py-4 font-semibold text-arl-dark">{fmt(r.amount)}</td>
                   <td className="px-5 py-4 text-gray-500 text-xs">{fmtDate(r.createdAt)}</td>
                   <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
+                  <td className="px-5 py-4">
+                    <RefundIdCell id={r.paymongoRefundID} />
+                  </td>
                   <td className="px-5 py-4 text-right">
                     {r.status === "Pending" ? (
                       <div className="flex justify-end gap-2">
