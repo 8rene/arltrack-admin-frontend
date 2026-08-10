@@ -259,7 +259,7 @@ export default function RefundRequests() {
                   <td className="px-5 py-4 font-semibold text-arl-dark">{fmt(r.amount)}</td>
                   <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
                   <td className="px-5 py-4">
-                    <ReferenceIdCell id={r.paymongoRefundID} />
+                    <ReferenceIdCell id={r.paymentID} />
                   </td>
                   <td className="px-5 py-4 text-right">
                     {r.status === "Pending" ? (
