@@ -43,7 +43,7 @@ function StatusBadge({ status }) {
   );
 }
 
-function RefundIdCell({ id }) {
+function ReferenceIdCell({ id }) {
   if (!id) return <span className="text-gray-300">—</span>;
 
   return (
@@ -237,7 +237,7 @@ export default function RefundRequests() {
                 <th className="px-5 py-3 font-semibold">Reason</th>
                 <th className="px-5 py-3 font-semibold">Amount</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
-                <th className="px-5 py-3 font-semibold">PayMongo Refund ID</th>
+                <th className="px-5 py-3 font-semibold">Reference ID</th>
                 <th className="px-5 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
@@ -259,7 +259,7 @@ export default function RefundRequests() {
                   <td className="px-5 py-4 font-semibold text-arl-dark">{fmt(r.amount)}</td>
                   <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
                   <td className="px-5 py-4">
-                    <RefundIdCell id={r.paymongoRefundID} />
+                    <ReferenceIdCell id={r.paymongoRefundID} />
                   </td>
                   <td className="px-5 py-4 text-right">
                     {r.status === "Pending" ? (
