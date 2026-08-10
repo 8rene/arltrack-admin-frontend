@@ -44,14 +44,11 @@ function StatusBadge({ status }) {
 }
 
 function RefundIdCell({ id }) {
-  if (!id) return <span className="text-xs text-gray-300">—</span>;
+  if (!id) return <span className="text-gray-300">—</span>;
 
   return (
-    <span
-      title={id}
-      className="inline-flex items-center font-mono text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1"
-    >
-      <span className="max-w-[130px] truncate">{id}</span>
+    <span title={id} className="font-mono text-gray-600 truncate block max-w-[160px]">
+      {id}
     </span>
   );
 }
