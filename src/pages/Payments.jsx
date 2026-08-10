@@ -333,7 +333,7 @@ export default function Payments() {
 
                   <Section title="Payment Info">
                     <Row label="Payment ID" value={selected.paymentID} mono />
-                    <Row label="Reference #" value={selected.referenceNumber} />
+                    <Row label="Payment Reference" value={selected.paymongoPaymentID || "—"} mono />
                     <Row label="Payment Type" value={selected.methodOfPayment} />
                     <Row label="Gateway" value={selected.paymentMethod} />
                     <Row label="Submitted" value={fmtDate(selected.createdAt)} />
@@ -434,7 +434,7 @@ export default function Payments() {
         <table className="w-full text-sm min-w-[900px]">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              {["Ref #", "Customer", "Car", "Total Fee", "Amount Paid", "Balance", "Method", "Payment Ref", "Status", "Submitted", ""].map((h) => (
+              {["Ref #", "Customer", "Car", "Total Fee", "Amount Paid", "Balance", "Method", "Payment Reference", "Status", "Submitted", ""].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">{h}</th>
               ))}
             </tr>
@@ -477,7 +477,7 @@ export default function Payments() {
                   {peso(p.balance, fmtCurrency)}
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600">{p.paymentMethod}</td>
-                <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.referenceNumber || "—"}</td>
+                <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.paymongoPaymentID || "—"}</td>
                 <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
                 <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                 <td className="px-4 py-3">

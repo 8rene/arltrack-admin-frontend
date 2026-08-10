@@ -43,16 +43,6 @@ function StatusBadge({ status }) {
   );
 }
 
-function ReferenceIdCell({ id }) {
-  if (!id) return <span className="text-gray-300">—</span>;
-
-  return (
-    <span title={id} className="font-mono text-gray-600 truncate block max-w-[160px]">
-      {id}
-    </span>
-  );
-}
-
 const STATUSES = ["All", "Pending", "Approved", "Refunded", "Rejected", "Failed"];
 
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
@@ -237,7 +227,6 @@ export default function RefundRequests() {
                 <th className="px-5 py-3 font-semibold">Reason</th>
                 <th className="px-5 py-3 font-semibold">Amount</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
-                <th className="px-5 py-3 font-semibold">Reference ID</th>
                 <th className="px-5 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
@@ -258,9 +247,6 @@ export default function RefundRequests() {
                   </td>
                   <td className="px-5 py-4 font-semibold text-arl-dark">{fmt(r.amount)}</td>
                   <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
-                  <td className="px-5 py-4">
-                    <ReferenceIdCell id={r.paymentID} />
-                  </td>
                   <td className="px-5 py-4 text-right">
                     {r.status === "Pending" ? (
                       <div className="flex justify-end gap-2">
