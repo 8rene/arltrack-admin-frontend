@@ -65,11 +65,47 @@ const IconClipboard = ({ className = "w-12 h-12" }) => (
   </svg>
 );
 
-const IconSummary = ({ className = "w-4 h-4" }) => (
+const IconTrendUp = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M3 17l6-6 4 4 8-8M21 7h-6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconDoc = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
+    <path d="M14 2v5h5M8 13h8M8 17h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconChecklist = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M8 12l2.5 2.5L16 9" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconCar = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 13l1.5-5A2 2 0 016.4 6.5h11.2A2 2 0 0119.5 8l1.5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="2.5" y="13" width="19" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <circle cx="7" cy="19" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="17" cy="19" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+  </svg>
+);
+
+const IconUsers = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="9" cy="8" r="3.25" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M2.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M16 4.5a3.25 3.25 0 010 6.5M21.5 20c0-3-2.2-5.3-5-5.9" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconMail = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3.5 6.5L12 13l8.5-6.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
@@ -88,6 +124,12 @@ const IconPackage = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconChevron = ({ className = "w-4 h-4", open }) => (
+  <svg className={`${className} transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
 const PERIODS = [
@@ -97,8 +139,12 @@ const PERIODS = [
   { key: "yearly",  label: "Yearly",  Icon: IconBarChart,      desc: "Pick a year" },
 ];
 
-const TABS = [
-  { key: "summary",  label: "Summary",  Icon: IconSummary },
+const MAIN_TABS = [
+  { key: "view",    label: "View Reports" },
+  { key: "receive", label: "Receive Reports" },
+];
+
+const DETAIL_TABS = [
   { key: "payments", label: "Payments", Icon: IconCreditCard },
   { key: "bookings", label: "Bookings", Icon: IconPackage },
 ];
@@ -112,6 +158,8 @@ const STATUS_COLORS = {
   pending:  "bg-yellow-50 border border-yellow-200",
   cancelled:"bg-gray-100 text-gray-500",
   completed:"bg-blue-100 text-blue-700",
+  ongoing:  "bg-teal-50 border border-teal-200",
+  upcoming: "bg-purple-50 border border-purple-200",
 };
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -153,7 +201,9 @@ export default function Reports() {
   const [report, setReport]       = useState(null);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState(null);
-  const [activeTab, setActiveTab] = useState("summary");
+  const [mainTab, setMainTab]     = useState("view");
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailTab, setDetailTab]   = useState("payments");
   const printRef = useRef(null);
   const token = localStorage.getItem("token");
 
@@ -179,7 +229,8 @@ export default function Reports() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to generate report.");
       setReport(json.data);
-      setActiveTab("summary");
+      setDetailOpen(false);
+      setDetailTab("payments");
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }, [token, period, selYear, selMonth, selWeek, selDay]);
@@ -206,20 +257,34 @@ export default function Reports() {
       ["Currency",      currency],
       [],
       ["Metric", "Value"],
-      ["Total Revenue",           fmt(report.summary.totalRevenue)],
-      ["Amount Collected",        fmt(report.summary.totalPaid)],
-      ["Outstanding Balance",     fmt(report.summary.totalBalance)],
-      ["Total Payments",          report.summary.totalPayments],
-      ["Total Bookings",          report.summary.totalBookings],
-      ["Avg Revenue per Booking", fmt(report.summary.avgRevenuePerBooking)],
+      ["Total Sales",              fmt(report.topStats.totalSales)],
+      ["Number of Rentals",        report.topStats.numberOfRentals],
+      ["Average Sale",             fmt(report.topStats.averageSale)],
       [],
-      ["Revenue by Gateway"],
-      ["Gateway", "Amount"],
-      ...Object.entries(report.paymentsByGateway).map(([k, v]) => [k, fmt(v)]),
+      ["Revenue Report"],
+      ["Total Revenue",   fmt(report.revenueReport.totalRevenue)],
+      ["Paid Amount",     fmt(report.revenueReport.paidAmount)],
+      ["Pending Amount",  fmt(report.revenueReport.pendingAmount)],
+      ["Refunded Amount", fmt(report.revenueReport.refundedAmount)],
       [],
-      ["Bookings by Status"],
-      ["Status", "Count"],
-      ...Object.entries(report.bookingsByStatus).filter(([k]) => ["completed", "cancelled"].includes(k.toLowerCase())).map(([k, v]) => [k, v]),
+      ["Rental Report"],
+      ["Total Rentals", report.rentalReport.totalRentals],
+      ["Completed",      report.rentalReport.completed],
+      ["Ongoing",        report.rentalReport.ongoing],
+      ["Upcoming",       report.rentalReport.upcoming],
+      ["Cancelled",      report.rentalReport.cancelled],
+      [],
+      ["Vehicle Report"],
+      ["Total Vehicles Rented", report.vehicleReport.totalVehiclesRented],
+      ["Revenue per Vehicle",   fmt(report.vehicleReport.revenuePerVehicle)],
+      ["Most Rented Vehicle",   report.vehicleReport.mostRented ? `${report.vehicleReport.mostRented.name} (${report.vehicleReport.mostRented.rentals} rentals)` : "—"],
+      ["Least Rented Vehicle",  report.vehicleReport.leastRented ? `${report.vehicleReport.leastRented.name} (${report.vehicleReport.leastRented.rentals} rentals)` : "—"],
+      [],
+      ["Customer Report"],
+      ["Total Customers",           report.customerReport.totalCustomers],
+      ["New Customers (this month)",report.customerReport.newCustomersThisMonth],
+      ["Top Customer", "Amount Paid"],
+      ...report.customerReport.topCustomers.map((c) => [c.name, fmt(c.amountPaid)]),
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
     autoWidth(wsSummary, summaryRows);
@@ -294,8 +359,6 @@ export default function Reports() {
     };
   };
 
-  const s = report?.summary;
-
   return (
     <div className="w-full px-4 space-y-5" ref={printRef}>
 
@@ -307,7 +370,7 @@ export default function Reports() {
             {report ? `${report.label} · Generated ${fmtDateTime(report.generatedAt)}` : "Select a period and generate a report"}
           </p>
         </div>
-        {report && (
+        {report && mainTab === "view" && (
           <div className="flex gap-2">
             <button onClick={exportCSV}
               className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50">
@@ -321,225 +384,295 @@ export default function Reports() {
         )}
       </div>
 
-      {/* PERIOD SELECTOR */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Select Report Period</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {PERIODS.map((p) => (
-            <button key={p.key} onClick={() => setPeriod(p.key)}
-              className={`flex flex-col items-center gap-1 px-4 py-4 rounded-xl border-2 transition-all ${
-                period === p.key
-                  ? "border-arl-dark bg-arl-dark text-white"
-                  : "border-gray-100 hover:border-gray-300 text-gray-600"
-              }`}>
-              <p.Icon className="w-7 h-7" />
-              <span className="font-semibold text-sm">{p.label}</span>
-              <span className={`text-xs ${period === p.key ? "text-white/70" : "text-gray-400"}`}>{p.desc}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* WHICH WEEK / MONTH / YEAR */}
-        <div className="mt-5 pt-5 border-t border-gray-100">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            Which {period === "daily" ? "day" : period === "weekly" ? "week" : period === "monthly" ? "month" : "year"}?
-          </p>
-          <div className="flex flex-wrap gap-3">
-            {/* Year — always shown */}
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-400">Year</span>
-              <select value={selYear} onChange={(e) => setSelYear(Number(e.target.value))}
-                className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                {YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </label>
-
-            {/* Month — for daily / weekly / monthly */}
-            {(period === "daily" || period === "weekly" || period === "monthly") && (
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Month</span>
-                <select value={selMonth} onChange={(e) => setSelMonth(Number(e.target.value))}
-                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                  {MONTH_NAMES.map((name, i) => <option key={name} value={i + 1}>{name}</option>)}
-                </select>
-              </label>
-            )}
-
-            {/* Week — for weekly only */}
-            {period === "weekly" && (
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Week</span>
-                <select value={selWeek} onChange={(e) => setSelWeek(Number(e.target.value))}
-                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                  {WEEK_OPTIONS.map((w) => <option key={w} value={w}>Week {w}</option>)}
-                </select>
-              </label>
-            )}
-
-            {/* Day — for daily only */}
-            {period === "daily" && (
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Day</span>
-                <select value={selDay} onChange={(e) => setSelDay(Number(e.target.value))}
-                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                  {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </label>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-4 flex justify-end">
-          <button onClick={generate} disabled={loading}
-            className="px-6 py-2.5 bg-arl-dark text-white rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50 flex items-center gap-2">
-            {loading ? (
-              <><svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-              </svg> Generating…</>
-            ) : "Generate Report →"}
+      {/* MAIN TABS */}
+      <div className="border-b border-gray-100 flex gap-6">
+        {MAIN_TABS.map((t) => (
+          <button key={t.key} onClick={() => setMainTab(t.key)}
+            className={`pb-3 -mb-px text-sm font-medium border-b-2 transition-colors ${
+              mainTab === t.key
+                ? "border-arl-dark text-arl-dark font-semibold"
+                : "border-transparent text-gray-400 hover:text-gray-600"
+            }`}>
+            {t.label}
           </button>
-        </div>
+        ))}
       </div>
 
-      {/* ERROR */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
-          <IconWarning className="w-4 h-4 shrink-0" />
-          {error}
+      {mainTab === "receive" ? (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft flex flex-col items-center justify-center py-20 gap-3 text-gray-300">
+          <IconMail className="w-12 h-12" />
+          <p className="text-gray-500 font-semibold">Scheduled reports coming soon</p>
+          <p className="text-gray-400 text-sm max-w-sm text-center">
+            This will let you have reports emailed to you automatically on a daily, weekly, or monthly schedule.
+          </p>
         </div>
-      )}
-
-      {/* REPORT OUTPUT */}
-      {report && (
+      ) : (
         <>
-          {/* TABS */}
-          <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-            {TABS.map((t) => (
-              <button key={t.key} onClick={() => setActiveTab(t.key)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
-                  activeTab === t.key ? "bg-white text-arl-dark shadow-sm font-semibold" : "text-gray-500 hover:text-gray-700"
-                }`}>
-                <t.Icon className="w-3.5 h-3.5" />
-                {t.label}
+          {/* PERIOD SELECTOR */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Select Report Period</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {PERIODS.map((p) => (
+                <button key={p.key} onClick={() => setPeriod(p.key)}
+                  className={`flex flex-col items-center gap-1 px-4 py-4 rounded-xl border-2 transition-all ${
+                    period === p.key
+                      ? "border-arl-dark bg-arl-dark text-white"
+                      : "border-gray-100 hover:border-gray-300 text-gray-600"
+                  }`}>
+                  <p.Icon className="w-7 h-7" />
+                  <span className="font-semibold text-sm">{p.label}</span>
+                  <span className={`text-xs ${period === p.key ? "text-white/70" : "text-gray-400"}`}>{p.desc}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* WHICH WEEK / MONTH / YEAR */}
+            <div className="mt-5 pt-5 border-t border-gray-100">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                Which {period === "daily" ? "day" : period === "weekly" ? "week" : period === "monthly" ? "month" : "year"}?
+              </p>
+              <div className="flex flex-wrap gap-3">
+                {/* Year — always shown */}
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-gray-400">Year</span>
+                  <select value={selYear} onChange={(e) => setSelYear(Number(e.target.value))}
+                    className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                    {YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </label>
+
+                {/* Month — for daily / weekly / monthly */}
+                {(period === "daily" || period === "weekly" || period === "monthly") && (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-400">Month</span>
+                    <select value={selMonth} onChange={(e) => setSelMonth(Number(e.target.value))}
+                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                      {MONTH_NAMES.map((name, i) => <option key={name} value={i + 1}>{name}</option>)}
+                    </select>
+                  </label>
+                )}
+
+                {/* Week — for weekly only */}
+                {period === "weekly" && (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-400">Week</span>
+                    <select value={selWeek} onChange={(e) => setSelWeek(Number(e.target.value))}
+                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                      {WEEK_OPTIONS.map((w) => <option key={w} value={w}>Week {w}</option>)}
+                    </select>
+                  </label>
+                )}
+
+                {/* Day — for daily only */}
+                {period === "daily" && (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-400">Day</span>
+                    <select value={selDay} onChange={(e) => setSelDay(Number(e.target.value))}
+                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                      {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button onClick={generate} disabled={loading}
+                className="px-6 py-2.5 bg-arl-dark text-white rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50 flex items-center gap-2">
+                {loading ? (
+                  <><svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                  </svg> Generating…</>
+                ) : "Generate Report →"}
               </button>
-            ))}
+            </div>
           </div>
 
-          {/* SUMMARY TAB */}
-          {activeTab === "summary" && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <BigStat label="Total Revenue"         value={fmt(s.totalRevenue)}         sub="Gross amount"       color="teal" />
-                <BigStat label="Amount Collected"      value={fmt(s.totalPaid)}            sub="Payments received"  color="green" />
-                <BigStat label="Outstanding Balance"   value={fmt(s.totalBalance)}         sub="Still due"          color="orange" />
-                <BigStat label="Total Payments"        value={s.totalPayments}             sub="Transactions"       color="blue" />
-                <BigStat label="Total Bookings"        value={s.totalBookings}             sub="Reservations"       color="purple" />
-                <BigStat label="Avg Revenue / Booking" value={fmt(s.avgRevenuePerBooking)} sub="Per reservation"    color="pink" />
+          {/* ERROR */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
+              <IconWarning className="w-4 h-4 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          {/* REPORT OUTPUT */}
+          {report && (
+            <div className="report-printable space-y-4">
+
+              {/* TOP STAT CARDS */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <TopStatCard icon={IconBarChart}  label="Total Sales"       value={fmt(report.topStats.totalSales)} />
+                <TopStatCard icon={IconDoc}       label="Number of Rentals" value={report.topStats.numberOfRentals} />
+                <TopStatCard icon={IconTrendUp}   label="Average Sale"      value={fmt(report.topStats.averageSale)} />
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
-                <BreakdownCard title="Revenue by Gateway" data={report.paymentsByGateway}
-                  isCurrency fmt={fmt}
-                  colorFn={() => "bg-teal-100 text-teal-700"} />
-                <BreakdownCard title="Bookings by Status" data={report.bookingsByStatus}
-                  colorFn={(k) => STATUS_COLORS[k] || "bg-gray-100 text-gray-600"} />
+              {/* REVENUE REPORT */}
+              <ReportSection icon={IconDoc} title="Revenue Report">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <MiniStat label="Total Revenue"   value={fmt(report.revenueReport.totalRevenue)} />
+                  <MiniStat label="Paid Amount"     value={fmt(report.revenueReport.paidAmount)}     color="text-green-600" />
+                  <MiniStat label="Pending Amount"  value={fmt(report.revenueReport.pendingAmount)}  color="text-amber-500" />
+                  <MiniStat label="Refunded Amount" value={fmt(report.revenueReport.refundedAmount)} color="text-red-500" />
+                </div>
+              </ReportSection>
+
+              {/* RENTAL REPORT */}
+              <ReportSection icon={IconChecklist} title="Rental Report">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                  <MiniStat label="Total Rentals" value={report.rentalReport.totalRentals} />
+                  <MiniStat label="Completed" value={report.rentalReport.completed} color="text-green-600" />
+                  <MiniStat label="Ongoing"   value={report.rentalReport.ongoing}   color="text-teal-600" />
+                  <MiniStat label="Upcoming"  value={report.rentalReport.upcoming}  color="text-purple-600" />
+                  <MiniStat label="Cancelled" value={report.rentalReport.cancelled} color="text-red-500" />
+                </div>
+              </ReportSection>
+
+              {/* VEHICLE REPORT */}
+              <ReportSection icon={IconCar} title="Vehicle Report">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <MiniStat label="Total Vehicles Rented" value={report.vehicleReport.totalVehiclesRented} />
+                  <MiniStat label="Revenue per Vehicle"   value={fmt(report.vehicleReport.revenuePerVehicle)} />
+                </div>
+                {report.vehicleReport.totalVehiclesRented > 0 ? (
+                  <div className="space-y-2">
+                    <RankRow icon="up"   label="Most Rented Vehicle"  name={report.vehicleReport.mostRented?.name}  countLabel={`${report.vehicleReport.mostRented?.rentals} rentals`} />
+                    <RankRow icon="down" label="Least Rented Vehicle" name={report.vehicleReport.leastRented?.name} countLabel={`${report.vehicleReport.leastRented?.rentals} rentals`} />
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-400 italic">No vehicles rented in this period.</p>
+                )}
+              </ReportSection>
+
+              {/* CUSTOMER REPORT */}
+              <ReportSection icon={IconUsers} title="Customer Report">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <MiniStat label="Total Customers" value={report.customerReport.totalCustomers} />
+                  <MiniStat label="New Customers (this month)" value={report.customerReport.newCustomersThisMonth} color="text-green-600" />
+                </div>
+                {report.customerReport.topCustomers.length > 0 ? (
+                  <div>
+                    <p className="text-xs text-gray-400 font-semibold mb-2">Top Customers</p>
+                    <div className="space-y-1.5">
+                      {report.customerReport.topCustomers.map((c, i) => (
+                        <div key={c.userID} className="flex items-center gap-3 py-1">
+                          <span className="text-xs text-gray-400 w-4">{i + 1}</span>
+                          <span className="w-7 h-7 rounded-full bg-blue-100 text-blue-600 text-xs font-semibold flex items-center justify-center shrink-0">
+                            {c.name?.[0]?.toUpperCase() || "?"}
+                          </span>
+                          <span className="text-sm text-gray-700 flex-1 truncate">{c.name}</span>
+                          <span className="text-sm font-semibold text-blue-600">{fmt(c.amountPaid)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-400 italic">No paying customers in this period.</p>
+                )}
+              </ReportSection>
+
+              {/* DETAIL RECORDS (collapsible — raw payments/bookings tables) */}
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+                <button onClick={() => setDetailOpen((v) => !v)}
+                  className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50/50">
+                  <span className="font-semibold text-gray-800 text-sm">Detailed Records</span>
+                  <IconChevron open={detailOpen} />
+                </button>
+
+                {detailOpen && (
+                  <div className="border-t border-gray-100">
+                    <div className="px-5 pt-4 flex gap-1 bg-gray-50/50">
+                      {DETAIL_TABS.map((t) => (
+                        <button key={t.key} onClick={() => setDetailTab(t.key)}
+                          className={`px-4 py-2 rounded-t-lg text-sm font-medium flex items-center gap-1.5 ${
+                            detailTab === t.key ? "bg-white text-arl-dark font-semibold border border-b-0 border-gray-100" : "text-gray-500 hover:text-gray-700"
+                          }`}>
+                          <t.Icon className="w-3.5 h-3.5" />
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {detailTab === "payments" && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm min-w-[750px]">
+                          <thead>
+                            <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
+                              {["Payment ID","Total","Paid","Balance","Status","Type","Gateway","Ref #","Date"].map(h => (
+                                <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {report.payments.length === 0 ? (
+                              <tr><td colSpan={9} className="text-center py-12 text-gray-400 text-sm">No payment records in this period.</td></tr>
+                            ) : report.payments.map((p, i) => (
+                              <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/50 ${i%2===1?"bg-gray-50/30":""}`}>
+                                <td className="px-4 py-3 font-mono text-xs text-gray-600 truncate max-w-[130px]">{p.paymentID}</td>
+                                <td className="px-4 py-3 text-xs font-semibold">{fmt(p.amount)}</td>
+                                <td className="px-4 py-3 text-xs text-green-700 font-semibold">{fmt(p.amountPaid)}</td>
+                                <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>{fmt(p.balance)}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[p.status]||"bg-gray-100 text-gray-500"}`}>{p.status}</span>
+                                </td>
+                                <td className="px-4 py-3 text-xs text-gray-600">{p.methodOfPayment}</td>
+                                <td className="px-4 py-3 text-xs text-gray-600">{p.paymentMethod}</td>
+                                <td className="px-4 py-3 text-xs font-mono text-gray-500">{p.referenceNumber}</td>
+                                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {detailTab === "bookings" && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm min-w-[700px]">
+                          <thead>
+                            <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
+                              {["Booking ID","Status","Location","Total Fee","Days","Start","End","Created"].map(h => (
+                                <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {report.bookings.length === 0 ? (
+                              <tr><td colSpan={8} className="text-center py-12 text-gray-400 text-sm">No booking records in this period.</td></tr>
+                            ) : report.bookings.map((b, i) => (
+                              <tr key={b.id} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/50 ${i%2===1?"bg-gray-50/30":""}`}>
+                                <td className="px-4 py-3 font-mono text-xs text-gray-600 truncate max-w-[130px]">{b.bookingID}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[b.status]||"bg-gray-100 text-gray-500"}`}>{b.status}</span>
+                                </td>
+                                <td className="px-4 py-3 text-xs text-gray-600 max-w-[140px] truncate">{b.location}</td>
+                                <td className="px-4 py-3 text-xs font-semibold text-gray-800">{fmt(b.totalFee)}</td>
+                                <td className="px-4 py-3 text-xs text-gray-600">{b.totalDays}d</td>
+                                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.startDate)}</td>
+                                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.endDate)}</td>
+                                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.createdAt)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* PAYMENTS TAB */}
-          {activeTab === "payments" && (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                <h2 className="font-semibold text-gray-800 text-sm">
-                  Payment Records <span className="text-gray-400 font-normal">({report.payments.length})</span>
-                </h2>
-                <span className="text-xs text-gray-400">{report.label}</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[750px]">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
-                      {["Payment ID","Total","Paid","Balance","Status","Type","Gateway","Ref #","Date"].map(h => (
-                        <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.payments.length === 0 ? (
-                      <tr><td colSpan={9} className="text-center py-12 text-gray-400 text-sm">No payment records in this period.</td></tr>
-                    ) : report.payments.map((p, i) => (
-                      <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/50 ${i%2===1?"bg-gray-50/30":""}`}>
-                        <td className="px-4 py-3 font-mono text-xs text-gray-600 truncate max-w-[130px]">{p.paymentID}</td>
-                        <td className="px-4 py-3 text-xs font-semibold">{fmt(p.amount)}</td>
-                        <td className="px-4 py-3 text-xs text-green-700 font-semibold">{fmt(p.amountPaid)}</td>
-                        <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>{fmt(p.balance)}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[p.status]||"bg-gray-100 text-gray-500"}`}>{p.status}</span>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-gray-600">{p.methodOfPayment}</td>
-                        <td className="px-4 py-3 text-xs text-gray-600">{p.paymentMethod}</td>
-                        <td className="px-4 py-3 text-xs font-mono text-gray-500">{p.referenceNumber}</td>
-                        <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* BOOKINGS TAB */}
-          {activeTab === "bookings" && (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                <h2 className="font-semibold text-gray-800 text-sm">
-                  Booking Records <span className="text-gray-400 font-normal">({report.bookings.length})</span>
-                </h2>
-                <span className="text-xs text-gray-400">{report.label}</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[700px]">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
-                      {["Booking ID","Status","Location","Total Fee","Days","Start","End","Created"].map(h => (
-                        <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.bookings.length === 0 ? (
-                      <tr><td colSpan={8} className="text-center py-12 text-gray-400 text-sm">No booking records in this period.</td></tr>
-                    ) : report.bookings.map((b, i) => (
-                      <tr key={b.id} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/50 ${i%2===1?"bg-gray-50/30":""}`}>
-                        <td className="px-4 py-3 font-mono text-xs text-gray-600 truncate max-w-[130px]">{b.bookingID}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[b.status]||"bg-gray-100 text-gray-500"}`}>{b.status}</span>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-gray-600 max-w-[140px] truncate">{b.location}</td>
-                        <td className="px-4 py-3 text-xs font-semibold text-gray-800">{fmt(b.totalFee)}</td>
-                        <td className="px-4 py-3 text-xs text-gray-600">{b.totalDays}d</td>
-                        <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.startDate)}</td>
-                        <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.endDate)}</td>
-                        <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.createdAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          {/* Empty state */}
+          {!report && !loading && !error && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-soft flex flex-col items-center justify-center py-20 gap-3 text-gray-300">
+              <IconClipboard className="w-12 h-12" />
+              <p className="text-gray-500 font-semibold">No report generated yet</p>
+              <p className="text-gray-400 text-sm">Pick a period above and click Generate Report</p>
             </div>
           )}
         </>
-      )}
-
-      {/* Empty state */}
-      {!report && !loading && !error && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft flex flex-col items-center justify-center py-20 gap-3 text-gray-300">
-          <IconClipboard className="w-12 h-12" />
-          <p className="text-gray-500 font-semibold">No report generated yet</p>
-          <p className="text-gray-400 text-sm">Pick a period above and click Generate Report</p>
-        </div>
       )}
 
     </div>
@@ -548,55 +681,55 @@ export default function Reports() {
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
 
-function BigStat({ label, value, sub, color }) {
-  const colors = {
-    teal:   "text-teal-600   bg-teal-50",
-    green:  "text-green-600  bg-green-50",
-    orange: "text-orange-500 bg-orange-50",
-    blue:   "text-blue-600   bg-blue-50",
-    purple: "text-purple-600 bg-purple-50",
-    pink:   "text-pink-600   bg-pink-50",
-  };
-  const [textC, bgC] = (colors[color] || "text-gray-800 bg-gray-50").split(" ");
+function TopStatCard({ icon: Icon, label, value }) {
   return (
-    <div className={`rounded-2xl border border-gray-100 shadow-soft p-4 ${bgC}`}>
-      <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">{label}</p>
-      <p className={`text-xl font-bold ${textC}`}>{value}</p>
-      <p className="text-xs text-gray-400 mt-0.5">{sub}</p>
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5 flex items-start gap-4">
+      <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+        <Icon className="w-5 h-5" />
+      </div>
+      <div>
+        <p className="text-sm text-gray-500 mb-1">{label}</p>
+        <p className="text-2xl font-bold text-gray-900">{value}</p>
+      </div>
     </div>
   );
 }
 
-function BreakdownCard({ title, data, colorFn, isCurrency, fmt: fmtFn }) {
-  const entries = Object.entries(data || {});
-  const total   = entries.reduce((s, [, v]) => s + v, 0);
-
+function ReportSection({ icon: Icon, title, children }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
-      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">{title}</p>
-      {entries.length === 0 ? (
-        <p className="text-sm text-gray-400 italic">No data</p>
-      ) : (
-        <div className="space-y-2">
-          {entries.sort((a,b)=>b[1]-a[1]).map(([key, val]) => {
-            const pct = total > 0 ? ((val / total) * 100).toFixed(0) : 0;
-            return (
-              <div key={key} className="flex items-center gap-3">
-                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold min-w-[80px] text-center ${colorFn(key)}`}>
-                  {key}
-                </span>
-                <div className="flex-1 bg-gray-100 rounded-full h-2">
-                  <div className="bg-teal-500 h-2 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
-                </div>
-                <span className="text-xs font-semibold text-gray-700 w-24 text-right">
-                  {isCurrency ? fmtFn(val) : val}
-                </span>
-                <span className="text-xs text-gray-400 w-8 text-right">{pct}%</span>
-              </div>
-            );
-          })}
+      <div className="flex items-center gap-2 mb-4">
+        <Icon className="w-5 h-5 text-arl-dark" />
+        <h2 className="font-semibold text-gray-800 text-sm">{title}</h2>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function MiniStat({ label, value, color = "text-gray-900" }) {
+  return (
+    <div className="bg-gray-50/70 rounded-xl p-3">
+      <p className="text-xs text-gray-400 mb-1">{label}</p>
+      <p className={`text-lg font-bold ${color}`}>{value}</p>
+    </div>
+  );
+}
+
+function RankRow({ icon, label, name, countLabel }) {
+  const up = icon === "up";
+  return (
+    <div className="flex items-center justify-between bg-gray-50/70 rounded-xl px-4 py-3">
+      <div className="flex items-center gap-3">
+        <span className={`w-6 h-6 flex items-center justify-center ${up ? "text-green-600" : "text-red-500"}`}>
+          {up ? <IconTrendUp className="w-4 h-4" /> : <IconTrendUp className="w-4 h-4 rotate-180" />}
+        </span>
+        <div>
+          <p className="text-xs text-gray-400">{label}</p>
+          <p className="text-sm font-semibold text-gray-800">{name || "—"}</p>
         </div>
-      )}
+      </div>
+      <span className={`text-sm font-semibold ${up ? "text-green-600" : "text-red-500"}`}>{countLabel}</span>
     </div>
   );
 }

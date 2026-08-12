@@ -52,6 +52,9 @@ const IconTag = ({ className = "w-3.5 h-3.5" }) => (
  * @param {(amount: number, reason: string) => void} [onApplyDiscount] - staff-only. Omit entirely for driver-facing screens (My Trips) — they can see payment.discountAmount reflected in the breakdown, but never get the control to set it.
  * @param {boolean} [applyingDiscount] - shows a busy state on the discount button while the request is in flight
  * @param {string} [discountError] - shown under the discount control if the last attempt failed
+ * @param {() => void} [onMarkRefundIssued] - both staff AND drivers can call this (unlike onApplyDiscount) — whoever's physically holding the cash confirms it was handed back. Shown only when payment.refundDue > 0.
+ * @param {boolean} [markingRefund] - shows a busy state on the button while the request is in flight
+ * @param {string} [refundError] - shown under the button if the last attempt failed
  * @param {() => void} [onGoToPayments] - fallback link shown only if onConfirmPayment isn't provided. Omit for roles that can't reach the Payments page (e.g. drivers).
  * @param {string} [pendingApprovalNote] - override the default "must be approved" wording, used only in the onGoToPayments fallback case
  */
@@ -60,9 +63,10 @@ export default function PaymentStatusModal({
   onConfirmPayment, confirming, confirmError,
   onCollectBalance, collecting, collectError,
   onApplyDiscount, applyingDiscount, discountError,
+  onMarkRefundIssued, markingRefund, refundError,
   onGoToPayments, pendingApprovalNote,
 }) {
-  const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0 };
+  const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0, refundDue: 0 };
 
   // Pre-fill with whatever discount is already on the booking — the field
   // sets the total discount, not an incremental add-on-top, so editing it
@@ -149,6 +153,36 @@ export default function PaymentStatusModal({
             <p className="text-xs text-gray-400">
               Collect the remaining {peso(p.balance)} before or upon completion of the trip, per your team's policy.
             </p>
+          )}
+
+          {/* A discount was applied after this booking was already paid past
+              what it could absorb — the spillover is cash owed BACK to the
+              customer. Shown to whoever's holding the cash (staff or the
+              driver), not just staff — see onMarkRefundIssued's JSDoc. */}
+          {p.refundDue > 0 && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-red-700 flex items-center gap-1.5">
+                  <IconTag className="w-3.5 h-3.5" /> Refund Due to Customer
+                </span>
+                <span className="font-bold text-red-700">{peso(p.refundDue)}</span>
+              </div>
+              <p className="text-xs text-red-600">
+                A discount was applied after this booking was already fully paid. Return {peso(p.refundDue)} to the customer.
+              </p>
+              {onMarkRefundIssued && (
+                <>
+                  <button
+                    onClick={onMarkRefundIssued}
+                    disabled={markingRefund}
+                    className="w-full py-2 rounded-xl text-sm font-semibold bg-red-600 text-white hover:bg-red-700 active:scale-[0.99] transition-all disabled:opacity-50"
+                  >
+                    {markingRefund ? "Marking…" : `Mark ${peso(p.refundDue)} as Returned`}
+                  </button>
+                  {refundError && <p className="text-xs text-red-500">{refundError}</p>}
+                </>
+              )}
+            </div>
           )}
 
           {canCollect && (

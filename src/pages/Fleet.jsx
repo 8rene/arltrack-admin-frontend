@@ -102,6 +102,17 @@ const STATUS_STYLE = {
   Inactive:    "bg-gray-100 border border-gray-200 text-gray-500",
 };
 
+// Card border color per status — same color family as STATUS_STYLE above,
+// just solid instead of a light fill, so a status is identifiable from the
+// card outline alone (useful when scanning a full grid at a glance).
+const STATUS_BORDER = {
+  Active:      "border-green-400",
+  Rented:      "border-blue-400",
+  Reserved:    "border-orange-400",
+  Maintenance: "border-red-400",
+  Inactive:    "border-gray-300",
+};
+
 // Sort pricing: 12 Hours always last
 function sortPricing(pricing) {
   return [...(pricing || [])].sort((a, b) => {
@@ -357,7 +368,7 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
   ) || car.pricing?.[0];
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col">
+    <div className={`bg-white rounded-2xl shadow-sm border-2 overflow-hidden flex flex-col ${STATUS_BORDER[car.status] || "border-gray-200"}`}>
       {/* IMAGE */}
       <div className="relative h-44 bg-gray-100 overflow-hidden">
         {car.imageURL ? (

@@ -246,6 +246,8 @@ export default function CarTracking() {
   const [confirmPaymentError, setConfirmPaymentError] = useState(null);
   const [applyingDiscount,    setApplyingDiscount]    = useState(false);
   const [discountError,       setDiscountError]       = useState(null);
+  const [markingRefund,       setMarkingRefund]       = useState(false);
+  const [refundError,         setRefundError]         = useState(null);
   // Deep-link from Bookings' "Trip History" button — { tab: "history", carID, bookingID }.
   // Only consumed once; switching tabs away and back won't re-trigger it since
   // React Router keeps the same location.state for the life of this page visit,
@@ -918,6 +920,35 @@ export default function CarTracking() {
     }
   };
 
+  // Owner/Admin/Supervisor confirming a refund-due amount (created when a
+  // discount overshot the balance) was handed back to the customer. Same
+  // re-sync pattern as handleApplyDiscount above.
+  const handleMarkRefundIssued = async () => {
+    if (!paymentModalBooking) return;
+    setMarkingRefund(true);
+    setRefundError(null);
+    try {
+      const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
+      const res  = await fetch(`${API}/api/payments/booking/${bID}/refund-issued`, {
+        method:  "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (json.success) {
+        setNotice({ type: "ok", msg: "Refund marked as returned." });
+        const fresh = await fetchBookings();
+        const updated = (fresh || []).find((b) => (b.bookingID || b.id) === bID);
+        if (updated) setPaymentModalBooking(updated);
+      } else {
+        setRefundError(json.message || "Could not mark refund as returned.");
+      }
+    } catch (e) {
+      setRefundError("Action failed — check your connection.");
+    } finally {
+      setMarkingRefund(false);
+    }
+  };
+
   const handleStolen  = (b) => {
     if (!window.confirm("Flag this car as stolen? This is logged permanently and the booking will be locked.")) return;
     runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
@@ -1483,7 +1514,7 @@ export default function CarTracking() {
 
     <PaymentStatusModal
       open={!!paymentModalBooking}
-      onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); setConfirmPaymentError(null); setDiscountError(null); }}
+      onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); setConfirmPaymentError(null); setDiscountError(null); setRefundError(null); }}
       customerName={paymentModalBooking?.customerName}
       payment={paymentModalBooking ? {
         totalFee:       paymentModalBooking.totalFee,
@@ -1492,6 +1523,8 @@ export default function CarTracking() {
         payType:        paymentModalBooking.payType,
         paymentStatus:  paymentModalBooking.paymentStatus,
         discountAmount: paymentModalBooking.discountAmount,
+        refundDue:      paymentModalBooking.refundDue,
+        refundIssued:   paymentModalBooking.refundIssued,
       } : null}
       onConfirmPayment={handleConfirmPayment}
       confirming={confirmingPayment}
@@ -1502,6 +1535,9 @@ export default function CarTracking() {
       onApplyDiscount={handleApplyDiscount}
       applyingDiscount={applyingDiscount}
       discountError={discountError}
+      onMarkRefundIssued={handleMarkRefundIssued}
+      markingRefund={markingRefund}
+      refundError={refundError}
       onGoToPayments={() => navigate(`/payments?bookingID=${paymentModalBooking?.bookingID || paymentModalBooking?.id || ""}`)}
     />
     </>

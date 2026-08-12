@@ -54,10 +54,48 @@ const IconX = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
+// Used for the "All Bookings" stat tab icon.
+const IconGrid = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+  </svg>
+);
+
+// Used for the "Ongoing" stat tab icon — a pulse/activity line.
+const IconActivity = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 12h4l3 8 4-16 3 8h4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
 const STATUS_TABS = ["All", "Upcoming", "Ongoing", "Cancelled", "Completed"];
 
+// Icon + color per stat tab — colors match STATUS_DOT/STATUS_BG below so a
+// status looks the same in the tab card as it does in the table badge.
+const TAB_ICON = {
+  All:       IconGrid,
+  Upcoming:  IconClock,
+  Ongoing:   IconActivity,
+  Cancelled: IconX,
+  Completed: IconCheck,
+};
+
+const TAB_ICON_COLOR = {
+  All:       "bg-teal-50 text-teal-600",
+  Upcoming:  "bg-yellow-50 text-yellow-600",
+  Ongoing:   "bg-blue-50 text-blue-600",
+  Cancelled: "bg-red-50 text-red-600",
+  Completed: "bg-green-50 text-green-600",
+};
+
+// STATUS_DOT / STATUS_BG / StatusBadge — kept identical to the copy in
+// Dashboard.jsx so the same status always looks the same on both pages.
+// If a new status is added, update both files.
 const STATUS_DOT = {
   upcoming:  "bg-yellow-400",
   ongoing:   "bg-blue-500",
@@ -588,17 +626,25 @@ export default function Bookings() {
 
       {/* STAT TABS */}
       <div className="grid grid-cols-5 gap-3">
-        {STATUS_TABS.map((tab) => (
-          <button key={tab} onClick={() => setActiveTab(tab)}
-            className={`p-4 rounded-2xl border text-left transition-all ${activeTab === tab ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}
-          >
-            <div className={`text-2xl font-bold ${activeTab === tab ? "text-teal-600" : "text-gray-800"}`}>{loading ? "…" : counts[tab] ?? 0}</div>
-            <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-              {tab === "All" ? "All Bookings" : tab}
-              {tab === "Cancelled" && cancellationRequestCount > 0 && <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />}
-            </div>
-          </button>
-        ))}
+        {STATUS_TABS.map((tab) => {
+          const TabIcon = TAB_ICON[tab];
+          return (
+            <button key={tab} onClick={() => setActiveTab(tab)}
+              className={`p-4 rounded-2xl border text-left transition-all ${activeTab === tab ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}
+            >
+              <div className="flex items-start justify-between">
+                <div className={`text-2xl font-bold ${activeTab === tab ? "text-teal-600" : "text-gray-800"}`}>{loading ? "…" : counts[tab] ?? 0}</div>
+                <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${TAB_ICON_COLOR[tab]}`}>
+                  <TabIcon className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                {tab === "All" ? "All Bookings" : tab}
+                {tab === "Cancelled" && cancellationRequestCount > 0 && <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {/* SEARCH */}

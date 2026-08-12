@@ -83,26 +83,31 @@ const IconFileText = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
-// ─── STATUS BADGE ─────────────────────────────────────────────────────────────
+// STATUS_DOT / STATUS_BG / StatusBadge — kept identical to the copy in
+// Bookings.jsx so the same status always looks the same on both pages.
+// Uses Bookings.jsx's actual status set (upcoming/ongoing/completed/
+// cancelled/stolen), replacing the retired approved/pending statuses this
+// used to have. If a new status is added, update both files.
+const STATUS_DOT = {
+  upcoming:  "bg-yellow-400",
+  ongoing:   "bg-blue-500",
+  completed: "bg-green-500",
+  cancelled: "bg-red-500",
+  stolen:    "bg-red-700",
+};
+
+const STATUS_BG = {
+  upcoming:  "bg-yellow-50 border border-yellow-200",
+  ongoing:   "bg-blue-50 border border-blue-200",
+  completed: "bg-green-50 border border-green-200",
+  cancelled: "bg-red-50 border border-red-200",
+  stolen:    "bg-red-100 border border-red-300",
+};
 
 function StatusBadge({ status }) {
-  const dotMap = {
-    approved:             "bg-green-500",
-    pending:              "bg-yellow-400",
-    completed:            "bg-blue-500",
-    cancelled:            "bg-red-500",
-    cancellation_request: "bg-orange-500",
-  };
-  const bgMap = {
-    approved:             "bg-green-50 border border-green-200",
-    pending:              "bg-yellow-50 border border-yellow-200",
-    completed:            "bg-blue-50 border border-blue-200",
-    cancelled:            "bg-red-50 border border-red-200",
-    cancellation_request: "bg-orange-50 border border-orange-200",
-  };
   const s   = (status || "").toLowerCase();
-  const dot = dotMap[s] || "bg-gray-400";
-  const bg  = bgMap[s]  || "bg-gray-50 border border-gray-200";
+  const dot = STATUS_DOT[s] || "bg-gray-400";
+  const bg  = STATUS_BG[s]  || "bg-gray-50 border border-gray-200";
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${bg}`}>
       <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
@@ -701,7 +706,7 @@ export default function Dashboard() {
               <tr className="bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wide">
                 <th className="px-4 py-3 font-medium">Booking ID</th>
                 <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium">Car ID</th>
+                <th className="px-4 py-3 font-medium">Vehicle</th>
                 <th className="px-4 py-3 font-medium">Rental Period</th>
                 <th className="px-4 py-3 font-medium">Status</th>
               </tr>
@@ -720,7 +725,7 @@ export default function Dashboard() {
                     className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer">
                     <td className="px-4 py-3 text-gray-600">{b.bookingID || b.id}</td>
                     <td className="px-4 py-3 font-medium text-gray-800">{b.customerName || b.userName || b.name || "—"}</td>
-                    <td className="px-4 py-3 text-gray-600">{b.carID || b.carId || b.car || "—"}</td>
+                    <td className="px-4 py-3 text-gray-600">{b.vehicleName || "—"}</td>
                     <td className="px-4 py-3 text-gray-500">{fmtDate(b.startDateTime)} – {fmtDate(b.endDateTime)}</td>
                     <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
                   </tr>

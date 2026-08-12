@@ -229,6 +229,7 @@ export default function Payments() {
   const [applyingDiscount, setApplyingDiscount] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
   const [discountReasonInput, setDiscountReasonInput] = useState("");
+  const [markingRefund, setMarkingRefund] = useState(false);
   const [sortKey, setSortKey]             = useState(null); // null = default/unsorted (API order)
   const [sortDir, setSortDir]             = useState("asc");
   const [searchParams] = useSearchParams();
@@ -331,6 +332,26 @@ export default function Payments() {
     finally { setApplyingDiscount(false); }
   };
 
+  // Confirm a refund-due amount (created by a discount that overshot the
+  // balance) was actually handed back to the customer. Same re-open
+  // pattern as handleApplyDiscount — refundDue recomputes server-side.
+  const handleMarkRefundIssued = async () => {
+    if (!selected) return;
+    setMarkingRefund(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/refund-issued`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast("Refund marked as returned.");
+      await openDetail(selected.id);
+      await fetchPayments();
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setMarkingRefund(false); }
+  };
+
   // ── filter ──
   const methods = ["All", ...new Set(payments.map((p) => p.paymentMethod).filter((m) => m && m !== "—"))];
 
@@ -423,7 +444,7 @@ export default function Payments() {
 
                   <Section title="Payment Info">
                     <Row label="Payment ID" value={selected.paymentID} mono />
-                    <Row label="Payment Reference" value={selected.paymongoPaymentID || "—"} mono />
+                    <Row label="Reference #" value={selected.referenceNumber} />
                     <Row label="Payment Type" value={selected.methodOfPayment} />
                     <Row label="Gateway" value={selected.paymentMethod} />
                     <Row label="Submitted" value={fmtDate(selected.createdAt)} />
@@ -443,6 +464,27 @@ export default function Payments() {
                       <Row label="Balance" value={peso(selected.balance, fmtCurrency)} bold color={selected.balance > 0 ? "text-red-500" : "text-green-600"} />
                     </div>
                   </Section>
+
+                  {selected.refundDue > 0 && (
+                    <Section title="Refund Due to Customer">
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-semibold text-red-700">Amount owed back</span>
+                          <span className="font-bold text-red-700">{peso(selected.refundDue, fmtCurrency)}</span>
+                        </div>
+                        <p className="text-xs text-red-600">
+                          A discount was applied after this booking was already fully paid — the driver or whoever holds the cash needs to return this amount.
+                        </p>
+                        <button
+                          onClick={handleMarkRefundIssued}
+                          disabled={markingRefund}
+                          className="w-full py-2 rounded-xl text-sm font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {markingRefund ? "Marking…" : `Mark ${peso(selected.refundDue, fmtCurrency)} as Returned`}
+                        </button>
+                      </div>
+                    </Section>
+                  )}
 
                   <Section title="Apply Discount">
                     <div className="space-y-2.5">
@@ -557,22 +599,32 @@ export default function Payments() {
         <table className="w-full text-sm min-w-[900px]">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              {["Ref #", "Customer", "Car", "Total Fee", "Amount Paid", "Balance", "Method", "Payment Ref", "Status", "Submitted", ""].map((h) => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">{h}</th>
-              ))}
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Ref #</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Car</th>
+              <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Discount" sortKey="discount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Refund</th>
+              <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Balance" sortKey="balance" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Method</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Ref</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+              <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 11 }).map((_, j) => (
+                  {Array.from({ length: 12 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={12} className="text-center py-16 text-gray-400 text-sm">
+              <tr><td colSpan={13} className="text-center py-16 text-gray-400 text-sm">
                 {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
               </td></tr>
             ) : paginated.map((p, i) => (
@@ -600,12 +652,19 @@ export default function Payments() {
                     ? <span className="text-red-500">−{peso(p.discountAmount, fmtCurrency)}</span>
                     : <span className="text-gray-300">—</span>}
                 </td>
+                <td className="px-4 py-3 text-xs font-semibold">
+                  {p.refundDue > 0
+                    ? <span className="text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">Due {peso(p.refundDue, fmtCurrency)}</span>
+                    : p.refundIssued
+                    ? <span className="text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">Returned</span>
+                    : <span className="text-gray-300">—</span>}
+                </td>
                 <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.amountPaid, fmtCurrency)}</td>
                 <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
                   {peso(p.balance, fmtCurrency)}
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600">{p.paymentMethod}</td>
-                <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.paymongoPaymentID || "—"}</td>
+                <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.referenceNumber || "—"}</td>
                 <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
                 <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                 <td className="px-4 py-3">

@@ -111,6 +111,8 @@ function ActiveTripsTab() {
   const [collectBalanceError, setCollectBalanceError] = useState(null);
   const [confirmingPayment, setConfirmingPayment] = useState(false);
   const [confirmPaymentError, setConfirmPaymentError] = useState(null);
+  const [markingRefund, setMarkingRefund] = useState(false);
+  const [refundError, setRefundError] = useState(null);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -224,6 +226,27 @@ function ActiveTripsTab() {
       setCollectBalanceError(e.message);
     } finally {
       setCollectingBalance(false);
+    }
+  };
+
+  // Driver confirming they handed a refund-due amount back to the
+  // customer (created when a staff discount overshot the balance) —
+  // they're usually the one physically holding the cash.
+  const handleMarkRefundIssued = async () => {
+    if (!paymentTrip) return;
+    setMarkingRefund(true);
+    setRefundError(null);
+    try {
+      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/refund-issued`, { method: "PATCH" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Could not mark refund as returned.");
+      showToast("Refund marked as returned.");
+      setPaymentTrip(null);
+      fetchTrips();
+    } catch (e) {
+      setRefundError(e.message);
+    } finally {
+      setMarkingRefund(false);
     }
   };
 
@@ -343,7 +366,7 @@ function ActiveTripsTab() {
       />
       <PaymentStatusModal
         open={!!paymentTrip}
-        onClose={() => { setPaymentTrip(null); setCollectBalanceError(null); setConfirmPaymentError(null); }}
+        onClose={() => { setPaymentTrip(null); setCollectBalanceError(null); setConfirmPaymentError(null); setRefundError(null); }}
         customerName={paymentTrip?.customerName}
         payment={paymentTrip?.payment}
         onConfirmPayment={handleConfirmPayment}
@@ -352,6 +375,9 @@ function ActiveTripsTab() {
         onCollectBalance={handleCollectBalance}
         collecting={collectingBalance}
         collectError={collectBalanceError}
+        onMarkRefundIssued={handleMarkRefundIssued}
+        markingRefund={markingRefund}
+        refundError={refundError}
         pendingApprovalNote="The initial payment hasn't been approved yet — ask an admin or supervisor to approve it before collecting the rest."
       />
     </div>
