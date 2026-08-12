@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { collection, getDocs, doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../fireabase";
 
@@ -153,6 +154,7 @@ const EMPTY_FORM = {
 
 export default function Maintenance() {
   const token = localStorage.getItem("token");
+  const [searchParams] = useSearchParams();
 
   const [records, setRecords]             = useState([]);
   const [cars, setCars]                   = useState([]);
@@ -294,6 +296,18 @@ export default function Maintenance() {
   }, [authedFetch]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Arrived via a "View Maintenance" / status-switch link from Fleet.jsx
+  // (?carID=...) — open the add-record form pre-filled to that car instead
+  // of leaving staff to find and select it themselves.
+  useEffect(() => {
+    const carID = searchParams.get("carID");
+    if (carID) {
+      setForm((f) => ({ ...f, carID }));
+      setShowAdd(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const overdue   = records.filter(r => r.status === "Overdue" || (r.status !== "Completed" && r.status !== "Cancelled" && isPast(r.nextMaintenanceDate))).length;
   const dueSoon   = records.filter(r => isSoon(r.nextMaintenanceDate) && r.status !== "Completed" && r.status !== "Cancelled").length;

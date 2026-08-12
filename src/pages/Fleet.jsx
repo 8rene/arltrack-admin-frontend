@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import {
   collection, getDocs, query, where, orderBy, doc, updateDoc,
@@ -6,6 +7,18 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
+
+// Fire-and-forget audit log write — used by any status/data change below
+// that should show up in the Audit Log page. Never blocks or fails the
+// action it's logging; a logging hiccup shouldn't stop a real update.
+const logAuditEvent = (action, description) => {
+  const token = localStorage.getItem("token");
+  fetch(`${process.env.REACT_APP_API_URL}/api/audit-logs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action, description }),
+  }).catch((e) => console.error("Audit log write failed:", e));
+};
 
 // ─── SVG ICONS ────────────────────────────────────────────────────────────────
 const Icons = {
@@ -286,7 +299,7 @@ export default function Fleet() {
               onViewDetails={() => setDetailCar(car)}
               onEdit={() => setEditCar(car)}
               onDelete={() => setConfirmDelete(car)}
-              onStatusChange={(id, st) => setCars(prev => prev.map(c => c.id === id ? { ...c, status: st } : c))} />
+              onStatusChange={(id, st, extra = {}) => setCars(prev => prev.map(c => c.id === id ? { ...c, status: st, ...extra } : c))} />
           ))}
         </div>
       )}
@@ -324,9 +337,11 @@ export default function Fleet() {
 // ─── VEHICLE CARD ─────────────────────────────────────────────────────────────
 function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
   const { fmt } = useCurrency();
+  const navigate = useNavigate();
   const [nearestBooking, setNearestBooking] = useState(null);
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [inactiveModalOpen, setInactiveModalOpen] = useState(false);
   const CAR_STATUSES = ["Active", "Maintenance", "Inactive"];
 
   useEffect(() => {
@@ -353,14 +368,60 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
     }
   }, [car.id, car.status]);
 
-  const handleStatusChange = async (newStatus) => {
-    if (newStatus === car.status) { setStatusOpen(false); return; }
+  const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.plateNumber || car.id;
+
+  // Applies a status change that doesn't need extra input (Active,
+  // Maintenance) — Inactive is handled separately via the reason modal
+  // below since it needs to collect a reason first.
+  const applyStatusChange = async (newStatus, extra = {}) => {
     setStatusSaving(true);
     try {
-      await updateDoc(doc(db, "cars", car.id), { status: newStatus });
-      onStatusChange?.(car.id, newStatus);
+      await updateDoc(doc(db, "cars", car.id), {
+        status: newStatus,
+        // Clear any previously-recorded Inactive reason once the car
+        // leaves that status, so it doesn't show stale info if the car
+        // goes Inactive again later without a new reason being set.
+        inactiveReason: null,
+        ...extra,
+      });
+      onStatusChange?.(car.id, newStatus, { inactiveReason: null });
+      logAuditEvent("update", `Status changed for ${carLabel} from ${car.status || "—"} to ${newStatus}.`);
+
+      // Soft redirect: switching to Maintenance sends staff straight to
+      // the Maintenance page, prefilled to this car, instead of leaving
+      // them to remember to go log it there themselves.
+      if (newStatus === "Maintenance") {
+        navigate(`/maintenance?carID=${car.id}`);
+      }
     } catch (e) { console.error(e); }
     finally { setStatusSaving(false); setStatusOpen(false); }
+  };
+
+  const handleStatusChange = (newStatus) => {
+    if (newStatus === car.status) { setStatusOpen(false); return; }
+    if (newStatus === "Inactive") {
+      // Needs a reason first — open the modal instead of writing immediately.
+      setStatusOpen(false);
+      setInactiveModalOpen(true);
+      return;
+    }
+    applyStatusChange(newStatus);
+  };
+
+  const confirmInactive = async (reason) => {
+    setStatusSaving(true);
+    try {
+      await updateDoc(doc(db, "cars", car.id), {
+        status: "Inactive",
+        inactiveReason: reason,
+      });
+      onStatusChange?.(car.id, "Inactive", { inactiveReason: reason });
+      logAuditEvent(
+        "update",
+        `Status changed for ${carLabel} from ${car.status || "—"} to Inactive: ${reason}.`
+      );
+    } catch (e) { console.error(e); }
+    finally { setStatusSaving(false); setInactiveModalOpen(false); }
   };
 
   const basePrice = car.pricing?.find(p =>
@@ -385,6 +446,7 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
           <button
             onClick={(e) => { e.stopPropagation(); setStatusOpen((v) => !v); }}
             disabled={statusSaving}
+            title={car.status === "Inactive" && car.inactiveReason ? `Inactive: ${car.inactiveReason}` : undefined}
             className={`px-3 py-1 text-xs rounded-full font-semibold flex items-center gap-1 transition-opacity ${STATUS_STYLE[car.status] || "bg-gray-100 text-gray-600"} hover:opacity-80`}
           >
             {statusSaving ? "…" : car.status}
@@ -458,6 +520,53 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
               <Icons.ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
+        </div>
+      </div>
+      {inactiveModalOpen && (
+        <InactiveReasonModal
+          carLabel={carLabel}
+          saving={statusSaving}
+          onConfirm={confirmInactive}
+          onCancel={() => setInactiveModalOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Small modal collecting why a car is being switched to Inactive — a
+// required, pick-one reason. Written to the car doc as inactiveReason and
+// surfaced via a tooltip on the status badge and in the details modal.
+// "Under repair" isn't in this list on purpose — that case now belongs to
+// the Maintenance status, which has its own redirect flow.
+const INACTIVE_REASONS = ["Sold", "Retired", "Stolen/Lost", "Other"];
+
+function InactiveReasonModal({ carLabel, saving, onConfirm, onCancel }) {
+  const [reason, setReason] = useState(INACTIVE_REASONS[0]);
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
+        <div>
+          <h3 className="font-bold text-gray-800 text-lg">Mark as Inactive</h3>
+          <p className="text-sm text-gray-500 mt-1">Why is <span className="font-medium text-gray-700">{carLabel}</span> being taken out of service?</p>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-500">Reason</label>
+          <select value={reason} onChange={(e) => setReason(e.target.value)}
+            className="w-full mt-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
+            {INACTIVE_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={onCancel} disabled={saving}
+            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={() => onConfirm(reason)} disabled={saving}
+            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
+            {saving ? "Saving…" : "Confirm"}
+          </button>
         </div>
       </div>
     </div>
@@ -578,6 +687,13 @@ function ViewDetailsModal({ car, onClose, onEdit }) {
               </div>
             ))}
           </div>
+
+          {car.status === "Inactive" && car.inactiveReason && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm">
+              <p className="text-xs text-gray-400">Inactive Reason</p>
+              <p className="font-semibold text-gray-800 mt-0.5">{car.inactiveReason}</p>
+            </div>
+          )}
 
           {/* Pricing (12 Hours last) */}
           {sorted.length > 0 && (

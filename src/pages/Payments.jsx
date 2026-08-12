@@ -229,6 +229,7 @@ export default function Payments() {
   const [applyingDiscount, setApplyingDiscount] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
   const [discountReasonInput, setDiscountReasonInput] = useState("");
+  const [confirmEditDiscount, setConfirmEditDiscount] = useState(false);
   const [markingRefund, setMarkingRefund] = useState(false);
   const [sortKey, setSortKey]             = useState(null); // null = default/unsorted (API order)
   const [sortDir, setSortDir]             = useState("asc");
@@ -312,7 +313,7 @@ export default function Payments() {
   // away. Re-opens the same payment via openDetail() so amountPaid/balance
   // come back freshly recomputed server-side by computeAmounts(), instead
   // of trying to replicate that spillover math here in the frontend.
-  const handleApplyDiscount = async () => {
+  const submitDiscount = async () => {
     if (!selected) return;
     const amount = Number(discountInput);
     if (!Number.isFinite(amount) || amount < 0) return;
@@ -329,7 +330,24 @@ export default function Payments() {
       await openDetail(selected.id);
       await fetchPayments();
     } catch (e) { showToast(e.message, "error"); }
-    finally { setApplyingDiscount(false); }
+    finally { setApplyingDiscount(false); setConfirmEditDiscount(false); }
+  };
+
+  // Gate in front of submitDiscount() — a discount already exists on this
+  // booking, so this click is an *edit*, not the first time it's being
+  // given. Route through a confirmation step instead of writing straight
+  // away, since staff may not realize the customer could've already been
+  // told/charged the original amount. First-time discounts skip this and
+  // submit immediately.
+  const handleApplyDiscount = () => {
+    if (!selected) return;
+    const amount = Number(discountInput);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    if (selected.discountAmount > 0) {
+      setConfirmEditDiscount(true);
+      return;
+    }
+    submitDiscount();
   };
 
   // Confirm a refund-due amount (created by a discount that overshot the
@@ -512,6 +530,9 @@ export default function Payments() {
                       >
                         {applyingDiscount ? "Applying…" : selected.discountAmount > 0 ? "Update Discount" : "Apply Discount"}
                       </button>
+                      {selected.discountAmount > 0 && (
+                        <p className="text-[11px] text-amber-600">A discount is already on this booking — changing it will ask you to confirm first.</p>
+                      )}
                       <p className="text-[11px] text-gray-400">Sets the total discount on this booking — entering a new amount replaces the old one, it doesn't add to it.</p>
                     </div>
                   </Section>
@@ -533,7 +554,37 @@ export default function Payments() {
         </div>
       )}
 
-      {/* Stat Cards */}
+      {/* Confirm Edit Discount — only shown when changing a discount that's
+          already on the booking (first-time discounts skip straight to
+          submitDiscount). Staff may not realize the customer could've
+          already been told/charged the original amount, so this is a
+          speed bump for corrections, not a hard lock. */}
+      {confirmEditDiscount && selected && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
+            <div>
+              <h3 className="font-bold text-arl-dark text-lg">Update existing discount?</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                A discount of <span className="font-semibold text-gray-700">{peso(selected.discountAmount, fmtCurrency)}</span> was already given on this booking.
+                Changing it to <span className="font-semibold text-gray-700">{peso(Number(discountInput) || 0, fmtCurrency)}</span> will replace that amount.
+                Only proceed if this is a correction to the original discount.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmEditDiscount(false)} disabled={applyingDiscount}
+                className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={submitDiscount} disabled={applyingDiscount}
+                className="flex-1 px-4 py-2 bg-arl-dark text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50">
+                {applyingDiscount ? "Saving…" : "Yes, this is a correction"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard icon={<IconMoney      className="w-5 h-5" />} value={peso(totalCollected)} label="Total Collected"    color="teal" />
         <StatCard icon={<IconCheck      className="w-5 h-5" />} value={approved}             label="Approved Payments"  color="green" />
