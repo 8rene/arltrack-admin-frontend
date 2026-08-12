@@ -423,7 +423,7 @@ export default function Payments() {
 
                   <Section title="Payment Info">
                     <Row label="Payment ID" value={selected.paymentID} mono />
-                    <Row label="Reference #" value={selected.referenceNumber} />
+                    <Row label="Payment Reference" value={selected.paymongoPaymentID || "—"} mono />
                     <Row label="Payment Type" value={selected.methodOfPayment} />
                     <Row label="Gateway" value={selected.paymentMethod} />
                     <Row label="Submitted" value={fmtDate(selected.createdAt)} />
@@ -557,18 +557,9 @@ export default function Payments() {
         <table className="w-full text-sm min-w-[900px]">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Ref #</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Car</th>
-              <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Discount" sortKey="discount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Balance" sortKey="balance" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Method</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Ref</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-              <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
+              {["Ref #", "Customer", "Car", "Total Fee", "Amount Paid", "Balance", "Method", "Payment Ref", "Status", "Submitted", ""].map((h) => (
+                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">{h}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -614,7 +605,7 @@ export default function Payments() {
                   {peso(p.balance, fmtCurrency)}
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600">{p.paymentMethod}</td>
-                <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.referenceNumber || "—"}</td>
+                <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.paymongoPaymentID || "—"}</td>
                 <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
                 <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                 <td className="px-4 py-3">

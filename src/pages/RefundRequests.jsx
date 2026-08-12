@@ -16,21 +16,7 @@ const IconX = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-const IconRefund = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3 10a9 9 0 1 1 2.6 6.36" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    <path d="M3 4v6h6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 // ─── HELPERS ────────────────────────────────────────────────────────────────
-
-function fmtDate(val) {
-  if (!val) return "—";
-  const d = val?.toDate ? val.toDate() : new Date(val);
-  if (isNaN(d)) return "—";
-  return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
-}
 
 const statusDot = {
   Pending:  "bg-yellow-400",
@@ -105,7 +91,7 @@ export default function RefundRequests() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to approve refund.");
       showToast(data.message || "Refund approved and sent to PayMongo.");
-      setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, status: "Approved" } : r));
+      setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, status: "Approved", paymongoRefundID: data.paymongoRefundID || r.paymongoRefundID } : r));
     } catch (e) { showToast(e.message, "error"); }
     finally { setBusyId(null); }
   };
@@ -193,7 +179,7 @@ export default function RefundRequests() {
       <div className="flex items-center justify-between pt-2">
         <div>
           <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">
-            <IconRefund className="w-5 h-5 text-arl-secondary" /> Refund Requests
+            Refunds
           </h1>
           <p className="text-sm text-gray-500">
             {pendingCount > 0 ? `${pendingCount} pending review` : "No pending requests"}
@@ -240,7 +226,6 @@ export default function RefundRequests() {
                 <th className="px-5 py-3 font-semibold">Booking</th>
                 <th className="px-5 py-3 font-semibold">Reason</th>
                 <th className="px-5 py-3 font-semibold">Amount</th>
-                <th className="px-5 py-3 font-semibold">Requested</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
                 <th className="px-5 py-3 font-semibold text-right">Actions</th>
               </tr>
@@ -261,7 +246,6 @@ export default function RefundRequests() {
                     )}
                   </td>
                   <td className="px-5 py-4 font-semibold text-arl-dark">{fmt(r.amount)}</td>
-                  <td className="px-5 py-4 text-gray-500 text-xs">{fmtDate(r.createdAt)}</td>
                   <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
                   <td className="px-5 py-4 text-right">
                     {r.status === "Pending" ? (
