@@ -46,6 +46,42 @@ const IconChevronDown = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+// ─── SORT HEADER (same pattern as Bookings.jsx / Users.jsx) ──────────────────
+// Neutral up/down chevrons when a column isn't the active sort (reads as
+// "sortable" even before it's clicked), a bold single arrow in the active
+// color once it is — toggles asc/desc on repeat clicks of the same column.
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg
+    className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`}
+    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-4 py-3 text-left select-none ${className}`}>
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 function peso(n, fmtFn) {
@@ -190,7 +226,21 @@ export default function Payments() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [toast, setToast]                 = useState(null);
   const [updating, setUpdating]           = useState(false);
+  const [applyingDiscount, setApplyingDiscount] = useState(false);
+  const [discountInput, setDiscountInput] = useState("");
+  const [discountReasonInput, setDiscountReasonInput] = useState("");
+  const [sortKey, setSortKey]             = useState(null); // null = default/unsorted (API order)
+  const [sortDir, setSortDir]             = useState("asc");
   const [searchParams] = useSearchParams();
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
 
   const token = localStorage.getItem("token");
   const { fmt: fmtCurrency } = useCurrency();
@@ -233,6 +283,8 @@ export default function Payments() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       setSelected(data.data);
+      setDiscountInput(data.data.discountAmount ? String(data.data.discountAmount) : "");
+      setDiscountReasonInput("");
     } catch (e) { showToast(e.message, "error"); }
     finally { setDetailLoading(false); }
   };
@@ -254,6 +306,31 @@ export default function Payments() {
     finally { setUpdating(false); }
   };
 
+  // Flat-peso discount — keeps the drawer open afterward (rather than
+  // closing it) so the recalculated Amount Paid/Balance are visible right
+  // away. Re-opens the same payment via openDetail() so amountPaid/balance
+  // come back freshly recomputed server-side by computeAmounts(), instead
+  // of trying to replicate that spillover math here in the frontend.
+  const handleApplyDiscount = async () => {
+    if (!selected) return;
+    const amount = Number(discountInput);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    setApplyingDiscount(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ amount, reason: discountReasonInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast("Discount applied.");
+      await openDetail(selected.id);
+      await fetchPayments();
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setApplyingDiscount(false); }
+  };
+
   // ── filter ──
   const methods = ["All", ...new Set(payments.map((p) => p.paymentMethod).filter((m) => m && m !== "—"))];
 
@@ -269,7 +346,20 @@ export default function Payments() {
     return matchQ && matchS && matchM && matchT;
   });
 
-  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
+  // ── sort (numeric/date columns only — everything else stays in API/insertion order) ──
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sortKey) return 0;
+    let av, bv;
+    if (sortKey === "totalFee") { av = a.totalFee ?? -Infinity; bv = b.totalFee ?? -Infinity; }
+    else if (sortKey === "amountPaid") { av = a.amountPaid ?? -Infinity; bv = b.amountPaid ?? -Infinity; }
+    else if (sortKey === "balance") { av = a.balance ?? -Infinity; bv = b.balance ?? -Infinity; }
+    else if (sortKey === "discount") { av = a.discountAmount ?? 0; bv = b.discountAmount ?? 0; }
+    else if (sortKey === "submitted") { av = a.createdAt ? new Date(a.createdAt).getTime() : -Infinity; bv = b.createdAt ? new Date(b.createdAt).getTime() : -Infinity; }
+    else return 0;
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
   useEffect(() => setPage(1), [search, statusF, methodF, timeF, customFrom, customTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── stat cards ──
@@ -346,8 +436,41 @@ export default function Payments() {
                     <Row label="Service Fee" value={peso(selected.serviceFee, fmtCurrency)} />
                     <div className="border-t pt-2 mt-1">
                       <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
+                      {selected.discountAmount > 0 && (
+                        <Row label="Discount" value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
+                      )}
                       <Row label="Amount Paid" value={peso(selected.amountPaid, fmtCurrency)} bold />
                       <Row label="Balance" value={peso(selected.balance, fmtCurrency)} bold color={selected.balance > 0 ? "text-red-500" : "text-green-600"} />
+                    </div>
+                  </Section>
+
+                  <Section title="Apply Discount">
+                    <div className="space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
+                          <input
+                            type="number" min="0" step="1" placeholder="0"
+                            value={discountInput}
+                            onChange={(e) => setDiscountInput(e.target.value)}
+                            className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+                          />
+                        </div>
+                        <input
+                          type="text" placeholder="Reason (optional)"
+                          value={discountReasonInput}
+                          onChange={(e) => setDiscountReasonInput(e.target.value)}
+                          className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+                        />
+                      </div>
+                      <button
+                        onClick={handleApplyDiscount}
+                        disabled={applyingDiscount || discountInput === ""}
+                        className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-white active:scale-[0.99] transition-all disabled:opacity-50"
+                      >
+                        {applyingDiscount ? "Applying…" : selected.discountAmount > 0 ? "Update Discount" : "Apply Discount"}
+                      </button>
+                      <p className="text-[11px] text-gray-400">Sets the total discount on this booking — entering a new amount replaces the old one, it doesn't add to it.</p>
                     </div>
                   </Section>
 
@@ -434,22 +557,31 @@ export default function Payments() {
         <table className="w-full text-sm min-w-[900px]">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              {["Ref #", "Customer", "Car", "Total Fee", "Amount Paid", "Balance", "Method", "Payment Ref", "Status", "Submitted", ""].map((h) => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">{h}</th>
-              ))}
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Ref #</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Car</th>
+              <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Discount" sortKey="discount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Balance" sortKey="balance" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Method</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Ref</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+              <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 10 }).map((_, j) => (
+                  {Array.from({ length: 11 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={11} className="text-center py-16 text-gray-400 text-sm">
+              <tr><td colSpan={12} className="text-center py-16 text-gray-400 text-sm">
                 {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
               </td></tr>
             ) : paginated.map((p, i) => (
@@ -471,6 +603,11 @@ export default function Payments() {
                         : "bg-orange-100 text-orange-700"
                     }`}>{p.methodOfPayment}</span>
                   )}
+                </td>
+                <td className="px-4 py-3 text-xs font-semibold">
+                  {p.discountAmount > 0
+                    ? <span className="text-red-500">−{peso(p.discountAmount, fmtCurrency)}</span>
+                    : <span className="text-gray-300">—</span>}
                 </td>
                 <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.amountPaid, fmtCurrency)}</td>
                 <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>

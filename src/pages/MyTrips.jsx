@@ -302,7 +302,11 @@ function ActiveTripsTab() {
                     </button>
                     <button
                       onClick={() => setPaymentTrip(trip)}
-                      className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 transition-all"
+                      className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold border transition-all ${
+                        trip.payment?.totalFee > 0 && trip.payment?.balance <= 0
+                          ? "border-green-300 text-green-700 hover:bg-green-50"
+                          : "border-amber-300 text-amber-700 hover:bg-amber-50"
+                      }`}
                     >
                       <IconPeso className="w-4 h-4" /> Payment
                     </button>

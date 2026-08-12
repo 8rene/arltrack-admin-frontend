@@ -97,13 +97,9 @@ const STATUS_STYLE = {
   Rented:      "bg-blue-50 border border-blue-200 text-black",
   Reserved:    "bg-orange-50 border border-orange-200 text-black",
   Maintenance: "bg-red-50 border border-red-200 text-black",
-};
-
-const STATUS_DOT_FLEET = {
-  Active:      "bg-green-500",
-  Rented:      "bg-blue-500",
-  Reserved:    "bg-orange-100 text-orange-700",
-  Maintenance: "bg-red-100 text-red-600",
+  // Matches Inventory.jsx's gray treatment for the same status, since
+  // both pages read/write the same cars.status field.
+  Inactive:    "bg-gray-100 border border-gray-200 text-gray-500",
 };
 
 // Sort pricing: 12 Hours always last
@@ -125,7 +121,6 @@ function fmtDate(val) {
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Fleet() {
-  const { fmt } = useCurrency();
   const [cars, setCars]           = useState([]);
   const [brands, setBrands]       = useState([]);
   const [models, setModels]       = useState([]);
@@ -201,7 +196,14 @@ export default function Fleet() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  const statuses = ["All", "Active", "Rented", "Reserved", "Maintenance"];
+  // Rented/Reserved dropped from the filter chips too — now that they can't
+  // be set from the UI anymore, they'd sit stuck at 0 forever (any legacy
+  // car still tagged that way in Firestore is still reachable under "All",
+  // just no longer has its own chip). Inactive added — matches
+  // Inventory.jsx's status filter, which reads this same field and has
+  // offered "Inactive" as an option all along even though nothing could
+  // ever set it until now.
+  const statuses = ["All", "Active", "Maintenance", "Inactive"];
   const filtered = cars.filter(c => {
     const q = search.toLowerCase();
     const matchSearch = !search ||
@@ -314,7 +316,7 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
   const [nearestBooking, setNearestBooking] = useState(null);
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
-  const CAR_STATUSES = ["Active", "Rented", "Reserved", "Maintenance"];
+  const CAR_STATUSES = ["Active", "Maintenance", "Inactive"];
 
   useEffect(() => {
     if (car.status === "Rented" || car.status === "Reserved") {
@@ -382,12 +384,7 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
               {CAR_STATUSES.map((s) => (
                 <button key={s} onClick={(e) => { e.stopPropagation(); handleStatusChange(s); }}
                   className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center gap-2 hover:bg-gray-50 transition-colors ${s === car.status ? "opacity-50 cursor-default" : ""}`}>
-                  <span className={`w-2 h-2 rounded-full ${
-                    s === "Active"      ? "bg-green-500" :
-                    s === "Rented"      ? "bg-blue-500"  :
-                    s === "Reserved"    ? "bg-orange-500":
-                    "bg-red-500"
-                  }`}/>
+                  <span className={`w-2 h-2 rounded-full ${s === "Active" ? "bg-green-500" : s === "Inactive" ? "bg-gray-400" : "bg-red-500"}`}/>
                   {s}
                 </button>
               ))}
@@ -549,7 +546,7 @@ function ViewDetailsModal({ car, onClose, onEdit }) {
             {allImages.length > 1 && (
               <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
                 {allImages.map((img, i) => (
-                  <img key={i} src={img} onClick={() => setActiveImg(img)}
+                  <img key={i} src={img} onClick={() => setActiveImg(img)} alt={`Vehicle view ${i + 1}`}
                     className={`h-14 w-20 object-cover rounded-lg cursor-pointer border-2 flex-shrink-0 ${activeImg === img ? "border-teal-500" : "border-transparent"}`} />
                 ))}
               </div>
@@ -713,7 +710,7 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
         <Field label="Seats"          name="seatingCapacity" type="number" />
         <Field label="Fuel Type"      name="fuelType"     options={["Gasoline","Diesel","Electric","Hybrid"]} />
         <Field label="Transmission"   name="transmission" options={["Automatic","Manual"]} />
-        <Field label="Status"         name="status"       options={["Active","Rented","Reserved","Maintenance"]} />
+        <Field label="Status"         name="status"       options={["Active","Maintenance","Inactive"]} />
       </div>
 
       {/* Short Description */}

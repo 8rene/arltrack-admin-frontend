@@ -949,4 +949,4 @@ function PhotoSlot({ fieldKey, label, sub, icon, image, uploading, isPending, on
       </div>
     </div>
   );
-}
+} 

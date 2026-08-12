@@ -23,7 +23,7 @@ const { OWNER, ADMIN, SUPERVISOR, DRIVER } = ROLES;
 export const PAGE_ACCESS = {
   "/dashboard": [OWNER, ADMIN, SUPERVISOR, DRIVER],
   "/bookings": [OWNER, ADMIN, SUPERVISOR],
-  "/fleet": [ADMIN, SUPERVISOR],
+  "/fleet": [OWNER, ADMIN, SUPERVISOR],
 
   // "/users" (formerly Customers) manages Customers/Drivers/Supervisors/
   // Admins under one page with per-role sub-tabs. This entry must stay the

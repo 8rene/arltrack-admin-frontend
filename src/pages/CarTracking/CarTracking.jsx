@@ -244,6 +244,8 @@ export default function CarTracking() {
   const [collectBalanceError, setCollectBalanceError] = useState(null);
   const [confirmingPayment,   setConfirmingPayment]   = useState(false);
   const [confirmPaymentError, setConfirmPaymentError] = useState(null);
+  const [applyingDiscount,    setApplyingDiscount]    = useState(false);
+  const [discountError,       setDiscountError]       = useState(null);
   // Deep-link from Bookings' "Trip History" button — { tab: "history", carID, bookingID }.
   // Only consumed once; switching tabs away and back won't re-trigger it since
   // React Router keeps the same location.state for the life of this page visit,
@@ -382,6 +384,10 @@ export default function CarTracking() {
   }, [fetchLocations]);
 
   // ── Fetch upcoming + ongoing bookings (for the badges / pickup-return-stolen panel) ─
+  // Returns the freshly-combined array too (not just via setBookings) so
+  // callers that need the very latest data right after a mutation — e.g.
+  // handleApplyDiscount resyncing the open payment modal — don't have to
+  // wait a render cycle for `bookings` state to catch up.
   const fetchBookings = useCallback(async () => {
     try {
       const [upRes, onRes] = await Promise.all([
@@ -389,9 +395,12 @@ export default function CarTracking() {
         fetch(`${API}/api/bookings?status=ongoing`,  { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       const [upJson, onJson] = await Promise.all([upRes.json(), onRes.json()]);
-      setBookings([...(upJson.data || []), ...(onJson.data || [])]);
+      const combined = [...(upJson.data || []), ...(onJson.data || [])];
+      setBookings(combined);
+      return combined;
     } catch (e) {
       console.error("[CarTracking] fetchBookings error:", e);
+      return null;
     }
   }, [token]);
 
@@ -876,6 +885,39 @@ export default function CarTracking() {
     }
   };
 
+  // Owner/Admin/Supervisor applying a flat-peso discount — from the
+  // payment modal right here on Car Tracking. Unlike confirm/collect, this
+  // deliberately keeps the modal open afterward (rather than closing it)
+  // so staff can see the recalculated balance immediately; it re-syncs
+  // paymentModalBooking to the freshly-fetched booking once fetchBookings()
+  // resolves, since that piece of state is a snapshot, not a live reference.
+  const handleApplyDiscount = async (amount, reason) => {
+    if (!paymentModalBooking) return;
+    setApplyingDiscount(true);
+    setDiscountError(null);
+    try {
+      const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
+      const res  = await fetch(`${API}/api/payments/booking/${bID}/discount`, {
+        method:  "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body:    JSON.stringify({ amount, reason }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setNotice({ type: "ok", msg: "Discount applied." });
+        const fresh = await fetchBookings();
+        const updated = (fresh || []).find((b) => (b.bookingID || b.id) === bID);
+        if (updated) setPaymentModalBooking(updated);
+      } else {
+        setDiscountError(json.message || "Could not apply discount.");
+      }
+    } catch (e) {
+      setDiscountError("Action failed — check your connection.");
+    } finally {
+      setApplyingDiscount(false);
+    }
+  };
+
   const handleStolen  = (b) => {
     if (!window.confirm("Flag this car as stolen? This is logged permanently and the booking will be locked.")) return;
     runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
@@ -1316,13 +1358,27 @@ export default function CarTracking() {
                           // Chauffeur trip with nobody assigned yet — pickup is blocked
                           // until dispatch happens, so this sends staff there instead
                           // of letting them start a trip with no driver.
-                          <button
-                            onClick={() => navigate("/driver-dispatch")}
-                            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold hover:bg-amber-600 active:scale-95 transition-all"
-                          >
-                            <Icons.SteeringWheel className="w-3 h-3" />
-                            Assign Driver First
-                          </button>
+                          <div className="shrink-0 flex items-center gap-1.5">
+                            <button
+                              onClick={() => setPaymentModalBooking(b)}
+                              title="View payment breakdown"
+                              className={`flex items-center gap-1 px-2.5 py-1.5 border rounded-lg text-xs font-semibold active:scale-95 transition-all ${
+                                b.balance > 0
+                                  ? "border-amber-300 text-amber-700 hover:bg-amber-50"
+                                  : "border-green-300 text-green-700 hover:bg-green-50"
+                              }`}
+                            >
+                              <Icons.Peso className="w-3 h-3" />
+                              {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
+                            </button>
+                            <button
+                              onClick={() => navigate("/driver-dispatch")}
+                              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold hover:bg-amber-600 active:scale-95 transition-all"
+                            >
+                              <Icons.SteeringWheel className="w-3 h-3" />
+                              Assign Driver First
+                            </button>
+                          </div>
                         ) : (
                           <div className="shrink-0 flex items-center gap-1.5">
                             {isChauffeur && hasDriver && (
@@ -1360,9 +1416,11 @@ export default function CarTracking() {
                         )
                       ) : (
                         // Only the nearest upcoming booking can be picked up — that
-                        // restriction stays. But dispatch isn't tied to pickup order:
-                        // a chauffeur trip further down the queue can still be
-                        // assigned (or its assigned driver reviewed) ahead of time.
+                        // restriction stays. But dispatch isn't tied to pickup order,
+                        // and viewing the payment breakdown isn't either — a chauffeur
+                        // trip further down the queue can still be assigned (or its
+                        // assigned driver reviewed) ahead of time, and staff can check
+                        // balance on any upcoming booking, not just the next one.
                         <div className="shrink-0 flex items-center gap-2">
                           {isChauffeur && !hasDriver && (
                             <button
@@ -1382,6 +1440,18 @@ export default function CarTracking() {
                               View Driver
                             </button>
                           )}
+                          <button
+                            onClick={() => setPaymentModalBooking(b)}
+                            title="View payment breakdown"
+                            className={`flex items-center gap-1 px-2 py-1 border rounded-lg text-[11px] font-semibold active:scale-95 transition-all ${
+                              b.balance > 0
+                                ? "border-amber-300 text-amber-700 hover:bg-amber-50"
+                                : "border-green-300 text-green-700 hover:bg-green-50"
+                            }`}
+                          >
+                            <Icons.Peso className="w-3 h-3" />
+                            {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
+                          </button>
                           <span className={`text-[11px] italic px-1 ${isChauffeur ? "text-indigo-300" : "text-blue-300"}`}>Upcoming</span>
                         </div>
                       )}
@@ -1413,14 +1483,15 @@ export default function CarTracking() {
 
     <PaymentStatusModal
       open={!!paymentModalBooking}
-      onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); setConfirmPaymentError(null); }}
+      onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); setConfirmPaymentError(null); setDiscountError(null); }}
       customerName={paymentModalBooking?.customerName}
       payment={paymentModalBooking ? {
-        totalFee:      paymentModalBooking.totalFee,
-        amountPaid:    paymentModalBooking.amountPaid,
-        balance:       paymentModalBooking.balance,
-        payType:       paymentModalBooking.payType,
-        paymentStatus: paymentModalBooking.paymentStatus,
+        totalFee:       paymentModalBooking.totalFee,
+        amountPaid:     paymentModalBooking.amountPaid,
+        balance:        paymentModalBooking.balance,
+        payType:        paymentModalBooking.payType,
+        paymentStatus:  paymentModalBooking.paymentStatus,
+        discountAmount: paymentModalBooking.discountAmount,
       } : null}
       onConfirmPayment={handleConfirmPayment}
       confirming={confirmingPayment}
@@ -1428,6 +1499,9 @@ export default function CarTracking() {
       onCollectBalance={handleCollectBalance}
       collecting={collectingBalance}
       collectError={collectBalanceError}
+      onApplyDiscount={handleApplyDiscount}
+      applyingDiscount={applyingDiscount}
+      discountError={discountError}
       onGoToPayments={() => navigate(`/payments?bookingID=${paymentModalBooking?.bookingID || paymentModalBooking?.id || ""}`)}
     />
     </>
