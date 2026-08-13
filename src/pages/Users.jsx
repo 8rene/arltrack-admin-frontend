@@ -1596,7 +1596,50 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
 
+  // Role changes are high-stakes, so on top of the Owner/Admin gate above,
+  // the acting admin has to confirm a one-time code sent to THEIR OWN
+  // email (never the target user's) before the change is applied. The
+  // backend enforces this too (PATCH /api/users/:uid/role now requires
+  // and consumes a valid otp) — this is just the UI for it.
+  const [otp, setOtp]           = useState("");
+  const [otpSent, setOtpSent]   = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [otpNotice, setOtpNotice]   = useState(null);
+  const [otpCooldown, setOtpCooldown] = useState(0);
+
+  useEffect(() => {
+    if (otpCooldown <= 0) return;
+    const t = setTimeout(() => setOtpCooldown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [otpCooldown]);
+
+  const handleSendOtp = async () => {
+    setSendingOtp(true); setOtpNotice(null); setError(null);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/auth/send-otp`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.message || "Could not send verification code.");
+      setOtpSent(true);
+      setOtpNotice(body.emailSent === false ? body.message : "Code sent — check your email.");
+      setOtpCooldown(60);
+    } catch (e) {
+      setOtpNotice(e.message);
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
   const handleSave = async () => {
+    // Role changes need a verified code first — everything else (status,
+    // flag) can still be saved without one.
+    if (canEditRole && role && !otp) {
+      setError("Enter the verification code sent to your email to confirm this role change.");
+      return;
+    }
+
     setSaving(true); setError(null);
     try {
       await updateDoc(doc(db, "user", user.id), { ...form, updatedAt: serverTimestamp() });
@@ -1611,7 +1654,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
             "Content-Type": "application/json",
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
-          body: JSON.stringify({ role }),
+          body: JSON.stringify({ role, otp }),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
@@ -1662,9 +1705,39 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
                 {assignableRoleOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
               {role && (
-                <p className="text-xs text-amber-600 mt-1">
-                  This will move {user.details?.firstName || user.username || "this user"} out of the {roleLabelSingular} list into {role}.
-                </p>
+                <>
+                  <p className="text-xs text-amber-600 mt-1">
+                    This will move {user.details?.firstName || user.username || "this user"} out of the {roleLabelSingular} list into {role}.
+                  </p>
+
+                  {/* Verification step — required before a role change can be saved */}
+                  <div className="mt-3 p-3 border rounded-xl bg-gray-50 space-y-2">
+                    <p className="text-xs font-medium text-gray-600">Verify it's you</p>
+                    <p className="text-xs text-gray-400">
+                      We'll send a 6-digit code to your own account email to confirm this role change.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSendOtp}
+                        disabled={sendingOtp || otpCooldown > 0}
+                        className="px-3 py-2 text-xs font-medium rounded-xl border border-teal-300 text-teal-700 hover:bg-teal-50 disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {sendingOtp ? "Sending..." : otpCooldown > 0 ? `Resend in ${otpCooldown}s` : otpSent ? "Resend code" : "Send code"}
+                      </button>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="Enter 6-digit code"
+                        value={otp}
+                        onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        className="flex-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400"
+                      />
+                    </div>
+                    {otpNotice && <p className="text-xs text-gray-500">{otpNotice}</p>}
+                  </div>
+                </>
               )}
             </div>
           )}

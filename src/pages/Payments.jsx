@@ -2,6 +2,17 @@ import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 
+// Fire-and-forget audit log write — same pattern as Fleet.jsx's status
+// changes. Never blocks or fails the action it's logging.
+const logAuditEvent = (action, description) => {
+  const token = localStorage.getItem("token");
+  fetch(`${process.env.REACT_APP_API_URL}/api/audit-logs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action, description }),
+  }).catch((e) => console.error("Audit log write failed:", e));
+};
+
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
 const IconMoney = ({ className = "w-5 h-5" }) => (
@@ -231,6 +242,10 @@ export default function Payments() {
   const [discountReasonInput, setDiscountReasonInput] = useState("");
   const [confirmEditDiscount, setConfirmEditDiscount] = useState(false);
   const [markingRefund, setMarkingRefund] = useState(false);
+  const [correctingDiscount, setCorrectingDiscount] = useState(false);
+  const [correctionInput, setCorrectionInput] = useState("");
+  const [correctionReasonInput, setCorrectionReasonInput] = useState("");
+  const [confirmCorrection, setConfirmCorrection] = useState(false);
   const [sortKey, setSortKey]             = useState(null); // null = default/unsorted (API order)
   const [sortDir, setSortDir]             = useState("asc");
   const [searchParams] = useSearchParams();
@@ -245,6 +260,10 @@ export default function Payments() {
   };
 
   const token = localStorage.getItem("token");
+  const currentUser = (() => {
+    try { return JSON.parse(localStorage.getItem("user")); } catch { return null; }
+  })();
+  const isAdmin = currentUser?.role === "Admin";
   const { fmt: fmtCurrency } = useCurrency();
 
   const showToast = (msg, type = "success") => {
@@ -287,6 +306,8 @@ export default function Payments() {
       setSelected(data.data);
       setDiscountInput(data.data.discountAmount ? String(data.data.discountAmount) : "");
       setDiscountReasonInput("");
+      setCorrectionInput(data.data.discountAmount ? String(data.data.discountAmount) : "");
+      setCorrectionReasonInput("");
     } catch (e) { showToast(e.message, "error"); }
     finally { setDetailLoading(false); }
   };
@@ -317,6 +338,7 @@ export default function Payments() {
     if (!selected) return;
     const amount = Number(discountInput);
     if (!Number.isFinite(amount) || amount < 0) return;
+    const previousAmount = selected.discountAmount || 0;
     setApplyingDiscount(true);
     try {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount`, {
@@ -327,6 +349,12 @@ export default function Payments() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       showToast("Discount applied.");
+      logAuditEvent(
+        "update",
+        previousAmount > 0
+          ? `Discount on booking ${selected.bookingID} updated from ₱${previousAmount.toLocaleString()} to ₱${amount.toLocaleString()}.${discountReasonInput.trim() ? ` Reason: ${discountReasonInput.trim()}` : ""}`
+          : `Discount of ₱${amount.toLocaleString()} applied to booking ${selected.bookingID}.${discountReasonInput.trim() ? ` Reason: ${discountReasonInput.trim()}` : ""}`
+      );
       await openDetail(selected.id);
       await fetchPayments();
     } catch (e) { showToast(e.message, "error"); }
@@ -364,10 +392,49 @@ export default function Payments() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       showToast("Refund marked as returned.");
+      logAuditEvent("update", `Refund of ₱${selected.refundDue.toLocaleString()} on booking ${selected.bookingID} marked as returned to customer.`);
       await openDetail(selected.id);
       await fetchPayments();
     } catch (e) { showToast(e.message, "error"); }
     finally { setMarkingRefund(false); }
+  };
+
+  // Admin-only backdoor: corrects an already-issued discount's recorded
+  // amount for the books — no notification, no reopening. Mirrors
+  // submitDiscount()'s re-open-and-refresh pattern, but hits the
+  // /discount/correct route instead.
+  const submitCorrection = async () => {
+    if (!selected) return;
+    const amount = Number(correctionInput);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    if (!correctionReasonInput.trim()) { showToast("A reason is required for a correction.", "error"); return; }
+    const previousAmount = selected.discountAmount || 0;
+    setCorrectingDiscount(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount/correct`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ amount, reason: correctionReasonInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast("Discount record corrected.");
+      logAuditEvent(
+        "update",
+        `[Admin correction] Discount record on booking ${selected.bookingID} corrected from ₱${previousAmount.toLocaleString()} to ₱${amount.toLocaleString()} (refund already returned — documentation only, no notification sent). Reason: ${correctionReasonInput.trim()}`
+      );
+      await openDetail(selected.id);
+      await fetchPayments();
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setCorrectingDiscount(false); setConfirmCorrection(false); }
+  };
+
+  const handleSubmitCorrection = () => {
+    if (!selected) return;
+    const amount = Number(correctionInput);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    if (!correctionReasonInput.trim()) { showToast("A reason is required for a correction.", "error"); return; }
+    setConfirmCorrection(true);
   };
 
   // ── filter ──
@@ -505,6 +572,44 @@ export default function Payments() {
                   )}
 
                   <Section title="Apply Discount">
+                    {selected.refundIssued ? (
+                      isAdmin ? (
+                        <div className="space-y-2.5">
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                            This booking's refund has already been marked as returned. Editing here only corrects the number on record — it will <span className="font-semibold">not</span> reopen the refund or notify anyone.
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="relative flex-1">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
+                              <input
+                                type="number" min="0" step="1" placeholder="0"
+                                value={correctionInput}
+                                onChange={(e) => setCorrectionInput(e.target.value)}
+                                className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+                              />
+                            </div>
+                            <input
+                              type="text" placeholder="Reason (required)"
+                              value={correctionReasonInput}
+                              onChange={(e) => setCorrectionReasonInput(e.target.value)}
+                              className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+                            />
+                          </div>
+                          <button
+                            onClick={handleSubmitCorrection}
+                            disabled={correctingDiscount || correctionInput === "" || !correctionReasonInput.trim()}
+                            className="w-full py-2 rounded-xl text-sm font-semibold border border-amber-500 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all disabled:opacity-50"
+                          >
+                            {correctingDiscount ? "Correcting…" : "Correct Discount Record"}
+                          </button>
+                          <p className="text-[11px] text-gray-400">Admin-only. Logged to the Audit Log. Does not send a notification.</p>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
+                          This booking's refund has already been marked as returned, so the discount can no longer be edited here. Only an Admin can correct the recorded amount now.
+                        </div>
+                      )
+                    ) : (
                     <div className="space-y-2.5">
                       <div className="flex items-center gap-2">
                         <div className="relative flex-1">
@@ -535,6 +640,7 @@ export default function Payments() {
                       )}
                       <p className="text-[11px] text-gray-400">Sets the total discount on this booking — entering a new amount replaces the old one, it doesn't add to it.</p>
                     </div>
+                    )}
                   </Section>
 
                   <Section title="Proof of Payment">
@@ -578,6 +684,35 @@ export default function Payments() {
               <button onClick={submitDiscount} disabled={applyingDiscount}
                 className="flex-1 px-4 py-2 bg-arl-dark text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50">
                 {applyingDiscount ? "Saving…" : "Yes, this is a correction"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Correction — Admin-only backdoor edit for a discount whose
+          refund has already been marked as returned. Extra confirm step
+          since this bypasses the normal notify-and-reopen flow entirely. */}
+      {confirmCorrection && selected && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
+            <div>
+              <h3 className="font-bold text-arl-dark text-lg">Correct discount record?</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                This booking's refund was already marked as returned. This will only update the recorded discount from{" "}
+                <span className="font-semibold text-gray-700">{peso(selected.discountAmount, fmtCurrency)}</span> to{" "}
+                <span className="font-semibold text-gray-700">{peso(Number(correctionInput) || 0, fmtCurrency)}</span>{" "}
+                for the books — <span className="font-semibold">no one will be notified</span> and the refund will stay marked as returned.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmCorrection(false)} disabled={correctingDiscount}
+                className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={submitCorrection} disabled={correctingDiscount}
+                className="flex-1 px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50">
+                {correctingDiscount ? "Saving…" : "Yes, correct the record"}
               </button>
             </div>
           </div>

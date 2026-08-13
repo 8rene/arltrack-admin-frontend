@@ -6,6 +6,22 @@ import {
 import { db } from "../fireabase";
 
 /* ── helpers ── */
+
+// Same slugifier VehicleDocs.jsx uses to build each part's photo field
+// key (e.g. "Brake Parts" + "Brake Disc" -> "brakePartsBrakeDiscUrl").
+// Must stay byte-for-byte identical on both sides or the lookup won't
+// find the photo a driver actually saved.
+const partNameToFieldKey = (str = "") => {
+  const camel = str
+    .replace(/[^a-zA-Z0-9 ]/g, "")
+    .trim()
+    .split(/\s+/)
+    .map((w, i) =>
+      i === 0 ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+    )
+    .join("");
+  return camel ? `${camel}Url` : "";
+};
 const fmtTs = (val) => {
   if (!val) return "—";
   try {
@@ -81,6 +97,18 @@ export default function Inventory() {
   const [saving, setSaving]                 = useState(false);
   const [saveSuccess, setSaveSuccess]       = useState("");     // flash message
 
+  // carPartTypes map (typeID -> category name), used to build the same
+  // photo field key VehicleDocs.jsx computes per part (e.g. "brakePartsBrakeDiscUrl")
+  const [partTypes, setPartTypes]           = useState({});
+
+  // vehicleDocumentationBeforeTrip / AfterTrip docs for the active booking —
+  // read-only here, this page never writes photos, just links to them.
+  const [beforePhotoDoc, setBeforePhotoDoc] = useState(null);
+  const [afterPhotoDoc, setAfterPhotoDoc]   = useState(null);
+
+  // Lightbox for "View Photo" — { url, label } or null
+  const [viewingPhoto, setViewingPhoto]     = useState(null);
+
   // Part edits per tab
   const [beforeEdits, setBeforeEdits]       = useState({});     // { partId: status }
   const [afterEdits, setAfterEdits]         = useState({});
@@ -88,6 +116,13 @@ export default function Inventory() {
   // Search / filter
   const [search, setSearch]                 = useState("");
   const [statusFilter, setStatusFilter]     = useState("All");
+
+  // Past trips (history) for the selected car — derived from the same
+  // bookings query openCar() already runs, just the non-nearest ones.
+  const [pastBookings, setPastBookings]         = useState([]);
+  const [expandedHistoryID, setExpandedHistoryID] = useState(null);
+  // bookingID -> { loading, userFullName, before, after }
+  const [historyRecords, setHistoryRecords]     = useState({});
 
   /* ── Load cars ── */
   const fetchCars = useCallback(async () => {
@@ -125,6 +160,48 @@ export default function Inventory() {
 
   useEffect(() => { fetchCars(); }, [fetchCars]);
 
+  // carPartTypes — needed to compute each part's photo field key the
+  // same way VehicleDocs.jsx does (typeName + partName -> camelCase + "Url").
+  useEffect(() => {
+    getDocs(collection(db, "carPartTypes")).then(snap => {
+      const map = {};
+      snap.docs.forEach(d => { map[d.id] = d.data().carPartName || d.id; });
+      setPartTypes(map);
+    }).catch(console.error);
+  }, []);
+
+  // Same slugifier VehicleDocs.jsx uses — must match exactly, or the
+  // computed field key won't line up with the URL a driver actually saved.
+  const getPartFieldKey = useCallback((part) => {
+    const typeName = partTypes[part.carPartTypeID] || "";
+    const combined = `${typeName} ${part.carPartName || ""}`.trim();
+    return partNameToFieldKey(combined) || partNameToFieldKey(part.carPartName || part.id);
+  }, [partTypes]);
+
+  /* ── Load photo docs (read-only) for a booking ──
+   * Same collections + "pick most recent" pattern VehicleDocs.jsx uses,
+   * just never written to from this page. */
+  const loadPhotoDocs = useCallback(async (bookingID) => {
+    if (!bookingID) { setBeforePhotoDoc(null); setAfterPhotoDoc(null); return; }
+    try {
+      const [beforeSnap, afterSnap] = await Promise.all([
+        getDocs(query(collection(db, "vehicleDocumentationBeforeTrip"), where("bookingID", "==", bookingID))),
+        getDocs(query(collection(db, "vehicleDocumentationAfterTrip"),  where("bookingID", "==", bookingID))),
+      ]);
+      const pickLatest = (snap) => {
+        if (snap.empty) return null;
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        docs.sort((a, b) => toSec(b.updatedAt || b.createdAt) - toSec(a.updatedAt || a.createdAt));
+        return docs[0];
+      };
+      setBeforePhotoDoc(pickLatest(beforeSnap));
+      setAfterPhotoDoc(pickLatest(afterSnap));
+    } catch (e) {
+      console.error("[INV] Failed to load photo docs:", e);
+      setBeforePhotoDoc(null); setAfterPhotoDoc(null);
+    }
+  }, []);
+
   /* ── Load inventory records for a booking ── */
   const loadInventoryRecords = useCallback(async (bookingID) => {
     if (!bookingID) return;
@@ -155,6 +232,65 @@ export default function Inventory() {
     }
   }, []);
 
+  /* ── Toggle + lazy-load a past trip's before/after records ── */
+  const toggleHistoryRow = useCallback(async (booking) => {
+    const bID = booking.bookingID || booking.id;
+
+    if (expandedHistoryID === bID) {
+      setExpandedHistoryID(null);
+      return;
+    }
+    setExpandedHistoryID(bID);
+
+    // Already fetched — don't re-query.
+    if (historyRecords[bID] && !historyRecords[bID].loading) return;
+
+    setHistoryRecords(prev => ({ ...prev, [bID]: { loading: true, before: null, after: null, userFullName: null } }));
+
+    try {
+      const [beforeSnap, afterSnap, beforePhotoSnap, afterPhotoSnap, detailDoc, userDoc] = await Promise.all([
+        getDocs(query(collection(db, "inventoryBeforeTrip"), where("bookingID", "==", bID))),
+        getDocs(query(collection(db, "inventoryAfterTrip"),  where("bookingID", "==", bID))),
+        getDocs(query(collection(db, "vehicleDocumentationBeforeTrip"), where("bookingID", "==", bID))),
+        getDocs(query(collection(db, "vehicleDocumentationAfterTrip"),  where("bookingID", "==", bID))),
+        booking.userID ? getDoc(doc(db, "userDetails", booking.userID)) : Promise.resolve(null),
+        booking.userID ? getDoc(doc(db, "user", booking.userID)) : Promise.resolve(null),
+      ]);
+
+      const pickLatest = (snap, sortField = "recordedAt") => {
+        if (snap.empty) return null;
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        docs.sort((a, b) => toSec(b[sortField]) - toSec(a[sortField]));
+        return docs[0];
+      };
+
+      let userFullName = "—";
+      if (detailDoc?.exists()) {
+        const { firstName = "", lastName = "" } = detailDoc.data();
+        userFullName = [firstName, lastName].filter(Boolean).join(" ").trim() || userFullName;
+      }
+      if (userFullName === "—" && userDoc?.exists()) {
+        const { username = "", email = "" } = userDoc.data();
+        userFullName = username || email || "—";
+      }
+
+      setHistoryRecords(prev => ({
+        ...prev,
+        [bID]: {
+          loading: false,
+          before: pickLatest(beforeSnap),
+          after:  pickLatest(afterSnap),
+          beforePhoto: pickLatest(beforePhotoSnap, "updatedAt"),
+          afterPhoto:  pickLatest(afterPhotoSnap, "updatedAt"),
+          userFullName,
+        },
+      }));
+    } catch (e) {
+      console.error("[INV] Failed to load history record:", e);
+      setHistoryRecords(prev => ({ ...prev, [bID]: { loading: false, before: null, after: null, beforePhoto: null, afterPhoto: null, userFullName: "—" } }));
+    }
+  }, [expandedHistoryID, historyRecords]);
+
   /* ── Open a car ── */
   const openCar = useCallback(async (car) => {
     setSelectedCar(car);
@@ -163,10 +299,15 @@ export default function Inventory() {
     setBookingUser(null);
     setBeforeRecord(null);
     setAfterRecord(null);
+    setBeforePhotoDoc(null);
+    setAfterPhotoDoc(null);
     setBeforeEdits({});
     setAfterEdits({});
     setActiveTab("before");
     setSaveSuccess("");
+    setPastBookings([]);
+    setExpandedHistoryID(null);
+    setHistoryRecords({});
 
     // Load parts
     setPartsLoading(true);
@@ -176,36 +317,46 @@ export default function Inventory() {
     } catch (e) { console.error(e); }
     finally { setPartsLoading(false); }
 
-    // Load bookings → find nearest upcoming
+    // Load bookings → find the active one
     setBookingLoading(true);
     try {
       const snap = await getDocs(
         query(collection(db, "bookings"), where("carID", "==", car.id))
       );
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const nowSec = Date.now() / 1000;
 
-      // NEAREST BOOKING: upcoming/ongoing OR completed bookings where:
-      // - startDateTime is today or in the future, OR
-      // - endDateTime hasn't passed yet (trip in progress)
-      // Sort by startDateTime ascending → nearest first
-      // (Was checking for "approved", a status that no booking has ever
-      // actually had — real statuses are upcoming/ongoing/completed/
-      // cancelled/cancellation_request/stolen, see booking.model.js —
-      // same bug as VehicleDocs.jsx had.)
+      // Trust status, not scheduled dates, to decide what's "active" (same
+      // logic as VehicleDocs.jsx). "upcoming"/"ongoing" both mean the trip
+      // genuinely hasn't wrapped up yet — a late pickup or delayed return
+      // whose original startDateTime/endDateTime has already passed is
+      // still very much active until it's actually marked
+      // completed/cancelled. A prior version of this filter used a date
+      // window on top of status, which silently dropped bookings the
+      // moment their scheduled dates slipped into the past even though
+      // nothing about their real state had changed. Sort by
+      // startDateTime only to pick among multiple open bookings for the
+      // same car, never to exclude one.
       const upcoming = all
-        .filter(b => {
-          const status = b.status?.toLowerCase();
-          if (!["upcoming", "ongoing", "completed"].includes(status)) return false;
-          const startSec = toSec(b.startDateTime);
-          const endSec   = toSec(b.endDateTime);
-          // Include: starts in future, or end is in future (ongoing), or starts today
-          return (!isNaN(endSec) && endSec > nowSec) || (!isNaN(startSec) && startSec >= nowSec - 86400);
-        })
+        .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
         .sort((a, b) => toSec(a.startDateTime) - toSec(b.startDateTime));
 
       const nearest = upcoming[0] || null;
       setActiveBooking(nearest);
+
+      // Past trips for this car — every other booking that's actually run
+      // its course (completed/cancelled/stolen), not the nearest
+      // upcoming/ongoing one above. Reuses the same `all` fetch — no extra
+      // query needed. Sorted newest-first by startDateTime.
+      const nearestID = nearest ? (nearest.bookingID || nearest.id) : null;
+      const past = all
+        .filter(b => {
+          const status = b.status?.toLowerCase();
+          const bID = b.bookingID || b.id;
+          if (bID === nearestID) return false;
+          return ["completed", "cancelled", "stolen"].includes(status);
+        })
+        .sort((a, b) => toSec(b.startDateTime) - toSec(a.startDateTime));
+      setPastBookings(past);
 
       if (nearest) {
         // Resolve user info for this booking
@@ -226,16 +377,16 @@ export default function Inventory() {
           }
         }
 
-        // Load inventory records
+        // Load inventory records + linked photo docs
         const bID = nearest.bookingID || nearest.id;
-        await loadInventoryRecords(bID);
+        await Promise.all([loadInventoryRecords(bID), loadPhotoDocs(bID)]);
       }
     } catch (e) {
       console.error("[BOOKING] fetch error:", e);
     } finally {
       setBookingLoading(false);
     }
-  }, [loadInventoryRecords]);
+  }, [loadInventoryRecords, loadPhotoDocs]);
 
   /* ── Save Before Trip record ── */
   const saveBeforeTrip = async () => {
@@ -478,11 +629,35 @@ export default function Inventory() {
                 saveSuccess={saveSuccess}
                 onSaveBefore={saveBeforeTrip}
                 onSaveAfter={saveAfterTrip}
+                beforePhotoDoc={beforePhotoDoc}
+                afterPhotoDoc={afterPhotoDoc}
+                getPartFieldKey={getPartFieldKey}
+                onViewPhoto={setViewingPhoto}
+              />
+            )}
+
+            {/* Past Trips — every other completed/cancelled/stolen booking
+                for this car. Before/after records are lazy-loaded only
+                when a row is expanded, so opening a car with a long
+                history doesn't fire N queries up front. */}
+            {!bookingLoading && pastBookings.length > 0 && (
+              <PastTripsSection
+                pastBookings={pastBookings}
+                parts={parts}
+                expandedHistoryID={expandedHistoryID}
+                historyRecords={historyRecords}
+                onToggleRow={toggleHistoryRow}
+                getPartFieldKey={getPartFieldKey}
+                onViewPhoto={setViewingPhoto}
               />
             )}
           </div>
         )}
       </div>
+
+      {viewingPhoto && (
+        <PhotoLightbox photo={viewingPhoto} onClose={() => setViewingPhoto(null)} />
+      )}
     </div>
   );
 }
@@ -499,6 +674,7 @@ function InventoryPanel({
   afterEdits, setAfterEdits,
   saving, saveSuccess,
   onSaveBefore, onSaveAfter,
+  beforePhotoDoc, afterPhotoDoc, getPartFieldKey, onViewPhoto,
 }) {
   const bID = booking.bookingID || booking.id;
 
@@ -507,6 +683,7 @@ function InventoryPanel({
   const currentEdits   = isBeforeTab ? beforeEdits  : afterEdits;
   const setCurrentEdits = isBeforeTab ? setBeforeEdits : setAfterEdits;
   const onSave         = isBeforeTab ? onSaveBefore : onSaveAfter;
+  const currentPhotoDoc = isBeforeTab ? beforePhotoDoc : afterPhotoDoc;
 
   const hasPendingEdits = Object.keys(currentEdits).length > 0;
 
@@ -519,7 +696,8 @@ function InventoryPanel({
     const savedEntry = currentRecord?.damageParts?.find(d => d.carPartID === p.id);
     const savedStatus = savedEntry?.status || "Good";
     const effectiveStatus = currentEdits[p.id] !== undefined ? currentEdits[p.id] : savedStatus;
-    return { ...p, effectiveStatus, isDirty: currentEdits[p.id] !== undefined };
+    const photoUrl = currentPhotoDoc?.[getPartFieldKey(p)] || null;
+    return { ...p, effectiveStatus, isDirty: currentEdits[p.id] !== undefined, photoUrl };
   });
 
   const damagedCount = partRows.filter(p => !["Good", "New"].includes(p.effectiveStatus)).length;
@@ -534,7 +712,7 @@ function InventoryPanel({
           <div className="flex items-center gap-2">
             <span className="text-base">🚗</span>
             <h3 className="font-bold text-gray-800 text-sm">
-              Nearest Upcoming Booking
+              {booking.status?.toLowerCase() === "ongoing" ? "Active Booking" : "Upcoming Booking"}
             </h3>
           </div>
           <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[booking.status?.toLowerCase()] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_STATUS_STYLE[booking.status?.toLowerCase()]?.includes("green") ? "bg-green-500" : BOOKING_STATUS_STYLE[booking.status?.toLowerCase()]?.includes("yellow") ? "bg-yellow-400" : BOOKING_STATUS_STYLE[booking.status?.toLowerCase()]?.includes("blue") ? "bg-blue-500" : BOOKING_STATUS_STYLE[booking.status?.toLowerCase()]?.includes("red") ? "bg-red-500" : "bg-gray-400"}`} />
@@ -640,9 +818,10 @@ function InventoryPanel({
               <div className="rounded-xl border border-gray-100 overflow-hidden mb-4">
                 <table className="w-full text-sm table-fixed">
                   <colgroup>
-                    <col style={{ width: "35%" }} />
-                    <col style={{ width: "25%" }} />
-                    <col style={{ width: "22%" }} />
+                    <col style={{ width: "30%" }} />
+                    <col style={{ width: "20%" }} />
+                    <col style={{ width: "18%" }} />
+                    <col style={{ width: "14%" }} />
                     <col style={{ width: "18%" }} />
                   </colgroup>
                   <thead>
@@ -650,6 +829,7 @@ function InventoryPanel({
                       <th className="px-4 py-2.5 text-left font-semibold">Part Name</th>
                       <th className="px-4 py-2.5 text-left font-semibold">Serial No.</th>
                       <th className="px-4 py-2.5 text-left font-semibold">Status</th>
+                      <th className="px-4 py-2.5 text-center font-semibold">Photo</th>
                       <th className="px-4 py-2.5 text-right font-semibold">Edit</th>
                     </tr>
                   </thead>
@@ -674,6 +854,19 @@ function InventoryPanel({
                           }`}>
                             {p.effectiveStatus}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {p.photoUrl ? (
+                            <button
+                              onClick={() => onViewPhoto({ url: p.photoUrl, label: p.carPartName || "Part" })}
+                              className="text-xs text-teal-600 hover:text-teal-700 font-semibold inline-flex items-center gap-1"
+                              title="View photo saved by driver"
+                            >
+                              📷 View
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-300" title="No photo saved for this part yet">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <PartEditDropdown
@@ -795,6 +988,170 @@ function InventoryPanel({
   );
 }
 
+/* ══════════════════════════════════════════════
+   PAST TRIPS — collapsed list of past bookings for the selected car;
+   click a row to lazy-load and expand that trip's before/after records.
+══════════════════════════════════════════════ */
+function PastTripsSection({ pastBookings, parts, expandedHistoryID, historyRecords, onToggleRow, getPartFieldKey, onViewPhoto }) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+      <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-100">
+        <span className="text-base">🕘</span>
+        <h3 className="font-bold text-gray-800 text-sm">Past Trips</h3>
+        <span className="text-xs text-gray-400">({pastBookings.length})</span>
+      </div>
+
+      <div className="divide-y divide-gray-50">
+        {pastBookings.map((booking) => {
+          const bID = booking.bookingID || booking.id;
+          const isExpanded = expandedHistoryID === bID;
+          const record = historyRecords[bID];
+          const status = booking.status?.toLowerCase();
+
+          return (
+            <div key={bID}>
+              <button
+                onClick={() => onToggleRow(booking)}
+                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50/60 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black shrink-0 ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
+                    {status?.replace("_", " ") || "—"}
+                  </span>
+                  <span className="text-xs font-mono text-gray-500 truncate">{bID}</span>
+                  <span className="text-xs text-gray-400 shrink-0">
+                    {fmtTs(booking.startDateTime)} – {fmtTs(booking.endDateTime)}
+                  </span>
+                </div>
+                <span className={`text-gray-400 text-xs shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`}>▾</span>
+              </button>
+
+              {isExpanded && (
+                <div className="px-5 pb-4">
+                  {!record || record.loading ? (
+                    <div className="h-16 flex items-center justify-center text-gray-400 text-xs">Loading trip record…</div>
+                  ) : (
+                    <PastTripDetail record={record} parts={parts} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} />
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── Expanded past-trip detail: own Before/After tab toggle, full
+   read-only parts table (all parts, not just damaged ones) — same shape
+   as the live InventoryPanel table, minus the Edit column. ── */
+function PastTripDetail({ record, parts, getPartFieldKey, onViewPhoto }) {
+  const [rowTab, setRowTab] = useState("before");
+  const isBeforeTab = rowTab === "before";
+  const currentRecord = isBeforeTab ? record.before : record.after;
+  const currentPhotoDoc = isBeforeTab ? record.beforePhoto : record.afterPhoto;
+
+  return (
+    <div className="space-y-3 pt-1">
+      {record.userFullName && record.userFullName !== "—" && (
+        <p className="text-xs text-gray-500">Customer: <span className="text-gray-700 font-medium">{record.userFullName}</span></p>
+      )}
+
+      <div className="flex bg-gray-50 border border-gray-100 rounded-xl p-1 gap-1 w-fit">
+        <button
+          onClick={() => setRowTab("before")}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${isBeforeTab ? "bg-white shadow-sm text-arl-dark" : "text-gray-400 hover:text-gray-600"}`}
+        >🔍 Before Trip</button>
+        <button
+          onClick={() => setRowTab("after")}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${!isBeforeTab ? "bg-white shadow-sm text-arl-dark" : "text-gray-400 hover:text-gray-600"}`}
+        >🔎 After Trip</button>
+      </div>
+
+      <HistoryPartsTable record={currentRecord} parts={parts} photoDoc={currentPhotoDoc} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} />
+    </div>
+  );
+}
+
+/* ── Full read-only parts table for one past before/after record —
+   every part for the car, mirroring the live Before/After Trip table,
+   just without the Edit column. ── */
+function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPhoto }) {
+  if (!record) {
+    return (
+      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 text-center">
+        <p className="text-xs text-gray-400">No record saved for this trip.</p>
+      </div>
+    );
+  }
+
+  const isGood = record.inventoryOverallStatus !== "has damage";
+  const partRows = parts.map(p => {
+    const savedEntry = record.damageParts?.find(d => d.carPartID === p.id);
+    const photoUrl = photoDoc?.[getPartFieldKey(p)] || null;
+    return { ...p, effectiveStatus: savedEntry?.status || "Good", photoUrl };
+  });
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${isGood ? "bg-green-500" : "bg-red-500"}`} />
+          <p className="text-xs font-semibold text-gray-700 capitalize">Overall: {record.inventoryOverallStatus}</p>
+        </div>
+        {record.recordedAt && (
+          <p className="text-xs text-gray-400">Recorded: {fmtTs(record.recordedAt)}</p>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-gray-100 overflow-hidden">
+        <table className="w-full text-sm table-fixed">
+          <colgroup>
+            <col style={{ width: "38%" }} />
+            <col style={{ width: "24%" }} />
+            <col style={{ width: "20%" }} />
+            <col style={{ width: "18%" }} />
+          </colgroup>
+          <thead>
+            <tr className="text-xs text-gray-400 uppercase tracking-wide bg-gray-50 border-b border-gray-100">
+              <th className="px-4 py-2 text-left font-semibold">Part Name</th>
+              <th className="px-4 py-2 text-left font-semibold">Serial No.</th>
+              <th className="px-4 py-2 text-left font-semibold">Status</th>
+              <th className="px-4 py-2 text-center font-semibold">Photo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {partRows.map((p, i) => (
+              <tr key={p.id} className={`border-t border-gray-50 ${i % 2 === 1 ? "bg-gray-50/20" : ""}`}>
+                <td className="px-4 py-2.5 font-medium text-gray-800 text-xs truncate">{p.carPartName || "—"}</td>
+                <td className="px-4 py-2.5 font-mono text-xs text-gray-500 truncate">{p.serialNumber || "—"}</td>
+                <td className="px-4 py-2.5">
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${PART_STATUS_STYLE[p.effectiveStatus] || "bg-gray-100 text-gray-500"}`}>
+                    {p.effectiveStatus}
+                  </span>
+                </td>
+                <td className="px-4 py-2.5 text-center">
+                  {p.photoUrl ? (
+                    <button
+                      onClick={() => onViewPhoto({ url: p.photoUrl, label: p.carPartName || "Part" })}
+                      className="text-xs text-teal-600 hover:text-teal-700 font-semibold"
+                    >
+                      📷 View
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /* ── Tab Button ── */
 function TabButton({ active, onClick, emoji, label, badge, badgeColor }) {
   return (
@@ -875,5 +1232,30 @@ function CarCard({ car, selected, compact, onClick }) {
         )}
       </div>
     </button>
+  );
+}
+
+/* ── Photo lightbox — simple click-outside/X-to-close overlay for
+   viewing a single part/exterior photo a driver saved in VehicleDocs. ── */
+function PhotoLightbox({ photo, onClose }) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-6"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl overflow-hidden max-w-lg w-full shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-800">{photo.label}</p>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+          >✕</button>
+        </div>
+        <img src={photo.url} alt={photo.label} className="w-full max-h-[70vh] object-contain bg-gray-50" />
+      </div>
+    </div>
   );
 }
