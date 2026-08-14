@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import {
   collection, getDocs, query, where, orderBy, doc, updateDoc,
-  addDoc, deleteDoc, serverTimestamp
+  addDoc, serverTimestamp
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
@@ -18,6 +18,29 @@ const logAuditEvent = (action, description) => {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ action, description }),
   }).catch((e) => console.error("Audit log write failed:", e));
+};
+
+// Authenticated call to this app's own backend (/api/fleet/...) instead of
+// writing to Firestore directly from the browser. This is what actually
+// makes verifyToken + requireRole run on every car/pricing/brand/model
+// change — going straight to Firestore skipped both entirely. Throws on
+// any non-success response so callers' existing try/catch + setError(...)
+// continues to work unchanged.
+const apiFetch = async (path, options = {}) => {
+  const token = localStorage.getItem("token");
+  const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || `Request failed (${res.status})`);
+  }
+  return json?.data;
 };
 
 // ─── SVG ICONS ────────────────────────────────────────────────────────────────
@@ -159,11 +182,9 @@ export default function Fleet() {
 
   const handleDeleteCar = async (car) => {
     try {
-      await deleteDoc(doc(db, "cars", car.id));
-      const imgSnap = await getDocs(query(collection(db, "carImages"), where("carID", "==", car.id)));
-      for (const d of imgSnap.docs) await deleteDoc(d.ref);
-      const priceSnap = await getDocs(query(collection(db, "carPricing"), where("carID", "==", car.id)));
-      for (const d of priceSnap.docs) await deleteDoc(d.ref);
+      // Backend's deleteCar already cascades to that car's images + pricing
+      // docs in one batch — matches what this used to do by hand.
+      await apiFetch(`/api/fleet/cars/${car.id}`, { method: "DELETE" });
       setConfirmDelete(null);
       fetchAll();
     } catch (e) { console.error("Delete car error:", e); }
@@ -172,45 +193,18 @@ export default function Fleet() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [carsSnap, imgSnap, priceSnap, brandSnap, modelSnap] = await Promise.all([
-        getDocs(collection(db, "cars")),
-        getDocs(collection(db, "carImages")),
-        getDocs(collection(db, "carPricing")),
-        getDocs(collection(db, "brand")),
-        getDocs(collection(db, "model")),
+      // getAllCars on the backend already merges in imageURL, pricing, and
+      // brandName/modelName — no need to fetch+join those collections
+      // client-side anymore.
+      const [carsData, brandsData, modelsData] = await Promise.all([
+        apiFetch("/api/fleet/cars"),
+        apiFetch("/api/fleet/brands"),
+        apiFetch("/api/fleet/models"),
       ]);
 
-      const imgMap = {};
-      imgSnap.docs.forEach(d => {
-        const { carID, imageURL, isPrimary } = d.data();
-        if (!imgMap[carID] || isPrimary) imgMap[carID] = imageURL;
-      });
-
-      const priceMap = {};
-      priceSnap.docs.forEach(d => {
-        const { carID, price, durationType } = d.data();
-        if (!priceMap[carID]) priceMap[carID] = [];
-        priceMap[carID].push({ id: d.id, price, durationType });
-      });
-
-      const brandList = brandSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const modelList = modelSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const brandMap  = Object.fromEntries(brandList.map(b => [b.id, b.brandName]));
-      const modelMap  = Object.fromEntries(modelList.map(m => [m.id, m.modelName]));
-
-      setBrands(brandList);
-      setModels(modelList);
-
-      const merged = carsSnap.docs.map(d => ({
-        id: d.id,
-        ...d.data(),
-        imageURL:  imgMap[d.id] || null,
-        pricing:   sortPricing(priceMap[d.id] || []),
-        brandName: brandMap[d.data().brandID] || "—",
-        modelName: modelMap[d.data().modelID] || "—",
-      }));
-
-      setCars(merged);
+      setBrands(brandsData || []);
+      setModels(modelsData || []);
+      setCars(carsData || []);
     } catch (e) {
       console.error("Fleet fetch error:", e);
     } finally {
@@ -341,7 +335,7 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
   const [nearestBooking, setNearestBooking] = useState(null);
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
-  const [inactiveModalOpen, setInactiveModalOpen] = useState(false);
+  const [reasonModalStatus, setReasonModalStatus] = useState(null); // null | "Maintenance" | "Inactive"
   const CAR_STATUSES = ["Active", "Maintenance", "Inactive"];
 
   useEffect(() => {
@@ -370,22 +364,33 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
 
   const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.plateNumber || car.id;
 
-  // Applies a status change that doesn't need extra input (Active,
-  // Maintenance) — Inactive is handled separately via the reason modal
-  // below since it needs to collect a reason first.
+  // Applies a status change. Active writes immediately; Maintenance and
+  // Inactive both collect a reason first via the shared reason modal below
+  // (see reasonModalStatus / confirmStatusReason) since staff should
+  // always be able to say *why* a car left service, not just Inactive.
   const applyStatusChange = async (newStatus, extra = {}) => {
     setStatusSaving(true);
     try {
-      await updateDoc(doc(db, "cars", car.id), {
-        status: newStatus,
-        // Clear any previously-recorded Inactive reason once the car
-        // leaves that status, so it doesn't show stale info if the car
-        // goes Inactive again later without a new reason being set.
-        inactiveReason: null,
-        ...extra,
+      // PUT /api/fleet/cars/:carID accepts any subset of car fields, so
+      // status + statusReason go in one call — runs through
+      // verifyToken + requireRole on the backend now, unlike the old
+      // direct Firestore updateDoc.
+      await apiFetch(`/api/fleet/cars/${car.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          status: newStatus,
+          // Clear any previously-recorded reason once the car leaves
+          // Maintenance/Inactive, so it doesn't show stale info if the
+          // car goes back into one of those statuses later without a
+          // new reason being set.
+          statusReason: extra.statusReason ?? null,
+        }),
       });
-      onStatusChange?.(car.id, newStatus, { inactiveReason: null });
-      logAuditEvent("update", `Status changed for ${carLabel} from ${car.status || "—"} to ${newStatus}.`);
+      onStatusChange?.(car.id, newStatus, { statusReason: extra.statusReason ?? null });
+      logAuditEvent(
+        "update",
+        `Status changed for ${carLabel} from ${car.status || "—"} to ${newStatus}${extra.statusReason ? `: ${extra.statusReason}` : "."}`
+      );
 
       // Soft redirect: switching to Maintenance sends staff straight to
       // the Maintenance page, prefilled to this car, instead of leaving
@@ -399,29 +404,20 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
 
   const handleStatusChange = (newStatus) => {
     if (newStatus === car.status) { setStatusOpen(false); return; }
-    if (newStatus === "Inactive") {
-      // Needs a reason first — open the modal instead of writing immediately.
+    if (newStatus === "Inactive" || newStatus === "Maintenance") {
+      // Both need a reason first — open the shared modal instead of
+      // writing immediately.
       setStatusOpen(false);
-      setInactiveModalOpen(true);
+      setReasonModalStatus(newStatus);
       return;
     }
     applyStatusChange(newStatus);
   };
 
-  const confirmInactive = async (reason) => {
-    setStatusSaving(true);
-    try {
-      await updateDoc(doc(db, "cars", car.id), {
-        status: "Inactive",
-        inactiveReason: reason,
-      });
-      onStatusChange?.(car.id, "Inactive", { inactiveReason: reason });
-      logAuditEvent(
-        "update",
-        `Status changed for ${carLabel} from ${car.status || "—"} to Inactive: ${reason}.`
-      );
-    } catch (e) { console.error(e); }
-    finally { setStatusSaving(false); setInactiveModalOpen(false); }
+  const confirmStatusReason = async (reason) => {
+    const targetStatus = reasonModalStatus;
+    setReasonModalStatus(null);
+    await applyStatusChange(targetStatus, { statusReason: reason });
   };
 
   const basePrice = car.pricing?.find(p =>
@@ -446,7 +442,7 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
           <button
             onClick={(e) => { e.stopPropagation(); setStatusOpen((v) => !v); }}
             disabled={statusSaving}
-            title={car.status === "Inactive" && car.inactiveReason ? `Inactive: ${car.inactiveReason}` : undefined}
+            title={car.statusReason && (car.status === "Inactive" || car.status === "Maintenance") ? `${car.status}: ${car.statusReason}` : undefined}
             className={`px-3 py-1 text-xs rounded-full font-semibold flex items-center gap-1 transition-opacity ${STATUS_STYLE[car.status] || "bg-gray-100 text-gray-600"} hover:opacity-80`}
           >
             {statusSaving ? "…" : car.status}
@@ -522,48 +518,49 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
           </div>
         </div>
       </div>
-      {inactiveModalOpen && (
-        <InactiveReasonModal
+      {reasonModalStatus && (
+        <StatusReasonModal
           carLabel={carLabel}
+          status={reasonModalStatus}
           saving={statusSaving}
-          onConfirm={confirmInactive}
-          onCancel={() => setInactiveModalOpen(false)}
+          onConfirm={confirmStatusReason}
+          onCancel={() => setReasonModalStatus(null)}
         />
       )}
     </div>
   );
 }
 
-// Small modal collecting why a car is being switched to Inactive — a
-// required, pick-one reason. Written to the car doc as inactiveReason and
-// surfaced via a tooltip on the status badge and in the details modal.
-// "Under repair" isn't in this list on purpose — that case now belongs to
-// the Maintenance status, which has its own redirect flow.
-const INACTIVE_REASONS = ["Sold", "Retired", "Stolen/Lost", "Other"];
-
-function InactiveReasonModal({ carLabel, saving, onConfirm, onCancel }) {
-  const [reason, setReason] = useState(INACTIVE_REASONS[0]);
+// Small modal collecting why a car is being switched to Maintenance or
+// Inactive — a required, free-text reason either way. Written to the car
+// doc as statusReason and surfaced via a tooltip on the status badge and
+// in the details modal. Shared between both statuses so staff give a
+// reason no matter which direction the car is leaving Active for.
+function StatusReasonModal({ carLabel, status, saving, onConfirm, onCancel }) {
+  const [reason, setReason] = useState("");
+  const trimmed = reason.trim();
+  const verb = status === "Maintenance" ? "sent for maintenance" : "taken out of service";
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
         <div>
-          <h3 className="font-bold text-gray-800 text-lg">Mark as Inactive</h3>
-          <p className="text-sm text-gray-500 mt-1">Why is <span className="font-medium text-gray-700">{carLabel}</span> being taken out of service?</p>
+          <h3 className="font-bold text-gray-800 text-lg">Mark as {status}</h3>
+          <p className="text-sm text-gray-500 mt-1">Why is <span className="font-medium text-gray-700">{carLabel}</span> being {verb}?</p>
         </div>
         <div>
           <label className="text-xs font-medium text-gray-500">Reason</label>
-          <select value={reason} onChange={(e) => setReason(e.target.value)}
-            className="w-full mt-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
-            {INACTIVE_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <input type="text" value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder={status === "Maintenance" ? "e.g. Scheduled oil change, Flat tire…" : "e.g. Sold, Retired, Stolen/Lost…"}
+            autoFocus
+            className="w-full mt-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
         </div>
         <div className="flex gap-3">
           <button onClick={onCancel} disabled={saving}
             className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
             Cancel
           </button>
-          <button onClick={() => onConfirm(reason)} disabled={saving}
+          <button onClick={() => onConfirm(trimmed)} disabled={saving || !trimmed}
             className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
             {saving ? "Saving…" : "Confirm"}
           </button>
@@ -688,10 +685,10 @@ function ViewDetailsModal({ car, onClose, onEdit }) {
             ))}
           </div>
 
-          {car.status === "Inactive" && car.inactiveReason && (
+          {(car.status === "Inactive" || car.status === "Maintenance") && car.statusReason && (
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm">
-              <p className="text-xs text-gray-400">Inactive Reason</p>
-              <p className="font-semibold text-gray-800 mt-0.5">{car.inactiveReason}</p>
+              <p className="text-xs text-gray-400">{car.status} Reason</p>
+              <p className="font-semibold text-gray-800 mt-0.5">{car.statusReason}</p>
             </div>
           )}
 
@@ -931,7 +928,7 @@ function PricingForm({ pricing, setPricing }) {
         {sorted.map((p, i) => {
           const isEditing = editingIdx === i;
           return (
-            <div key={i} className={`rounded-xl border transition-all ${isEditing ? "border-teal-300 bg-teal-50/40" : "border-gray-100 bg-gray-50"}`}>
+            <div key={p.id || `new-${i}`} className={`rounded-xl border transition-all ${isEditing ? "border-teal-300 bg-teal-50/40" : "border-gray-100 bg-gray-50"}`}>
               {isEditing ? (
                 /* ── Edit mode ── */
                 <div className="p-4 space-y-3">
@@ -1087,13 +1084,20 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
   const handleSave = async () => {
     setSaving(true); setError(null);
     try {
-      await updateDoc(doc(db, "cars", car.id), {
-        ...form,
-        seatingCapacity: Number(form.seatingCapacity) || form.seatingCapacity,
-        year: Number(form.year) || form.year,
-        updatedAt: serverTimestamp(),
+      // PUT /api/fleet/cars/:carID — runs through verifyToken +
+      // requireRole on the backend, unlike the old direct Firestore write.
+      await apiFetch(`/api/fleet/cars/${car.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          ...form,
+          seatingCapacity: Number(form.seatingCapacity) || form.seatingCapacity,
+          year: Number(form.year) || form.year,
+        }),
       });
 
+      // No backend route exists for images yet, so this one still goes
+      // straight to Firebase Storage + Firestore's carImages collection —
+      // flagging that gap rather than quietly leaving it.
       if (imageFile) {
         const imgRef = ref(storage, `carImages/${car.id}/${Date.now()}_${imageFile.name}`);
         await uploadBytes(imgRef, imageFile);
@@ -1107,10 +1111,20 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
         }
       }
 
-      for (const p of pricing) {
-        if (p.id) await updateDoc(doc(db, "carPricing", p.id), { price: Number(p.price), durationType: p.durationType });
-        else if (p.durationType && p.price) await addDoc(collection(db, "carPricing"), { carID: car.id, price: Number(p.price), durationType: p.durationType, pricingID: "" });
-      }
+      // PUT /api/fleet/cars/:carID/pricing/replace deletes every existing
+      // tier for this car and reinserts the current list in one go — same
+      // idea as the manual diff-and-delete this used to need client-side,
+      // except it's atomic-ish on the backend and actually enforces
+      // requireRole. Also fixes the old "Remove doesn't actually delete"
+      // bug for free, since there's no separate delete step to forget.
+      await apiFetch(`/api/fleet/cars/${car.id}/pricing/replace`, {
+        method: "PUT",
+        body: JSON.stringify({
+          pricing: pricing
+            .filter(p => p.durationType && p.price !== "")
+            .map(p => ({ durationType: p.durationType, price: p.price })),
+        }),
+      });
 
       onSaved();
     } catch (e) {
@@ -1216,25 +1230,28 @@ function AddCarModal({ brands, models, onClose, onSaved }) {
     if (!form.brandID || !form.modelID) { setError("Please select Brand and Model."); return; }
     setSaving(true); setError(null);
     try {
-      const carRef = await addDoc(collection(db, "cars"), {
-        ...form,
-        seatingCapacity: Number(form.seatingCapacity) || 0,
-        year: Number(form.year) || 0,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      // POST /api/fleet/cars accepts pricing[] in the same body and
+      // creates the tiers itself — one authenticated call covers car +
+      // pricing instead of separate addDoc calls per tier.
+      const data = await apiFetch("/api/fleet/cars", {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          seatingCapacity: Number(form.seatingCapacity) || 0,
+          year: Number(form.year) || 0,
+          pricing: pricing.filter(p => p.durationType && p.price),
+        }),
       });
+      const carID = data.id;
 
+      // No backend route exists for images yet, so this one still goes
+      // straight to Firebase Storage + Firestore's carImages collection —
+      // flagging that gap rather than quietly leaving it.
       if (imageFile) {
-        const imgRef = ref(storage, `carImages/${carRef.id}/${Date.now()}_${imageFile.name}`);
+        const imgRef = ref(storage, `carImages/${carID}/${Date.now()}_${imageFile.name}`);
         await uploadBytes(imgRef, imageFile);
         const downloadURL = await getDownloadURL(imgRef);
-        await addDoc(collection(db, "carImages"), { carID: carRef.id, imageURL: downloadURL, isPrimary: true, label: "Primary", createdAt: serverTimestamp() });
-      }
-
-      for (const p of pricing) {
-        if (p.durationType && p.price) {
-          await addDoc(collection(db, "carPricing"), { carID: carRef.id, price: Number(p.price), durationType: p.durationType });
-        }
+        await addDoc(collection(db, "carImages"), { carID, imageURL: downloadURL, isPrimary: true, label: "Primary", createdAt: serverTimestamp() });
       }
 
       onSaved();
@@ -1331,8 +1348,10 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
     if (!newBrand.trim()) return;
     setSaving(true); setError(null);
     try {
-      const ref2 = await addDoc(collection(db, "brand"), { brandName: newBrand.trim() });
-      await updateDoc(doc(db, "brand", ref2.id), { brandID: ref2.id });
+      await apiFetch("/api/fleet/brands", {
+        method: "POST",
+        body: JSON.stringify({ brandName: newBrand.trim() }),
+      });
       setNewBrand(""); onSaved();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
@@ -1341,8 +1360,10 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
     if (!newModel.trim() || !modelBrandID) { setError("Select a brand and enter model name."); return; }
     setSaving(true); setError(null);
     try {
-      const ref2 = await addDoc(collection(db, "model"), { modelName: newModel.trim(), brandID: modelBrandID });
-      await updateDoc(doc(db, "model", ref2.id), { modelID: ref2.id });
+      await apiFetch("/api/fleet/models", {
+        method: "POST",
+        body: JSON.stringify({ modelName: newModel.trim(), brandID: modelBrandID }),
+      });
       setNewModel(""); setModelBrandID(""); onSaved();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
@@ -1351,12 +1372,12 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
     if (!confirmDel) return;
     setSaving(true);
     try {
+      // Backend's deleteBrand already cascades to that brand's models in
+      // one batch — matches what this used to do by hand.
       if (confirmDel.type === "brand") {
-        await deleteDoc(doc(db, "brand", confirmDel.item.id));
-        const mSnap = await getDocs(query(collection(db, "model"), where("brandID", "==", confirmDel.item.id)));
-        for (const d of mSnap.docs) await deleteDoc(d.ref);
+        await apiFetch(`/api/fleet/brands/${confirmDel.item.id}`, { method: "DELETE" });
       } else {
-        await deleteDoc(doc(db, "model", confirmDel.item.id));
+        await apiFetch(`/api/fleet/models/${confirmDel.item.id}`, { method: "DELETE" });
       }
       setConfirmDel(null); onSaved();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
