@@ -475,6 +475,18 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
           </span>
         </div>
 
+        {/* Why this car is out of service, shown directly on the card —
+            previously this only existed as a hover title="" tooltip on
+            the badge above, which is unreachable on touch/mobile and
+            easy to miss even on desktop. Staff scanning the fleet grid
+            should see this without opening Details. */}
+        {(car.status === "Inactive" || car.status === "Maintenance") && car.statusReason && (
+          <div className={`flex items-start gap-1.5 text-xs rounded-lg px-2 py-1.5 -mt-1 ${car.status === "Maintenance" ? "bg-red-50 text-red-600" : "bg-gray-100 text-gray-500"}`}>
+            <span className="shrink-0">{car.status === "Maintenance" ? "🔧" : "⛔"}</span>
+            <span className="line-clamp-2">{car.statusReason}</span>
+          </div>
+        )}
+
         {/* Short Description */}
         {car.shortDescription && (
           <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">{car.shortDescription}</p>

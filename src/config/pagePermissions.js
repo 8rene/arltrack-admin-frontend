@@ -36,6 +36,9 @@ export const PAGE_ACCESS = {
   "/gps-setup": [OWNER, ADMIN, SUPERVISOR],
   "/driver-dispatch": [OWNER, ADMIN, SUPERVISOR],
   "/maintenance": [OWNER, ADMIN, SUPERVISOR],
+  // Inventory = parts catalog (edited occasionally, Owner/Admin/Supervisor
+  // only, no Driver — matches its old access level). Vehicle Documentation
+  // = per-trip status + photos + history, Driver included.
   "/inventory": [OWNER, ADMIN, SUPERVISOR],
   "/vehicle-documentation": [OWNER, ADMIN, SUPERVISOR, DRIVER],
   "/analytics": [OWNER, ADMIN, SUPERVISOR],

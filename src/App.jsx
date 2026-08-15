@@ -137,6 +137,11 @@ function AppRoutes() {
                     <DashboardLayout><Maintenance /></DashboardLayout>
                 </ProtectedRoute>
             } />
+            {/* Inventory = the parts catalog (name/type/serial), edited
+                occasionally — grouped under "System" in the sidebar.
+                Vehicle Documentation below is the per-trip Good/Damaged
+                status + photos + Past Trips history. Deliberately kept
+                separate rather than merged into one page or into Settings. */}
             <Route path="/inventory" element={
                 <ProtectedRoute>
                     <DashboardLayout><Inventory /></DashboardLayout>

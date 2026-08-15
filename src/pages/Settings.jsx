@@ -16,6 +16,11 @@ const IconGear = ({ className = "w-5 h-5" }) => (
 // page instead (pages/Account.jsx) since those apply to every role, not
 // just Owner/Admin. This page is reserved for system-wide configuration —
 // intentionally empty until there's something system-level to put here.
+//
+// NOTE: Car Parts (the vehicle parts catalog) intentionally does NOT
+// live here — it has its own page at pages/Inventory.jsx, navigated to
+// via the "Inventory" item under the System group in the sidebar. Keeping
+// it separate rather than folding it into this generic Settings page.
 
 export default function Settings() {
   const { isDark } = useTheme();

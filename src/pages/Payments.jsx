@@ -484,16 +484,20 @@ export default function Payments() {
         }`}>{toast.msg}</div>
       )}
 
-      {/* Detail Drawer */}
+      {/* Payment Detail — centered modal like Bookings' "Booking Details".
+          z-[60], not z-40: the app's top Header bar is z-50 (see
+          Header.jsx), so z-40 let the navbar draw over the top of this
+          modal and hide the "Payment Detail" label entirely — matches
+          the other centered modals below (Confirm Edit Discount, Mark
+          Refund), which already use z-[60] for the same reason. */}
       {(selected || detailLoading) && (
-        <div className="fixed inset-0 z-40 flex">
-          <div className="flex-1 bg-black/30 backdrop-blur-sm" onClick={() => setSelected(null)} />
-          <div className="w-full max-w-xl bg-white shadow-2xl overflow-y-auto flex flex-col">
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
             {detailLoading ? (
-              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">Loading…</div>
+              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm py-20">Loading…</div>
             ) : selected && (
               <>
-                <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
+                <div className="sticky top-0 bg-white border-b rounded-t-2xl px-6 py-4 flex items-center justify-between z-10">
                   <div>
                     <p className="text-xs text-gray-400 uppercase tracking-wider">Payment Detail</p>
                     <p className="font-bold text-arl-dark text-sm">{selected.paymentID}</p>
@@ -643,16 +647,7 @@ export default function Payments() {
                     )}
                   </Section>
 
-                  <Section title="Proof of Payment">
-                    {selected.proofUrl ? (
-                      <a href={selected.proofUrl} target="_blank" rel="noreferrer"
-                        className="block mt-2 rounded-xl overflow-hidden border border-gray-200 hover:opacity-90 transition-opacity">
-                        <img src={selected.proofUrl} alt="Proof" className="w-full object-cover max-h-72" />
-                      </a>
-                    ) : (
-                      <p className="text-sm text-gray-400 italic">No proof image uploaded.</p>
-                    )}
-                  </Section>
+                  <button onClick={() => setSelected(null)} className="w-full py-2 border rounded-xl text-sm">Close</button>
                 </div>
               </>
             )}

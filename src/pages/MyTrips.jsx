@@ -174,19 +174,12 @@ function ActiveTripsTab() {
     }
   };
 
-  const handleReturn = async (trip) => {
-    setBusyID(trip.id);
-    try {
-      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${trip.id}/return`, { method: "PATCH" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Failed to mark returned.");
-      showToast("Trip completed — nice work!");
-      fetchTrips();
-    } catch (e) {
-      showToast(e.message, "error");
-    } finally {
-      setBusyID(null);
-    }
+  const handleReturn = (trip) => {
+    // Same rule as Pickup: Return goes through Vehicle Documentation first,
+    // not straight to "completed". The after-trip photos are required
+    // there (server-enforced), and that page is what actually flips the
+    // booking to "completed" once they're saved.
+    navigate(`/vehicle-documentation?carID=${trip.carID}&bookingID=${trip.id}&action=return`);
   };
 
   // Driver confirming a cash/in-person initial payment — right here in My

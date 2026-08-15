@@ -427,9 +427,13 @@ function ViewModal({ booking, onClose }) {
     });
   };
 
+  const goToPayments = () => {
+    navigate(`/payments?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <h2 className="font-bold text-lg text-gray-800">Booking Details</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -437,24 +441,75 @@ function ViewModal({ booking, onClose }) {
           </button>
         </div>
         <StatusBadge status={booking.status} />
-        <div className="pt-1">
-          {row("Booking ID",      booking.bookingID || booking.id)}
-          {row("Customer",        booking.customerName)}
-          {row("Phone",           booking.phone)}
-          {row("Vehicle",         booking.vehicleName)}
-          {row("Service Type",    booking.serviceTypeName)}
-          {row("Car ID",          booking.carID)}
-          {row("Start Date",      fmtDate(booking.startDateTime))}
-          {row("End Date",        fmtDate(booking.endDateTime))}
-          {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
-          {row("Location",        booking.location)}
-          {row("Rental Fee",      fmt(booking.rentalFee))}
-          {row("Deposit Fee",     fmt(booking.depositFee))}
-          {row("Service Fee",     fmt(booking.serviceFee))}
-          {row("Extra Fee",       fmt(booking.extraFee))}
-          {row("Total Fee",       fmt(booking.totalFee))}
-          {row("Payment Method",  booking.paymentMethod)}
-          {row("Mode of Driving", booking.modeOfDriving)}
+
+        {/* Two columns side by side: core booking details on the left,
+            payment + driving mode (each with a jump-to-page button) on
+            the right — instead of one long stacked list where the
+            payment/chauffeur rows were easy to scroll past. */}
+        <div className="grid md:grid-cols-2 gap-6">
+          <div>
+            {row("Booking ID",      booking.bookingID || booking.id)}
+            {row("Customer",        booking.customerName)}
+            {row("Phone",           booking.phone)}
+            {row("Vehicle",         booking.vehicleName)}
+            {row("Service Type",    booking.serviceTypeName)}
+            {row("Car ID",          booking.carID)}
+            {row("Start Date",      fmtDate(booking.startDateTime))}
+            {row("End Date",        fmtDate(booking.endDateTime))}
+            {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
+            {row("Location",        booking.location)}
+          </div>
+
+          <div>
+            {row("Rental Fee",  fmt(booking.rentalFee))}
+            {row("Deposit Fee", fmt(booking.depositFee))}
+            {row("Service Fee", fmt(booking.serviceFee))}
+            {row("Extra Fee",   fmt(booking.extraFee))}
+            {row("Total Fee",   fmt(booking.totalFee))}
+
+            {/* Payment Method — paired with a jump straight to the matching
+                Payments record instead of just showing the method as inert
+                text, since "what's the actual payment status/proof" is the
+                natural next question. Payments.jsx already supports
+                ?bookingID= to pre-filter to this booking (same pattern as
+                goToHistory's Car Tracking link below). */}
+            <div className="flex justify-between items-center py-2 border-b border-gray-50 text-sm">
+              <span className="text-gray-500 font-medium w-28 shrink-0">Payment</span>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-800">{booking.paymentMethod || "—"}</span>
+                <button
+                  onClick={goToPayments}
+                  className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
+                >
+                  View →
+                </button>
+              </div>
+            </div>
+
+            {/* Mode of Driving (Self-drive / With Chauffeur) — when a
+                chauffeur is involved, jump straight to Driver Dispatch to
+                see or assign one, same idea as the payment button above. */}
+            <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
+              <span className="text-gray-500 font-medium w-28 shrink-0">Driving</span>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-800">{booking.modeOfDriving || "—"}</span>
+                {booking.modeOfDriving?.toLowerCase().includes("chauffeur") && (
+                  <button
+                    onClick={() => navigate("/driver-dispatch", {
+                      state: { assignBookingId: booking.bookingID || booking.id, assignCustomerName: booking.customerName },
+                    })}
+                    className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
+                  >
+                    View →
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Notes / additional info — full width beneath the two columns. */}
+        <div className="pt-1 border-t border-gray-100">
           {row("Notes (User)",    booking.notesUser)}
           {row("Notes (Admin)",   booking.notesAdmin)}
         </div>

@@ -201,23 +201,54 @@ function sortByStartAsc(a, b) {
 // (doc per car: { carID, imageURL }) — shows the vehicle's real photo on the
 // map marker instead of the generic icon, falling back to it on load error
 // or when a car simply has no photo uploaded yet.
-function makeCarIcon(active = false, imageURL = null) {
+//
+// `status` overrides the normal teal "live" coloring — a car that's out of
+// service shouldn't visually look the same as one that's actually available,
+// even if its GPS is still reporting a location. Maintenance renders red,
+// Inactive renders a dashed/grayed "blocked" look, matching the same status
+// colors used in Fleet.jsx.
+function makeCarIcon(active = false, imageURL = null, status = "Active") {
+  const isMaintenance = status === "Maintenance";
+  const isInactive = status === "Inactive";
+
   const content = imageURL
-    ? `<img src="${imageURL}" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+    ? `<img src="${imageURL}" style="width:100%;height:100%;object-fit:cover;display:block;${isInactive ? "filter:grayscale(1);" : ""}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
        <div style="display:none;align-items:center;justify-content:center;width:100%;height:100%;">${CAR_SVG_RAW}</div>`
     : CAR_SVG_RAW;
 
+  const bg = isMaintenance
+    ? "#dc2626"
+    : isInactive
+      ? "#9ca3af"
+      : (active ? "#0f766e" : "#0d9488");
+
+  const border = isMaintenance
+    ? "3px solid #7f1d1d"
+    : isInactive
+      ? "2px dashed #4b5563"
+      : (active ? "3px solid #134e4a" : "2px solid transparent");
+
+  const badge = isMaintenance
+    ? `<div style="position:absolute;bottom:-2px;right:-2px;background:#dc2626;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border:2px solid white;font-size:9px;line-height:1;">🔧</div>`
+    : isInactive
+      ? `<div style="position:absolute;bottom:-2px;right:-2px;background:#6b7280;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border:2px solid white;font-size:9px;line-height:1;">⛔</div>`
+      : "";
+
   return L.divIcon({
     className: "",
-    html: `<div style="
-      background:${active ? "#0f766e" : "#0d9488"};
-      color:white;border-radius:50%;width:36px;height:36px;
-      display:flex;align-items:center;justify-content:center;
-      overflow:hidden;
-      box-shadow:0 2px 10px rgba(0,0,0,${active ? "0.5" : "0.3"});
-      border:${active ? "3px solid #134e4a" : "2px solid transparent"};
-      transition:all .2s">
-      ${content}
+    html: `<div style="position:relative;width:36px;height:36px;">
+      <div style="
+        background:${bg};
+        color:white;border-radius:50%;width:36px;height:36px;
+        display:flex;align-items:center;justify-content:center;
+        overflow:hidden;
+        opacity:${isInactive ? "0.75" : "1"};
+        box-shadow:0 2px 10px rgba(0,0,0,${active ? "0.5" : "0.3"});
+        border:${border};
+        transition:all .2s">
+        ${content}
+      </div>
+      ${badge}
     </div>`,
     iconSize:   [36, 36],
     iconAnchor: [18, 18],
@@ -585,7 +616,13 @@ export default function CarTracking() {
       seen.add(car.id);
 
       const isSelected = selected === car.id;
+      const statusLine = car.status === "Maintenance"
+        ? `<span style="color:#dc2626;font-size:11px;font-weight:600">🔧 In Maintenance</span><br>`
+        : car.status === "Inactive"
+          ? `<span style="color:#6b7280;font-size:11px;font-weight:600">⛔ Inactive</span><br>`
+          : "";
       const popupHtml = `<b>${getCarLabel(car)}</b><br>
+        ${statusLine}
         ${loc.lastLocation ? `${loc.lastLocation}<br>` : ""}
         Speed: ${typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h<br>
         ${loc.offline ? `<span style="color:#f59e0b;font-size:11px">📦 Offline flush</span><br>` : ""}
@@ -594,10 +631,10 @@ export default function CarTracking() {
       const existing = markersRef.current[car.id];
       if (existing) {
         existing.setLatLng([loc.lat, loc.lng]);
-        existing.setIcon(makeCarIcon(isSelected, car.imageURL));
+        existing.setIcon(makeCarIcon(isSelected, car.imageURL, car.status));
         existing.setPopupContent(popupHtml);
       } else {
-        const marker = L.marker([loc.lat, loc.lng], { icon: makeCarIcon(isSelected, car.imageURL) })
+        const marker = L.marker([loc.lat, loc.lng], { icon: makeCarIcon(isSelected, car.imageURL, car.status) })
           .addTo(leafletMap.current)
           .bindPopup(popupHtml)
           .on("click", () => setSelected(selectedRef.current === car.id ? null : car.id));
@@ -804,7 +841,14 @@ export default function CarTracking() {
   // server-side too, so this redirect is about the right flow, not the
   // only thing stopping a bypass.
   const handlePickup  = (b) => navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=pickup`);
-  const handleReturn  = (b) => runBookingAction(b.id, "completed", "Car marked returned — trip history saved.");
+
+  // Return now follows the exact same pattern as Pickup — it routes to
+  // Vehicle Documentation first instead of PATCHing straight to
+  // "completed". The after-trip photos (front/side/back) are required
+  // there, and that page is what actually calls the PATCH once they're
+  // saved. booking.service.js enforces this server-side too, so this
+  // redirect is about the right flow, not the only thing stopping a bypass.
+  const handleReturn  = (b) => navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=return`);
 
   // Chauffeur-only, separate from Return/runBookingAction above — this
   // hits its own endpoint (PATCH /:id/dropoff) since it doesn't change
@@ -1120,7 +1164,23 @@ export default function CarTracking() {
                     <Icons.Car className="w-5 h-5" style={car.imageURL ? { display: "none" } : undefined} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-gray-800 text-sm truncate">{getCarLabel(car)}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-bold text-gray-800 text-sm truncate">{getCarLabel(car)}</p>
+                      {/* Same status colors as Fleet.jsx (Maintenance/Inactive)
+                          so a car looks consistent across both pages —
+                          Active/Rented/Reserved don't need a badge here since
+                          the marker itself is already the "normal" color. */}
+                      {car.status === "Maintenance" && (
+                        <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-red-600">
+                          🔧 Maintenance
+                        </span>
+                      )}
+                      {car.status === "Inactive" && (
+                        <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-gray-500">
+                          ⛔ Inactive
+                        </span>
+                      )}
+                    </div>
 
                     {/* Device badge */}
                     {device ? (
@@ -1403,7 +1463,7 @@ export default function CarTracking() {
                               {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
                             </button>
                             <button
-                              onClick={() => navigate("/driver-dispatch")}
+                              onClick={() => navigate("/driver-dispatch", { state: { assignBookingId: b.id, assignCustomerName: b.customerName, assignCarLabel: getCarLabel(car) } })}
                               className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold hover:bg-amber-600 active:scale-95 transition-all"
                             >
                               <Icons.SteeringWheel className="w-3 h-3" />
@@ -1455,7 +1515,7 @@ export default function CarTracking() {
                         <div className="shrink-0 flex items-center gap-2">
                           {isChauffeur && !hasDriver && (
                             <button
-                              onClick={() => navigate("/driver-dispatch")}
+                              onClick={() => navigate("/driver-dispatch", { state: { assignBookingId: b.id, assignCustomerName: b.customerName, assignCarLabel: getCarLabel(car) } })}
                               className="flex items-center gap-1 px-2 py-1 border border-amber-300 text-amber-700 rounded-lg text-[11px] font-semibold hover:bg-amber-50 active:scale-95 transition-all"
                             >
                               <Icons.SteeringWheel className="w-3 h-3" />

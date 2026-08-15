@@ -88,23 +88,28 @@ const nav = [
         ),
       },
       {
-        label: "Inventory",
-        path: "/inventory",
+        // Moved out of "Driver" — that group's name was misleading for
+        // Owner/Admin/Supervisor, who can access this page too (see
+        // pagePermissions.js) but would otherwise see a whole section
+        // titled "Driver" for just this one item. Renamed from "Vehicle
+        // Documentation" to "Vehicle Inspections" — this is per-trip
+        // before/after condition tracking (photos + damage status), not
+        // a stock count, so "Inventory" was the wrong word for it.
+        label: "Vehicle Inspections",
+        path: "/vehicle-documentation",
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z" />
           </svg>
         ),
       },
-    ],
-  },
-  {
-    // Its own group, separate from Operations/Reports — same
-    // [Owner, Admin, Supervisor] gating as before, just grouped together
-    // now instead of split across two unrelated sections.
-    group: "Finance",
-    items: [
       {
+        // Finance as its own 2-item group didn't earn the extra section —
+        // it existed only because Payments/Refunds share a permission
+        // level, not because staff think of them separately from the rest
+        // of day-to-day operations. Kept together here rather than split
+        // across two groups, since a refund is conceptually "undo a
+        // payment" — staff handling one usually care about the other.
         label: "Payments",
         path: "/payments",
         icon: (
@@ -122,6 +127,9 @@ const nav = [
           </svg>
         ),
       },
+      // "Inventory" (parts catalog) lives in "System" below, renamed to
+      // "Parts Inventory" — not folded into Settings itself since staff
+      // jump here directly and fairly often.
     ],
   },
   {
@@ -174,6 +182,20 @@ const nav = [
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 2.5 2 2.5-2 3.5 2z" />
+          </svg>
+        ),
+      },
+      {
+        // Parts catalog (name/type/serial) — "Inventory" was already the
+        // right word for this (it's an actual stock count), just renamed
+        // to "Parts Inventory" for clarity next to "Fleet" (the vehicle
+        // roster) and "Vehicle Inspections" (condition tracking, not a
+        // stock count — see Operations group above).
+        label: "Parts Inventory",
+        path: "/inventory",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z" />
           </svg>
         ),
       },
@@ -249,6 +271,10 @@ const nav = [
     ],
   },
   {
+    // Driver-only from here on — "Vehicle Inspections" moved up into
+    // Operations (see there) since Owner/Admin/Supervisor can access it
+    // too; keeping it here made this group show up mislabeled "Driver"
+    // in their own sidebar for a page that isn't driver-exclusive.
     group: "Driver",
     items: [
       {
@@ -259,19 +285,6 @@ const nav = [
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M8 16l2.5-2.5M8 16l7-7m-7 7l-3 1 1-3 9-9 2 2-9 9z" />
-          </svg>
-        ),
-      },
-      {
-        // Moved here from "Operations" — that group is otherwise
-        // Owner/Admin/Supervisor-only, so a Driver used to see a whole
-        // section header for this one item. It belongs with their other
-        // trip actions anyway (this is what "Start Pickup" links to).
-        label: "Vehicle Documentation",
-        path: "/vehicle-documentation",
-        icon: (
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z" />
           </svg>
         ),
       },

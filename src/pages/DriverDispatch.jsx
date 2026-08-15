@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -73,6 +73,27 @@ export default function DriverDispatch() {
   const token = localStorage.getItem("token");
   const [searchParams] = useSearchParams();
   const highlightDriverID = searchParams.get("driver");
+  const routerLocation = useLocation();
+  const navigate        = useNavigate();
+
+  // If we got here from "Assign Driver" / "Assign Driver First" on Car
+  // Tracking, this holds the booking we're trying to assign a driver to —
+  // same pattern as DeviceTrack.jsx's assignForCar. Kept in local state
+  // (rather than read straight from routerLocation.state) so we can clear
+  // it once the assignment succeeds without another navigation.
+  const [assignForBooking, setAssignForBooking] = useState(
+    routerLocation.state?.assignBookingId
+      ? {
+          bookingId: routerLocation.state.assignBookingId,
+          customerName: routerLocation.state.assignCustomerName,
+          carLabel: routerLocation.state.assignCarLabel,
+        }
+      : null
+  );
+  const cancelAssignMode = () => {
+    setAssignForBooking(null);
+    navigate(routerLocation.pathname, { replace: true, state: {} });
+  };
 
   const [board, setBoard]       = useState({ drivers: [], unassigned: [], missingWhileOngoing: [] });
   const [loading, setLoading]   = useState(true);
@@ -123,13 +144,22 @@ export default function DriverDispatch() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [highlightDriverID, loading]);
 
+  // Arrived via "Assign Driver" on Car Tracking — scroll to this booking's
+  // card in the "Needs a Driver" queue so its conflict prompt (if any) is
+  // visible once a driver is clicked below.
+  useEffect(() => {
+    if (!assignForBooking || loading) return;
+    const el = document.getElementById(`booking-${assignForBooking.bookingId}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [assignForBooking, loading]);
+
   const driverOptions = useMemo(
     () => board.drivers.map((d) => ({ id: d.driverID, name: d.name })),
     [board.drivers]
   );
 
   const doAssign = async (bookingDocID, driverID, force = false) => {
-    if (!driverID) { showToast("Pick a driver first.", "error"); return; }
+    if (!driverID) { showToast("Pick a driver first.", "error"); return false; }
     setBusyID(bookingDocID);
     try {
       const res  = await authedFetch("/api/driver-dispatch/assign", {
@@ -140,18 +170,33 @@ export default function DriverDispatch() {
       if (!res.ok) {
         if (json.conflict) {
           setConflict({ bookingDocID, driverID, message: json.message });
-          return;
+          return false;
         }
         throw new Error(json.message || "Failed to assign driver.");
       }
       setConflict(null);
       showToast("Driver assigned.");
       fetchBoard();
+      return true;
     } catch (e) {
       showToast(e.message, "error");
+      return false;
     } finally {
       setBusyID(null);
     }
+  };
+
+  // Used when a driver card is clicked while in "assign this booking" mode
+  // (i.e. arrived here via "Assign Driver" on Car Tracking). Skips the
+  // manual dropdown-and-Assign step and assigns directly — mirrors
+  // DeviceTrack.jsx's handleQuickAssign for GPS devices. On a scheduling
+  // conflict, doAssign already surfaces the "Assign Anyway" prompt on the
+  // matching Needs-a-Driver card (scrolled into view above), so assign
+  // mode stays open until it actually succeeds.
+  const handleQuickAssignDriver = async (driverID) => {
+    if (!assignForBooking) return;
+    const ok = await doAssign(assignForBooking.bookingId, driverID);
+    if (ok) cancelAssignMode();
   };
 
   const doUnassign = async (bookingDocID) => {
@@ -178,6 +223,20 @@ export default function DriverDispatch() {
 
   return (
     <div className="w-full px-4 space-y-5">
+
+      {/* Assign-mode banner — shown when we arrived here to assign a specific booking */}
+      {assignForBooking && (
+        <div className="rounded-2xl px-4 py-3 text-xs font-medium border bg-amber-50 border-amber-200 text-amber-700 flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <IconSteering className="w-3.5 h-3.5 shrink-0" />
+            Pick an available driver below to assign to <strong>{assignForBooking.customerName || "this trip"}</strong>
+            {assignForBooking.carLabel ? <> · {assignForBooking.carLabel}</> : null}.
+          </span>
+          <button onClick={cancelAssignMode} className="text-amber-600 hover:text-amber-800 font-semibold shrink-0">
+            Cancel
+          </button>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (
@@ -239,7 +298,9 @@ export default function DriverDispatch() {
           ) : (
             <div className="space-y-2">
               {board.unassigned.map((b) => (
-                <div key={b.id} className="border border-gray-200 rounded-xl p-3 space-y-2">
+                <div key={b.id} id={`booking-${b.id}`} className={`border rounded-xl p-3 space-y-2 transition-all ${
+                  assignForBooking?.bookingId === b.id ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200"
+                }`}>
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="text-sm font-semibold text-arl-dark">{b.customerName}</div>
@@ -301,13 +362,23 @@ export default function DriverDispatch() {
             <p className="text-xs text-gray-400 py-6 text-center">No drivers found. Add one from Users.</p>
           ) : (
             <div className="space-y-2">
-              {board.drivers.map((d) => (
+              {board.drivers.map((d) => {
+                const isAssignTarget = !!assignForBooking;
+                const isAssigning    = busyID === assignForBooking?.bookingId;
+                return (
                 <div key={d.driverID} id={`driver-${d.driverID}`}
                   className={`border rounded-xl overflow-hidden transition-all ${
-                    highlightDriverID === d.driverID ? "border-arl-primary ring-2 ring-arl-primary/30" : "border-gray-200"
+                    isAssignTarget
+                      ? "border-amber-400 ring-2 ring-amber-200 animate-pulse cursor-pointer"
+                      : highlightDriverID === d.driverID ? "border-arl-primary ring-2 ring-arl-primary/30" : "border-gray-200"
                   }`}>
-                  <button onClick={() => toggleExpand(d.driverID)}
-                    className="w-full flex items-center justify-between gap-2 p-3 hover:bg-gray-50 text-left">
+                  <button
+                    onClick={() => {
+                      if (isAssignTarget) { if (!isAssigning) handleQuickAssignDriver(d.driverID); }
+                      else toggleExpand(d.driverID);
+                    }}
+                    disabled={isAssignTarget && isAssigning}
+                    className="w-full flex items-center justify-between gap-2 p-3 hover:bg-gray-50 text-left disabled:opacity-50">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full bg-arl-light flex items-center justify-center text-arl-primary">
                         <IconUser />
@@ -320,11 +391,11 @@ export default function DriverDispatch() {
                     <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg ${
                       d.assignments.length > 0 ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-gray-50 text-gray-500 border border-gray-200"
                     }`}>
-                      {d.assignments.length} trip{d.assignments.length === 1 ? "" : "s"}
+                      {isAssignTarget && isAssigning ? "Assigning…" : `${d.assignments.length} trip${d.assignments.length === 1 ? "" : "s"}`}
                     </span>
                   </button>
 
-                  {expanded[d.driverID] && (
+                  {!isAssignTarget && expanded[d.driverID] && (
                     <div className="border-t border-gray-100 p-3 space-y-2 bg-gray-50/50">
                       {d.assignments.length === 0 ? (
                         <p className="text-xs text-gray-400">No trips assigned.</p>
@@ -351,7 +422,8 @@ export default function DriverDispatch() {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

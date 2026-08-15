@@ -216,7 +216,7 @@ export default function Analytics() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-arl-dark">Analytics</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Revenue and booking trends</p>
+          <p className="text-xs text-gray-400 mt-0.5">Live view of revenue and booking trends — for a downloadable report, see Reports.</p>
         </div>
         <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full uppercase tracking-wide">
           {currency}
