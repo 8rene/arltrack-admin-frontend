@@ -16,7 +16,7 @@ const IconMap = ({ className = "w-4 h-4" }) => (
 );
 
 // ─── FIELD DEFINITIONS ─────────────────────────────────────────────────────
-// Keep these in sync BY HAND with backend/models/pricingSettings/pricingSettings.model.js
+// Keep these in sync BY HAND with backend/models/systemSettings/systemSettings.model.js
 const FLAT_FEE_FIELDS = [
   { key: "serviceFee", label: "Service Fee", hint: "Flat platform/service fee, added to every booking." },
   { key: "gatewayFee", label: "Gateway Fee", hint: "Flat payment gateway fee, added to every booking." },
@@ -32,8 +32,10 @@ const AREA_FEE_FIELDS = [
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 //
 // System Settings — Owner & Admin only (see config/pagePermissions.js).
-// Editable booking-fee configuration, backed by the systemSettings/pricing
-// Firestore doc (backend/services/pricingSettings/pricingSettings.service.js).
+// Editable booking-fee configuration, backed by the systemSettings
+// Firestore collection (backend/services/systemSettings/systemSettings.service.js).
+// Each save writes a new doc (systemSettingsID + createdAt) rather than
+// mutating one fixed doc — the form always reads back the latest one.
 //
 // IMPORTANT — this only changes what the ADMIN side stores. The customer
 // app's booking quote (arltrack-customer-backend/utils/pricing.js) still
@@ -56,6 +58,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(null);      // last-saved copy, to detect dirty state
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editMode, setEditMode] = useState(false); // fields are read-only until "Edit" is clicked
   const [notice, setNotice] = useState(null);    // { type: "success" | "error", msg }
   const [keywordDraft, setKeywordDraft] = useState(""); // text currently being typed for the next chip
   const [areaSuggestions, setAreaSuggestions] = useState([]); // [{ id, name, type }]
@@ -68,7 +71,7 @@ export default function Settings() {
       : "bg-white border-gray-100 shadow-soft"
   }`;
 
-  const inputCls = `w-full rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 transition-colors ${
+  const inputCls = `w-full rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
     isDark
       ? "bg-[#212121] border-[#4FC3F7]/20 text-[#F5F5F5] focus:ring-[#4FC3F7]/40"
       : "bg-white border-gray-200 text-arl-dark focus:ring-arl-dark/20"
@@ -214,6 +217,7 @@ export default function Settings() {
 
       setForm(json.data);
       setSaved(json.data);
+      setEditMode(false);
       setNotice({ type: "success", msg: "Pricing settings saved." });
     } catch (err) {
       setNotice({ type: "error", msg: err.message || "Failed to save settings." });
@@ -228,6 +232,7 @@ export default function Settings() {
     setForm(saved);
     setKeywordDraft("");
     setNotice(null);
+    setEditMode(false);
   };
 
   return (
@@ -276,6 +281,7 @@ export default function Settings() {
                       type="number" min="0" step="1"
                       value={form[key]}
                       onChange={(e) => handleNumberChange(key, e.target.value)}
+                      disabled={!editMode}
                       className={`${inputCls} pl-6`}
                     />
                   </div>
@@ -305,6 +311,7 @@ export default function Settings() {
                       type="number" min="0" step="1"
                       value={form[key]}
                       onChange={(e) => handleNumberChange(key, e.target.value)}
+                      disabled={!editMode}
                       className={`${inputCls} pl-6`}
                     />
                   </div>
@@ -326,16 +333,18 @@ export default function Settings() {
                     }`}
                   >
                     {word}
-                    <button
-                      type="button"
-                      onClick={() => removeKeyword(word)}
-                      aria-label={`Remove ${word}`}
-                      className={`rounded-full w-4 h-4 flex items-center justify-center leading-none ${
-                        isDark ? "hover:bg-[#4FC3F7]/20 text-[#F5F5F5]/50" : "hover:bg-gray-300 text-gray-500"
-                      }`}
-                    >
-                      ×
-                    </button>
+                    {editMode && (
+                      <button
+                        type="button"
+                        onClick={() => removeKeyword(word)}
+                        aria-label={`Remove ${word}`}
+                        className={`rounded-full w-4 h-4 flex items-center justify-center leading-none ${
+                          isDark ? "hover:bg-[#4FC3F7]/20 text-[#F5F5F5]/50" : "hover:bg-gray-300 text-gray-500"
+                        }`}
+                      >
+                        ×
+                      </button>
+                    )}
                   </span>
                 ))}
                 {(form.baseAreaKeywords || []).length === 0 && (
@@ -344,6 +353,7 @@ export default function Settings() {
               </div>
 
               {/* Add new keyword */}
+              {editMode && (
               <div className="flex gap-2 relative">
                 <div className="relative flex-1">
                   <input
@@ -404,6 +414,7 @@ export default function Settings() {
                   +
                 </button>
               </div>
+              )}
 
               <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>
                 Search picks a real, correctly-spelled province or city from the PH location list. A destination is still
@@ -414,35 +425,40 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Follow-up notice */}
-          <div className={`rounded-xl border px-4 py-3 text-xs ${
-            isDark ? "bg-[#212121]/40 border-[#4FC3F7]/10 text-[#F5F5F5]/50" : "bg-amber-50 border-amber-200 text-amber-700"
-          }`}>
-            These values are saved here on the admin side. The customer app's booking quote is not yet wired up to read
-            them — that's a separate follow-up — so changes made here won't affect customer pricing until that's done.
-          </div>
-
           {/* Actions */}
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleSave}
-              disabled={saving || !isDirty}
-              className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium disabled:opacity-50 transition-all ${
-                isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
-              }`}
-            >
-              {saving ? "Saving…" : "Save Changes"}
-            </button>
-            <button
-              onClick={handleReset}
-              disabled={saving || !isDirty}
-              className={`px-6 py-2.5 rounded-xl border text-sm font-medium disabled:opacity-50 transition-all ${
-                isDark ? "border-[#4FC3F7]/20 text-[#F5F5F5]/70 hover:bg-[#212121]/40" : "border-gray-200 text-gray-600 hover:bg-gray-50"
-              }`}
-            >
-              Discard Changes
-            </button>
-            {form.updatedAt && (
+            {editMode ? (
+              <>
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !isDirty}
+                  className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium disabled:opacity-50 transition-all ${
+                    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
+                  }`}
+                >
+                  {saving ? "Saving…" : "Save Changes"}
+                </button>
+                <button
+                  onClick={handleReset}
+                  disabled={saving}
+                  className={`px-6 py-2.5 rounded-xl border text-sm font-medium disabled:opacity-50 transition-all ${
+                    isDark ? "border-[#4FC3F7]/20 text-[#F5F5F5]/70 hover:bg-[#212121]/40" : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {isDirty ? "Discard Changes" : "Cancel"}
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setEditMode(true)}
+                className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium transition-all ${
+                  isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
+                }`}
+              >
+                Edit Settings
+              </button>
+            )}
+            {form.createdAt && (
               <span className={`text-[11px] ml-auto ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>
                 Last updated {form.updatedBy?.name ? `by ${form.updatedBy.name}` : ""}
               </span>

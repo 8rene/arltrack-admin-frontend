@@ -8,3 +8,7 @@ does base area mean if in there?
 
 
 wire up not removed
+
+wrong db
+
+it shouldnt show pricing? it should be systemSettingsID just like others....
