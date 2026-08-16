@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  collection, getDocs, doc, updateDoc, addDoc,
-  serverTimestamp, query, where, orderBy
+  collection, getDocs, query, where, orderBy
 } from "firebase/firestore";
 import { db } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
@@ -306,13 +305,19 @@ function ExpiryField({ userID, docId, currentValue, onSaved }) {
     if (!value) return;
     setSaving(true);
     try {
-      if (docId) {
-        await updateDoc(doc(db, "userDocument", docId), { driverLicenseExpiry: value, updatedAt: serverTimestamp() });
-      } else {
-        // No userDocument doc exists yet for this user (shouldn't normally
-        // happen if they've uploaded a license, but guards against it).
-        await addDoc(collection(db, "userDocument"), { userID, driverLicenseExpiry: value, createdAt: serverTimestamp() });
-      }
+      // PUT /api/users/:uid/document upserts — same one-doc-per-user
+      // shape as before, but the docId/no-docId branching is no longer
+      // needed client-side since the backend looks that up itself.
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${userID}/document`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ driverLicenseExpiry: value }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Save failed.");
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 2000);
       onSaved?.();
@@ -605,6 +610,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
   const [detailUser, setDetailUser]       = useState(null);
   const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleteError, setDeleteError]     = useState(null);
   const [searchParams, setSearchParams]   = useSearchParams();
   const [sortKey, setSortKey]       = useState(null); // null = default/unsorted (API order)
   const [sortDir, setSortDir]       = useState("asc");
@@ -642,6 +648,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
   }, [searchParams, users, setSearchParams]);
 
   const handleDelete = async (user) => {
+    setDeleteError(null);
     try {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}`, {
         method: "DELETE",
@@ -653,7 +660,10 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
       }
       setConfirmDelete(null);
       onRefresh();
-    } catch (e) { console.error("Delete/archive error:", e); }
+    } catch (e) {
+      console.error("Delete/archive error:", e);
+      setDeleteError(e.message || "Delete failed. Please try again.");
+    }
   };
 
   const filtered = users.filter(u => {
@@ -807,7 +817,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
       {detailUser    && <ViewDetailsModal user={detailUser} roleLabelSingular={roleLabelSingular} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
       {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }}
         viewerRole={viewerRole} currentRoleName={currentRoleName} />}
-      {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)} />}
+      {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} error={deleteError} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => { setConfirmDelete(null); setDeleteError(null); }} />}
     </>
   );
 }
@@ -985,7 +995,16 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
   const handleVerify = async (user, approve) => {
     setLoadingId(user.id);
     try {
-      await updateDoc(doc(db, "user", user.id), { isVerified: approve });
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/verify`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ isVerified: approve }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Verify failed.");
       onRefresh();
     } catch (e) { console.error("Verify error:", e); }
     finally { setLoadingId(null); }
@@ -1180,34 +1199,32 @@ function EditRequestsTab({ onCountChange }) {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Applies each changed field to the collection/doc it actually lives in —
-  // mirrors exactly what Profile.jsx's own "canEditDirectly" branch does,
-  // just running as the reviewing admin instead of the user themself.
-  const applyProfileChanges = async (req) => {
-    const byCollection = { user: {}, userDetails: {}, userAddress: {} };
-    req.changes.forEach(c => { byCollection[c.collection][c.field] = c.newValue; });
-
-    if (Object.keys(byCollection.user).length) {
-      await updateDoc(doc(db, "user", req.userID), { ...byCollection.user, updatedAt: serverTimestamp() });
-    }
-    for (const col of ["userDetails", "userAddress"]) {
-      if (!Object.keys(byCollection[col]).length) continue;
-      const existing = await getDocs(query(collection(db, col), where("userID", "==", req.userID)));
-      if (!existing.empty) {
-        await updateDoc(doc(db, col, existing.docs[0].id), { ...byCollection[col], updatedAt: serverTimestamp() });
-      } else {
-        await addDoc(collection(db, col), { userID: req.userID, ...byCollection[col], createdAt: serverTimestamp() });
-      }
-    }
+  // Small local helper matching the other authed-fetch calls in this file
+  // — throws on failure so the existing try/catch below keeps working
+  // unchanged.
+  const reviewFetch = async (path, options = {}) => {
+    const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+        ...(options.headers || {}),
+      },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.message || `Request failed (${res.status})`);
+    return json.data;
   };
 
+  // POST /api/edit-requests/:id/approve applies each changed field to the
+  // collection it actually lives in (user / userDetails / userAddress)
+  // AND marks the request approved, in one authenticated call — same
+  // logic that used to run client-side as applyProfileChanges(), now
+  // behind verifyToken + requireRole and with a real audit log entry.
   const handleApproveProfile = async (req) => {
     setBusyId(req.id);
     try {
-      await applyProfileChanges(req);
-      await updateDoc(doc(db, "editRequests", req.id), {
-        status: "approved", reviewedAt: serverTimestamp(), updatedAt: serverTimestamp(),
-      });
+      await reviewFetch(`/api/edit-requests/${req.id}/approve`, { method: "POST" });
       fetchAll();
       onCountChange?.();
     } catch (e) { console.error("Approve profile request failed:", e); }
@@ -1218,23 +1235,12 @@ function EditRequestsTab({ onCountChange }) {
   // Deliberately does NOT touch driverLicenseExpiry — admin re-confirms the
   // date against the new photo separately (ExpiryField, in the Documents
   // tab / Document Request review), same "human looks at the actual card"
-  // principle as the original review.
+  // principle as the original review. (Enforced server-side now too — see
+  // approveIdResubmitRequest in profileRequests.service.js.)
   const handleApproveId = async (req) => {
     setBusyId(req.id);
     try {
-      const existing = await getDocs(query(collection(db, "userDocument"), where("userID", "==", req.userID)));
-      if (!existing.empty) {
-        await updateDoc(doc(db, "userDocument", existing.docs[0].id), {
-          driverLicenseUrl: req.newLicenseUrl, updatedAt: serverTimestamp(),
-        });
-      } else {
-        await addDoc(collection(db, "userDocument"), {
-          userID: req.userID, driverLicenseUrl: req.newLicenseUrl, createdAt: serverTimestamp(),
-        });
-      }
-      await updateDoc(doc(db, "idResubmitRequests", req.id), {
-        status: "approved", reviewedAt: serverTimestamp(), updatedAt: serverTimestamp(),
-      });
+      await reviewFetch(`/api/id-resubmit-requests/${req.id}/approve`, { method: "POST" });
       fetchAll();
       onCountChange?.();
     } catch (e) { console.error("Approve ID resubmit failed:", e); }
@@ -1244,9 +1250,9 @@ function EditRequestsTab({ onCountChange }) {
   const handleReject = async (kind, id, note) => {
     setBusyId(id);
     try {
-      const col = kind === "profile" ? "editRequests" : "idResubmitRequests";
-      await updateDoc(doc(db, col, id), {
-        status: "rejected", reviewNote: note || null, reviewedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      await reviewFetch(`/api/review-requests/${kind}/${id}/reject`, {
+        method: "PATCH",
+        body: JSON.stringify({ note }),
       });
       setRejectTarget(null);
       fetchAll();
@@ -1566,7 +1572,7 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
 
 // ─── EDIT USER MODAL ──────────────────────────────────────────────────────────
 // Role change is a separate, higher-stakes action, so it's kept out of
-// `form` (which maps 1:1 onto a plain updateDoc) and only offered to Owner
+// `form` (which maps 1:1 onto the PATCH /api/users/:uid/status body) and only offered to Owner
 // and Admin — both here (hides the field otherwise) and on the backend
 // (PATCH /api/users/:uid/role is gated to Owner+Admin, see user.routes.js).
 // Owner is intentionally excluded from the options: promoting someone to
@@ -1582,8 +1588,9 @@ const ASSIGNABLE_ROLES = [
 ];
 
 function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, currentRoleName }) {
+  const KNOWN_STATUSES = ["active", "inactive", "locked"];
   const [form, setForm] = useState({
-    status:    user.status    || "active",
+    status:    KNOWN_STATUSES.includes((user.status || "").toLowerCase()) ? user.status : "active",
     isFlagged: user.isFlagged || false,
   });
   const canEditRole = viewerRole === ROLES.OWNER || viewerRole === ROLES.ADMIN;
@@ -1642,7 +1649,18 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
 
     setSaving(true); setError(null);
     try {
-      await updateDoc(doc(db, "user", user.id), { ...form, updatedAt: serverTimestamp() });
+      const statusRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify(form),
+      });
+      if (!statusRes.ok) {
+        const err = await statusRes.json().catch(() => ({}));
+        throw new Error(err.message || "Save failed.");
+      }
 
       // role can only ever be "" (placeholder, untouched) or one of the
       // OTHER roles now — currentRoleName was filtered out of the options
@@ -1774,7 +1792,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
 }
 
 // ─── CONFIRM DELETE ───────────────────────────────────────────────────────────
-function ConfirmDeleteModal({ name, roleLabelSingular, onConfirm, onCancel }) {
+function ConfirmDeleteModal({ name, roleLabelSingular, error, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
@@ -1789,6 +1807,11 @@ function ConfirmDeleteModal({ name, roleLabelSingular, onConfirm, onCancel }) {
             Delete <strong>{name}</strong>? Their data will be moved to the archive and cannot be undone.
           </p>
         </div>
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-600 text-xs rounded-xl px-3 py-2 text-center">
+            {error}
+          </div>
+        )}
         <div className="flex gap-3">
           <button onClick={onCancel}  className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
           <button onClick={onConfirm} className="flex-1 px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-medium hover:bg-red-600">Delete & Archive</button>

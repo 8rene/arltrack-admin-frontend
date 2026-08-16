@@ -2,8 +2,15 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../fireabase";
+import { ROLES } from "../config/pagePermissions";
 
 const AuthContext = createContext(null);
+
+// sessionStorage (not localStorage) on purpose — a "view as" preview should
+// survive an accidental page refresh mid-testing, but should NOT survive
+// closing the tab or carry over into a fresh login later. That's the right
+// lifetime for a temporary look-around tool, not a persistent setting.
+const PREVIEW_ROLE_KEY = "previewRole";
 
 // Decode JWT payload without a library
 const decodeToken = (token) => {
@@ -34,12 +41,68 @@ export function AuthProvider({ children }) {
 
   const logoutTimerRef = useRef(null);
 
-  // ── Logout helper (clears storage + state) ──────────────────────
+  // ── "View as" preview role — Admin-only, cosmetic (frontend rendering
+  //    only; never touches the JWT or backend authorization). See
+  //    setPreviewRole below for the enforcement of who can actually set it.
+  const [previewRole, setPreviewRoleState] = useState(() => {
+    try {
+      return sessionStorage.getItem(PREVIEW_ROLE_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Only a real Admin can ever activate a preview — checked here too (not
+  // just by hiding the UI in Account.jsx) so this can't be triggered from
+  // the console by a non-Admin account. Passing a falsy role clears preview.
+  const setPreviewRole = useCallback((role) => {
+    if (user?.role !== ROLES.ADMIN) return;
+
+    try {
+      if (role) sessionStorage.setItem(PREVIEW_ROLE_KEY, role);
+      else sessionStorage.removeItem(PREVIEW_ROLE_KEY);
+    } catch {}
+    setPreviewRoleState(role || null);
+  }, [user]);
+
+  // The role every gating check (Sidebar, ProtectedRoute, dashboard picker)
+  // should actually use. Falls back to the real role whenever no preview is
+  // active, or the logged-in user isn't Admin (defensive — previewRole
+  // should already be null in that case, this just guarantees it).
+  const effectiveRole = (user?.role === ROLES.ADMIN && previewRole) ? previewRole : user?.role;
+
+  // ── Logout helper (closes the server-side session log, then clears
+  //    storage + state) ──────────────────────────────────────────────
   const logout = useCallback(async () => {
     clearTimeout(logoutTimerRef.current);
+
+    // Close out the userLogs entry (logoutDateTime + sessionDuration) and
+    // write the matching audit log entry. Fire-and-forget on purpose — a
+    // dead/expired token or a network hiccup here should never block the
+    // user from actually logging out.
+    const token = localStorage.getItem("token");
+    const sessionLogID = localStorage.getItem("sessionLogID");
+    if (token) {
+      try {
+        await fetch(`${process.env.REACT_APP_API_URL}/api/auth/logout`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ sessionLogID }),
+        });
+      } catch (e) {
+        console.error("Failed to close session log:", e);
+      }
+    }
+
     try { await signOut(auth); } catch {}
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    localStorage.removeItem("sessionLogID");
+    try { sessionStorage.removeItem(PREVIEW_ROLE_KEY); } catch {}
+    setPreviewRoleState(null);
     setUser(null);
   }, []);
 
@@ -161,6 +224,9 @@ export function AuthProvider({ children }) {
 
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
+      if (data.sessionLogID) {
+        localStorage.setItem("sessionLogID", data.sessionLogID);
+      }
       setUser(data.user);
       scheduleAutoLogout(data.token);
 
@@ -211,7 +277,7 @@ export function AuthProvider({ children }) {
   const getToken = () => localStorage.getItem("token");
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, getToken }}>
+    <AuthContext.Provider value={{ user, login, logout, getToken, previewRole, setPreviewRole, effectiveRole }}>
       {children}
     </AuthContext.Provider>
   );

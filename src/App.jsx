@@ -33,17 +33,23 @@ import ReviewsArchivePage from "./pages/ReviewsArchivePage";
 import MyTrips from "./pages/MyTrips";
 import Account from "./pages/Account";
 import { canAccess, homePathFor } from "./config/pagePermissions";
+import PreviewRoleBanner from "./components/PreviewRoleBanner";
 
 // Wraps any route — redirects to /login if not authenticated, and to the
 // user's own home page if they're logged in but their role can't access
 // this particular path (so a hidden sidebar link can't be bypassed by
 // just typing the URL directly).
+//
+// Uses effectiveRole (real role, or an Admin's active "view as" preview —
+// see AuthContext.jsx) so previewing e.g. Driver also blocks navigating to
+// pages Driver can't see, making the preview feel real. This never changes
+// actual backend authorization — only which frontend routes are reachable.
 function ProtectedRoute({ children }) {
-    const { user } = useAuth();
+    const { user, effectiveRole } = useAuth();
     const { pathname } = useLocation();
     if (!user) return <Navigate to="/login" replace />;
-    if (!canAccess(user.role, pathname)) {
-        return <Navigate to={homePathFor(user.role)} replace />;
+    if (!canAccess(effectiveRole, pathname)) {
+        return <Navigate to={homePathFor(effectiveRole)} replace />;
     }
     return children;
 }
@@ -70,6 +76,7 @@ function DashboardLayout({ children }) {
             <Sidebar />
             <div className="flex-1 flex flex-col overflow-hidden">
                 <Header title={title} />
+                <PreviewRoleBanner />
                 <main className="flex-1 overflow-auto p-6">
                     {children}
                 </main>
@@ -79,7 +86,7 @@ function DashboardLayout({ children }) {
 }
 
 function AppRoutes() {
-    const { user } = useAuth();
+    const { user, effectiveRole } = useAuth();
 
     return (
         <Routes>
@@ -98,7 +105,7 @@ function AppRoutes() {
             <Route path="/dashboard" element={
                 <ProtectedRoute>
                     <DashboardLayout>
-                        {user?.role === "Driver" ? <DriverDashboard /> : <Dashboard />}
+                        {effectiveRole === "Driver" ? <DriverDashboard /> : <Dashboard />}
                     </DashboardLayout>
                 </ProtectedRoute>
             } />

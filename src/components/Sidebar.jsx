@@ -310,14 +310,18 @@ export const NAV_SECTIONS = nav;
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
-  const { user } = useAuth();
+  const { effectiveRole } = useAuth();
 
   // Only show nav items this role can actually access, and drop any
   // section left with zero items (e.g. "Archives" for a Driver).
+  // Uses effectiveRole rather than the real user.role so an Admin
+  // previewing another role (see Account.jsx "View system as") sees the
+  // sidebar that role would actually see — this is cosmetic-only, their
+  // real backend permissions never change (see AuthContext.jsx).
   const visibleNav = nav
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => canAccess(user?.role, item.path)),
+      items: section.items.filter((item) => canAccess(effectiveRole, item.path)),
     }))
     .filter((section) => section.items.length > 0);
 

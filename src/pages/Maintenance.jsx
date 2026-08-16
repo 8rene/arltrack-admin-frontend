@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { collection, getDocs, doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -190,16 +190,14 @@ export default function Maintenance() {
     });
   }, [token]);
 
-  // Damaged/stolen part tracking still reads Firestore directly — this
-  // belongs to the inventory/carParts domain, not maintenance, so it's
-  // left as-is here.
   const markAsReplaced = async (part) => {
     try {
-      await updateDoc(doc(db, "carParts", part.carPartID), {
-        status: "Replaced",
-        replacedAt: serverTimestamp(),
-        replacedType: part.status,
+      const res = await authedFetch(`/api/car-parts/${part.carPartID}`, {
+        method: "PUT",
+        body: JSON.stringify({ markReplaced: true, replacedType: part.status }),
       });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to mark as replaced.");
       setDamagedParts(prev => prev.filter(p => p.id !== part.id));
       setReplacedParts(prev => {
         if (prev.find(p => p.id === part.id)) return prev;

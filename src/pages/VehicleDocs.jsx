@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
-  collection, getDocs, query, where, doc,
-  setDoc, addDoc, updateDoc, serverTimestamp, getDoc,
+  collection, getDocs, query, where, doc, getDoc,
 } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { initializeApp, getApps } from "firebase/app";
@@ -569,7 +568,6 @@ export default function VehicleDocs() {
     const keys = Object.keys(editsToCommit);
     if (!keys.length) return;
 
-    const collectionName = tripType === "before" ? "inventoryBeforeTrip" : "inventoryAfterTrip";
     const existingInv     = tripType === "before" ? beforeInv : afterInv;
 
     // Merge on top of whatever's already recorded so committing one
@@ -591,23 +589,24 @@ export default function VehicleDocs() {
     const damageParts  = Object.values(merged).filter(d => d.status !== "Good" && d.status !== "New");
     const overallStatus = damageParts.length > 0 ? "has damage" : "good";
 
-    let savedId = existingInv?.id;
-    if (savedId) {
-      await updateDoc(doc(db, collectionName, savedId), {
-        inventoryOverallStatus: overallStatus,
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_URL}/api/vehicle-docs/inventory-status`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        bookingID: bID,
+        carID: selectedCar.carID || selectedCar.id,
+        tripType,
+        overallStatus,
         damageParts,
-        recordedAt: serverTimestamp(),
-      });
-    } else {
-      const newRef = await addDoc(collection(db, collectionName), {
-        bookingID:               bID,
-        carID:                   selectedCar.carID || selectedCar.id,
-        inventoryOverallStatus:  overallStatus,
-        damageParts,
-        recordedAt:              serverTimestamp(),
-      });
-      savedId = newRef.id;
-    }
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || "Failed to save part status.");
+    const savedId = json.data.id;
 
     const updatedInv = { id: savedId, bookingID: bID, carID: selectedCar.carID || selectedCar.id, inventoryOverallStatus: overallStatus, damageParts };
     if (tripType === "before") {
@@ -624,7 +623,6 @@ export default function VehicleDocs() {
     setUploading(prev => ({ ...prev, [fieldKey]: true }));
 
     const bID    = activeBooking.bookingID || activeBooking.id;
-    const phase  = PHASE[tripType];
     const existingDoc = tripType === "before" ? beforeDoc : afterDoc;
 
     try {
@@ -634,29 +632,25 @@ export default function VehicleDocs() {
       await uploadBytes(ref(storage, storagePath), jpegBlob, { contentType: "image/jpeg" });
       const url = await getDownloadURL(ref(storage, storagePath));
 
-      let savedDocId;
-      if (existingDoc?.id) {
-        savedDocId = existingDoc.id;
-        await setDoc(
-          doc(db, phase.collection, savedDocId),
-          { [fieldKey]: url, updatedAt: serverTimestamp() },
-          { merge: true }
-        );
-      } else {
-        const newRef = await addDoc(collection(db, phase.collection), {
-          bookingID:       bID,
-          carID:           selectedCar.carID || selectedCar.id,
-          [phase.idField]: "",
-          frontViewUrl:    "",
-          sideViewUrl:     "",
-          backViewUrl:     "",
-          [fieldKey]:      url,
-          createdAt:       serverTimestamp(),
-          updatedAt:       serverTimestamp(),
-        });
-        savedDocId = newRef.id;
-        await setDoc(doc(db, phase.collection, savedDocId), { [phase.idField]: savedDocId }, { merge: true });
-      }
+      // POST /api/vehicle-docs/before-trip or /after-trip upserts by
+      // bookingID server-side — no need to track/send a doc id from here.
+      const token = localStorage.getItem("token");
+      const endpoint = tripType === "before" ? "before-trip" : "after-trip";
+      const res = await fetch(`${API_URL}/api/vehicle-docs/${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          bookingID: bID,
+          carID: selectedCar.carID || selectedCar.id,
+          photoFields: { [fieldKey]: url },
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Upload failed.");
+      const savedDocId = json.data.vehicleDocumentationBeforeTripID || json.data.vehicleDocumentationAfterTripID;
 
       // Update local state
       const updatedDoc = { ...(existingDoc || {}), id: savedDocId, bookingID: bID, carID: selectedCar.carID || selectedCar.id, [fieldKey]: url };
@@ -698,7 +692,6 @@ export default function VehicleDocs() {
     setUploading(prev => { const n = { ...prev }; pending.forEach(k => n[k] = true); return n; });
 
     const bID    = activeBooking.bookingID || activeBooking.id;
-    const phase  = PHASE[tripType];
     // Read the existing doc ONCE, up front — this is the fix. The old
     // version called uploadSlot() once per pending photo in a loop, and
     // every one of those calls shared the same stale beforeDoc/afterDoc
@@ -708,6 +701,10 @@ export default function VehicleDocs() {
     // separate doc with only its own field, slot 3 a third — three
     // orphaned docs instead of one merged doc, and whichever save
     // finished last is the only one that ended up reflected on screen.
+    // (Now moot for the actual write — the backend upserts by bookingID,
+    // so even parallel calls land on the same doc — but Promise.all below
+    // still uploads all files in parallel and sends ONE combined request,
+    // which is simply more efficient than one request per photo.)
     const existingDoc = tripType === "before" ? beforeDoc : afterDoc;
 
     try {
@@ -725,29 +722,23 @@ export default function VehicleDocs() {
         }));
         const urlMap = Object.fromEntries(entries);
 
-        let savedDocId;
-        if (existingDoc?.id) {
-          savedDocId = existingDoc.id;
-          await setDoc(
-            doc(db, phase.collection, savedDocId),
-            { ...urlMap, updatedAt: serverTimestamp() },
-            { merge: true }
-          );
-        } else {
-          const newRef = await addDoc(collection(db, phase.collection), {
-            bookingID:       bID,
-            carID:           selectedCar.carID || selectedCar.id,
-            [phase.idField]: "",
-            frontViewUrl:    "",
-            sideViewUrl:     "",
-            backViewUrl:     "",
-            ...urlMap,
-            createdAt:       serverTimestamp(),
-            updatedAt:       serverTimestamp(),
-          });
-          savedDocId = newRef.id;
-          await setDoc(doc(db, phase.collection, savedDocId), { [phase.idField]: savedDocId }, { merge: true });
-        }
+        const token = localStorage.getItem("token");
+        const endpoint = tripType === "before" ? "before-trip" : "after-trip";
+        const res = await fetch(`${API_URL}/api/vehicle-docs/${endpoint}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            bookingID: bID,
+            carID: selectedCar.carID || selectedCar.id,
+            photoFields: urlMap,
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Save failed.");
+        const savedDocId = json.data.vehicleDocumentationBeforeTripID || json.data.vehicleDocumentationAfterTripID;
 
         // Single state update with ALL saved fields merged in — not one
         // overwrite per photo.

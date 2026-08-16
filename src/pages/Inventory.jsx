@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import {
-  collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where,
-} from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
+
+const API_URL = process.env.REACT_APP_API_URL;
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 //
@@ -37,6 +37,18 @@ export default function Inventory() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  const token = localStorage.getItem("token");
+  const authedFetch = useCallback((path, options = {}) => {
+    return fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+    });
+  }, [token]);
+
   useEffect(() => {
     setCarsLoading(true);
     Promise.all([
@@ -62,23 +74,28 @@ export default function Inventory() {
       .catch(console.error)
       .finally(() => setCarsLoading(false));
 
-    getDocs(collection(db, "carPartTypes")).then(snap => {
-      setPartTypes(snap.docs.map(d => ({ id: d.id, carPartName: d.data().carPartName || d.id })));
+    authedFetch("/api/car-parts/types").then(async (res) => {
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to load part types.");
+      setPartTypes(json.data || []);
     }).catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadParts = useCallback(async (carID) => {
     setPartsLoading(true);
     try {
-      const snap = await getDocs(query(collection(db, "carParts"), where("carID", "==", carID)));
-      setParts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const res = await authedFetch(`/api/car-parts/car/${carID}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to load parts.");
+      setParts(json.data || []);
     } catch (e) {
       console.error(e);
       showToast("Failed to load parts.", "error");
     } finally {
       setPartsLoading(false);
     }
-  }, []);
+  }, [authedFetch]);
 
   const openCar = (car) => {
     setSelectedCar(car);
@@ -112,11 +129,16 @@ export default function Inventory() {
     if (!formState.carPartName.trim()) { showToast("Part name is required.", "error"); return; }
     setSaving(true);
     try {
-      await updateDoc(doc(db, "carParts", editingID), {
-        carPartName:   formState.carPartName.trim(),
-        carPartTypeID: formState.carPartTypeID,
-        serialNumber:  formState.serialNumber.trim(),
+      const res = await authedFetch(`/api/car-parts/${editingID}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          carPartName:   formState.carPartName.trim(),
+          carPartTypeID: formState.carPartTypeID,
+          serialNumber:  formState.serialNumber.trim(),
+        }),
       });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to update part.");
       setParts(prev => prev.map(p => p.id === editingID ? { ...p, ...formState } : p));
       setEditingID(null);
       showToast("Part updated.");
@@ -132,14 +154,18 @@ export default function Inventory() {
     if (!formState.carPartName.trim()) { showToast("Part name is required.", "error"); return; }
     setSaving(true);
     try {
-      const newRef = await addDoc(collection(db, "carParts"), {
-        carID:         selectedCar.id,
-        carPartName:   formState.carPartName.trim(),
-        carPartTypeID: formState.carPartTypeID,
-        serialNumber:  formState.serialNumber.trim(),
-        status:        "Good",
+      const res = await authedFetch("/api/car-parts", {
+        method: "POST",
+        body: JSON.stringify({
+          carID:         selectedCar.id,
+          carPartName:   formState.carPartName.trim(),
+          carPartTypeID: formState.carPartTypeID,
+          serialNumber:  formState.serialNumber.trim(),
+        }),
       });
-      setParts(prev => [...prev, { id: newRef.id, carID: selectedCar.id, ...formState, status: "Good" }]);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to add part.");
+      setParts(prev => [...prev, json.data]);
       setIsAdding(false);
       showToast("Part added.");
     } catch (e) {
@@ -153,7 +179,9 @@ export default function Inventory() {
   const removePart = async (part) => {
     if (!window.confirm(`Remove "${part.carPartName}" from ${selectedCar.label}? This can't be undone, and any photo/history tied to it (via its old field key) will become orphaned.`)) return;
     try {
-      await deleteDoc(doc(db, "carParts", part.id));
+      const res = await authedFetch(`/api/car-parts/${part.id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to remove part.");
       setParts(prev => prev.filter(p => p.id !== part.id));
       showToast("Part removed.");
     } catch (e) {

@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import {
-  collection, getDocs, query, where, orderBy, doc, updateDoc,
-  addDoc, serverTimestamp
+  collection, getDocs, query, where, orderBy,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
@@ -1107,20 +1106,18 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
         }),
       });
 
-      // No backend route exists for images yet, so this one still goes
-      // straight to Firebase Storage + Firestore's carImages collection —
-      // flagging that gap rather than quietly leaving it.
+      // POST /api/fleet/cars/:carID/image — upload still goes to Storage
+      // directly via the client SDK, but the resulting Firestore
+      // carImages doc write now runs through verifyToken + requireRole
+      // on the backend, unlike the old direct addDoc/updateDoc.
       if (imageFile) {
         const imgRef = ref(storage, `carImages/${car.id}/${Date.now()}_${imageFile.name}`);
         await uploadBytes(imgRef, imageFile);
         const downloadURL = await getDownloadURL(imgRef);
-        const imgQ = query(collection(db, "carImages"), where("carID", "==", car.id), where("isPrimary", "==", true));
-        const imgSnap = await getDocs(imgQ);
-        if (!imgSnap.empty) {
-          await updateDoc(doc(db, "carImages", imgSnap.docs[0].id), { imageURL: downloadURL });
-        } else {
-          await addDoc(collection(db, "carImages"), { carID: car.id, imageURL: downloadURL, isPrimary: true, label: "Primary", createdAt: serverTimestamp() });
-        }
+        await apiFetch(`/api/fleet/cars/${car.id}/image`, {
+          method: "POST",
+          body: JSON.stringify({ imageURL: downloadURL }),
+        });
       }
 
       // PUT /api/fleet/cars/:carID/pricing/replace deletes every existing
@@ -1256,14 +1253,17 @@ function AddCarModal({ brands, models, onClose, onSaved }) {
       });
       const carID = data.id;
 
-      // No backend route exists for images yet, so this one still goes
-      // straight to Firebase Storage + Firestore's carImages collection —
-      // flagging that gap rather than quietly leaving it.
+      // POST /api/fleet/cars/:carID/image — same as the edit modal: upload
+      // stays client-side via the Storage SDK, but the Firestore write is
+      // now behind verifyToken + requireRole instead of a direct addDoc.
       if (imageFile) {
         const imgRef = ref(storage, `carImages/${carID}/${Date.now()}_${imageFile.name}`);
         await uploadBytes(imgRef, imageFile);
         const downloadURL = await getDownloadURL(imgRef);
-        await addDoc(collection(db, "carImages"), { carID, imageURL: downloadURL, isPrimary: true, label: "Primary", createdAt: serverTimestamp() });
+        await apiFetch(`/api/fleet/cars/${carID}/image`, {
+          method: "POST",
+          body: JSON.stringify({ imageURL: downloadURL }),
+        });
       }
 
       onSaved();

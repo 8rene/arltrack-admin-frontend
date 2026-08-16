@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  doc, getDoc, updateDoc, addDoc, collection, query, where, getDocs, serverTimestamp,
+  doc, getDoc, collection, query, where, getDocs,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage, auth } from "../fireabase";
@@ -417,9 +417,12 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
     if (!activePending) return;
     setCancelling(true);
     try {
-      await updateDoc(doc(db, "editRequests", activePending.id), {
-        status: "cancelled", updatedAt: serverTimestamp(),
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/edit-requests/${activePending.id}/cancel`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Could not cancel the pending request.");
       setActivePending(null);
       onCancelledRequest?.();
     } catch (e) {
@@ -434,33 +437,26 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
     setError(null);
     try {
       if (canEditDirectly) {
-        // Owner/Admin: write straight to the underlying docs, no approval needed.
-        const userFields = {};
-        const detailFields = {};
-        const addressFields = {};
+        // Owner/Admin: applied straight to the underlying docs server-side,
+        // no approval needed — same shape as an edit request's `changes`,
+        // just applied immediately instead of going through review.
+        const changes = [];
         EDITABLE_FIELDS.forEach(f => {
           if (form[f.key] === (current[f.key] || "")) return; // unchanged
-          if (f.source === "user") userFields[f.key] = form[f.key];
-          if (f.source === "userDetails") detailFields[f.key] = form[f.key];
-          if (f.source === "userAddress") addressFields[f.key] = form[f.key];
+          changes.push({ field: f.key, collection: f.source, newValue: form[f.key] });
         });
 
-        if (Object.keys(userFields).length) {
-          await updateDoc(doc(db, "user", current.uid), { ...userFields, updatedAt: serverTimestamp() });
-        }
-        if (Object.keys(detailFields).length) {
-          if (current._detailsDocId) {
-            await updateDoc(doc(db, "userDetails", current._detailsDocId), { ...detailFields, updatedAt: serverTimestamp() });
-          } else {
-            await addDoc(collection(db, "userDetails"), { userID: current.uid, ...detailFields, createdAt: serverTimestamp() });
-          }
-        }
-        if (Object.keys(addressFields).length) {
-          if (current._addressDocId) {
-            await updateDoc(doc(db, "userAddress", current._addressDocId), { ...addressFields, updatedAt: serverTimestamp() });
-          } else {
-            await addDoc(collection(db, "userAddress"), { userID: current.uid, ...addressFields, createdAt: serverTimestamp() });
-          }
+        if (changes.length) {
+          const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/fields`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+            body: JSON.stringify({ changes }),
+          });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.message || "Save failed.");
         }
         onSaved({ submitted: false });
       } else {
@@ -481,18 +477,16 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
           newValue: form[f.key] || "",
         }));
 
-        await addDoc(collection(db, "editRequests"), {
-          userID: current.uid,
-          role: current.role,
-          status: "pending",
-          changes,
-          requestedBy: current.uid,
-          reviewedBy: null,
-          reviewedAt: null,
-          reviewNote: null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+        const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/edit-requests`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+          body: JSON.stringify({ role: current.role, changes }),
         });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Could not submit request.");
         onSaved({ submitted: true });
       }
     } catch (e) {
@@ -662,19 +656,20 @@ function ResubmitIdModal({ current, onClose, onSubmitted }) {
       await uploadBytes(storageRef, file);
       const newLicenseUrl = await getDownloadURL(storageRef);
 
-      await addDoc(collection(db, "idResubmitRequests"), {
-        userID: current.uid,
-        role: current.role,
-        currentLicenseUrl: current.driverLicenseUrl || "",
-        newLicenseUrl,
-        status: "pending",
-        requestedBy: current.uid,
-        reviewedBy: null,
-        reviewedAt: null,
-        reviewNote: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/id-resubmit-requests`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({
+          role: current.role,
+          currentLicenseUrl: current.driverLicenseUrl || "",
+          newLicenseUrl,
+        }),
       });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Upload failed. Please try again.");
       onSubmitted();
     } catch (e) {
       setError(e.message || "Upload failed. Please try again.");
@@ -732,7 +727,7 @@ function ResubmitIdModal({ current, onClose, onSubmitted }) {
 // Shared by every role (Owner, Admin, Supervisor, Driver).
 export default function Account() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, previewRole, setPreviewRole } = useAuth();
   const { isDark, toggleDark } = useTheme();
 
   const [profile, setProfile] = useState(null); // merged user + userDetails + userAddress
@@ -1032,6 +1027,52 @@ export default function Account() {
         </h2>
         <Toggle label="Dark Mode" checked={isDark} onChange={() => toggleDark()} isDark={isDark} />
       </div>
+
+      {/* VIEW SYSTEM AS — Admin-only cosmetic role preview. Never shown to
+          Owner/Supervisor/Driver, and gated on the real user.role (not
+          effectiveRole) so this control stays visible and usable no matter
+          which role is currently being previewed — it's how you get back. */}
+      {user.role === "Admin" && (
+        <div className={`${card} px-6 py-4 space-y-3`}>
+          <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
+            <IconEye className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> View System As
+          </h2>
+          <p className={`text-xs ${isDark ? "text-[#F5F5F5]/50" : "text-gray-400"}`}>
+            Preview the sidebar and pages as another role sees them. This only changes what's shown to you —
+            your actions still use your real Admin permissions underneath.
+          </p>
+
+          <div className="space-y-2">
+            {[
+              { value: "", label: "Admin (You) — no preview" },
+              { value: "Owner", label: "Owner" },
+              { value: "Supervisor", label: "Supervisor" },
+              { value: "Driver", label: "Driver" },
+            ].map((opt) => {
+              const checked = (previewRole || "") === opt.value;
+              return (
+                <label
+                  key={opt.value || "off"}
+                  className={`flex items-center gap-3 border rounded-xl px-4 py-3 cursor-pointer transition-colors ${
+                    checked
+                      ? isDark ? "border-[#4FC3F7] bg-[#4FC3F7]/10" : "border-arl-dark bg-arl-dark/5"
+                      : isDark ? "border-[#4FC3F7]/20" : "border-gray-100"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="previewRole"
+                    checked={checked}
+                    onChange={() => setPreviewRole(opt.value || null)}
+                    className="accent-arl-dark"
+                  />
+                  <span className={`text-sm ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>{opt.label}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* SECURITY — Change Password (moved here from the old Settings page) */}
       <div className={`${card} px-6 py-4 space-y-4`}>
