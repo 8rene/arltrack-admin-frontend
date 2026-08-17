@@ -26,6 +26,7 @@ import Settings from "./pages/Settings";
 import VehicleDocumentation from "./pages/VehicleDocs";
 import UserLogArchivePage from "./pages/UserLogArchivePage";
 import PaymentsArchivePage from "./pages/PaymentsArchivePage";
+import UserArchivePage from "./pages/UserArchivePage";
 import BookingArchivePage from "./pages/BookingArchivePage";
 import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
@@ -229,6 +230,11 @@ function AppRoutes() {
             <Route path="/archives/reviews" element={
                 <ProtectedRoute>
                     <DashboardLayout><ReviewsArchivePage /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/archives/users" element={
+                <ProtectedRoute>
+                    <DashboardLayout><UserArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
 
