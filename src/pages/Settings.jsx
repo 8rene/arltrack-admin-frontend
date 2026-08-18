@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useTheme } from "../context/ThemeContext";
+import StoreLocationSettings from "../components/StoreLocationSettings";
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
@@ -254,6 +255,8 @@ export default function Settings() {
           {notice.msg}
         </div>
       )}
+
+      <StoreLocationSettings />
 
       {loading || !form ? (
         <div className={card}>
