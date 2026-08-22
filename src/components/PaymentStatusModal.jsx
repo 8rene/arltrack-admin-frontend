@@ -73,15 +73,24 @@ export default function PaymentStatusModal({
   // needs to start from the current value rather than blank.
   const [discountInput, setDiscountInput] = useState("");
   const [reasonInput, setReasonInput]     = useState("");
+  // Once a discount already exists, the fields open locked (read-only)
+  // behind a "Re-edit Discount" button instead of sitting open and
+  // editable — makes it much harder to bump an existing discount by
+  // accident. Re-locks every time the modal is (re)opened.
+  const [discountUnlocked, setDiscountUnlocked] = useState(false);
   useEffect(() => {
     if (open) {
       setDiscountInput(p.discountAmount ? String(p.discountAmount) : "");
       setReasonInput("");
+      setDiscountUnlocked(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, p.discountAmount]);
 
   if (!open) return null;
+
+  const hasDiscount = p.discountAmount > 0;
+  const discountLocked = hasDiscount && !discountUnlocked;
 
   const isFullyPaid = p.balance <= 0 && p.totalFee > 0;
   const statusKey = (p.paymentStatus || "").toLowerCase();
@@ -230,34 +239,52 @@ export default function PaymentStatusModal({
           {onApplyDiscount && (
             <div className="border-t border-gray-100 pt-4 space-y-2.5">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                <IconTag /> {p.discountAmount > 0 ? "Edit Discount" : "Apply Discount"}
+                <IconTag /> {hasDiscount ? "Edit Discount" : "Apply Discount"}
               </p>
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
-                  <input
-                    type="number" min="0" step="1" placeholder="0"
-                    value={discountInput}
-                    onChange={(e) => setDiscountInput(e.target.value)}
-                    className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
-                  />
-                </div>
-                <input
-                  type="text" placeholder="Reason (optional)"
-                  value={reasonInput}
-                  onChange={(e) => setReasonInput(e.target.value)}
-                  className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
-                />
-              </div>
-              <button
-                onClick={handleDiscountSubmit}
-                disabled={applyingDiscount || discountInput === ""}
-                className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-arl-light/30 active:scale-[0.99] transition-all disabled:opacity-50"
-              >
-                {applyingDiscount ? "Applying…" : "Apply Discount"}
-              </button>
-              {discountError && <p className="text-xs text-red-500">{discountError}</p>}
-              <p className="text-[11px] text-gray-400">Sets the total discount on this booking — entering a new amount replaces the old one, it doesn't add to it.</p>
+              {discountLocked ? (
+                <>
+                  <div className="flex items-center justify-between text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
+                    <span className="text-gray-500">Current discount</span>
+                    <span className="font-semibold text-red-500">−{peso(p.discountAmount)}</span>
+                  </div>
+                  <button
+                    onClick={() => setDiscountUnlocked(true)}
+                    className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-arl-light/30 active:scale-[0.99] transition-all"
+                  >
+                    Re-edit Discount
+                  </button>
+                  <p className="text-[11px] text-gray-400">Locked to avoid accidental changes. Click above to unlock and edit it.</p>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
+                      <input
+                        type="number" min="0" step="1" placeholder="0"
+                        value={discountInput}
+                        onChange={(e) => setDiscountInput(e.target.value)}
+                        className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
+                      />
+                    </div>
+                    <input
+                      type="text" placeholder="Reason (optional)"
+                      value={reasonInput}
+                      onChange={(e) => setReasonInput(e.target.value)}
+                      className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
+                    />
+                  </div>
+                  <button
+                    onClick={handleDiscountSubmit}
+                    disabled={applyingDiscount || discountInput === ""}
+                    className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-arl-light/30 active:scale-[0.99] transition-all disabled:opacity-50"
+                  >
+                    {applyingDiscount ? "Applying…" : hasDiscount ? "Edit Discount" : "Apply Discount"}
+                  </button>
+                  {discountError && <p className="text-xs text-red-500">{discountError}</p>}
+                  <p className="text-[11px] text-gray-400">Sets the total discount on this booking — entering a new amount replaces the old one, it doesn't add to it.</p>
+                </>
+              )}
             </div>
           )}
         </div>

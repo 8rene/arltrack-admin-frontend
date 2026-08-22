@@ -31,6 +31,7 @@ import BookingArchivePage from "./pages/BookingArchivePage";
 import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
 import ReviewsArchivePage from "./pages/ReviewsArchivePage";
+import Reviews from "./pages/Reviews";
 import MyTrips from "./pages/MyTrips";
 import Account from "./pages/Account";
 import { canAccess, homePathFor } from "./config/pagePermissions";
@@ -230,6 +231,11 @@ function AppRoutes() {
             <Route path="/archives/reviews" element={
                 <ProtectedRoute>
                     <DashboardLayout><ReviewsArchivePage /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/reviews" element={
+                <ProtectedRoute>
+                    <DashboardLayout><Reviews /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/archives/users" element={

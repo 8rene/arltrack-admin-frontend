@@ -57,6 +57,8 @@ export const PAGE_ACCESS = {
   "/archives/transaction-log": [OWNER, ADMIN],
   "/archives/audit-log": [OWNER, ADMIN],
   "/archives/reviews": [OWNER, ADMIN],
+  "/reviews": [OWNER, ADMIN],
+  "/archives/users": [OWNER, ADMIN],
 
   // Driver-only page. Trips + History are tabs on this one page now
   // (pages/MyTrips.jsx) — /my-trips/history is a redirect, not a

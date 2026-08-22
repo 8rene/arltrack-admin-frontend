@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -43,7 +44,9 @@ export default function AuditLogsArchivePage() {
   const [page, setPage]           = useState(1);
   const [toast, setToast]         = useState(null);
   const [confirmId, setConfirmId] = useState(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState(null);
   const [actionId, setActionId]   = useState(null);
+  const [viewRecord, setViewRecord] = useState(null);
 
   const token = localStorage.getItem("token");
 
@@ -68,6 +71,7 @@ export default function AuditLogsArchivePage() {
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
   const handleRestore = async (auditLogsArchivesId) => {
+    setRestoreConfirmId(null);
     setActionId(auditLogsArchivesId);
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/audit-logs/${auditLogsArchivesId}/restore`, {
@@ -109,6 +113,7 @@ export default function AuditLogsArchivePage() {
     const matchSearch =
       (r.auditLogsArchivesId || "").toLowerCase().includes(q) ||
       (r.userID              || "").toLowerCase().includes(q) ||
+      (r.userName            || "").toLowerCase().includes(q) ||
       (r.action              || "").toLowerCase().includes(q) ||
       (r.description         || "").toLowerCase().includes(q);
     return matchSearch && inRange(r.archivedAt, dateFrom, dateTo);
@@ -118,6 +123,8 @@ export default function AuditLogsArchivePage() {
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   useEffect(() => setPage(1), [search, dateFrom, dateTo]);
+
+  const restoreConfirmRecord = records.find((r) => r.auditLogsArchivesId === restoreConfirmId);
 
   return (
     <div className="w-full px-6 py-6">
@@ -141,6 +148,31 @@ export default function AuditLogsArchivePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {restoreConfirmId && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
+            <h3 className="font-semibold text-gray-800 mb-2">Restore this audit log?</h3>
+            {restoreConfirmRecord && (
+              <p className="text-xs text-gray-500 mb-2">{restoreConfirmRecord.userName || restoreConfirmRecord.userID || "—"} — {restoreConfirmRecord.action}</p>
+            )}
+            <p className="text-sm text-gray-500 mb-5">It will move back to the live audit log.</p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewRecord && (
+        <ArchiveDetailModal
+          title="Audit Log Archive Details"
+          record={viewRecord}
+          onClose={() => setViewRecord(null)}
+          labelOverrides={{ auditLogsArchivesId: "Archive ID", userID: "User ID", userName: "User" }}
+        />
       )}
 
       <div className="mb-6">
@@ -199,7 +231,7 @@ export default function AuditLogsArchivePage() {
               paginated.map((r, i) => (
                 <tr key={r.auditLogsArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.auditLogsArchivesId}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[100px]">{r.userID || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 truncate max-w-[140px]" title={r.userID || ""}>{r.userName || r.userID || "—"}</td>
                   <td className="px-4 py-3 text-xs">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${actionBadge[r.action] || "bg-gray-100 text-gray-500"}`}>
                       {r.action || "—"}
@@ -212,7 +244,10 @@ export default function AuditLogsArchivePage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
-                      <button onClick={() => handleRestore(r.auditLogsArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
+                      <button onClick={() => setViewRecord(r)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap">
+                        View
+                      </button>
+                      <button onClick={() => setRestoreConfirmId(r.auditLogsArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
                         {actionId === r.auditLogsArchivesId ? "…" : "Restore"}
                       </button>
                       <button onClick={() => setConfirmId(r.auditLogsArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
@@ -239,4 +274,3 @@ export default function AuditLogsArchivePage() {
     </div>
   );
 }
-

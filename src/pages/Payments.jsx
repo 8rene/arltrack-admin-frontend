@@ -241,6 +241,12 @@ export default function Payments() {
   const [discountInput, setDiscountInput] = useState("");
   const [discountReasonInput, setDiscountReasonInput] = useState("");
   const [confirmEditDiscount, setConfirmEditDiscount] = useState(false);
+  // Once a discount already exists on a booking, the amount/reason fields
+  // start locked (read-only) behind a "Re-edit Discount" button, instead of
+  // sitting open and editable — makes it much harder to bump an existing
+  // discount by accident. Clicking it unlocks the fields for this viewing
+  // session; re-opening the booking (openDetail) locks it again.
+  const [discountUnlocked, setDiscountUnlocked] = useState(false);
   const [markingRefund, setMarkingRefund] = useState(false);
   const [correctingDiscount, setCorrectingDiscount] = useState(false);
   const [correctionInput, setCorrectionInput] = useState("");
@@ -308,6 +314,7 @@ export default function Payments() {
       setDiscountReasonInput("");
       setCorrectionInput(data.data.discountAmount ? String(data.data.discountAmount) : "");
       setCorrectionReasonInput("");
+      setDiscountUnlocked(false);
     } catch (e) { showToast(e.message, "error"); }
     finally { setDetailLoading(false); }
   };
@@ -613,6 +620,20 @@ export default function Payments() {
                           This booking's refund has already been marked as returned, so the discount can no longer be edited here. Only an Admin can correct the recorded amount now.
                         </div>
                       )
+                    ) : selected.discountAmount > 0 && !discountUnlocked ? (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
+                          <span className="text-gray-500">Current discount</span>
+                          <span className="font-semibold text-red-500">−{peso(selected.discountAmount, fmtCurrency)}</span>
+                        </div>
+                        <button
+                          onClick={() => setDiscountUnlocked(true)}
+                          className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-white active:scale-[0.99] transition-all"
+                        >
+                          Re-edit Discount
+                        </button>
+                        <p className="text-[11px] text-gray-400">Locked to avoid accidental changes. Click above to unlock and edit it.</p>
+                      </div>
                     ) : (
                     <div className="space-y-2.5">
                       <div className="flex items-center gap-2">
@@ -637,7 +658,7 @@ export default function Payments() {
                         disabled={applyingDiscount || discountInput === ""}
                         className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-white active:scale-[0.99] transition-all disabled:opacity-50"
                       >
-                        {applyingDiscount ? "Applying…" : selected.discountAmount > 0 ? "Update Discount" : "Apply Discount"}
+                        {applyingDiscount ? "Applying…" : selected.discountAmount > 0 ? "Edit Discount" : "Apply Discount"}
                       </button>
                       {selected.discountAmount > 0 && (
                         <p className="text-[11px] text-amber-600">A discount is already on this booking — changing it will ask you to confirm first.</p>

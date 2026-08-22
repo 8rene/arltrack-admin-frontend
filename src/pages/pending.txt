@@ -1,14 +1,8 @@
-customer on 001 account
-
-adjus cusomter audits
-base area clear it? like how does base area works
-
-does base area mean if in there?
+pending payments
+discount
 
 
+payments and car tracking should have a edit again if ever th discount was already given
 
-wire up not removed
 
-wrong db
-
-it shouldnt show pricing? it should be systemSettingsID just like others....
+booking connect the inventory hisotry

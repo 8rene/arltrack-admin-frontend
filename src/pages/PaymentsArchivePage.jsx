@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useCurrency } from "../context/CurrencyContext";
+import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -39,8 +40,6 @@ function StatusBadge({ status }) {
     </span>
   );
 }
-const statusColor = {};
-
 const PAGE_SIZE = 15;
 
 export default function PaymentsArchivePage() {
@@ -54,7 +53,9 @@ export default function PaymentsArchivePage() {
   const [page, setPage]           = useState(1);
   const [toast, setToast]         = useState(null);
   const [confirmId, setConfirmId] = useState(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState(null);
   const [actionId, setActionId]   = useState(null);
+  const [viewRecord, setViewRecord] = useState(null);
 
   const token = localStorage.getItem("token");
 
@@ -79,6 +80,7 @@ export default function PaymentsArchivePage() {
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
   const handleRestore = async (paymentsArchivesId) => {
+    setRestoreConfirmId(null);
     setActionId(paymentsArchivesId);
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/payments/${paymentsArchivesId}/restore`, {
@@ -94,7 +96,7 @@ export default function PaymentsArchivePage() {
             : r
         )
       );
-      showToast("Payment restored to active table.", "success");
+      showToast(data.message || "Payment restored to active table.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
   };
@@ -136,6 +138,8 @@ export default function PaymentsArchivePage() {
     return `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
   };
 
+  const restoreConfirmRecord = records.find((r) => r.paymentsArchivesId === restoreConfirmId);
+
   return (
     <div className="w-full px-6 py-6">
 
@@ -158,6 +162,35 @@ export default function PaymentsArchivePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {restoreConfirmId && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-96">
+            <h3 className="font-semibold text-gray-800 mb-2">Restore this payment?</h3>
+            {restoreConfirmRecord && (
+              <p className="text-xs font-mono text-gray-400 mb-2 break-all">
+                Booking ID: {restoreConfirmRecord.bookingID || "—"}
+              </p>
+            )}
+            <p className="text-sm text-gray-500 mb-5">
+              If the linked booking is still archived, it will be restored along with this payment.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewRecord && (
+        <ArchiveDetailModal
+          title={`Payment Archive — ${viewRecord.paymentsArchivesId}`}
+          record={viewRecord}
+          onClose={() => setViewRecord(null)}
+          labelOverrides={{ paymentsArchivesId: "Archive ID", bookingID: "Booking ID" }}
+        />
       )}
 
       <div className="mb-6">
@@ -220,16 +253,17 @@ export default function PaymentsArchivePage() {
                   <td className="px-4 py-3 text-xs text-gray-700 font-medium">{peso(r.amount)}</td>
                   <td className="px-4 py-3 text-xs text-gray-600">{r.paymentMethod || "—"}</td>
                   <td className="px-4 py-3 text-xs">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor[r.status] || "bg-gray-100 text-gray-500"}`}>
-                      {r.status || "—"}
-                    </span>
+                    {r.status ? <StatusBadge status={r.status} /> : <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap">
                     <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-xs font-medium">{formatDate(r.archivedAt)}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
-                      <button onClick={() => handleRestore(r.paymentsArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
+                      <button onClick={() => setViewRecord(r)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap">
+                        View
+                      </button>
+                      <button onClick={() => setRestoreConfirmId(r.paymentsArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
                         {actionId === r.paymentsArchivesId ? "…" : "Restore"}
                       </button>
                       <button onClick={() => setConfirmId(r.paymentsArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">

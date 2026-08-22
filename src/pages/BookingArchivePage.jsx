@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useCurrency } from "../context/CurrencyContext";
+import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -40,7 +41,9 @@ export default function BookingArchivePage() {
   const [page, setPage]           = useState(1);
   const [toast, setToast]         = useState(null);
   const [confirmId, setConfirmId] = useState(null); // bookingArchivesId pending delete confirm
+  const [restoreConfirmId, setRestoreConfirmId] = useState(null); // bookingArchivesId pending restore confirm
   const [actionId, setActionId]   = useState(null); // currently processing id
+  const [viewRecord, setViewRecord] = useState(null); // record currently shown in the detail modal
 
   const token = localStorage.getItem("token");
 
@@ -68,6 +71,7 @@ export default function BookingArchivePage() {
   // Restores booking + linked payment + linked reviews back to live collections,
   // then removes all three archive records.
   const handleRestore = async (bookingArchivesId) => {
+    setRestoreConfirmId(null);
     setActionId(bookingArchivesId);
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/bookings/${bookingArchivesId}/restore`, {
@@ -106,6 +110,7 @@ export default function BookingArchivePage() {
     const matchSearch =
       (r.bookingArchivesId || "").toLowerCase().includes(q) ||
       (r.bookingID         || "").toLowerCase().includes(q) ||
+      (r.customerName      || "").toLowerCase().includes(q) ||
       (r.status            || "").toLowerCase().includes(q);
     return matchSearch && inRange(r.archivedAt, dateFrom, dateTo);
   });
@@ -123,6 +128,7 @@ export default function BookingArchivePage() {
 
   // The record currently pending delete (for confirm modal details)
   const confirmRecord = records.find((r) => r.bookingArchivesId === confirmId);
+  const restoreConfirmRecord = records.find((r) => r.bookingArchivesId === restoreConfirmId);
 
   return (
     <div className="w-full px-6 py-6">
@@ -134,6 +140,55 @@ export default function BookingArchivePage() {
         }`}>
           {toast.msg}
         </div>
+      )}
+
+      {/* CASCADE RESTORE CONFIRM MODAL */}
+      {restoreConfirmId && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-96">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-full bg-teal-100 flex items-center justify-center text-teal-600 text-lg">↺</div>
+              <h3 className="font-semibold text-gray-800">Restore this booking?</h3>
+            </div>
+            {restoreConfirmRecord && (
+              <p className="text-xs font-mono text-gray-400 mb-3 break-all">
+                Booking ID: {restoreConfirmRecord.bookingID || restoreConfirmRecord.bookingArchivesId}
+              </p>
+            )}
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 mb-4 space-y-1">
+              <p className="text-xs font-semibold text-teal-800">This will also restore:</p>
+              <ul className="text-xs text-teal-700 list-disc ml-4 space-y-0.5">
+                <li>The linked payment (if any)</li>
+                <li>All linked reviews (if any)</li>
+              </ul>
+              <p className="text-xs text-teal-600 mt-1">All matching archive records will be removed once restored.</p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setRestoreConfirmId(null)}
+                className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleRestore(restoreConfirmId)}
+                className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700"
+              >
+                Yes, Restore
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW DETAILS MODAL */}
+      {viewRecord && (
+        <ArchiveDetailModal
+          title={`Booking Archive — ${viewRecord.bookingID || viewRecord.bookingArchivesId}`}
+          record={viewRecord}
+          onClose={() => setViewRecord(null)}
+          labelOverrides={{ bookingArchivesId: "Archive ID", bookingID: "Booking ID", carID: "Car ID", userID: "User ID" }}
+        />
       )}
 
       {/* CASCADE DELETE CONFIRM MODAL */}
@@ -209,6 +264,7 @@ export default function BookingArchivePage() {
             <tr className="bg-gray-50 border-b border-gray-100">
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Archive ID</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Deleted Booking ID</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Booking Date</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
@@ -220,13 +276,13 @@ export default function BookingArchivePage() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived bookings found."}</td></tr>
+              <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived bookings found."}</td></tr>
             ) : (
               paginated.map((r, i) => (
                 <tr key={r.bookingArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
@@ -240,6 +296,7 @@ export default function BookingArchivePage() {
                       {r.bookingID || r.originalId || "—"}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-xs text-gray-700">{r.customerName || "—"}</td>
                   <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatDate(r.createdAt)}</td>
                   <td className="px-4 py-3 text-xs text-gray-700 font-medium">{peso(r.amount ?? r.totalFee)}</td>
                   <td className="px-4 py-3 text-xs">
@@ -253,7 +310,15 @@ export default function BookingArchivePage() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
                       <button
-                        onClick={() => handleRestore(r.bookingArchivesId)}
+                        onClick={() => setViewRecord(r)}
+                        disabled={!!actionId}
+                        title="View full archived record"
+                        className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap"
+                      >
+                        View
+                      </button>
+                      <button
+                        onClick={() => setRestoreConfirmId(r.bookingArchivesId)}
                         disabled={!!actionId}
                         title="Restores booking, payment, and reviews back to live collections and removes all archive records"
                         className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap"

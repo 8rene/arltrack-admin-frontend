@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -45,7 +46,9 @@ export default function ReviewsArchivePage() {
   const [page, setPage]           = useState(1);
   const [toast, setToast]         = useState(null);
   const [confirmId, setConfirmId] = useState(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState(null);
   const [actionId, setActionId]   = useState(null);
+  const [viewRecord, setViewRecord] = useState(null);
 
   const token = localStorage.getItem("token");
 
@@ -68,6 +71,7 @@ export default function ReviewsArchivePage() {
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
   const handleRestore = async (reviewsArchivesID) => {
+    setRestoreConfirmId(null);
     setActionId(reviewsArchivesID);
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/reviews/${reviewsArchivesID}/restore`, {
@@ -103,6 +107,7 @@ export default function ReviewsArchivePage() {
       (r.reviewsArchivesID || "").toLowerCase().includes(q) ||
       (r.reviewID           || "").toLowerCase().includes(q) ||
       (r.bookingID          || "").toLowerCase().includes(q) ||
+      (r.reviewerName       || "").toLowerCase().includes(q) ||
       (r.comment            || "").toLowerCase().includes(q);
     return matchSearch && inRange(r.archivedAt, dateFrom, dateTo);
   });
@@ -111,6 +116,8 @@ export default function ReviewsArchivePage() {
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   useEffect(() => setPage(1), [search, dateFrom, dateTo]);
+
+  const restoreConfirmRecord = records.find((r) => r.reviewsArchivesID === restoreConfirmId);
 
   return (
     <div className="w-full px-6 py-6">
@@ -132,6 +139,41 @@ export default function ReviewsArchivePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {restoreConfirmId && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
+            <h3 className="font-semibold text-gray-800 mb-2">Restore this review?</h3>
+            {restoreConfirmRecord && (
+              <p className="text-xs text-gray-500 mb-2">
+                {restoreConfirmRecord.reviewerName || "—"} · Booking {restoreConfirmRecord.bookingID || "—"}
+              </p>
+            )}
+            <p className="text-sm text-gray-500 mb-5">It will move back to the live reviews table.</p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewRecord && (
+        <ArchiveDetailModal
+          title={`Review Archive — ${viewRecord.reviewID || viewRecord.reviewsArchivesID}`}
+          record={viewRecord}
+          onClose={() => setViewRecord(null)}
+          labelOverrides={{
+            reviewsArchivesID: "Archive ID",
+            reviewID: "Review ID",
+            bookingID: "Booking ID",
+            userID: "Reviewer User ID",
+            reviewerName: "Reviewed By",
+            archivedBy: "Deleted By",
+            rate: "Rating",
+          }}
+        />
       )}
 
       <div className="mb-6">
@@ -166,10 +208,12 @@ export default function ReviewsArchivePage() {
             <tr className="bg-gray-50 border-b border-gray-100">
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">reviewsArchivesID</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Booking ID</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Reviewed By</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Rating</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Comment</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Reviewed At</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Archived At</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Deleted By</th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
@@ -177,27 +221,32 @@ export default function ReviewsArchivePage() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 9 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived reviews found."}</td></tr>
+              <tr><td colSpan={9} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived reviews found."}</td></tr>
             ) : (
               paginated.map((r, i) => (
                 <tr key={r.reviewsArchivesID} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.reviewsArchivesID}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500 truncate max-w-[140px]">{r.bookingID || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 truncate max-w-[140px]" title={r.userID || r.reviewerID || ""}>{r.reviewerName || "—"}</td>
                   <td className="px-4 py-3"><StarRating rate={r.rate} /></td>
                   <td className="px-4 py-3 text-xs text-gray-700 max-w-[220px] truncate" title={r.comment}>{r.comment || "—"}</td>
                   <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatDate(r.createdAt)}</td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap">
                     <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-xs font-medium">{formatDate(r.archivedAt)}</span>
                   </td>
+                  <td className="px-4 py-3 text-xs text-gray-600">{r.archivedBy || "—"}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
-                      <button onClick={() => handleRestore(r.reviewsArchivesID)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
+                      <button onClick={() => setViewRecord(r)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap">
+                        View
+                      </button>
+                      <button onClick={() => setRestoreConfirmId(r.reviewsArchivesID)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
                         {actionId === r.reviewsArchivesID ? "…" : r.restoredAt ? "Restored" : "Restore"}
                       </button>
                       <button onClick={() => setConfirmId(r.reviewsArchivesID)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">

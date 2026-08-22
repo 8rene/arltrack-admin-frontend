@@ -79,6 +79,7 @@ export default function UserLogs() {
     const q = search.toLowerCase();
     return (
       (log.uID || "").toLowerCase().includes(q) ||
+      (log.username || "").toLowerCase().includes(q) ||
       (log.userLogID || "").toLowerCase().includes(q) ||
       (log.id || "").toLowerCase().includes(q)
     );
@@ -165,6 +166,7 @@ export default function UserLogs() {
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Log ID</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Username</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">User ID (uID)</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Login Time</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Logout Time</th>
@@ -176,7 +178,7 @@ export default function UserLogs() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 6 }).map((_, j) => (
+                  {Array.from({ length: 7 }).map((_, j) => (
                     <td key={j} className="px-5 py-4">
                       <div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />
                     </td>
@@ -185,7 +187,7 @@ export default function UserLogs() {
               ))
             ) : paginated.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-16 text-gray-400 text-sm">
+                <td colSpan={7} className="text-center py-16 text-gray-400 text-sm">
                   {search ? "No logs match your search." : "No user logs found."}
                 </td>
               </tr>
@@ -199,6 +201,9 @@ export default function UserLogs() {
                 >
                   <td className="px-5 py-3.5 text-gray-500 font-mono text-xs truncate max-w-[140px]">
                     {log.userLogID || log.id || "—"}
+                  </td>
+                  <td className="px-5 py-3.5 text-gray-700 text-xs truncate max-w-[160px]">
+                    {log.username || "—"}
                   </td>
                   <td className="px-5 py-3.5 text-gray-500 font-mono text-xs truncate max-w-[180px]">
                     {log.uID || "—"}

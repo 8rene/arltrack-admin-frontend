@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 function formatDate(iso) {
@@ -38,7 +39,9 @@ export default function UserLogArchivePage() {
   const [page, setPage]             = useState(1);
   const [toast, setToast]           = useState(null);
   const [confirmId, setConfirmId]   = useState(null);   // pending permanent-delete confirm
+  const [restoreConfirmId, setRestoreConfirmId] = useState(null); // pending restore confirm
   const [actionId, setActionId]     = useState(null);   // loading state for buttons
+  const [viewRecord, setViewRecord] = useState(null);
 
   const token = localStorage.getItem("token");
 
@@ -65,6 +68,7 @@ export default function UserLogArchivePage() {
 
   /* ── RESTORE ── */
   const handleRestore = async (userLogArchivesId) => {
+    setRestoreConfirmId(null);
     setActionId(userLogArchivesId);
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/user-log/${userLogArchivesId}/restore`, {
@@ -118,6 +122,8 @@ export default function UserLogArchivePage() {
 
   useEffect(() => setPage(1), [search, dateFrom, dateTo]);
 
+  const restoreConfirmRecord = records.find((r) => r.userLogArchivesId === restoreConfirmId);
+
   /* ── RENDER ── */
   return (
     <div className="w-full px-6 py-6">
@@ -155,6 +161,35 @@ export default function UserLogArchivePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Restore confirm modal */}
+      {restoreConfirmId && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
+            <h3 className="font-semibold text-gray-800 mb-2">Restore this user log?</h3>
+            {restoreConfirmRecord && (
+              <p className="text-xs text-gray-500 mb-2">
+                {restoreConfirmRecord.username || restoreConfirmRecord.uID || "—"}
+              </p>
+            )}
+            <p className="text-sm text-gray-500 mb-5">It will move back to the live user logs table.</p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View details modal */}
+      {viewRecord && (
+        <ArchiveDetailModal
+          title={`User Log Archive — ${viewRecord.username || viewRecord.uID || viewRecord.userLogArchivesId}`}
+          record={viewRecord}
+          onClose={() => setViewRecord(null)}
+          labelOverrides={{ userLogArchivesId: "Archive ID", uID: "User ID" }}
+        />
       )}
 
       {/* Header */}
@@ -261,7 +296,14 @@ export default function UserLogArchivePage() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
                       <button
-                        onClick={() => handleRestore(r.userLogArchivesId)}
+                        onClick={() => setViewRecord(r)}
+                        disabled={!!actionId}
+                        className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap"
+                      >
+                        View
+                      </button>
+                      <button
+                        onClick={() => setRestoreConfirmId(r.userLogArchivesId)}
                         disabled={!!actionId || !!r.restoredAt}
                         className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap"
                       >
@@ -304,4 +346,3 @@ export default function UserLogArchivePage() {
     </div>
   );
 }
-
