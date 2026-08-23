@@ -52,6 +52,7 @@ export default function Reviews() {
   const [cars, setCars]               = useState([]);
   const [carsLoading, setCarsLoading] = useState(true);
   const [selectedCar, setSelectedCar] = useState(null);
+  const [reviewCounts, setReviewCounts] = useState({}); // { carID: count } — badge on each card, fetched via count() aggregation so it doesn't pull full review content
 
   const [reviews, setReviews]         = useState([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
@@ -84,10 +85,15 @@ export default function Reviews() {
       getDocs(collection(db, "cars")),
       getDocs(collection(db, "brand")),
       getDocs(collection(db, "model")),
+      getDocs(collection(db, "carImages")),
     ])
-      .then(([carsSnap, brandsSnap, modelsSnap]) => {
+      .then(([carsSnap, brandsSnap, modelsSnap, imgsSnap]) => {
         const bMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data()]));
         const mMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, d.data()]));
+        const iMap = {};
+        imgsSnap.docs.forEach(d => {
+          if (d.data().carID) iMap[d.data().carID] = d.data().imageURL;
+        });
         setCars(
           carsSnap.docs.map(d => {
             const c     = { id: d.id, ...d.data() };
@@ -96,9 +102,22 @@ export default function Reviews() {
             return {
               ...c,
               label: `${brand.brandName || ""} ${model.modelName || ""}`.trim() || d.id,
+              imageURL: iMap[d.id] || null,
             };
           })
         );
+
+        // Fire off the count badge fetch once we know which cars exist —
+        // separate lean request (counts only, see reviews.service.js's
+        // getReviewCountsForCars), doesn't block the cards from rendering.
+        const carIDs = carsSnap.docs.map(d => d.id);
+        authedFetch("/api/reviews/counts", {
+          method: "POST",
+          body: JSON.stringify({ carIDs }),
+        })
+          .then(res => res.json())
+          .then(data => { if (data.success) setReviewCounts(data.data || {}); })
+          .catch(e => console.error("Failed to load review counts:", e));
       })
       .catch((e) => { console.error(e); showToast("Failed to load vehicles.", "error"); })
       .finally(() => setCarsLoading(false));
@@ -193,8 +212,28 @@ export default function Reviews() {
                       isSelected ? "border-teal-400 ring-2 ring-teal-100" : "border-gray-100 hover:border-teal-200"
                     }`}
                   >
-                    <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
-                    <p className="text-xs text-gray-400 truncate">{car.plateNumber || car.platenumber || "—"}</p>
+                    <div className="flex items-center gap-3">
+                      {car.imageURL ? (
+                        <img src={car.imageURL} alt="car"
+                          className={`rounded-xl object-cover ${selectedCar ? "w-10 h-10" : "w-14 h-14"}`} />
+                      ) : (
+                        <div className={`rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 ${selectedCar ? "w-10 h-10" : "w-14 h-14"}`}>
+                          🚗
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
+                        <p className="text-xs text-gray-400 truncate">{car.plateNumber || car.platenumber || "—"}</p>
+                      </div>
+                      {reviewCounts[car.id] > 0 && (
+                        <span
+                          className="shrink-0 inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold"
+                          title={`${reviewCounts[car.id]} review${reviewCounts[car.id] !== 1 ? "s" : ""}`}
+                        >
+                          {reviewCounts[car.id]}
+                        </span>
+                      )}
+                    </div>
                   </button>
                 );
               })}

@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
+import { useAuth } from "../context/AuthContext";
+import { ROLES } from "../config/pagePermissions";
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -21,6 +23,7 @@ function inRange(iso, from, to) {
 const PAGE_SIZE = 15;
 
 export default function UserArchivePage() {
+  const { effectiveRole } = useAuth();
   const [records, setRecords]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
@@ -204,9 +207,11 @@ export default function UserArchivePage() {
                       <button onClick={() => handleRestore(r.userArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
                         {actionId === r.userArchivesId ? "…" : "Restore"}
                       </button>
+                      {effectiveRole === ROLES.OWNER && (
                       <button onClick={() => setConfirmId(r.userArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
                         Delete
                       </button>
+                    )}
                     </div>
                   </td>
                 </tr>

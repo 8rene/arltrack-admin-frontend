@@ -6,6 +6,8 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
+import { useAuth } from "../context/AuthContext";
+import { ROLES } from "../config/pagePermissions";
 
 // Fire-and-forget audit log write — used by any status/data change below
 // that should show up in the Audit Log page. Never blocks or fails the
@@ -167,6 +169,11 @@ function fmtDate(val) {
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Fleet() {
+  const { effectiveRole } = useAuth();
+  // Owner can still view/add/delete/change status — just not edit an
+  // existing vehicle's details. Uses effectiveRole so an Admin previewing
+  // "as Owner" sees the same restriction a real Owner would.
+  const canEdit = effectiveRole !== ROLES.OWNER;
   const [cars, setCars]           = useState([]);
   const [brands, setBrands]       = useState([]);
   const [models, setModels]       = useState([]);
@@ -289,6 +296,7 @@ export default function Fleet() {
         <div className="grid md:grid-cols-3 gap-6">
           {filtered.map(car => (
             <VehicleCard key={car.id} car={car}
+              canEdit={canEdit}
               onViewDetails={() => setDetailCar(car)}
               onEdit={() => setEditCar(car)}
               onDelete={() => setConfirmDelete(car)}
@@ -299,7 +307,7 @@ export default function Fleet() {
 
       {/* MODALS */}
       {detailCar && (
-        <ViewDetailsModal car={detailCar} onClose={() => setDetailCar(null)}
+        <ViewDetailsModal car={detailCar} canEdit={canEdit} onClose={() => setDetailCar(null)}
           onEdit={() => { setDetailCar(null); setEditCar(detailCar); }} />
       )}
       {editCar && (
@@ -328,7 +336,7 @@ export default function Fleet() {
 }
 
 // ─── VEHICLE CARD ─────────────────────────────────────────────────────────────
-function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
+function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusChange }) {
   const { fmt } = useCurrency();
   const navigate = useNavigate();
   const [nearestBooking, setNearestBooking] = useState(null);
@@ -518,10 +526,12 @@ function VehicleCard({ car, onViewDetails, onEdit, onDelete, onStatusChange }) {
             <button onClick={onDelete} className="p-1.5 border border-red-200 rounded-lg text-red-500 hover:bg-red-50">
               <Icons.Trash className="w-4 h-4" />
             </button>
-            <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
-              <Icons.Edit className="w-3.5 h-3.5" />
-              Edit
-            </button>
+            {canEdit && (
+              <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+                <Icons.Edit className="w-3.5 h-3.5" />
+                Edit
+              </button>
+            )}
             <button onClick={onViewDetails} className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
               Details
               <Icons.ArrowRight className="w-3.5 h-3.5" />
@@ -582,7 +592,7 @@ function StatusReasonModal({ carLabel, status, saving, onConfirm, onCancel }) {
 }
 
 // ─── VIEW DETAILS MODAL ───────────────────────────────────────────────────────
-function ViewDetailsModal({ car, onClose, onEdit }) {
+function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
   const { fmt } = useCurrency();
   const [bookings, setBookings]   = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -652,10 +662,12 @@ function ViewDetailsModal({ car, onClose, onEdit }) {
             <p className="text-sm text-gray-400">{car.bodyType} · {car.platenumber || car.plateNumber}</p>
           </div>
           <div className="flex gap-2 items-center">
-            <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
-              <Icons.Edit className="w-4 h-4" />
-              Edit
-            </button>
+            {canEdit && (
+              <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
+                <Icons.Edit className="w-4 h-4" />
+                Edit
+              </button>
+            )}
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
               <Icons.Close className="w-5 h-5" />
             </button>

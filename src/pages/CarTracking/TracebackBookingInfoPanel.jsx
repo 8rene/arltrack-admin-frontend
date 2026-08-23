@@ -142,6 +142,11 @@ export default function TracebackBookingInfoPanel({
                 </span>
               )}
             </div>
+            {session.isArchived && (
+              <p className="text-[10px] font-semibold text-amber-600 mt-1">
+                This trip's booking has been archived — showing the preserved record.
+              </p>
+            )}
             <p className="text-xs text-gray-500 mt-1">
               {fmtDateTime(session.pickupTime)} → {fmtDateTime(session.returnTime)}
             </p>

@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
+import { useAuth } from "../context/AuthContext";
+import { ROLES } from "../config/pagePermissions";
 import { useCurrency } from "../context/CurrencyContext";
 import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
@@ -35,6 +37,7 @@ const typeColor = {
 const PAGE_SIZE = 15;
 
 export default function TransactionLogArchivePage() {
+  const { effectiveRole } = useAuth();
   const { fmt } = useCurrency();
   const [records, setRecords]     = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -263,9 +266,11 @@ export default function TransactionLogArchivePage() {
                       <button onClick={() => setRestoreConfirmId(r.transactionLogArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
                         {actionId === r.transactionLogArchivesId ? "…" : "Restore"}
                       </button>
+                      {effectiveRole === ROLES.OWNER && (
                       <button onClick={() => setConfirmId(r.transactionLogArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
                         Delete
                       </button>
+                    )}
                     </div>
                   </td>
                 </tr>

@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
+import { useAuth } from "../context/AuthContext";
+import { ROLES } from "../config/pagePermissions";
 import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -30,6 +32,7 @@ function inRange(iso, from, to) {
 const PAGE_SIZE = 15;
 
 export default function UserLogArchivePage() {
+  const { effectiveRole } = useAuth();
   const [records, setRecords]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
@@ -309,6 +312,7 @@ export default function UserLogArchivePage() {
                       >
                         {actionId === r.userLogArchivesId ? "…" : "Restore"}
                       </button>
+                      {effectiveRole === ROLES.OWNER && (
                       <button
                         onClick={() => setConfirmId(r.userLogArchivesId)}
                         disabled={!!actionId}
@@ -316,6 +320,7 @@ export default function UserLogArchivePage() {
                       >
                         Delete
                       </button>
+                    )}
                     </div>
                   </td>
                 </tr>

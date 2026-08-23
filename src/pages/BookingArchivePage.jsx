@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
+import { useAuth } from "../context/AuthContext";
+import { ROLES } from "../config/pagePermissions";
 import { useCurrency } from "../context/CurrencyContext";
 import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
@@ -31,6 +33,7 @@ const statusColor = {
 const PAGE_SIZE = 15;
 
 export default function BookingArchivePage() {
+  const { effectiveRole } = useAuth();
   const { fmt } = useCurrency();
   const [records, setRecords]     = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -44,6 +47,27 @@ export default function BookingArchivePage() {
   const [restoreConfirmId, setRestoreConfirmId] = useState(null); // bookingArchivesId pending restore confirm
   const [actionId, setActionId]   = useState(null); // currently processing id
   const [viewRecord, setViewRecord] = useState(null); // record currently shown in the detail modal
+
+  // Linked-record modals — Payment / Vehicle Inspection / Booking Session.
+  // Each stays a modal fed from the archive copy, never a navigation to the
+  // live page, so archived data never leaks back into a live operational view.
+  const [paymentModal, setPaymentModal]         = useState(null); // { loading, data, bookingArchivesId } | null
+  const [inspectionModal, setInspectionModal]   = useState(null);
+  const [sessionModal, setSessionModal]         = useState(null);
+
+  const openLinkedModal = async (setModal, bookingArchivesId, endpoint) => {
+    setModal({ loading: true, data: null, bookingArchivesId });
+    try {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/bookings/${bookingArchivesId}/${endpoint}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to load record.");
+      setModal({ loading: false, data: data.data, message: data.message, bookingArchivesId });
+    } catch (err) {
+      setModal({ loading: false, data: null, error: err.message, bookingArchivesId });
+    }
+  };
 
   const token = localStorage.getItem("token");
 
@@ -191,6 +215,100 @@ export default function BookingArchivePage() {
         />
       )}
 
+      {/* VIEW PAYMENT MODAL — linked paymentsArchives record, scoped to this one booking */}
+      {paymentModal && (
+        paymentModal.loading ? (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+            <div className="bg-white rounded-2xl shadow-xl p-6 text-sm text-gray-500">Loading payment record…</div>
+          </div>
+        ) : paymentModal.data ? (
+          <ArchiveDetailModal
+            title="Linked Payment Archive"
+            record={paymentModal.data}
+            onClose={() => setPaymentModal(null)}
+            labelOverrides={{ paymentsArchivesId: "Archive ID", bookingID: "Booking ID", userID: "User ID" }}
+          />
+        ) : (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30" onClick={() => setPaymentModal(null)}>
+            <div className="bg-white rounded-2xl shadow-xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
+              <p className="text-sm text-gray-600">{paymentModal.error || paymentModal.message || "No linked payment archive found for this booking."}</p>
+              <button onClick={() => setPaymentModal(null)} className="mt-4 px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Close</button>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* VIEW BOOKING SESSION MODAL — linked bookingSessionArchives record */}
+      {sessionModal && (
+        sessionModal.loading ? (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+            <div className="bg-white rounded-2xl shadow-xl p-6 text-sm text-gray-500">Loading booking session…</div>
+          </div>
+        ) : sessionModal.data ? (
+          <ArchiveDetailModal
+            title="Linked Booking Session Archive"
+            record={sessionModal.data}
+            onClose={() => setSessionModal(null)}
+            labelOverrides={{ bookingSessionArchivesId: "Archive ID", bookingID: "Booking ID", carID: "Car ID" }}
+          />
+        ) : (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30" onClick={() => setSessionModal(null)}>
+            <div className="bg-white rounded-2xl shadow-xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
+              <p className="text-sm text-gray-600">{sessionModal.error || sessionModal.message || "No linked booking session archive found for this booking."}</p>
+              <button onClick={() => setSessionModal(null)} className="mt-4 px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Close</button>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* VIEW VEHICLE INSPECTION MODAL — before/after parts status + photos,
+          scoped to just this one booking. These records were never archived
+          (they live permanently in their own collections), so this reads
+          straight from the live inventory/vehicleDocumentation collections. */}
+      {inspectionModal && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={() => setInspectionModal(null)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-semibold text-gray-800">Vehicle Inspection Record</h3>
+              <button onClick={() => setInspectionModal(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+            </div>
+            {inspectionModal.loading ? (
+              <p className="text-sm text-gray-500">Loading inspection record…</p>
+            ) : inspectionModal.error ? (
+              <p className="text-sm text-red-500">{inspectionModal.error}</p>
+            ) : (
+              (() => {
+                const groups = [
+                  ["inventoryBeforeTrip", "Parts — Before Trip"],
+                  ["inventoryAfterTrip", "Parts — After Trip"],
+                  ["vehicleDocumentationBeforeTrip", "Photos — Before Trip"],
+                  ["vehicleDocumentationAfterTrip", "Photos — After Trip"],
+                ];
+                const data = inspectionModal.data || {};
+                const hasAny = groups.some(([key]) => (data[key] || []).length > 0);
+                if (!hasAny) return <p className="text-sm text-gray-400">No vehicle inspection records found for this booking.</p>;
+                return groups.map(([key, label]) => {
+                  const rows = data[key] || [];
+                  if (rows.length === 0) return null;
+                  return (
+                    <div key={key} className="mb-5">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{label}</p>
+                      <div className="space-y-2">
+                        {rows.map((row) => (
+                          <div key={row.id} className="border border-gray-100 rounded-xl p-3 bg-gray-50/60 text-xs text-gray-700">
+                            <pre className="whitespace-pre-wrap break-all font-sans">{JSON.stringify(row, null, 2)}</pre>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                });
+              })()
+            )}
+          </div>
+        </div>
+      )}
+
       {/* CASCADE DELETE CONFIRM MODAL */}
       {confirmId && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
@@ -209,6 +327,8 @@ export default function BookingArchivePage() {
               <ul className="text-xs text-amber-700 list-disc ml-4 space-y-0.5">
                 <li>The linked payment archive (if any)</li>
                 <li>All linked review archives (if any)</li>
+                <li>The linked booking session archive (if any)</li>
+                <li>This booking's vehicle inspection records — before/after parts status and photos (if any)</li>
               </ul>
               <p className="text-xs text-amber-600 mt-1">This action cannot be undone.</p>
             </div>
@@ -326,13 +446,39 @@ export default function BookingArchivePage() {
                         {actionId === r.bookingArchivesId ? "…" : "Restore"}
                       </button>
                       <button
+                        onClick={() => openLinkedModal(setPaymentModal, r.bookingArchivesId, "payment")}
+                        disabled={!!actionId}
+                        title="View the linked archived payment for this booking"
+                        className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap"
+                      >
+                        Payment
+                      </button>
+                      <button
+                        onClick={() => openLinkedModal(setInspectionModal, r.bookingArchivesId, "vehicle-inspection")}
+                        disabled={!!actionId}
+                        title="View this booking's vehicle inspection record (parts status + photos)"
+                        className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap"
+                      >
+                        Inspection
+                      </button>
+                      <button
+                        onClick={() => openLinkedModal(setSessionModal, r.bookingArchivesId, "booking-session")}
+                        disabled={!!actionId}
+                        title="View the linked archived booking session (status, pickup/return, geofence & coding alerts)"
+                        className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap"
+                      >
+                        Session
+                      </button>
+                      {effectiveRole === ROLES.OWNER && (
+                      <button
                         onClick={() => setConfirmId(r.bookingArchivesId)}
                         disabled={!!actionId}
-                        title="Permanently deletes this archive and all linked payment/review archives"
+                        title="Permanently deletes this archive and all linked payment/review/session/inspection archives"
                         className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap"
                       >
                         Delete
                       </button>
+                    )}
                     </div>
                   </td>
                 </tr>

@@ -33,7 +33,7 @@ export const PAGE_ACCESS = {
   // Supervisor tab=[Owner,Admin], Admin tab=[Owner].
   "/users": [OWNER, ADMIN, SUPERVISOR],
   "/car-tracking": [OWNER, ADMIN, SUPERVISOR],
-  "/gps-setup": [OWNER, ADMIN, SUPERVISOR],
+  "/gps-setup": [ADMIN, SUPERVISOR],
   "/driver-dispatch": [OWNER, ADMIN, SUPERVISOR],
   "/maintenance": [OWNER, ADMIN, SUPERVISOR],
   // Inventory = parts catalog (edited occasionally, Owner/Admin/Supervisor
