@@ -23,12 +23,13 @@ import AuditLog from "./pages/AuditLog";
 import UserLogs from "./pages/UserLogs";
 import TransactionLogs from "./pages/TransactionLogs";
 import Settings from "./pages/Settings";
-import VehicleDocumentation from "./pages/VehicleDocs";
+import VehicleInspection from "./pages/VechicleInspection";
 import UserLogArchivePage from "./pages/UserLogArchivePage";
 import PaymentsArchivePage from "./pages/PaymentsArchivePage";
 import UserArchivePage from "./pages/UserArchivePage";
 import BookingArchivePage from "./pages/BookingArchivePage";
 import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
+import RefundArchivePage from "./pages/RefundArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
 import ReviewsArchivePage from "./pages/ReviewsArchivePage";
 import Reviews from "./pages/Reviews";
@@ -158,7 +159,7 @@ function AppRoutes() {
             } />
             <Route path="/vehicle-documentation" element={
                 <ProtectedRoute>
-                    <DashboardLayout><VehicleDocumentation /></DashboardLayout>
+                    <DashboardLayout><VehicleInspection /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/analytics" element={
@@ -221,6 +222,11 @@ function AppRoutes() {
             <Route path="/archives/transaction-log" element={
                 <ProtectedRoute>
                     <DashboardLayout><TransactionLogArchivePage /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/archives/refund-requests" element={
+                <ProtectedRoute>
+                    <DashboardLayout><RefundArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/archives/audit-log" element={

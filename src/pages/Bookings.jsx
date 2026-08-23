@@ -409,6 +409,7 @@ function EditModal({ booking, onClose, onSave }) {
 
 function ViewModal({ booking, onClose }) {
   const { fmt } = useCurrency();
+  const { getToken } = useAuth();
   const navigate = useNavigate();
   const row = (label, value) => (
     <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
@@ -416,6 +417,27 @@ function ViewModal({ booking, onClose }) {
       <span className="text-gray-800 text-right">{value || "—"}</span>
     </div>
   );
+
+  // Inline check: does THIS booking actually have before/after-trip
+  // inventory records? Don't just link off to Vehicle Inspections and
+  // hope it lands on the right one — that page defaults to a car's
+  // nearest/upcoming booking, which for a completed booking is very
+  // likely the wrong record entirely.
+  const [inventoryCheck, setInventoryCheck]     = useState(null); // { before, after } | null
+  const [inventoryLoading, setInventoryLoading] = useState(true);
+
+  useEffect(() => {
+    const bID = booking.bookingID || booking.id;
+    if (!bID) { setInventoryLoading(false); return; }
+    setInventoryLoading(true);
+    fetch(`${process.env.REACT_APP_API_URL}/api/inventory/booking/${encodeURIComponent(bID)}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((r) => r.json())
+      .then((json) => setInventoryCheck(json.data || { before: null, after: null }))
+      .catch(() => setInventoryCheck(null))
+      .finally(() => setInventoryLoading(false));
+  }, [booking, getToken]);
 
   const goToHistory = () => {
     navigate("/car-tracking", {
@@ -429,6 +451,17 @@ function ViewModal({ booking, onClose }) {
 
   const goToPayments = () => {
     navigate(`/payments?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
+  };
+
+  // Vehicle Inspections page (system inventory: before/after-trip part
+  // condition + photos) is keyed by carID first, bookingID second — same
+  // deep-link shape it already reads elsewhere (?carID=...&bookingID=...).
+  const goToInventory = () => {
+    const params = new URLSearchParams({
+      carID: booking.carID || "",
+      bookingID: booking.bookingID || booking.id || "",
+    });
+    navigate(`/vehicle-documentation?${params.toString()}`);
   };
 
   return (
@@ -504,6 +537,53 @@ function ViewModal({ booking, onClose }) {
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* System Inventory — before/after-trip part condition, checked
+                inline against THIS booking's own records (not a link that
+                assumes you'll land on the right one — Vehicle Inspections'
+                own deep-link picks a car's nearest/upcoming booking, which
+                for a past booking is very likely a different one). */}
+            <div className="py-2 border-b border-gray-50 last:border-0 text-sm space-y-1.5">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500 font-medium w-28 shrink-0">Inventory</span>
+                {inventoryLoading ? (
+                  <span className="text-xs text-gray-400 italic">Checking…</span>
+                ) : !inventoryCheck?.before && !inventoryCheck?.after ? (
+                  <span className="text-xs text-gray-300">Not recorded</span>
+                ) : null}
+              </div>
+
+              {!inventoryLoading && (inventoryCheck?.before || inventoryCheck?.after) && (
+                <div className="flex flex-col gap-1 pl-0">
+                  {["before", "after"].map((slot) => {
+                    const rec = inventoryCheck?.[slot];
+                    if (!rec) {
+                      return (
+                        <div key={slot} className="flex justify-between items-center text-xs text-gray-300">
+                          <span className="capitalize">{slot}-trip</span>
+                          <span>Not recorded</span>
+                        </div>
+                      );
+                    }
+                    const hasDamage = rec.inventoryOverallStatus === "has damage";
+                    return (
+                      <div key={slot} className="flex justify-between items-center text-xs">
+                        <span className="capitalize text-gray-500">{slot}-trip</span>
+                        <span className={`font-semibold ${hasDamage ? "text-red-600" : "text-green-600"}`}>
+                          {hasDamage ? `Has damage (${rec.damageParts?.length || 0})` : "Good"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <button
+                    onClick={goToInventory}
+                    className="self-end text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors mt-1"
+                  >
+                    View full record →
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

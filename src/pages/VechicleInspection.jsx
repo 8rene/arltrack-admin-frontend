@@ -182,6 +182,10 @@ export default function VehicleDocs() {
   const [pastBookingNames, setPastBookingNames] = useState({});
   const [expandedHistoryID, setExpandedHistoryID] = useState(null);
   const [historyRecords, setHistoryRecords]     = useState({});
+  // Set when a deep link points at an already-closed booking — consumed
+  // (and cleared) by the effect below once that row is found, expanded,
+  // and scrolled into view.
+  const [historyFocusID, setHistoryFocusID]     = useState(null);
   const [viewingPhoto, setViewingPhoto]         = useState(null);
   const [docsLoading, setDocsLoading] = useState(false);
 
@@ -347,6 +351,60 @@ export default function VehicleDocs() {
     }
   }, [expandedHistoryID, historyRecords]);
 
+  // ── Deep-linked into a closed booking → auto-expand its row in Past
+  // Trips (instead of showing it in the panel meant for pickup/return).
+  // Waits for pastBookings to actually contain the row (it loads async
+  // right after this flag is set in selectCar), expands it once, then
+  // clears the flag so re-collapsing it later doesn't get forced back
+  // open. `pendingScrollID` hands off to the effect below, which waits
+  // for the row's actual data — not a guessed timeout — before scrolling.
+  const [highlightRowID, setHighlightRowID] = useState(null);
+  const [pendingScrollID, setPendingScrollID] = useState(null);
+  useEffect(() => {
+    if (!historyFocusID) return;
+    const match = pastBookings.find(b => (b.bookingID || b.id) === historyFocusID);
+    if (!match) return;
+    toggleHistoryRow(match);
+    setHighlightRowID(historyFocusID);
+    setPendingScrollID(historyFocusID);
+    setHistoryFocusID(null);
+  }, [historyFocusID, pastBookings, toggleHistoryRow]);
+
+  // Scrolls only once BOTH of these are true — not a fixed delay guess:
+  //   1. toggleHistoryRow's fetch for this row has resolved
+  //      (historyRecords[bID].loading === false)
+  //   2. `bookingLoading` is false — PastTripsSection is gated behind
+  //      `!bookingLoading && pastBookings.length > 0` (see the render
+  //      below), and bookingLoading doesn't flip to false until AFTER
+  //      setPastBookings/setHistoryFocusID run in selectCar (it's still
+  //      awaiting the active booking's own photo/inventory loads at that
+  //      point). Without this check, the history record could finish
+  //      loading — and this effect would consume pendingScrollID and give
+  //      up for good — before the section even existed in the DOM,
+  //      which is exactly why the scroll was silently never happening.
+  // requestAnimationFrame gives the browser one paint to apply the
+  // now-expanded row's real height before scrollIntoView measures it.
+  useEffect(() => {
+    if (!pendingScrollID || bookingLoading) return;
+    const record = historyRecords[pendingScrollID];
+    if (!record || record.loading) return; // still fetching — wait for the next update
+    const el = document.getElementById(`history-row-${pendingScrollID}`);
+    if (!el) return; // section hasn't painted into the DOM yet — wait for the next render
+    const raf = requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    setPendingScrollID(null);
+    return () => cancelAnimationFrame(raf);
+  }, [pendingScrollID, historyRecords, bookingLoading]);
+
+  // Highlight fades on its own timer, independent of when the scroll
+  // actually happens.
+  useEffect(() => {
+    if (!highlightRowID) return;
+    const timer = setTimeout(() => setHighlightRowID(null), 2200);
+    return () => clearTimeout(timer);
+  }, [highlightRowID]);
+
   /* ── Open a car — mirrors Inventory's openCar exactly ── */
   const selectCar = useCallback(async (car, forcedBookingID) => {
     setSelectedCar(car);
@@ -365,6 +423,7 @@ export default function VehicleDocs() {
     setPastBookingNames({});
     setExpandedHistoryID(null);
     setHistoryRecords({});
+    setHistoryFocusID(null);
 
     // Load parts
     setPartsLoading(true);
@@ -379,27 +438,33 @@ export default function VehicleDocs() {
     setBookingLoading(true);
     try {
       let target = null;
+      let forcedBooking = null;
 
       if (forcedBookingID) {
-        // Came from a specific "Start Pickup" tap on My Trips — go straight
-        // to that exact booking instead of guessing. The "nearest booking
-        // for this car" heuristic below is fine for Inventory (which has
-        // no specific booking in mind), but for a targeted pickup it can
-        // pick the wrong doc — e.g. a stale/duplicate "completed" booking
-        // for the same car with an earlier start date — which silently
-        // hides the Complete Pickup button since that only shows for
-        // status "upcoming".
         const snap = await getDoc(doc(db, "bookings", forcedBookingID));
-        if (snap.exists()) target = { id: snap.id, ...snap.data() };
+        if (snap.exists()) forcedBooking = { id: snap.id, ...snap.data() };
       }
 
-      if (!target) {
-        // Load bookings → find the active one (SAME logic as Inventory).
-        const snap = await getDocs(
-          query(collection(db, "bookings"), where("carID", "==", car.carID || car.id))
-        );
-        const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // A forced booking that's still open wins outright as the target —
+      // e.g. the "Start Pickup" deep link, where the "nearest booking"
+      // heuristic below can pick the wrong doc (a stale/duplicate
+      // "completed" booking for the same car with an earlier start date).
+      if (forcedBooking && ["upcoming", "ongoing"].includes(forcedBooking.status?.toLowerCase())) {
+        target = forcedBooking;
+      }
 
+      // Always load the full bookings list — even with a forced booking —
+      // so Past Trips is populated. A forced booking that's already
+      // completed/cancelled/stolen (e.g. "View full record →" from the
+      // Booking Details modal) belongs in that history list, not force-fit
+      // into the panel above, which is built for pickup/return, not for
+      // browsing a closed trip.
+      const snap = await getDocs(
+        query(collection(db, "bookings"), where("carID", "==", car.carID || car.id))
+      );
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      if (!target) {
         // Trust status, not scheduled dates, to decide what's "active."
         // "upcoming"/"ongoing" both mean the trip genuinely hasn't wrapped
         // up yet — a late pickup or delayed return whose original
@@ -412,56 +477,62 @@ export default function VehicleDocs() {
           .sort((a, b) => toSec(a.startDateTime) - toSec(b.startDateTime));
 
         target = candidates[0] || null;
+      }
 
-        // Past trips for this car — every booking that's actually run its
-        // course, excluding whichever one we just picked as active.
-        // Skipped in the forcedBookingID branch above (deep-link "Start
-        // Pickup" flow) since there's no `all` list fetched there and the
-        // person's focus is completing that one pickup, not browsing history.
-        const targetID = target ? (target.bookingID || target.id) : null;
-        const past = all
-          .filter(b => {
-            const status = b.status?.toLowerCase();
-            const bID = b.bookingID || b.id;
-            if (bID === targetID) return false;
-            return ["completed", "cancelled", "stolen"].includes(status);
-          })
-          .sort((a, b) => toSec(b.startDateTime) - toSec(a.startDateTime));
-        setPastBookings(past);
+      // Past trips for this car — every booking that's actually run its
+      // course, excluding whichever one we just picked as active.
+      const targetID = target ? (target.bookingID || target.id) : null;
+      const past = all
+        .filter(b => {
+          const status = b.status?.toLowerCase();
+          const bID = b.bookingID || b.id;
+          if (bID === targetID) return false;
+          return ["completed", "cancelled", "stolen"].includes(status);
+        })
+        .sort((a, b) => toSec(b.startDateTime) - toSec(a.startDateTime));
+      setPastBookings(past);
 
-        // Batch-resolve one name per unique customer up front (instead of
-        // per-row on expand) so the collapsed list can show "Customer" —
-        // not the booking ID — without waiting for a click.
-        const uniqueUserIDs = [...new Set(past.map(b => b.userID).filter(Boolean))];
-        if (uniqueUserIDs.length) {
-          Promise.all(
-            uniqueUserIDs.map(async (uid) => {
-              try {
-                const [detailDoc, userDoc] = await Promise.all([
-                  getDoc(doc(db, "userDetails", uid)),
-                  getDoc(doc(db, "user", uid)),
-                ]);
-                const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
-                let name = [firstName, lastName].filter(Boolean).join(" ").trim();
-                if (!name && userDoc.exists()) {
-                  const { username = "", email = "" } = userDoc.data();
-                  name = username || email || "";
-                }
-                return [uid, name || null];
-              } catch {
-                return [uid, null];
+      // Batch-resolve one name per unique customer up front (instead of
+      // per-row on expand) so the collapsed list can show "Customer" —
+      // not the booking ID — without waiting for a click.
+      const uniqueUserIDs = [...new Set(past.map(b => b.userID).filter(Boolean))];
+      if (uniqueUserIDs.length) {
+        Promise.all(
+          uniqueUserIDs.map(async (uid) => {
+            try {
+              const [detailDoc, userDoc] = await Promise.all([
+                getDoc(doc(db, "userDetails", uid)),
+                getDoc(doc(db, "user", uid)),
+              ]);
+              const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
+              let name = [firstName, lastName].filter(Boolean).join(" ").trim();
+              if (!name && userDoc.exists()) {
+                const { username = "", email = "" } = userDoc.data();
+                name = username || email || "";
               }
-            })
-          ).then(entries => {
-            const byUser = Object.fromEntries(entries.filter(([, n]) => n));
-            const byBooking = {};
-            past.forEach(b => {
-              const bID = b.bookingID || b.id;
-              if (byUser[b.userID]) byBooking[bID] = byUser[b.userID];
-            });
-            setPastBookingNames(byBooking);
+              return [uid, name || null];
+            } catch {
+              return [uid, null];
+            }
+          })
+        ).then(entries => {
+          const byUser = Object.fromEntries(entries.filter(([, n]) => n));
+          const byBooking = {};
+          past.forEach(b => {
+            const bID = b.bookingID || b.id;
+            if (byUser[b.userID]) byBooking[bID] = byUser[b.userID];
           });
-        }
+          setPastBookingNames(byBooking);
+        });
+      }
+
+      // Deep-linked into a closed booking → flag it so the Past Trips
+      // effect below auto-expands that exact row and scrolls it into view
+      // once it's rendered, instead of silently landing wherever "nearest
+      // active booking" happens to be.
+      if (forcedBooking && forcedBookingID !== targetID &&
+          ["completed", "cancelled", "stolen"].includes(forcedBooking.status?.toLowerCase())) {
+        setHistoryFocusID(forcedBookingID);
       }
 
       setActiveBooking(target);
@@ -499,11 +570,24 @@ export default function VehicleDocs() {
   // Auto-select the matching car once the cars list has loaded, so staff
   // land straight on the right vehicle's before-trip photos instead of
   // having to find it again in the grid.
+  //
+  // `deepLinkConsumed` makes this a ONE-SHOT per incoming link. It used to
+  // guard on `!selectedCar` alone, which meant clicking the ✕ to close the
+  // car (setSelectedCar(null)) made this effect re-fire immediately — the
+  // URL still had the same ?carID=&bookingID=, so it just re-selected the
+  // same car and snapped the person right back. There was no way to
+  // actually leave a deep-linked record once you'd landed on it.
+  const [deepLinkConsumed, setDeepLinkConsumed] = useState(false);
+  useEffect(() => { setDeepLinkConsumed(false); }, [deepLinkCarID, deepLinkBookingID]);
   useEffect(() => {
-    if (!deepLinkCarID || carsLoading || !cars.length || selectedCar) return;
+    if (!deepLinkCarID || carsLoading || !cars.length || selectedCar || deepLinkConsumed) return;
     const match = cars.find(c => (c.carID || c.id) === deepLinkCarID);
-    if (match) selectCar(match, deepLinkBookingID);
-  }, [deepLinkCarID, deepLinkBookingID, carsLoading, cars, selectedCar, selectCar]);
+    if (match) {
+      selectCar(match, deepLinkBookingID);
+      setDeepLinkConsumed(true);
+    }
+  }, [deepLinkCarID, deepLinkBookingID, carsLoading, cars, selectedCar, selectCar, deepLinkConsumed]);
+
 
   // ── Deep-link from Return (?action=return) — land on After Trip instead
   // of selectCar's default "before" tab. Runs as its own effect (rather
@@ -1336,6 +1420,7 @@ export default function VehicleDocs() {
                 onToggleRow={toggleHistoryRow}
                 getPartFieldKey={getPartFieldKey}
                 onViewPhoto={setViewingPhoto}
+                highlightRowID={highlightRowID}
               />
             )}
           </div>
@@ -1481,7 +1566,7 @@ function PhotoSlot({ fieldKey, label, sub, icon, image, uploading, isPending, on
 
 /* ── Past Trips — moved over from the old Inventory page. Lazy-loads
  * each row's before/after status + photo docs only when expanded. ── */
-function PastTripsSection({ pastBookings, pastBookingNames, parts, expandedHistoryID, historyRecords, onToggleRow, getPartFieldKey, onViewPhoto }) {
+function PastTripsSection({ pastBookings, pastBookingNames, parts, expandedHistoryID, historyRecords, onToggleRow, getPartFieldKey, onViewPhoto, highlightRowID }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
       <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100">
@@ -1511,7 +1596,11 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, expandedHisto
           const status = booking.status?.toLowerCase();
 
           return (
-            <div key={bID}>
+            <div
+              key={bID}
+              id={`history-row-${bID}`}
+              className={`transition-colors duration-1000 ${highlightRowID === bID ? "bg-teal-50" : ""}`}
+            >
               <button
                 onClick={() => onToggleRow(booking)}
                 className="w-full grid grid-cols-[108px_minmax(0,1fr)_180px_16px] items-center gap-4 px-5 py-2.5 hover:bg-gray-50/60 transition-colors text-left"

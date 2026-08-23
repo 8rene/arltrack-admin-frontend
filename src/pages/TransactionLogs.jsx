@@ -6,12 +6,14 @@ const statusBadge = {
   Failed:   "bg-red-50 border border-red-200",
   Pending:  "bg-yellow-50 border border-yellow-200",
   Refunded: "bg-blue-100 text-blue-600",
+  Rejected: "bg-red-50 border border-red-200",
 };
 
 const typeBadge = {
   Payment:  "bg-purple-50 border border-purple-200",
   Refund:   "bg-blue-50 border border-blue-200",
   Deposit:  "bg-teal-50 border border-teal-200",
+  Discount: "bg-orange-50 border border-orange-200",
 };
 
 function formatDate(val) {
@@ -285,4 +287,3 @@ export default function TransactionLogs() {
     </div>
   );
 }
-

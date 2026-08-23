@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 
 // ─── SVG ICONS ─────────────────────────────────────────────────────────────
@@ -43,7 +44,14 @@ function StatusBadge({ status }) {
   );
 }
 
-const STATUSES = ["All", "Pending", "Approved", "Refunded", "Rejected", "Failed"];
+// "Active" = still an open queue item admin needs to act on or is waiting
+// on PayMongo for. "History" = resolved, permanent record — money already
+// moved (or definitively didn't). Tab lives above the status chips; the
+// chips themselves narrow further within whichever tab is selected.
+const TABS = [
+  { key: "active",  label: "Active Queue", statuses: ["Pending", "Approved"] },
+  { key: "history", label: "History",      statuses: ["Refunded", "Rejected", "Failed"] },
+];
 
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
 
@@ -51,7 +59,8 @@ export default function RefundRequests() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
-  const [statusF, setStatusF]   = useState("Pending");
+  const [tab, setTab]           = useState("active");
+  const [statusF, setStatusF]   = useState("All");
   const [search, setSearch]     = useState("");
   const [toast, setToast]       = useState(null);
   const [busyId, setBusyId]     = useState(null);
@@ -60,6 +69,14 @@ export default function RefundRequests() {
 
   const token = localStorage.getItem("token");
   const { fmt } = useCurrency();
+  const navigate = useNavigate();
+
+  const activeTab = TABS.find((t) => t.key === tab) || TABS[0];
+
+  const switchTab = (key) => {
+    setTab(key);
+    setStatusF("All"); // reset the sub-filter so switching tabs doesn't hide everything
+  };
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -122,8 +139,9 @@ export default function RefundRequests() {
       || (r.customerName || "").toLowerCase().includes(q)
       || (r.bookingID || "").toLowerCase().includes(q)
       || (r.paymentID || "").toLowerCase().includes(q);
+    const matchTab = activeTab.statuses.includes(r.status);
     const matchS = statusF === "All" || r.status === statusF;
-    return matchQ && matchS;
+    return matchQ && matchTab && matchS;
   });
 
   const pendingCount = requests.filter((r) => r.status === "Pending").length;
@@ -187,6 +205,28 @@ export default function RefundRequests() {
         </div>
       </div>
 
+      {/* Active / History tabs */}
+      <div className="flex gap-1 border-b border-gray-100">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => switchTab(t.key)}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+              tab === t.key
+                ? "border-arl-dark text-arl-dark"
+                : "border-transparent text-gray-400 hover:text-gray-600"
+            }`}
+          >
+            {t.label}
+            {t.key === "active" && pendingCount > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-yellow-100 text-yellow-700 text-[11px] font-bold">
+                {pendingCount}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
         <input
@@ -196,7 +236,7 @@ export default function RefundRequests() {
           className="flex-1 min-w-[220px] rounded-xl border border-gray-200 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
         />
         <div className="flex gap-2 flex-wrap">
-          {STATUSES.map((s) => (
+          {["All", ...activeTab.statuses].map((s) => (
             <button
               key={s}
               onClick={() => setStatusF(s)}
@@ -217,7 +257,9 @@ export default function RefundRequests() {
         ) : error ? (
           <div className="p-10 text-center text-sm text-red-500">{error}</div>
         ) : filtered.length === 0 ? (
-          <div className="p-10 text-center text-sm text-gray-400">No refund requests found.</div>
+          <div className="p-10 text-center text-sm text-gray-400">
+            {tab === "history" ? "No resolved refunds yet." : "No refund requests found."}
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -237,7 +279,17 @@ export default function RefundRequests() {
                     <p className="font-semibold text-arl-dark">{r.customerName || "—"}</p>
                     <p className="text-xs text-gray-400">{r.paymentID}</p>
                   </td>
-                  <td className="px-5 py-4 text-gray-600">{r.bookingID || "—"}</td>
+                  <td className="px-5 py-4">
+                    {r.bookingID ? (
+                      <button
+                        onClick={() => navigate(`/payments?bookingID=${encodeURIComponent(r.bookingID)}`)}
+                        className="text-arl-dark font-medium hover:underline"
+                        title="View payment for this booking"
+                      >
+                        {r.bookingID}
+                      </button>
+                    ) : "—"}
+                  </td>
                   <td className="px-5 py-4">
                     <p className="text-gray-700">{r.reason}</p>
                     {r.notes && <p className="text-xs text-gray-400 max-w-[220px] truncate" title={r.notes}>{r.notes}</p>}

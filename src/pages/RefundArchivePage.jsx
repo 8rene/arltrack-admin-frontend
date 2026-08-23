@@ -1,0 +1,295 @@
+import { useEffect, useState, useCallback } from "react";
+import { useCurrency } from "../context/CurrencyContext";
+import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString("en-PH", {
+    month: "short", day: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
+}
+function inRange(iso, from, to) {
+  if (!from && !to) return true;
+  const d = new Date(iso);
+  if (isNaN(d)) return true;
+  if (from && d < new Date(from)) return false;
+  if (to   && d > new Date(to + "T23:59:59")) return false;
+  return true;
+}
+
+const statusColor = {
+  Pending:  "bg-yellow-50 border border-yellow-200",
+  Approved: "bg-blue-50 border border-blue-200",
+  Refunded: "bg-green-50 border border-green-200",
+  Rejected: "bg-red-50 border border-red-200",
+  Failed:   "bg-red-50 border border-red-200",
+};
+const statusDotColor = {
+  Pending:  "bg-yellow-400",
+  Approved: "bg-blue-500",
+  Refunded: "bg-green-500",
+  Rejected: "bg-red-500",
+  Failed:   "bg-red-500",
+};
+
+const PAGE_SIZE = 15;
+
+export default function RefundArchivePage() {
+  const { fmt } = useCurrency();
+  const [records, setRecords]     = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState(null);
+  const [search, setSearch]       = useState("");
+  const [dateFrom, setDateFrom]   = useState("");
+  const [dateTo, setDateTo]       = useState("");
+  const [page, setPage]           = useState(1);
+  const [toast, setToast]         = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState(null);
+  const [actionId, setActionId]   = useState(null);
+  const [viewRecord, setViewRecord] = useState(null);
+
+  const token = localStorage.getItem("token");
+
+  const showToast = (msg, type = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  const fetchRecords = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/refund-requests`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to load archive.");
+      setRecords(data.data || []);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  }, [token]);
+
+  useEffect(() => { fetchRecords(); }, [fetchRecords]);
+
+  const handleRestore = async (refundArchivesId) => {
+    setRestoreConfirmId(null);
+    setActionId(refundArchivesId);
+    try {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/refund-requests/${refundArchivesId}/restore`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Restore failed.");
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.refundArchivesId === refundArchivesId
+            ? { ...r, restoredAt: new Date().toISOString() }
+            : r
+        )
+      );
+      showToast(data.message || "Refund request restored to active table.", "success");
+    } catch (err) { showToast(err.message, "error"); }
+    finally { setActionId(null); }
+  };
+
+  const handleDelete = async (refundArchivesId) => {
+    setConfirmId(null);
+    setActionId(refundArchivesId);
+    try {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/refund-requests/${refundArchivesId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Delete failed.");
+      setRecords((prev) => prev.filter((r) => r.refundArchivesId !== refundArchivesId));
+      showToast("Permanently deleted.", "success");
+    } catch (err) { showToast(err.message, "error"); }
+    finally { setActionId(null); }
+  };
+
+  const filtered = records.filter((r) => {
+    const q = search.toLowerCase();
+    const matchSearch =
+      (r.refundArchivesId || "").toLowerCase().includes(q) ||
+      (r.refundRequestID   || "").toLowerCase().includes(q) ||
+      (r.bookingID          || "").toLowerCase().includes(q) ||
+      (r.customerName        || "").toLowerCase().includes(q) ||
+      (r.reason               || "").toLowerCase().includes(q) ||
+      (r.status                || "").toLowerCase().includes(q);
+    return matchSearch && inRange(r.archivedAt, dateFrom, dateTo);
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  useEffect(() => setPage(1), [search, dateFrom, dateTo]);
+
+  const restoreConfirmRecord = records.find((r) => r.refundArchivesId === restoreConfirmId);
+
+  const peso = (n) => {
+    if (n == null) return "—";
+    if (fmt) return fmt(n);
+    return `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
+  };
+
+  return (
+    <div className="w-full px-6 py-6">
+
+      {toast && (
+        <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${
+          toast.type === "error" ? "bg-red-500" : "bg-teal-600"
+        }`}>
+          {toast.msg}
+        </div>
+      )}
+
+      {confirmId && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
+            <h3 className="font-semibold text-gray-800 mb-2">Permanently Delete?</h3>
+            <p className="text-sm text-gray-500 mb-5">This action cannot be undone.</p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleDelete(confirmId)} className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm hover:bg-red-600">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {restoreConfirmId && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
+            <h3 className="font-semibold text-gray-800 mb-2">Restore this refund request?</h3>
+            {restoreConfirmRecord && (
+              <p className="text-xs text-gray-500 mb-2">{restoreConfirmRecord.customerName || restoreConfirmRecord.userID || "—"} — {restoreConfirmRecord.status}</p>
+            )}
+            <p className="text-sm text-gray-500 mb-5">
+              It will move back to the live refund requests queue. If its booking or payment were archived alongside it, those are restored too.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewRecord && (
+        <ArchiveDetailModal
+          title={`Refund Request Archive — ${viewRecord.refundRequestID || viewRecord.refundArchivesId}`}
+          record={viewRecord}
+          onClose={() => setViewRecord(null)}
+          labelOverrides={{ refundArchivesId: "Archive ID", refundRequestID: "Refund Request ID", userID: "User ID", customerName: "Customer" }}
+        />
+      )}
+
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">REFUND REQUEST ARCHIVE</h1>
+        <p className="text-sm text-gray-400 mt-1">
+          {loading ? "Loading…" : `${filtered.length} archived record${filtered.length !== 1 ? "s" : ""}`}
+        </p>
+        <p className="text-xs text-gray-400 mt-1">
+          Refund requests only end up here when their booking is deleted — there's no manual delete for a single refund request.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-3 mb-5">
+        <input
+          type="text"
+          placeholder="Search by ID, booking, customer, reason, status…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 w-72"
+        />
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-400 whitespace-nowrap">Archived from</label>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400" />
+          <label className="text-xs text-gray-400">to</label>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400" />
+        </div>
+        <button onClick={fetchRecords} disabled={loading} className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 ml-auto">
+          {loading ? "…" : "Refresh"}
+        </button>
+      </div>
+
+      {error && <div className="mb-4 p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">{error}</div>}
+
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-100">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Refund Request ID</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Booking</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Reason</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Archived At</th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <tr key={i} className="border-b border-gray-50">
+                  {Array.from({ length: 8 }).map((_, j) => (
+                    <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
+                  ))}
+                </tr>
+              ))
+            ) : paginated.length === 0 ? (
+              <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived refund requests found."}</td></tr>
+            ) : (
+              paginated.map((r, i) => (
+                <tr key={r.refundArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.refundRequestID || "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[120px]">{r.bookingID || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 truncate max-w-[140px]" title={r.userID || ""}>{r.customerName || r.userID || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 truncate max-w-[160px]" title={r.notes || ""}>{r.reason || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 font-medium">{peso(r.amount)}</td>
+                  <td className="px-4 py-3 text-xs">
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium text-black ${statusColor[r.status] || "bg-gray-50 border border-gray-200"}`}>
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${statusDotColor[r.status] || "bg-gray-400"}`} />
+                      {r.status || "—"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-xs font-medium">{formatDate(r.archivedAt)}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => setViewRecord(r)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap">
+                        View
+                      </button>
+                      <button onClick={() => setRestoreConfirmId(r.refundArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
+                        {actionId === r.refundArchivesId ? "…" : "Restore"}
+                      </button>
+                      <button onClick={() => setConfirmId(r.refundArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {!loading && filtered.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between mt-4 text-sm text-gray-500">
+          <span>Page {page} of {totalPages}</span>
+          <div className="flex gap-2">
+            <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">← Prev</button>
+            <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">Next →</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
