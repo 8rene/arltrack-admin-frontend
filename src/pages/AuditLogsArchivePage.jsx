@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
+import { useCurrency } from "../context/CurrencyContext";
 import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
 function formatDate(iso) {
@@ -21,23 +22,31 @@ function inRange(iso, from, to) {
   return true;
 }
 
-const actionBadge = {
-  REGISTER: "bg-green-100 text-green-600",
-  LOGIN:    "bg-gray-100 text-gray-500",
-  LOGOUT:   "bg-gray-100 text-gray-400",
-  UPDATE:   "bg-blue-100 text-blue-600",
-  DELETE:   "bg-red-100 text-red-600",
-  create:   "bg-green-100 text-green-600",
-  update:   "bg-blue-100 text-blue-600",
-  delete:   "bg-red-100 text-red-600",
-  export:   "bg-yellow-100 text-yellow-700",
-  system:   "bg-purple-100 text-purple-600",
+const statusDot = {
+  Paid:     "bg-green-500",
+  Pending:  "bg-yellow-400",
+  Refunded: "bg-blue-500",
 };
-
+const statusBg = {
+  Paid:     "bg-green-50 border border-green-200",
+  Pending:  "bg-yellow-50 border border-yellow-200",
+  Refunded: "bg-blue-50 border border-blue-200",
+};
+function StatusBadge({ status }) {
+  const dot = statusDot[status] || "bg-gray-400";
+  const bg  = statusBg[status]  || "bg-gray-50 border border-gray-200";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      {status}
+    </span>
+  );
+}
 const PAGE_SIZE = 15;
 
-export default function AuditLogsArchivePage() {
+export default function PaymentsArchivePage() {
   const { effectiveRole } = useAuth();
+  const { fmt } = useCurrency();
   const [records, setRecords]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
@@ -61,7 +70,7 @@ export default function AuditLogsArchivePage() {
   const fetchRecords = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/audit-logs`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/payments`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -73,39 +82,33 @@ export default function AuditLogsArchivePage() {
 
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
-  const handleRestore = async (auditLogsArchivesId) => {
+  const handleRestore = async (paymentsArchivesId) => {
     setRestoreConfirmId(null);
-    setActionId(auditLogsArchivesId);
+    setActionId(paymentsArchivesId);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/audit-logs/${auditLogsArchivesId}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/payments/${paymentsArchivesId}/restore`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Restore failed.");
-      setRecords((prev) =>
-        prev.map((r) =>
-          r.auditLogsArchivesId === auditLogsArchivesId
-            ? { ...r, restoredAt: new Date().toISOString() }
-            : r
-        )
-      );
-      showToast("Audit log restored to active table.", "success");
+      setRecords((prev) => prev.filter((r) => r.paymentsArchivesId !== paymentsArchivesId));
+      showToast(data.message || "Payment restored to active table.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
   };
 
-  const handleDelete = async (auditLogsArchivesId) => {
+  const handleDelete = async (paymentsArchivesId) => {
     setConfirmId(null);
-    setActionId(auditLogsArchivesId);
+    setActionId(paymentsArchivesId);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/audit-logs/${auditLogsArchivesId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/payments/${paymentsArchivesId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Delete failed.");
-      setRecords((prev) => prev.filter((r) => r.auditLogsArchivesId !== auditLogsArchivesId));
+      setRecords((prev) => prev.filter((r) => r.paymentsArchivesId !== paymentsArchivesId));
       showToast("Permanently deleted.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
@@ -114,11 +117,10 @@ export default function AuditLogsArchivePage() {
   const filtered = records.filter((r) => {
     const q = search.toLowerCase();
     const matchSearch =
-      (r.auditLogsArchivesId || "").toLowerCase().includes(q) ||
-      (r.userID              || "").toLowerCase().includes(q) ||
-      (r.userName            || "").toLowerCase().includes(q) ||
-      (r.action              || "").toLowerCase().includes(q) ||
-      (r.description         || "").toLowerCase().includes(q);
+      (r.paymentsArchivesId || "").toLowerCase().includes(q) ||
+      (r.customerName       || "").toLowerCase().includes(q) ||
+      (r.paymentMethod      || "").toLowerCase().includes(q) ||
+      (r.bookingID          || "").toLowerCase().includes(q);
     return matchSearch && inRange(r.archivedAt, dateFrom, dateTo);
   });
 
@@ -127,7 +129,13 @@ export default function AuditLogsArchivePage() {
 
   useEffect(() => setPage(1), [search, dateFrom, dateTo]);
 
-  const restoreConfirmRecord = records.find((r) => r.auditLogsArchivesId === restoreConfirmId);
+  const peso = (n) => {
+    if (n == null) return "—";
+    if (fmt) return fmt(n);
+    return `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
+  };
+
+  const restoreConfirmRecord = records.find((r) => r.paymentsArchivesId === restoreConfirmId);
 
   return (
     <div className="w-full px-6 py-6">
@@ -155,12 +163,16 @@ export default function AuditLogsArchivePage() {
 
       {restoreConfirmId && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
-            <h3 className="font-semibold text-gray-800 mb-2">Restore this audit log?</h3>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-96">
+            <h3 className="font-semibold text-gray-800 mb-2">Restore this payment?</h3>
             {restoreConfirmRecord && (
-              <p className="text-xs text-gray-500 mb-2">{restoreConfirmRecord.userName || restoreConfirmRecord.userID || "—"} — {restoreConfirmRecord.action}</p>
+              <p className="text-xs font-mono text-gray-400 mb-2 break-all">
+                Booking ID: {restoreConfirmRecord.bookingID || "—"}
+              </p>
             )}
-            <p className="text-sm text-gray-500 mb-5">It will move back to the live audit log.</p>
+            <p className="text-sm text-gray-500 mb-5">
+              If the linked booking is still archived, it will be restored along with this payment.
+            </p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
               <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
@@ -171,15 +183,15 @@ export default function AuditLogsArchivePage() {
 
       {viewRecord && (
         <ArchiveDetailModal
-          title="Audit Log Archive Details"
+          title={`Payment Archive — ${viewRecord.paymentsArchivesId}`}
           record={viewRecord}
           onClose={() => setViewRecord(null)}
-          labelOverrides={{ auditLogsArchivesId: "Archive ID", userID: "User ID", userName: "User" }}
+          labelOverrides={{ paymentsArchivesId: "Archive ID", bookingID: "Booking ID" }}
         />
       )}
 
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">AUDIT LOGS ARCHIVE</h1>
+        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">PAYMENTS ARCHIVE</h1>
         <p className="text-sm text-gray-400 mt-1">
           {loading ? "Loading…" : `${filtered.length} archived record${filtered.length !== 1 ? "s" : ""}`}
         </p>
@@ -188,7 +200,7 @@ export default function AuditLogsArchivePage() {
       <div className="flex flex-wrap gap-3 mb-5">
         <input
           type="text"
-          placeholder="Search by ID, user, action, description…"
+          placeholder="Search by ID, customer, method…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 w-64"
@@ -210,11 +222,11 @@ export default function AuditLogsArchivePage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">auditLogsArchivesId</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">User</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Action</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Description</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Timestamp</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">paymentsArchivesId</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Method</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Archived At</th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
             </tr>
@@ -229,19 +241,17 @@ export default function AuditLogsArchivePage() {
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived audit logs found."}</td></tr>
+              <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived payments found."}</td></tr>
             ) : (
               paginated.map((r, i) => (
-                <tr key={r.auditLogsArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.auditLogsArchivesId}</td>
-                  <td className="px-4 py-3 text-xs text-gray-700 truncate max-w-[140px]" title={r.userID || ""}>{r.userName || r.userID || "—"}</td>
+                <tr key={r.paymentsArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.paymentsArchivesId}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700">{r.customerName || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 font-medium">{peso(r.amount)}</td>
+                  <td className="px-4 py-3 text-xs text-gray-600">{r.paymentMethod || "—"}</td>
                   <td className="px-4 py-3 text-xs">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${actionBadge[r.action] || "bg-gray-100 text-gray-500"}`}>
-                      {r.action || "—"}
-                    </span>
+                    {r.status ? <StatusBadge status={r.status} /> : <span className="text-gray-400">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-600 truncate max-w-[220px]">{r.description || "—"}</td>
-                  <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatDate(r.createdAt)}</td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap">
                     <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-xs font-medium">{formatDate(r.archivedAt)}</span>
                   </td>
@@ -250,11 +260,11 @@ export default function AuditLogsArchivePage() {
                       <button onClick={() => setViewRecord(r)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap">
                         View
                       </button>
-                      <button onClick={() => setRestoreConfirmId(r.auditLogsArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
-                        {actionId === r.auditLogsArchivesId ? "…" : "Restore"}
+                      <button onClick={() => setRestoreConfirmId(r.paymentsArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
+                        {actionId === r.paymentsArchivesId ? "…" : "Restore"}
                       </button>
                       {effectiveRole === ROLES.OWNER && (
-                      <button onClick={() => setConfirmId(r.auditLogsArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
+                      <button onClick={() => setConfirmId(r.paymentsArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
                         Delete
                       </button>
                     )}

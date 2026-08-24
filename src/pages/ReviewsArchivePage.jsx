@@ -82,9 +82,7 @@ export default function ReviewsArchivePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Restore failed.");
-      setRecords((prev) => prev.map((r) =>
-        r.reviewsArchivesID === reviewsArchivesID ? { ...r, restoredAt: new Date().toISOString() } : r
-      ));
+      setRecords((prev) => prev.filter((r) => r.reviewsArchivesID !== reviewsArchivesID));
       showToast("Review restored to active table.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
@@ -249,8 +247,8 @@ export default function ReviewsArchivePage() {
                       <button onClick={() => setViewRecord(r)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap">
                         View
                       </button>
-                      <button onClick={() => setRestoreConfirmId(r.reviewsArchivesID)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
-                        {actionId === r.reviewsArchivesID ? "…" : r.restoredAt ? "Restored" : "Restore"}
+                      <button onClick={() => setRestoreConfirmId(r.reviewsArchivesID)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
+                        {actionId === r.reviewsArchivesID ? "…" : "Restore"}
                       </button>
                       {effectiveRole === ROLES.OWNER && (
                       <button onClick={() => setConfirmId(r.reviewsArchivesID)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">

@@ -80,13 +80,7 @@ export default function UserLogArchivePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Restore failed.");
-      setRecords((prev) =>
-        prev.map((r) =>
-          r.userLogArchivesId === userLogArchivesId
-            ? { ...r, restoredAt: new Date().toISOString() }
-            : r
-        )
-      );
+      setRecords((prev) => prev.filter((r) => r.userLogArchivesId !== userLogArchivesId));
       showToast("User log restored to active table.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
@@ -290,11 +284,7 @@ export default function UserLogArchivePage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs">
-                    {r.restoredAt ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-50 border border-green-200 text-xs font-medium text-black"><span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />Restored</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-xs font-medium text-black"><span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" />Archived</span>
-                    )}
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-xs font-medium text-black"><span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" />Archived</span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
@@ -307,7 +297,7 @@ export default function UserLogArchivePage() {
                       </button>
                       <button
                         onClick={() => setRestoreConfirmId(r.userLogArchivesId)}
-                        disabled={!!actionId || !!r.restoredAt}
+                        disabled={!!actionId}
                         className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap"
                       >
                         {actionId === r.userLogArchivesId ? "…" : "Restore"}

@@ -66,13 +66,7 @@ export default function UserArchivePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Restore failed.");
-      setRecords((prev) =>
-        prev.map((r) =>
-          r.userArchivesId === userArchivesId
-            ? { ...r, restoredAt: new Date().toISOString() }
-            : r
-        )
-      );
+      setRecords((prev) => prev.filter((r) => r.userArchivesId !== userArchivesId));
       showToast(data.message || "User restored to active table.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
@@ -204,7 +198,7 @@ export default function UserArchivePage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
-                      <button onClick={() => handleRestore(r.userArchivesId)} disabled={!!actionId || !!r.restoredAt} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
+                      <button onClick={() => handleRestore(r.userArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
                         {actionId === r.userArchivesId ? "…" : "Restore"}
                       </button>
                       {effectiveRole === ROLES.OWNER && (
