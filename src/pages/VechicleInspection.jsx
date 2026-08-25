@@ -116,8 +116,13 @@ const BOOKING_STATUS_STYLE = {
 export default function VehicleDocs() {
   const [searchParams] = useSearchParams();
   const navigate        = useNavigate();
-  const { user }         = useAuth();
+  const { user, effectiveRole } = useAuth();
   const isDriver         = user?.role === "Driver";
+  // Direct edit of past-trip history — Admin only. effectiveRole (not raw
+  // user.role) so an Admin using "preview as X" correctly sees the same
+  // read-only view that role would — same pattern as Fleet.jsx/archive
+  // pages. Deliberately not a dual-value "correction" UI.
+  const canEditHistory   = effectiveRole === "Admin";
   const deepLinkCarID    = searchParams.get("carID");
   const deepLinkBookingID = searchParams.get("bookingID");
   const pickupFlow       = searchParams.get("action") === "pickup";
@@ -243,6 +248,33 @@ export default function VehicleDocs() {
     });
   }, []);
 
+  // Admin-only: replace (or add) a single photo on a past trip's
+  // documentation record. Upload goes straight to Storage (same as the
+  // driver flow), then the backend just needs to know the new URL to
+  // record it and log the change — see adminReplaceHistoryPhoto.
+  const handleReplaceHistoryPhoto = useCallback(async (bID, carID, tripPhase, fieldKey, file) => {
+    const jpegBlob = await normalizeToJpeg(file);
+    const storagePath = `vehicleDocs/${carID}/${bID}/${tripPhase}/${fieldKey}_admin_${Date.now()}.jpg`;
+    await uploadBytes(ref(storage, storagePath), jpegBlob, { contentType: "image/jpeg" });
+    const newUrl = await getDownloadURL(ref(storage, storagePath));
+
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_URL}/api/vehicle-docs/history/${tripPhase}/${bID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ carID, fieldKey, newUrl }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.message || "Failed to replace photo.");
+
+    setHistoryRecords(prev => {
+      const current = prev[bID] || {};
+      const key = tripPhase === "before" ? "beforePhoto" : "afterPhoto";
+      const photoDoc = current[key] || { id: data.data.recordID, bookingID: bID, carID };
+      return { ...prev, [bID]: { ...current, [key]: { ...photoDoc, [fieldKey]: newUrl } } };
+    });
+  }, []);
+
   /* ── Load existing photo docs for a booking (equivalent to Inventory's loadInventoryRecords) ── */
   const loadPhotoDocs = useCallback(async (bookingID) => {
     if (!bookingID) return;
@@ -350,6 +382,42 @@ export default function VehicleDocs() {
       setHistoryRecords(prev => ({ ...prev, [bID]: { loading: false, before: null, after: null, beforePhoto: null, afterPhoto: null, userFullName: "—" } }));
     }
   }, [expandedHistoryID, historyRecords]);
+
+  // Admin-only: directly edit a part's status on an already-recorded past
+  // trip. Backend logs an audit entry with the previous value (see
+  // adminUpdateHistoryPartStatus) — this just fires the call and updates
+  // the row in place on success. Also handles the "no record yet" case:
+  // backend upserts by bookingID, so this creates the record on first edit.
+  const handleEditHistoryPart = useCallback(async (bID, carID, tripPhase, carPartID, newStatus) => {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_URL}/api/inventory/history/${tripPhase}/${bID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ carID, carPartID, newStatus }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.message || "Failed to update part status.");
+
+    setHistoryRecords(prev => {
+      const current = prev[bID] || {};
+      const key = tripPhase === "before" ? "before" : "after";
+      const record = current[key] || { id: data.data.recordID, bookingID: bID, carID, damageParts: [] };
+      const damageParts = Array.isArray(record.damageParts) ? [...record.damageParts] : [];
+      const idx = damageParts.findIndex(p => p.carPartID === carPartID);
+      if (newStatus === "Good" || newStatus === "New") {
+        if (idx >= 0) damageParts.splice(idx, 1);
+      } else if (idx >= 0) {
+        damageParts[idx] = { ...damageParts[idx], status: newStatus };
+      } else {
+        damageParts.push({ carPartID, status: newStatus });
+      }
+      return {
+        ...prev,
+        [bID]: { ...current, [key]: { ...record, damageParts, inventoryOverallStatus: data.data.inventoryOverallStatus } },
+      };
+    });
+
+  }, []);
 
   // ── Deep-linked into a closed booking → auto-expand its row in Past
   // Trips (instead of showing it in the panel meant for pickup/return).
@@ -1415,12 +1483,16 @@ export default function VehicleDocs() {
                 pastBookings={pastBookings}
                 pastBookingNames={pastBookingNames}
                 parts={carParts}
+                carID={selectedCar?.carID || selectedCar?.id}
                 expandedHistoryID={expandedHistoryID}
                 historyRecords={historyRecords}
                 onToggleRow={toggleHistoryRow}
                 getPartFieldKey={getPartFieldKey}
                 onViewPhoto={setViewingPhoto}
                 highlightRowID={highlightRowID}
+                canEditHistory={canEditHistory}
+                onEditPart={handleEditHistoryPart}
+                onReplacePhoto={handleReplaceHistoryPhoto}
               />
             )}
           </div>
@@ -1566,7 +1638,7 @@ function PhotoSlot({ fieldKey, label, sub, icon, image, uploading, isPending, on
 
 /* ── Past Trips — moved over from the old Inventory page. Lazy-loads
  * each row's before/after status + photo docs only when expanded. ── */
-function PastTripsSection({ pastBookings, pastBookingNames, parts, expandedHistoryID, historyRecords, onToggleRow, getPartFieldKey, onViewPhoto, highlightRowID }) {
+function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expandedHistoryID, historyRecords, onToggleRow, getPartFieldKey, onViewPhoto, highlightRowID, canEditHistory, onEditPart, onReplacePhoto }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
       <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100">
@@ -1634,7 +1706,7 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, expandedHisto
                   {!record || record.loading ? (
                     <div className="h-16 flex items-center justify-center text-gray-400 text-xs">Loading trip record…</div>
                   ) : (
-                    <PastTripDetail record={record} parts={parts} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} />
+                    <PastTripDetail record={record} parts={parts} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} canEditHistory={canEditHistory} onEditPart={onEditPart} onReplacePhoto={onReplacePhoto} bID={bID} carID={carID} />
                   )}
                 </div>
               )}
@@ -1646,9 +1718,11 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, expandedHisto
   );
 }
 
-/* ── Expanded past-trip detail: own Before/After tab toggle, full
-   read-only parts table (all parts, not just damaged ones). ── */
-function PastTripDetail({ record, parts, getPartFieldKey, onViewPhoto }) {
+/* ── Expanded past-trip detail: own Before/After tab toggle. Read-only for
+   everyone except Admin — Admin gets an editable status dropdown per part,
+   a direct correction (not a dual-value overlay), logged to auditLogs with
+   the previous value. See handleEditHistoryPart / adminUpdateHistoryPartStatus. ── */
+function PastTripDetail({ record, parts, getPartFieldKey, onViewPhoto, canEditHistory, onEditPart, onReplacePhoto, bID, carID }) {
   const [rowTab, setRowTab] = useState("before");
   const isBeforeTab = rowTab === "before";
   const currentRecord = isBeforeTab ? record.before : record.after;
@@ -1671,14 +1745,17 @@ function PastTripDetail({ record, parts, getPartFieldKey, onViewPhoto }) {
         >🔎 After Trip</button>
       </div>
 
-      <HistoryPartsTable record={currentRecord} parts={parts} photoDoc={currentPhotoDoc} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} />
+      <HistoryPartsTable record={currentRecord} parts={parts} photoDoc={currentPhotoDoc} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} canEditHistory={canEditHistory}
+        onEditPart={canEditHistory ? (carPartID, newStatus) => onEditPart(bID, carID, rowTab, carPartID, newStatus) : null}
+        onReplacePhoto={canEditHistory ? (fieldKey, file) => onReplacePhoto(bID, carID, rowTab, fieldKey, file) : null} />
     </div>
   );
 }
 
-/* ── Full read-only parts table for one past before/after record —
-   every part for the car, mirroring the live Before/After Trip table,
-   just without an edit control. ──
+/* ── Full parts table for one past before/after record — every part for
+   the car, mirroring the live Before/After Trip table. Read-only unless
+   onEditPart is passed (Admin only — see PastTripDetail above), in which
+   case the status cell becomes an editable dropdown instead of a badge. ──
    NOTE: `record` (inventoryBeforeTrip/AfterTrip) and `photoDoc`
    (vehicleDocumentationBeforeTrip/AfterTrip) are two SEPARATE Firestore
    docs, only written together when a driver actually flags a part as
@@ -1688,18 +1765,81 @@ function PastTripDetail({ record, parts, getPartFieldKey, onViewPhoto }) {
    bail out to "No record saved for this trip" on `!record` alone,
    which silently hid photos that WERE saved. Now it only bails when
    there's truly nothing (no inventory record AND no photos of any kind). */
-function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPhoto }) {
+/* ── Small file-input control for Admin's photo replace/upload — a hidden
+   <input type="file"> behind a text button, own saving/error state so
+   each photo slot fails independently of the others. ── */
+function PhotoReplaceControl({ fieldKey, label, onReplacePhoto, compact }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState(false);
+  const inputID = `photo-replace-${fieldKey}`;
+
+  const handleChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    setSaving(true);
+    setError(false);
+    try {
+      await onReplacePhoto(fieldKey, file);
+    } catch (err) {
+      console.error("[VD] Failed to replace history photo:", err);
+      setError(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <label
+      htmlFor={inputID}
+      className={`inline-flex items-center gap-1 cursor-pointer text-[10px] font-semibold ${
+        error ? "text-red-500" : "text-teal-600 hover:text-teal-700"
+      } ${compact ? "" : "px-2 py-1 rounded-lg bg-teal-50 border border-teal-200"}`}
+    >
+      {saving ? "Uploading…" : error ? "Failed — retry" : `📤 ${label}`}
+      <input id={inputID} type="file" accept="image/*" className="hidden" onChange={handleChange} disabled={saving} />
+    </label>
+  );
+}
+
+function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPhoto, onEditPart, onReplacePhoto }) {
+  const [savingID, setSavingID] = useState(null);
+  const [errorID, setErrorID]   = useState(null);
+  const [revealEmpty, setRevealEmpty] = useState(false); // Admin clicked "Edit" on a trip with no recorded inspection
+
+  const handleStatusChange = async (carPartID, newStatus) => {
+    if (!onEditPart) return;
+    setSavingID(carPartID);
+    setErrorID(null);
+    try {
+      await onEditPart(carPartID, newStatus);
+    } catch (e) {
+      console.error("[VD] Failed to edit history part:", e);
+      setErrorID(carPartID);
+    } finally {
+      setSavingID(null);
+    }
+  };
   const hasExteriorPhoto = !!(photoDoc?.frontViewUrl || photoDoc?.sideViewUrl || photoDoc?.backViewUrl);
   const hasPartPhoto = photoDoc ? parts.some(p => !!photoDoc[getPartFieldKey(p)]) : false;
   const hasAnyPhoto = hasExteriorPhoto || hasPartPhoto;
 
-  if (!record && !hasAnyPhoto) {
+  if (!record && !hasAnyPhoto && !revealEmpty) {
     return (
-      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 text-center">
+      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 text-center space-y-2">
         <p className="text-xs text-gray-400">No record saved for this trip.</p>
+        {onEditPart && (
+          <button
+            onClick={() => setRevealEmpty(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100"
+          >
+            Edit — set parts status for this trip
+          </button>
+        )}
       </div>
     );
   }
+
 
   const isGood = !record || record.inventoryOverallStatus !== "has damage";
   const partRows = parts.map(p => {
@@ -1725,26 +1865,31 @@ function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPho
       {/* Exterior shots (front/side/back) — these are the required photos
           taken every trip, but were previously never shown in history at
           all, only per-part photos were. */}
-      {hasExteriorPhoto ? (
+      {hasExteriorPhoto || onReplacePhoto ? (
         <div className="grid grid-cols-3 gap-2">
           {EXTERIOR_SLOTS.map(slot => {
             const url = photoDoc?.[slot.key];
             if (!url) {
               return (
-                <div key={slot.key} className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-center">
+                <div key={slot.key} className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-center space-y-1">
                   <p className="text-[10px] text-gray-300">{slot.label} — not taken</p>
+                  {onReplacePhoto && <PhotoReplaceControl fieldKey={slot.key} label="Upload" onReplacePhoto={onReplacePhoto} />}
                 </div>
               );
             }
             return (
-              <button
-                key={slot.key}
-                onClick={() => onViewPhoto({ url, label: slot.label })}
-                className="rounded-xl border border-gray-100 overflow-hidden hover:ring-2 hover:ring-teal-300 transition-all"
-              >
-                <img src={url} alt={slot.label} className="w-full h-20 object-cover" />
-                <p className="text-[10px] text-gray-500 py-1">{slot.icon} {slot.label}</p>
-              </button>
+              <div key={slot.key} className="rounded-xl border border-gray-100 overflow-hidden">
+                <button
+                  onClick={() => onViewPhoto({ url, label: slot.label })}
+                  className="block w-full hover:ring-2 hover:ring-teal-300 transition-all"
+                >
+                  <img src={url} alt={slot.label} className="w-full h-20 object-cover" />
+                </button>
+                <div className="flex items-center justify-between px-1.5 py-1">
+                  <p className="text-[10px] text-gray-500">{slot.icon} {slot.label}</p>
+                  {onReplacePhoto && <PhotoReplaceControl fieldKey={slot.key} label="Replace" onReplacePhoto={onReplacePhoto} compact />}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -1774,21 +1919,43 @@ function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPho
                 <td className="px-4 py-2.5 font-medium text-gray-800 text-xs truncate">{p.carPartName || "—"}</td>
                 <td className="px-4 py-2.5 font-mono text-xs text-gray-500 truncate">{p.serialNumber || "—"}</td>
                 <td className="px-4 py-2.5">
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${PART_STATUS_STYLE[p.effectiveStatus] || "bg-gray-100 text-gray-500"}`}>
-                    {p.effectiveStatus}
-                  </span>
+                  {onEditPart ? (
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={p.effectiveStatus}
+                        disabled={savingID === p.id}
+                        onChange={(e) => handleStatusChange(p.id, e.target.value)}
+                        className={`px-2 py-1 rounded-full text-xs font-semibold border-0 cursor-pointer disabled:opacity-50 ${PART_STATUS_STYLE[p.effectiveStatus] || "bg-gray-100 text-gray-500"}`}
+                      >
+                        {Object.keys(PART_STATUS_STYLE).map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                      {savingID === p.id && <span className="text-[10px] text-gray-400">Saving…</span>}
+                      {errorID === p.id && <span className="text-[10px] text-red-500">Failed</span>}
+                    </div>
+                  ) : (
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${PART_STATUS_STYLE[p.effectiveStatus] || "bg-gray-100 text-gray-500"}`}>
+                      {p.effectiveStatus}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 text-center">
-                  {p.photoUrl ? (
-                    <button
-                      onClick={() => onViewPhoto({ url: p.photoUrl, label: p.carPartName || "Part" })}
-                      className="text-xs text-teal-600 hover:text-teal-700 font-semibold"
-                    >
-                      📷 View
-                    </button>
-                  ) : (
-                    <span className="text-xs text-gray-300">—</span>
-                  )}
+                  <div className="flex items-center justify-center gap-2">
+                    {p.photoUrl ? (
+                      <button
+                        onClick={() => onViewPhoto({ url: p.photoUrl, label: p.carPartName || "Part" })}
+                        className="text-xs text-teal-600 hover:text-teal-700 font-semibold"
+                      >
+                        📷 View
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-300">—</span>
+                    )}
+                    {onReplacePhoto && (
+                      <PhotoReplaceControl fieldKey={getPartFieldKey(p)} label={p.photoUrl ? "Replace" : "Upload"} onReplacePhoto={onReplacePhoto} compact />
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -1802,6 +1969,7 @@ function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPho
 /* ── Photo lightbox — click-outside/X-to-close overlay for viewing a
    single part/exterior photo, used from the Past Trips history view. ── */
 function PhotoLightbox({ photo, onClose }) {
+  const [failed, setFailed] = useState(false);
   return (
     <div
       className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-6"
@@ -1818,7 +1986,27 @@ function PhotoLightbox({ photo, onClose }) {
             className="text-gray-400 hover:text-gray-600 text-lg leading-none"
           >✕</button>
         </div>
-        <img src={photo.url} alt={photo.label} className="w-full max-h-[70vh] object-contain bg-gray-50" />
+        {failed ? (
+          <div className="w-full h-[60vh] flex flex-col items-center justify-center gap-2 bg-gray-50 text-gray-400">
+            <span className="text-2xl">🖼️</span>
+            <p className="text-xs">Photo failed to load.</p>
+            <a href={photo.url} target="_blank" rel="noreferrer" className="text-xs text-teal-600 hover:text-teal-700 font-semibold">
+              Open original link
+            </a>
+          </div>
+        ) : (
+          // Fixed-height box, independent of the photo's own dimensions —
+          // object-contain fills it without ever resizing the modal to
+          // match whatever size/aspect-ratio the actual image happens to be.
+          <div className="w-full h-[60vh] bg-gray-50">
+            <img
+              src={photo.url}
+              alt={photo.label}
+              className="w-full h-full object-contain"
+              onError={() => setFailed(true)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -33,6 +33,23 @@ function formatAmount(amount, fmtFn) {
   return `₱${Number(amount).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
 }
 
+// Same-day check against a yyyy-mm-dd input value, done in local time so
+// "today" in the date picker actually matches "today" in the log.
+function inDateRange(val, from, to) {
+  if (!from && !to) return true;
+  const d = new Date(val);
+  if (isNaN(d)) return true;
+  if (from) {
+    const fromD = new Date(from + "T00:00:00");
+    if (d < fromD) return false;
+  }
+  if (to) {
+    const toD = new Date(to + "T23:59:59");
+    if (d > toD) return false;
+  }
+  return true;
+}
+
 const PAGE_SIZE = 15;
 
 export default function TransactionLogs() {
@@ -42,9 +59,12 @@ export default function TransactionLogs() {
   const [error, setError]           = useState(null);
   const [page, setPage]             = useState(1);
   const [search, setSearch]         = useState("");
+  const [dateFrom, setDateFrom]     = useState("");
+  const [dateTo, setDateTo]         = useState("");
   const [deletingId, setDeletingId] = useState(null);
   const [confirmId, setConfirmId]   = useState(null);
   const [toast, setToast]           = useState(null);
+  const [viewLog, setViewLog]       = useState(null); // full-description view modal
 
   const token = localStorage.getItem("token");
 
@@ -93,19 +113,21 @@ export default function TransactionLogs() {
 
   const filtered = logs.filter((log) => {
     const q = search.toLowerCase();
-    return (
-      (log.transactionID || "").toLowerCase().includes(q) ||
+    const matchesSearch =
+      (log.transactionLogsID || "").toLowerCase().includes(q) ||
       (log.paymentID || "").toLowerCase().includes(q) ||
       (log.type || "").toLowerCase().includes(q) ||
       (log.status || "").toLowerCase().includes(q) ||
-      (log.description || "").toLowerCase().includes(q)
-    );
+      (log.description || "").toLowerCase().includes(q);
+    return matchesSearch && inDateRange(log.createdAt, dateFrom, dateTo);
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  useEffect(() => setPage(1), [search]);
+  useEffect(() => setPage(1), [search, dateFrom, dateTo]);
+
+  const clearDateFilter = () => { setDateFrom(""); setDateTo(""); };
 
   return (
     <div className="w-full px-4">
@@ -149,6 +171,46 @@ export default function TransactionLogs() {
         </div>
       )}
 
+      {/* Full description view modal */}
+      {viewLog && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+          onClick={() => setViewLog(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3 gap-4">
+              <div className="flex flex-wrap gap-2">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${typeBadge[viewLog.type] || "bg-gray-100 text-gray-500"}`}>
+                  {viewLog.type || "—"}
+                </span>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${statusBadge[viewLog.status] || "bg-gray-100 text-gray-500"}`}>
+                  {viewLog.status || "—"}
+                </span>
+              </div>
+              <button
+                onClick={() => setViewLog(null)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mb-3">{formatDate(viewLog.createdAt)}</p>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap break-words leading-relaxed">
+              {viewLog.description || "—"}
+            </p>
+            <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-400 space-y-1">
+              <p>Amount: <span className="text-gray-600 font-medium">{formatAmount(viewLog.amount, fmt)}</span></p>
+              {viewLog.transactionLogsID && <p className="font-mono break-all">Transaction ID: {viewLog.transactionLogsID}</p>}
+              {viewLog.paymentID && <p className="font-mono break-all">Payment ID: {viewLog.paymentID}</p>}
+              {viewLog.referenceNumber && <p>Reference #: {viewLog.referenceNumber}</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
         <div>
@@ -157,22 +219,48 @@ export default function TransactionLogs() {
             {loading ? "Loading…" : `${filtered.length} entr${filtered.length === 1 ? "y" : "ies"} found`}
           </p>
         </div>
-        <div className="flex gap-2 items-center">
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 items-center mb-5">
+        <input
+          type="text"
+          placeholder="Search transactions…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light w-56"
+        />
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-400 whitespace-nowrap">From</label>
           <input
-            type="text"
-            placeholder="Search transactions…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light w-56"
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
           />
-          <button
-            onClick={fetchLogs}
-            disabled={loading}
-            className="px-3 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50"
-          >
-            {loading ? "…" : "Refresh"}
-          </button>
+          <label className="text-xs text-gray-400">to</label>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
+          />
+          {(dateFrom || dateTo) && (
+            <button
+              onClick={clearDateFilter}
+              className="text-xs text-gray-400 hover:text-red-500 underline whitespace-nowrap"
+            >
+              Clear
+            </button>
+          )}
         </div>
+        <button
+          onClick={fetchLogs}
+          disabled={loading}
+          className="px-3 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50 ml-auto"
+        >
+          {loading ? "…" : "Refresh"}
+        </button>
       </div>
 
       {/* Error */}
@@ -210,13 +298,15 @@ export default function TransactionLogs() {
             ) : paginated.length === 0 ? (
               <tr>
                 <td colSpan={7} className="text-center py-16 text-gray-400 text-sm">
-                  {search ? "No transaction logs match your search." : "No transaction logs found."}
+                  {search || dateFrom || dateTo ? "No transaction logs match your filters." : "No transaction logs found."}
                 </td>
               </tr>
             ) : (
               paginated.map((log, i) => {
                 const sBadge = statusBadge[log.status] || "bg-gray-100 text-gray-500";
                 const tBadge = typeBadge[log.type] || "bg-gray-100 text-gray-500";
+                const desc = log.description || "—";
+                const isLong = desc.length > 50;
                 return (
                   <tr
                     key={log.id}
@@ -225,7 +315,7 @@ export default function TransactionLogs() {
                     }`}
                   >
                     <td className="px-5 py-3.5 text-gray-500 font-mono text-xs truncate max-w-[160px]">
-                      {log.transactionID || log.id || "—"}
+                      {log.transactionLogsID || log.id || "—"}
                     </td>
                     <td className="px-5 py-3.5">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${tBadge}`}><span className={`w-2 h-2 rounded-full shrink-0 ${tBadge.includes("purple") ? "bg-purple-500" : tBadge.includes("blue") ? "bg-blue-500" : tBadge.includes("teal") ? "bg-teal-500" : "bg-gray-400"}`} />
@@ -240,8 +330,18 @@ export default function TransactionLogs() {
                         {log.status || "—"}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-gray-600 text-xs max-w-xs truncate">
-                      {log.description || "—"}
+                    <td className="px-5 py-3.5 text-gray-600 text-xs max-w-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate">{desc}</span>
+                        {isLong && (
+                          <button
+                            onClick={() => setViewLog(log)}
+                            className="shrink-0 text-xs text-arl-dark/60 hover:text-arl-dark underline whitespace-nowrap"
+                          >
+                            View
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-5 py-3.5 text-gray-400 text-xs whitespace-nowrap">
                       {formatDate(log.createdAt)}

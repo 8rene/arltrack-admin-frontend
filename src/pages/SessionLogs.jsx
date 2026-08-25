@@ -1,32 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
 
-const typeBadgeDot = {
-  delete:   "bg-red-500",
-  update:   "bg-blue-500",
-  create:   "bg-green-500",
-  export:   "bg-yellow-400",
-  auth:     "bg-gray-400",
-  system:   "bg-purple-500",
-  REGISTER: "bg-green-500",
-  LOGIN:    "bg-gray-400",
-  LOGOUT:   "bg-gray-400",
-  UPDATE:   "bg-blue-500",
-  DELETE:   "bg-red-500",
-};
-const typeBadgeBg = {
-  delete:   "bg-red-50 border border-red-200",
-  update:   "bg-blue-50 border border-blue-200",
-  create:   "bg-green-50 border border-green-200",
-  export:   "bg-yellow-50 border border-yellow-200",
-  auth:     "bg-gray-50 border border-gray-200",
-  system:   "bg-purple-50 border border-purple-200",
-  REGISTER: "bg-green-50 border border-green-200",
-  LOGIN:    "bg-gray-50 border border-gray-200",
-  LOGOUT:   "bg-gray-50 border border-gray-200",
-  UPDATE:   "bg-blue-50 border border-blue-200",
-  DELETE:   "bg-red-50 border border-red-200",
-};
-
 function formatDate(isoString) {
   if (!isoString) return "—";
   const d = new Date(isoString);
@@ -36,6 +9,28 @@ function formatDate(isoString) {
     hour: "numeric", minute: "2-digit", hour12: true,
   });
 }
+
+function formatDuration(seconds) {
+  if (!seconds || seconds === 0) return "0s";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return [h && `${h}h`, m && `${m}m`, s && `${s}s`].filter(Boolean).join(" ");
+}
+
+const PLATFORM_LABEL = {
+  admin_web: "Admin Web",
+  customer_web: "Customer Web",
+  mobile_app: "Mobile App",
+};
+
+// status -> badge classes + label
+const STATUS_BADGE = {
+  active:      { label: "Active",      cls: "bg-green-50 text-green-600 border border-green-200" },
+  logged_out:  { label: "Logged out",  cls: "bg-gray-50 text-gray-500 border border-gray-200" },
+  expired:     { label: "Expired",     cls: "bg-amber-50 text-amber-600 border border-amber-200" },
+  blocked:     { label: "Blocked",     cls: "bg-red-50 text-red-600 border border-red-200" },
+};
 
 // Same-day check against a yyyy-mm-dd input value, done in local time so
 // "today" in the date picker actually matches "today" in the log.
@@ -56,63 +51,29 @@ function inDateRange(isoString, from, to) {
 
 const PAGE_SIZE = 15;
 
-export default function AuditLog() {
-  const [logs, setLogs]               = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState(null);
-  const [page, setPage]               = useState(1);
-  const [search, setSearch]           = useState("");
-  const [dateFrom, setDateFrom]       = useState("");
-  const [dateTo, setDateTo]           = useState("");
-  const [deletingId, setDeletingId]   = useState(null);
-  const [confirmId, setConfirmId]     = useState(null);
-  const [toast, setToast]             = useState(null);
-  const [customerNames, setCustomerNames] = useState({});
-  const [viewLog, setViewLog]         = useState(null); // full-description view modal
+export default function SessionLogs() {
+  const [logs, setLogs]             = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState(null);
+  const [page, setPage]             = useState(1);
+  const [search, setSearch]         = useState("");
+  const [dateFrom, setDateFrom]     = useState("");
+  const [dateTo, setDateTo]         = useState("");
+  const [deletingId, setDeletingId] = useState(null);
+  const [confirmId, setConfirmId]   = useState(null);
+  const [toast, setToast]           = useState(null);
 
   const token = localStorage.getItem("token");
-
-  // Resolve customer name from userID: user collection -> userDetails -> firstName + lastName
-  const resolveCustomerName = useCallback(async (userID) => {
-    if (!userID) return;
-    setCustomerNames((prev) => {
-      if (prev[userID] !== undefined) return prev; // already resolved/loading
-      return { ...prev, [userID]: null }; // mark as loading
-    });
-
-    try {
-      // Step 1: Get user doc by uid
-      const userRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/by-uid/${encodeURIComponent(userID)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!userRes.ok) throw new Error("user not found");
-      const userData = await userRes.json();
-      const uid = userData?.data?.uid || userID;
-
-      // Step 2: Get userDetails by uid
-      const detailsRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/details/${encodeURIComponent(uid)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!detailsRes.ok) throw new Error("details not found");
-      const detailsData = await detailsRes.json();
-      const { firstName, lastName } = detailsData?.data || {};
-      const fullName = [firstName, lastName].filter(Boolean).join(" ") || userID;
-
-      setCustomerNames((prev) => ({ ...prev, [userID]: fullName }));
-    } catch {
-      setCustomerNames((prev) => ({ ...prev, [userID]: userID }));
-    }
-  }, [token]);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/audit-logs`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/session-logs`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to load audit logs.");
+      if (!res.ok) throw new Error(data.message || "Failed to load session logs.");
       setLogs(data.data || []);
     } catch (err) {
       setError(err.message);
@@ -123,23 +84,17 @@ export default function AuditLog() {
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
-  useEffect(() => {
-    logs.forEach((log) => {
-      if (log.userID) resolveCustomerName(log.userID);
-    });
-  }, [logs]); // eslint-disable-line
-
   const handleDelete = async (id) => {
     setDeletingId(id);
     try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/audit-logs/${id}`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/session-logs/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Delete failed.");
       setLogs((prev) => prev.filter((l) => l.id !== id));
-      showToast("Audit log moved to archive.", "success");
+      showToast("Session log moved to archive.", "success");
     } catch (err) {
       showToast(err.message, "error");
     } finally {
@@ -155,14 +110,13 @@ export default function AuditLog() {
 
   const filtered = logs.filter((log) => {
     const q = search.toLowerCase();
-    const customerName = customerNames[log.userID] || "";
     const matchesSearch =
-      (log.action || "").toLowerCase().includes(q) ||
-      (log.userID || "").toLowerCase().includes(q) ||
-      customerName.toLowerCase().includes(q) ||
-      (log.description || "").toLowerCase().includes(q) ||
+      (log.uID || "").toLowerCase().includes(q) ||
+      (log.username || "").toLowerCase().includes(q) ||
+      (log.sessionLogsID || "").toLowerCase().includes(q) ||
       (log.id || "").toLowerCase().includes(q);
-    return matchesSearch && inDateRange(log.createdAt, dateFrom, dateTo);
+    const refDate = log.status === "blocked" ? log.attemptedAt : log.loginDateTime;
+    return matchesSearch && inDateRange(refDate, dateFrom, dateTo);
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -190,8 +144,8 @@ export default function AuditLog() {
           <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
             <h3 className="text-base font-semibold text-gray-800 mb-2">Archive this log?</h3>
             <p className="text-sm text-gray-500 mb-5">
-              This entry will be removed from <strong>auditLogs</strong> and moved to{" "}
-              <strong>auditLogsArchive</strong>. This cannot be undone.
+              This entry will be removed from <strong>sessionLogs</strong> and moved to{" "}
+              <strong>sessionLogArchives</strong>. This cannot be undone.
             </p>
             <div className="flex gap-3 justify-end">
               <button
@@ -212,46 +166,9 @@ export default function AuditLog() {
         </div>
       )}
 
-      {/* Full description view modal */}
-      {viewLog && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
-          onClick={() => setViewLog(null)}
-        >
-          <div
-            className="bg-white rounded-2xl shadow-xl p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between mb-3 gap-4">
-              <div>
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${typeBadgeBg[viewLog.action] || "bg-gray-50 border border-gray-200"}`}>
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${typeBadgeDot[viewLog.action] || "bg-gray-400"}`} />
-                  {viewLog.action || "system"}
-                </span>
-                <p className="text-xs text-gray-400 mt-2">{formatDate(viewLog.createdAt)}</p>
-              </div>
-              <button
-                onClick={() => setViewLog(null)}
-                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
-              >
-                ×
-              </button>
-            </div>
-            <p className="text-sm text-gray-700 whitespace-pre-wrap break-words leading-relaxed">
-              {viewLog.description || "—"}
-            </p>
-            {viewLog.userID && (
-              <p className="text-xs text-gray-400 mt-4 font-mono break-all">
-                User ID: {viewLog.userID}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
         <div>
-          <h1 className="text-xl font-bold text-arl-dark">Audit Logs</h1>
+          <h1 className="text-xl font-bold text-arl-dark">Session Logs</h1>
           <p className="text-xs text-gray-400 mt-0.5">
             {loading ? "Loading…" : `${filtered.length} entr${filtered.length === 1 ? "y" : "ies"} found`}
           </p>
@@ -262,7 +179,7 @@ export default function AuditLog() {
       <div className="flex flex-wrap gap-3 items-center mb-5">
         <input
           type="text"
-          placeholder="Search logs…"
+          placeholder="Search by user ID…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light w-56"
@@ -307,13 +224,17 @@ export default function AuditLog() {
       )}
 
       <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
-        <table className="w-full text-sm font-sans min-w-[600px]">
+        <table className="w-full text-sm font-sans min-w-[960px]">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Action</th>
-              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Description</th>
-              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer Name</th>
-              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Timestamp</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Log ID</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">User</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">User ID (uID)</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Platform</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Login / Attempted</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Logout Time</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Duration</th>
               <th className="px-5 py-3"></th>
             </tr>
           </thead>
@@ -321,7 +242,7 @@ export default function AuditLog() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 5 }).map((_, j) => (
+                  {Array.from({ length: 9 }).map((_, j) => (
                     <td key={j} className="px-5 py-4">
                       <div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />
                     </td>
@@ -330,26 +251,14 @@ export default function AuditLog() {
               ))
             ) : paginated.length === 0 ? (
               <tr>
-                <td colSpan={5} className="text-center py-16 text-gray-400 text-sm">
-                  {search || dateFrom || dateTo ? "No logs match your filters." : "No audit logs found."}
+                <td colSpan={9} className="text-center py-16 text-gray-400 text-sm">
+                  {search || dateFrom || dateTo ? "No logs match your filters." : "No session logs found."}
                 </td>
               </tr>
             ) : (
               paginated.map((log, i) => {
-                const actionKey = log.action || "system";
-                const badgeDot = typeBadgeDot[actionKey] || "bg-gray-400";
-                const badgeBg  = typeBadgeBg[actionKey]  || "bg-gray-50 border border-gray-200";
-                const nameVal = customerNames[log.userID];
-                const displayName = !log.userID
-                  ? "—"
-                  : nameVal === undefined
-                  ? "Loading…"
-                  : nameVal === null
-                  ? "Resolving…"
-                  : nameVal;
-                const desc = log.description || "—";
-                const isLong = desc.length > 60;
-
+                const badge = STATUS_BADGE[log.status] || { label: log.status || "—", cls: "bg-gray-50 text-gray-500 border border-gray-200" };
+                const isBlocked = log.status === "blocked";
                 return (
                   <tr
                     key={log.id}
@@ -357,29 +266,39 @@ export default function AuditLog() {
                       i % 2 === 0 ? "" : "bg-gray-50/30"
                     }`}
                   >
+                    <td className="px-5 py-3.5 text-gray-500 font-mono text-xs truncate max-w-[140px]">
+                      {log.sessionLogsID || log.id || "—"}
+                    </td>
+                    <td className="px-5 py-3.5 text-gray-700 text-xs truncate max-w-[160px]">
+                      {log.username || "—"}
+                    </td>
+                    <td className="px-5 py-3.5 text-gray-500 font-mono text-xs truncate max-w-[180px]">
+                      {log.uID || "—"}
+                    </td>
+                    <td className="px-5 py-3.5 text-gray-600 text-xs whitespace-nowrap">
+                      {PLATFORM_LABEL[log.platform] || log.platform || "—"}
+                    </td>
                     <td className="px-5 py-3.5">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${badgeBg}`}><span className={`w-2 h-2 rounded-full shrink-0 ${badgeDot}`} />
-                        {actionKey}
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${badge.cls}`}>
+                        {badge.label}
                       </span>
+                      {log.status === "logged_out" && log.closedReason === "revoked" && (
+                        <span className="ml-1.5 px-2 py-0.5 rounded-full bg-orange-50 text-orange-600 border border-orange-200 text-xs font-medium">
+                          Revoked
+                        </span>
+                      )}
+                      {isBlocked && log.blockedReason && (
+                        <div className="text-[11px] text-gray-400 mt-0.5">{log.blockedReason}</div>
+                      )}
                     </td>
-                    <td className="px-5 py-3.5 text-gray-700 max-w-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate">{desc}</span>
-                        {isLong && (
-                          <button
-                            onClick={() => setViewLog(log)}
-                            className="shrink-0 text-xs text-arl-dark/60 hover:text-arl-dark underline whitespace-nowrap"
-                          >
-                            View
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 text-gray-600 text-xs">
-                      {displayName}
+                    <td className="px-5 py-3.5 text-gray-600 text-xs whitespace-nowrap">
+                      {formatDate(isBlocked ? log.attemptedAt : log.loginDateTime)}
                     </td>
                     <td className="px-5 py-3.5 text-gray-400 text-xs whitespace-nowrap">
-                      {formatDate(log.createdAt)}
+                      {isBlocked ? "—" : formatDate(log.logoutDateTime)}
+                    </td>
+                    <td className="px-5 py-3.5 text-gray-400 text-xs">
+                      {isBlocked ? "—" : (log.sessionDuration ? formatDuration(log.sessionDuration) : "—")}
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       <button

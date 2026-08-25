@@ -6,3 +6,19 @@ payments and car tracking should have a edit again if ever th discount was alrea
 
 
 booking connect the inventory hisotry
+
+
+sidebar fix the logs to be in one place
+
+
+check the archive details things
+its ugly
+
+username are not getting function as well,
+deleted userarchives should show the info of the user or like have a view details
+
+
+payments as well
+
+
+vehicle inspection make it editable for admin 

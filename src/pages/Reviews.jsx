@@ -152,6 +152,10 @@ export default function Reviews() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to delete review.");
       setReviews(prev => prev.filter(r => r.reviewID !== review.reviewID));
+      setReviewCounts(prev => ({
+        ...prev,
+        [selectedCar.id]: Math.max(0, (prev[selectedCar.id] || 0) - 1),
+      }));
       showToast("Review deleted and archived.");
     } catch (e) {
       console.error(e);

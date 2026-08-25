@@ -73,13 +73,16 @@ export function AuthProvider({ children }) {
 
   // ── Logout helper (closes the server-side session log, then clears
   //    storage + state) ──────────────────────────────────────────────
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (reason = "manual") => {
     clearTimeout(logoutTimerRef.current);
 
-    // Close out the userLogs entry (logoutDateTime + sessionDuration) and
-    // write the matching audit log entry. Fire-and-forget on purpose — a
-    // dead/expired token or a network hiccup here should never block the
-    // user from actually logging out.
+    // Close out the sessionLogs entry (logoutDateTime + sessionDuration +
+    // closedReason). Fire-and-forget on purpose — a dead/expired token or
+    // a network hiccup here should never block the user from actually
+    // logging out. reason "revoked" is passed by the forced-logout
+    // listener below when an admin locks/deletes/changes this account's
+    // role mid-session, so that's distinguishable from an ordinary click
+    // on "Log out" in Session Logs.
     const token = localStorage.getItem("token");
     const sessionLogID = localStorage.getItem("sessionLogID");
     if (token) {
@@ -90,7 +93,7 @@ export function AuthProvider({ children }) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ sessionLogID }),
+          body: JSON.stringify({ sessionLogID, reason }),
         });
       } catch (e) {
         console.error("Failed to close session log:", e);
@@ -166,7 +169,7 @@ export function AuthProvider({ children }) {
           if (!snap.exists()) {
             handled = true;
             if (unsubDoc) { unsubDoc(); unsubDoc = null; }
-            logout();
+            logout("revoked");
             alert("Your account no longer exists. Please contact your administrator.");
             return;
           }
@@ -174,14 +177,14 @@ export function AuthProvider({ children }) {
           if (data.status && data.status.toLowerCase() !== "active") {
             handled = true;
             if (unsubDoc) { unsubDoc(); unsubDoc = null; }
-            logout();
+            logout("revoked");
             alert("Your account access has been revoked. Please contact your administrator.");
             return;
           }
           if (data.roleID && user.roleID && data.roleID !== user.roleID) {
             handled = true;
             if (unsubDoc) { unsubDoc(); unsubDoc = null; }
-            logout();
+            logout("revoked");
             alert("Your role has changed. Please log in again.");
           }
         },
@@ -190,7 +193,7 @@ export function AuthProvider({ children }) {
           // Firestore rules denying reads (e.g. locked account) counts as revoked too.
           handled = true;
           if (unsubDoc) { unsubDoc(); unsubDoc = null; }
-          logout();
+          logout("revoked");
         }
       );
     });

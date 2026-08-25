@@ -20,11 +20,11 @@ import Payments from "./pages/Payments";
 import RefundRequests from "./pages/RefundRequests";
 import Reports from "./pages/Reports";
 import AuditLog from "./pages/AuditLog";
-import UserLogs from "./pages/UserLogs";
+import SessionLogs from "./pages/SessionLogs";
 import TransactionLogs from "./pages/TransactionLogs";
 import Settings from "./pages/Settings";
 import VehicleInspection from "./pages/VechicleInspection";
-import UserLogArchivePage from "./pages/UserLogArchivePage";
+import SessionLogArchivePage from "./pages/SessionLogArchivePage";
 import PaymentsArchivePage from "./pages/PaymentsArchivePage";
 import UserArchivePage from "./pages/UserArchivePage";
 import BookingArchivePage from "./pages/BookingArchivePage";
@@ -192,9 +192,9 @@ function AppRoutes() {
                     <DashboardLayout><Settings /></DashboardLayout>
                 </ProtectedRoute>
             } />
-            <Route path="/user-logs" element={
+            <Route path="/session-logs" element={
                 <ProtectedRoute>
-                    <DashboardLayout><UserLogs /></DashboardLayout>
+                    <DashboardLayout><SessionLogs /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/transaction-logs" element={
@@ -204,9 +204,9 @@ function AppRoutes() {
             } />
 
             {/* Archive routes */}
-            <Route path="/archives/user-log" element={
+            <Route path="/archives/session-log" element={
                 <ProtectedRoute>
-                    <DashboardLayout><UserLogArchivePage /></DashboardLayout>
+                    <DashboardLayout><SessionLogArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/archives/payments" element={

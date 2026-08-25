@@ -46,12 +46,12 @@ export const PAGE_ACCESS = {
   "/refund-requests": [OWNER, ADMIN, SUPERVISOR],
   "/reports": [OWNER, ADMIN, SUPERVISOR],
   "/audit-log": [ADMIN],
-  "/user-logs": [ADMIN],
+  "/session-logs": [ADMIN],
   "/transaction-logs": [ADMIN],
   "/settings": [OWNER, ADMIN],
 
   // Archives — Owner keeps access, Admin added per this round's decision.
-  "/archives/user-log": [OWNER, ADMIN],
+  "/archives/session-log": [OWNER, ADMIN],
   "/archives/payments": [OWNER, ADMIN],
   "/archives/bookings": [OWNER, ADMIN],
   "/archives/transaction-log": [OWNER, ADMIN],

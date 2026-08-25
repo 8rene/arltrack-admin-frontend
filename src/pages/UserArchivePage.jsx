@@ -188,7 +188,7 @@ export default function UserArchivePage() {
               paginated.map((r, i) => (
                 <tr key={r.userArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.originalId || "—"}</td>
-                  <td className="px-4 py-3 text-xs text-gray-700">{r.username || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700">{r.username || r.email || "—"}</td>
                   <td className="px-4 py-3 text-xs text-gray-600">{r.email || "—"}</td>
                   <td className="px-4 py-3 text-xs">
                     <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs font-medium">{r.status || "—"}</span>

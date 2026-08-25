@@ -29,9 +29,22 @@ function inRange(iso, from, to) {
   return true;
 }
 
+const PLATFORM_LABEL = {
+  admin_web: "Admin Web",
+  customer_web: "Customer Web",
+  mobile_app: "Mobile App",
+};
+
+const STATUS_BADGE = {
+  logged_out: { label: "Logged out", cls: "bg-gray-50 text-gray-500 border border-gray-200" },
+  expired:    { label: "Expired",    cls: "bg-amber-50 text-amber-600 border border-amber-200" },
+  blocked:    { label: "Blocked",    cls: "bg-red-50 text-red-600 border border-red-200" },
+  active:     { label: "Active",     cls: "bg-green-50 text-green-600 border border-green-200" },
+};
+
 const PAGE_SIZE = 15;
 
-export default function UserLogArchivePage() {
+export default function SessionLogArchivePage() {
   const { effectiveRole } = useAuth();
   const [records, setRecords]       = useState([]);
   const [loading, setLoading]       = useState(true);
@@ -57,7 +70,7 @@ export default function UserLogArchivePage() {
   const fetchRecords = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/user-log`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/session-log`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -70,34 +83,34 @@ export default function UserLogArchivePage() {
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
   /* ── RESTORE ── */
-  const handleRestore = async (userLogArchivesId) => {
+  const handleRestore = async (sessionLogArchivesId) => {
     setRestoreConfirmId(null);
-    setActionId(userLogArchivesId);
+    setActionId(sessionLogArchivesId);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/user-log/${userLogArchivesId}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/session-log/${sessionLogArchivesId}/restore`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Restore failed.");
-      setRecords((prev) => prev.filter((r) => r.userLogArchivesId !== userLogArchivesId));
-      showToast("User log restored to active table.", "success");
+      setRecords((prev) => prev.filter((r) => r.sessionLogArchivesId !== sessionLogArchivesId));
+      showToast("Session log restored to active table.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
   };
 
   /* ── PERMANENT DELETE ── */
-  const handleDelete = async (userLogArchivesId) => {
+  const handleDelete = async (sessionLogArchivesId) => {
     setConfirmId(null);
-    setActionId(userLogArchivesId);
+    setActionId(sessionLogArchivesId);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/user-log/${userLogArchivesId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/session-log/${sessionLogArchivesId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Delete failed.");
-      setRecords((prev) => prev.filter((r) => r.userLogArchivesId !== userLogArchivesId));
+      setRecords((prev) => prev.filter((r) => r.sessionLogArchivesId !== sessionLogArchivesId));
       showToast("Permanently deleted.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
@@ -107,9 +120,9 @@ export default function UserLogArchivePage() {
   const filtered = records.filter((r) => {
     const q = search.toLowerCase();
     const matchSearch =
-      (r.userLogArchivesId || "").toLowerCase().includes(q) ||
-      (r.uID              || "").toLowerCase().includes(q) ||
-      (r.username         || "").toLowerCase().includes(q);
+      (r.sessionLogArchivesId || "").toLowerCase().includes(q) ||
+      (r.uID                  || "").toLowerCase().includes(q) ||
+      (r.username              || "").toLowerCase().includes(q);
     const matchDate = inRange(r.archivedAt, dateFrom, dateTo);
     return matchSearch && matchDate;
   });
@@ -119,7 +132,7 @@ export default function UserLogArchivePage() {
 
   useEffect(() => setPage(1), [search, dateFrom, dateTo]);
 
-  const restoreConfirmRecord = records.find((r) => r.userLogArchivesId === restoreConfirmId);
+  const restoreConfirmRecord = records.find((r) => r.sessionLogArchivesId === restoreConfirmId);
 
   /* ── RENDER ── */
   return (
@@ -164,13 +177,13 @@ export default function UserLogArchivePage() {
       {restoreConfirmId && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
-            <h3 className="font-semibold text-gray-800 mb-2">Restore this user log?</h3>
+            <h3 className="font-semibold text-gray-800 mb-2">Restore this session log?</h3>
             {restoreConfirmRecord && (
               <p className="text-xs text-gray-500 mb-2">
                 {restoreConfirmRecord.username || restoreConfirmRecord.uID || "—"}
               </p>
             )}
-            <p className="text-sm text-gray-500 mb-5">It will move back to the live user logs table.</p>
+            <p className="text-sm text-gray-500 mb-5">It will move back to the live session logs table.</p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
               <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
@@ -182,16 +195,16 @@ export default function UserLogArchivePage() {
       {/* View details modal */}
       {viewRecord && (
         <ArchiveDetailModal
-          title={`User Log Archive — ${viewRecord.username || viewRecord.uID || viewRecord.userLogArchivesId}`}
+          title={`Session Log Archive — ${viewRecord.username || viewRecord.uID || viewRecord.sessionLogArchivesId}`}
           record={viewRecord}
           onClose={() => setViewRecord(null)}
-          labelOverrides={{ userLogArchivesId: "Archive ID", uID: "User ID" }}
+          labelOverrides={{ sessionLogArchivesId: "Archive ID", sessionLogsID: "Session Log ID", uID: "User ID" }}
         />
       )}
 
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">USER LOG ARCHIVE</h1>
+        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">SESSION LOG ARCHIVE</h1>
         <p className="text-sm text-gray-400 mt-1">
           {loading ? "Loading…" : `${filtered.length} archived record${filtered.length !== 1 ? "s" : ""}`}
         </p>
@@ -238,13 +251,14 @@ export default function UserLogArchivePage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">userLogArchivesId</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Username</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">sessionLogArchivesId</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">User</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">User ID</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Platform</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Session Status</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Login Time</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Session Duration</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Archived At</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
@@ -252,7 +266,7 @@ export default function UserLogArchivePage() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 8 }).map((_, j) => (
+                  {Array.from({ length: 9 }).map((_, j) => (
                     <td key={j} className="px-4 py-4">
                       <div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />
                     </td>
@@ -261,30 +275,33 @@ export default function UserLogArchivePage() {
               ))
             ) : paginated.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-center py-16 text-gray-400 text-sm">
-                  {search || dateFrom || dateTo ? "No records match your filters." : "No archived user logs found."}
+                <td colSpan={9} className="text-center py-16 text-gray-400 text-sm">
+                  {search || dateFrom || dateTo ? "No records match your filters." : "No archived session logs found."}
                 </td>
               </tr>
             ) : (
-              paginated.map((r, i) => (
+              paginated.map((r, i) => {
+                const statusBadge = STATUS_BADGE[r.status] || { label: r.status || "—", cls: "bg-gray-50 text-gray-500 border border-gray-200" };
+                return (
                 <tr
-                  key={r.userLogArchivesId}
+                  key={r.sessionLogArchivesId}
                   className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}
                 >
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">
-                    {r.userLogArchivesId}
+                    {r.sessionLogArchivesId}
                   </td>
                   <td className="px-4 py-3 text-gray-700 text-xs">{r.username || "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[120px]">{r.uID || "—"}</td>
-                  <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatDate(r.loginDateTime)}</td>
+                  <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{PLATFORM_LABEL[r.platform] || r.platform || "—"}</td>
+                  <td className="px-4 py-3 text-xs">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge.cls}`}>{statusBadge.label}</span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatDate(r.status === "blocked" ? r.attemptedAt : r.loginDateTime)}</td>
                   <td className="px-4 py-3 text-xs text-gray-500">{formatDuration(r.sessionDuration)}</td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap">
                     <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-xs font-medium">
                       {formatDate(r.archivedAt)}
                     </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-xs font-medium text-black"><span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" />Archived</span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
@@ -296,15 +313,15 @@ export default function UserLogArchivePage() {
                         View
                       </button>
                       <button
-                        onClick={() => setRestoreConfirmId(r.userLogArchivesId)}
+                        onClick={() => setRestoreConfirmId(r.sessionLogArchivesId)}
                         disabled={!!actionId}
                         className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap"
                       >
-                        {actionId === r.userLogArchivesId ? "…" : "Restore"}
+                        {actionId === r.sessionLogArchivesId ? "…" : "Restore"}
                       </button>
                       {effectiveRole === ROLES.OWNER && (
                       <button
-                        onClick={() => setConfirmId(r.userLogArchivesId)}
+                        onClick={() => setConfirmId(r.sessionLogArchivesId)}
                         disabled={!!actionId}
                         className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap"
                       >
@@ -314,7 +331,7 @@ export default function UserLogArchivePage() {
                     </div>
                   </td>
                 </tr>
-              ))
+              );})
             )}
           </tbody>
         </table>

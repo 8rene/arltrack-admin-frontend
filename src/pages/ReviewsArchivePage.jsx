@@ -235,7 +235,7 @@ export default function ReviewsArchivePage() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.reviewsArchivesID}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500 truncate max-w-[140px]">{r.bookingID || "—"}</td>
                   <td className="px-4 py-3 text-xs text-gray-700 truncate max-w-[140px]" title={r.userID || r.reviewerID || ""}>{r.reviewerName || "—"}</td>
-                  <td className="px-4 py-3"><StarRating rate={r.rate} /></td>
+                  <td className="px-4 py-3"><StarRating rate={r.rating} /></td>
                   <td className="px-4 py-3 text-xs text-gray-700 max-w-[220px] truncate" title={r.comment}>{r.comment || "—"}</td>
                   <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatDate(r.createdAt)}</td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap">
