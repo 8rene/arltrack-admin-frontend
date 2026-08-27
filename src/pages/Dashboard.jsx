@@ -403,7 +403,29 @@ export default function Dashboard() {
         setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "idResubmit"), ...rows]);
       }
     );
-    return () => { unsubEdit(); unsubId(); };
+    // Pending refund requests — same "awaiting review" reasoning as the two
+    // above. Previously missing entirely from the Dashboard despite being
+    // the same shape of "something's waiting on an admin" item.
+    const unsubRefund = onSnapshot(
+      query(collection(db, "refundRequests"), where("status", "==", "Pending")),
+      (snap) => {
+        const rows = snap.docs.map((d) => {
+          const data = d.data();
+          const u = userMapRef.current[data.userID] || {};
+          return {
+            id: d.id,
+            userID: data.userID,
+            name: u.username || u.email || data.userID,
+            kind: "refundRequest",
+            amount: data.amount || 0,
+            bookingID: data.bookingID || null,
+            _due: toJsDate(data.createdAt) || new Date(),
+          };
+        });
+        setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "refundRequest"), ...rows]);
+      }
+    );
+    return () => { unsubEdit(); unsubId(); unsubRefund(); };
   }, []);
 
   const warnings = [
@@ -599,9 +621,11 @@ export default function Dashboard() {
                 const isMaint   = w._type === "maintenance";
                 const isLicense = w._type === "license";
                 const isRequest = w._type === "request";
+                const isRefund  = isRequest && w.kind === "refundRequest";
                 const goTo = () => {
                   if (isMaint) navigate("/maintenance");
                   else if (isLicense) navigate(`/users?role=${w.role}&tab=directory&open=${w.userID}`);
+                  else if (isRefund) navigate("/refund-requests");
                   else if (isRequest) navigate(`/users?role=${w.role}&tab=editRequests&open=${w.userID}`);
                   else navigate(`/bookings?open=${w.bookingID || w.id}`);
                 };
@@ -622,6 +646,29 @@ export default function Dashboard() {
                         <p className="text-sm font-semibold text-gray-800 leading-snug">Driver's License Expiring Soon</p>
                         <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
                         <p className="text-xs text-gray-400">Expires in {w.daysLeft} day(s)</p>
+                      </div>
+                    </div>
+                  );
+                }
+                if (isRefund) {
+                  return (
+                    <div
+                      key={`request-${w.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-blue-50 border-blue-100 hover:bg-blue-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-blue-500">
+                        <IconBell className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">Refund Request</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
+                        <p className="text-xs text-gray-400">
+                          ₱{Number(w.amount).toLocaleString()} — Awaiting review
+                        </p>
                       </div>
                     </div>
                   );

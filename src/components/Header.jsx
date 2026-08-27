@@ -53,6 +53,7 @@ const ROUTE_BY_COLLECTION = {
   bookings: "/bookings",
   user: "/users",
   cars: "/car-tracking",
+  refundRequests: "/refund-requests",
 };
 
 const META_BY_TYPE = {
@@ -62,6 +63,7 @@ const META_BY_TYPE = {
   coding_alert:         { bg: "bg-red-100",    emoji: "🚫", title: "Coding Restriction" },
   pickup_overdue:       { bg: "bg-orange-100", emoji: "⏰", title: "Pickup Overdue" },
   return_overdue:       { bg: "bg-red-100",    emoji: "⏰", title: "Return Overdue" },
+  refund_request:       { bg: "bg-blue-100",   emoji: "💸", title: "Refund Request" },
 };
 
 /* ── Notification Row ── */
