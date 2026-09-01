@@ -64,6 +64,10 @@ const META_BY_TYPE = {
   pickup_overdue:       { bg: "bg-orange-100", emoji: "⏰", title: "Pickup Overdue" },
   return_overdue:       { bg: "bg-red-100",    emoji: "⏰", title: "Return Overdue" },
   refund_request:       { bg: "bg-blue-100",   emoji: "💸", title: "Refund Request" },
+  refund_due:           { bg: "bg-blue-100",   emoji: "💰", title: "Refund Due" },
+  license_expiring:     { bg: "bg-yellow-100", emoji: "🪪", title: "License Expiring Soon" },
+  license_expired:      { bg: "bg-red-100",    emoji: "🪪", title: "License Expired" },
+  driver_assigned:      { bg: "bg-teal-100",   emoji: "🚗", title: "Trip Assigned" },
 };
 
 /* ── Notification Row ── */
@@ -141,14 +145,24 @@ export default function Header({ title = "Dashboard" }) {
     if (storedUser) setUser(JSON.parse(storedUser));
   }, []);
 
-  // Single source of truth: one query against the real notifications
-  // collection, active ones only. Replaces the old 4 mismatched streams
-  // (2 of which were live business queries with no read state, plus a
-  // legacy carParts stream, plus an inventory stream) with one consistent
-  // shape — see models/notification/notification.model.js on the backend.
+  // Single query, single listener: every notification type now fans out
+  // to specific people with a real userID (Owner/Admin/Supervisor for
+  // staff-facing types, or the specific driver for driver_assigned /
+  // license alerts). Nothing writes userID: null anymore, so the old
+  // second "global" listener would only ever return an empty snapshot —
+  // removed rather than left running as dead weight.
+  //
+  // Gated on `user` being loaded first (from the separate effect above)
+  // since we need user.uid before this query can even be built.
   useEffect(() => {
+    if (!user) return;
+
     const unsub = onSnapshot(
-      query(collection(db, "notifications"), where("status", "==", "active")),
+      query(
+        collection(db, "notifications"),
+        where("status", "==", "active"),
+        where("userID", "==", user.uid)
+      ),
       (snap) => {
         const rows = snap.docs
           .map((d) => ({ id: d.id, ...d.data() }))
@@ -156,8 +170,9 @@ export default function Header({ title = "Dashboard" }) {
         setNotifications(rows);
       }
     );
-    return unsub;
-  }, []);
+
+    return () => unsub();
+  }, [user]);
 
   // Close dropdowns on outside click
   useEffect(() => {
