@@ -272,7 +272,6 @@ function getDocImages(docu) {
   if (!docu) return {};
   return {
     driverLicense: docu.driverLicenseUrl || "",
-    governmentId:  docu.governmentIdUrl  || "",
     documentImage: docu.documentImageUrl || "",
     selfieWithId:  docu.selfieWithIdUrl  || "",
   };
@@ -921,8 +920,7 @@ function ViewDetailsModal({ user, roleLabelSingular, onClose, onEdit }) {
                   <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Uploaded Documents</h3>
                   <div className="grid grid-cols-2 gap-3">
                     <DocImg label="Driver License"  url={imgs.driverLicense} />
-                    <DocImg label="Government ID"   url={imgs.governmentId} />
-                    <DocImg label="Document Image"  url={imgs.documentImage} />
+                    <DocImg label="Government ID"   url={imgs.documentImage} />
                     <DocImg label="Selfie with ID"  url={imgs.selfieWithId} />
                   </div>
                   {imgs.driverLicense && (
@@ -992,7 +990,7 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
     return 0;
   });
 
-  const handleVerify = async (user, approve) => {
+  const handleVerify = async (user, approve, driverLicenseExpiry) => {
     setLoadingId(user.id);
     try {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/verify`, {
@@ -1001,7 +999,7 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
-        body: JSON.stringify({ isVerified: approve }),
+        body: JSON.stringify({ isVerified: approve, ...(driverLicenseExpiry ? { driverLicenseExpiry } : {}) }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Verify failed.");
@@ -1055,6 +1053,7 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
                   const fullName = `${fn} ${ln}`.trim() || u.username || u.email || "—";
                   const initials = ((fn[0] || u.email?.[0] || "?") + (ln[0] || "")).toUpperCase();
                   const uploaded = hasUploads(u);
+                  const hasLicense = !!u.document?.driverLicenseUrl;
                   const isLoading = loadingId === u.id;
 
                   return (
@@ -1097,7 +1096,8 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
                             <Icons.X className="w-3.5 h-3.5" />
                             {isLoading ? "..." : "Reject"}
                           </button>
-                          <button onClick={() => handleVerify(u, true)} disabled={isLoading || !uploaded}
+                          <button onClick={() => handleVerify(u, true)} disabled={isLoading || !uploaded || hasLicense}
+                            title={hasLicense ? "Use 'View IDs' to enter the license expiry date before approving" : undefined}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed">
                             <Icons.Check className="w-3.5 h-3.5" />
                             {isLoading ? "..." : "Approve"}
@@ -1118,7 +1118,7 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
         <DocDetailModal
           user={detailUser}
           onClose={() => setDetailUser(null)}
-          onApprove={() => { handleVerify(detailUser, true);  setDetailUser(null); }}
+          onApprove={(expiry) => { handleVerify(detailUser, true, expiry);  setDetailUser(null); }}
           onReject={()  => { handleVerify(detailUser, false); setDetailUser(null); }}
         />
       )}
@@ -1141,6 +1141,10 @@ function EditRequestsTab({ onCountChange }) {
   const [busyId, setBusyId]           = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null); // { kind, id }
   const [viewUserID, setViewUserID]     = useState(null); // userID whose full request history is open
+  // Per-request draft expiry date — only relevant for documentKind ===
+  // "license" rows; keyed by req.id since multiple pending rows can be
+  // open/being filled at once.
+  const [expiryDrafts, setExpiryDrafts] = useState({});
 
   // Deep-link from Dashboard: /users?...&open=<uid> lands here once this
   // tab is mounted (top-level Users() already switched role tab + subTab).
@@ -1231,16 +1235,18 @@ function EditRequestsTab({ onCountChange }) {
     finally { setBusyId(null); }
   };
 
-  // ID resubmit approve: the new photo becomes the license of record.
-  // Deliberately does NOT touch driverLicenseExpiry — admin re-confirms the
-  // date against the new photo separately (ExpiryField, in the Documents
-  // tab / Document Request review), same "human looks at the actual card"
-  // principle as the original review. (Enforced server-side now too — see
-  // approveIdResubmitRequest in profileRequests.service.js.)
+  // ID resubmit approve: the new photo becomes the license/document of
+  // record. For license, the reviewer's expiry entry (expiryDrafts, filled
+  // in next to the photo) is required and sent along — enforced
+  // server-side too, see approveIdResubmitRequest in
+  // profileRequests.service.js. Document kind has no expiry concept, so
+  // driverLicenseExpiry is simply omitted for those.
   const handleApproveId = async (req) => {
     setBusyId(req.id);
     try {
-      await reviewFetch(`/api/id-resubmit-requests/${req.id}/approve`, { method: "POST" });
+      const kind = req.documentKind || "license";
+      const body = kind === "license" ? { driverLicenseExpiry: expiryDrafts[req.id] } : {};
+      await reviewFetch(`/api/id-resubmit-requests/${req.id}/approve`, { method: "POST", body: JSON.stringify(body) });
       fetchAll();
       onCountChange?.();
     } catch (e) { console.error("Approve ID resubmit failed:", e); }
@@ -1347,7 +1353,7 @@ function EditRequestsTab({ onCountChange }) {
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
         <div className="px-5 py-4 border-b">
           <h2 className="font-bold text-lg text-gray-800">ID Resubmit Requests <span className="text-gray-400 text-sm font-normal">({pendingId.length} pending)</span></h2>
-          <p className="text-xs text-gray-400 mt-0.5">New driver's license photos submitted for a close-to-expiring or expired ID</p>
+          <p className="text-xs text-gray-400 mt-0.5">New license or document photos submitted for review</p>
         </div>
         {idReqs.length === 0 ? (
           <div className="text-center text-gray-400 py-10">No ID resubmit requests yet.</div>
@@ -1356,19 +1362,54 @@ function EditRequestsTab({ onCountChange }) {
             {[...pendingId, ...reviewedId].map(req => {
               const u = userLookup[req.userID] || {};
               const isHighlighted = highlightUserID === req.userID;
+              const kind = req.documentKind || "license"; // pre-existing docs had no field — always license
+              const isLicense = kind === "license";
+              const currentUrl = isLicense ? req.currentLicenseUrl : req.currentDocumentUrl;
+              const newUrl     = isLicense ? req.newLicenseUrl     : req.newDocumentUrl;
+              const needsExpiry = isLicense && req.status === "pending" && !expiryDrafts[req.id];
               return (
                 <div key={req.id} id={`idreq-user-${req.userID}`}
                   className={`p-4 flex flex-col gap-3 transition-all ${isHighlighted ? "ring-2 ring-inset ring-orange-400 bg-orange-50/40" : ""}`}>                  <div className="flex justify-between items-start">
                     <div>
                       <p className="font-semibold text-gray-800">{u.name || req.userID}</p>
-                      <p className="text-xs text-gray-400">@{u.username || "—"} · {fmtDate(req.createdAt)}</p>
+                      <p className="text-xs text-gray-400">
+                        @{u.username || "—"} · {isLicense ? "License" : "Document"} · {fmtDate(req.createdAt)}
+                      </p>
                     </div>
                     <StatusPill status={req.status} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <DocImg label="Current License" url={req.currentLicenseUrl} />
-                    <DocImg label="New License"     url={req.newLicenseUrl} />
+                    <DocImg label={isLicense ? "Current License" : "Current Document"} url={currentUrl} />
+                    <DocImg label={isLicense ? "New License"     : "New Document"}     url={newUrl} />
                   </div>
+                  {!isLicense && (req.documentType || req.documentNumber) && (
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="bg-gray-50 rounded-xl p-3">
+                        <p className="text-xs text-gray-400">Document Type</p>
+                        <p className="font-medium text-gray-800 mt-0.5">{req.documentType || "—"}</p>
+                      </div>
+                      <div className="bg-gray-50 rounded-xl p-3">
+                        <p className="text-xs text-gray-400">Document Number</p>
+                        <p className="font-medium text-gray-800 mt-0.5">{req.documentNumber || "—"}</p>
+                      </div>
+                    </div>
+                  )}
+                  {isLicense && req.status === "pending" && (
+                    <div className="bg-gray-50 rounded-xl p-3">
+                      <label className="text-xs text-gray-400 block mb-1">
+                        License Expiry Date <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={expiryDrafts[req.id] || ""}
+                        onChange={(e) => setExpiryDrafts(prev => ({ ...prev, [req.id]: e.target.value }))}
+                        className="w-full text-sm border rounded-lg px-3 py-1.5"
+                      />
+                      <p className="text-[11px] text-gray-400 mt-1">
+                        Required to approve — enter the date shown on the new card above.
+                      </p>
+                    </div>
+                  )}
                   {req.status === "rejected" && req.reviewNote && (
                     <p className="text-xs text-red-500 bg-red-50 rounded-lg p-2">Reason: {req.reviewNote}</p>
                   )}
@@ -1378,7 +1419,8 @@ function EditRequestsTab({ onCountChange }) {
                         className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40">
                         <Icons.X className="w-3.5 h-3.5" /> Reject
                       </button>
-                      <button onClick={() => handleApproveId(req)} disabled={busyId === req.id}
+                      <button onClick={() => handleApproveId(req)} disabled={busyId === req.id || needsExpiry}
+                        title={needsExpiry ? "Enter the license expiry date first" : undefined}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40">
                         <Icons.Check className="w-3.5 h-3.5" /> {busyId === req.id ? "..." : "Approve"}
                       </button>
@@ -1512,6 +1554,15 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
   const imgs = getDocImages(docu);
   const hasUploads = Object.values(imgs).some(v => v && v.trim() !== "");
 
+  // Captured here rather than via ExpiryField's own independent save
+  // button — the whole point is that Approve and "enter the expiry you
+  // see on the card" happen as ONE action, not two separate steps an
+  // admin could forget to pair up. ExpiryField itself stays unchanged
+  // for its other use (ViewDetailsModal's Documents tab — correcting/
+  // renewing a date outside of this approval moment).
+  const [licenseExpiry, setLicenseExpiry] = useState(toDateInputValue(docu.driverLicenseExpiry));
+  const needsExpiry = !!imgs.driverLicense && !licenseExpiry;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -1541,11 +1592,23 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
             ) : (
               <div className="space-y-3">
                 <DocImg label="Driver License"  url={imgs.driverLicense} />
-                <DocImg label="Government ID"   url={imgs.governmentId} />
-                <DocImg label="Document Image"  url={imgs.documentImage} />
+                <DocImg label="Government ID"   url={imgs.documentImage} />
                 <DocImg label="Selfie with ID"  url={imgs.selfieWithId} />
                 {imgs.driverLicense && (
-                  <ExpiryField userID={user.id} docId={docu.docId} currentValue={docu.driverLicenseExpiry} />
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <label className="text-xs text-gray-400 block mb-1">
+                      License Expiry Date <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={licenseExpiry}
+                      onChange={(e) => setLicenseExpiry(e.target.value)}
+                      className="w-full text-sm border rounded-lg px-3 py-1.5"
+                    />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Required to approve — enter the date shown on the card above.
+                    </p>
+                  </div>
                 )}
               </div>
             )}
@@ -1558,7 +1621,12 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
                 <button onClick={onReject}  className="flex items-center gap-2 px-5 py-2 border border-red-200 text-red-500 rounded-xl text-sm font-medium hover:bg-red-50">
                   <Icons.X className="w-4 h-4" /> Reject
                 </button>
-                <button onClick={onApprove} className="flex items-center gap-2 px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700">
+                <button
+                  onClick={() => onApprove(licenseExpiry)}
+                  disabled={needsExpiry}
+                  title={needsExpiry ? "Enter the license expiry date first" : undefined}
+                  className="flex items-center gap-2 px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-teal-600"
+                >
                   <Icons.Check className="w-4 h-4" /> Approve
                 </button>
               </>

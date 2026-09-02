@@ -58,6 +58,7 @@ const ROUTE_BY_COLLECTION = {
 
 const META_BY_TYPE = {
   cancellation_request: { bg: "bg-orange-100", emoji: "⚠️", title: "Cancellation Request" },
+  new_booking:          { bg: "bg-teal-100",   emoji: "📅", title: "New Booking" },
   new_user:             { bg: "bg-teal-100",   emoji: "🆕", title: "New User Signup" },
   geofence_alert:       { bg: "bg-red-100",    emoji: "📍", title: "Vehicle Left Zone" },
   coding_alert:         { bg: "bg-red-100",    emoji: "🚫", title: "Coding Restriction" },

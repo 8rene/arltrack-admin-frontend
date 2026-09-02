@@ -1,19 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   doc, getDoc, collection, query, where, getDocs,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage, auth } from "../fireabase";
+import { db, storage } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
-import { useTheme } from "../context/ThemeContext";
-import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
-import {
-  fetchRegions,
-  fetchProvinces,
-  fetchMunicipalities,
-  fetchBarangays,
-} from "../utils/fireStoreLocation";
 
 // How many days out an expiring (not yet expired) license starts showing
 // the amber warning. Kept in sync by hand with the admin backend's
@@ -84,106 +76,22 @@ const IconUpload = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-const IconPalette = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
-    <circle cx="8.5" cy="10" r="1" fill="currentColor" />
-    <circle cx="12" cy="8" r="1" fill="currentColor" />
-    <circle cx="15.5" cy="10" r="1" fill="currentColor" />
-    <path d="M7 15.5c1.38-1 5.62-1 9 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
-const IconLock = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M8 11V7a4 4 0 018 0v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-  </svg>
-);
-
-const IconEye = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.75" />
-  </svg>
-);
-
-const IconEyeOff = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19M1 1l22 22" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M14.12 14.12a3 3 0 01-4.24-4.24" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-  </svg>
-);
-
 const IconClose = ({ className = "w-5 h-5" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
   </svg>
 );
 
-/* ── Toggle switch (used by Dark Mode preference) ── */
-function Toggle({ label, checked, onChange, isDark }) {
-  return (
-    <div className={`flex items-center justify-between border rounded-xl px-4 py-3 ${
-      isDark ? "border-[#4FC3F7]/20" : "border-gray-100"
-    }`}>
-      <span className={`text-sm ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>{label}</span>
-      <button onClick={() => onChange(!checked)}
-        className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors ${
-          checked
-            ? isDark ? "bg-[#4FC3F7]" : "bg-arl-dark"
-            : isDark ? "bg-[#212121]" : "bg-gray-300"
-        }`}>
-        <div className={`w-4 h-4 rounded-full shadow transform transition-transform ${
-          checked ? "translate-x-6" : ""
-        } ${isDark ? (checked ? "bg-[#212121]" : "bg-[#F5F5F5]/40") : "bg-white"}`} />
-      </button>
-    </div>
-  );
-}
-
-/* ── Password input with show/hide toggle (used by Change Password) ── */
-function PasswordInput({ label, value, onChange, isDark }) {
-  const [show, setShow] = useState(false);
-  return (
-    <div className="flex flex-col gap-1">
-      <label className={`text-xs font-semibold uppercase tracking-wider ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-        {label}
-      </label>
-      <div className="relative">
-        <input
-          type={show ? "text" : "password"}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className={`w-full border rounded-xl px-3 py-2 text-sm outline-none pr-10 transition-colors ${
-            isDark
-              ? "border-[#4FC3F7]/20 bg-[#212121]/40 text-[#F5F5F5] placeholder-[#F5F5F5]/20 focus:border-[#4FC3F7] focus:ring-1 focus:ring-[#4FC3F7]/30"
-              : "border-gray-200 bg-white text-gray-800 focus:ring-2 focus:ring-arl-light"
-          }`}
-        />
-        <button type="button" onClick={() => setShow((s) => !s)}
-          className={`absolute right-3 top-1/2 -translate-y-1/2 ${
-            isDark ? "text-[#F5F5F5]/30 hover:text-[#4FC3F7]" : "text-gray-400 hover:text-gray-600"
-          }`}>
-          {show ? <IconEyeOff /> : <IconEye />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 /* ── Detail row ── */
-function DetailRow({ icon, label, value, isDark }) {
+function DetailRow({ icon, label, value }) {
   return (
-    <div className={`flex items-center gap-3 py-3.5 border-b last:border-0 ${isDark ? "border-[#4FC3F7]/10" : "border-gray-50"}`}>
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
-        isDark ? "bg-[#4FC3F7]/15 text-[#4FC3F7]" : "bg-arl-light text-arl-primary"
-      }`}>
+    <div className="flex items-center gap-3 py-3.5 border-b border-gray-50 last:border-0">
+      <div className="w-9 h-9 rounded-full bg-arl-light flex items-center justify-center text-arl-primary shrink-0">
         {icon}
       </div>
       <div className="min-w-0">
-        <p className={`text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{label}</p>
-        <p className={`text-sm font-medium truncate ${isDark ? "text-[#F5F5F5]" : "text-arl-dark"}`}>{value || "—"}</p>
+        <p className="text-xs text-gray-400">{label}</p>
+        <p className="text-sm font-medium text-arl-dark truncate">{value || "—"}</p>
       </div>
     </div>
   );
@@ -218,179 +126,17 @@ const EDITABLE_FIELDS = [
   { key: "suffix",       label: "Suffix",       source: "userDetails" },
   { key: "birthDate",    label: "Birth Date",   source: "userDetails", type: "date" },
   { key: "street",       label: "Street",       source: "userAddress" },
-  { key: "region",       label: "Region",       source: "userAddress" },
-  { key: "province",     label: "Province",     source: "userAddress" },
+  { key: "barangay",     label: "Barangay",     source: "userAddress" },
   { key: "municipality", label: "Municipality", source: "userAddress" },
   { key: "city",         label: "City",         source: "userAddress" },
-  { key: "barangay",     label: "Barangay",     source: "userAddress" },
+  { key: "province",     label: "Province",     source: "userAddress" },
   { key: "postalCode",   label: "Postal Code",  source: "userAddress" },
   { key: "village",      label: "Village",      source: "userAddress" },
   { key: "zipCode",      label: "Zip Code",     source: "userAddress" },
 ];
 
-// These four are rendered as cascading dropdowns (LocationFieldsEditor)
-// instead of the generic free-text EditField below.
-const LOCATION_KEYS = ["region", "province", "city", "municipality", "barangay"];
-
-// Grouping for the modal layout: personal info vs. address, so the two
-// don't run together in one long undifferentiated grid.
-const PROFILE_FIELD_KEYS = EDITABLE_FIELDS
-  .filter(f => f.source === "user" || f.source === "userDetails")
-  .map(f => f.key);
-const ADDRESS_TEXT_FIELD_KEYS = EDITABLE_FIELDS
-  .filter(f => f.source === "userAddress" && !LOCATION_KEYS.includes(f.key))
-  .map(f => f.key);
-
-/* ── Location fields editor — cascading Region → Province → Municipality →
-   Barangay dropdowns fed by /api/location/*, same data source and pattern
-   the customer signup flow uses. Replaces free-typed text inputs for these
-   fields so users can't enter a location that doesn't exist. ── */
-function LocationFieldsEditor({ values, onChange, token }) {
-  const [regions,        setRegions]        = useState([]);
-  const [provinces,      setProvinces]      = useState([]);
-  const [municipalities, setMunicipalities] = useState([]);
-  const [barangays,      setBarangays]      = useState([]);
-  const [loadingReg,  setLoadingReg]  = useState(false);
-  const [loadingProv, setLoadingProv] = useState(false);
-  const [loadingMun,  setLoadingMun]  = useState(false);
-  const [loadingBar,  setLoadingBar]  = useState(false);
-  const [selRegion, setSelRegion] = useState(null);
-  const [selProv,   setSelProv]   = useState(null);
-  const [selMun,    setSelMun]    = useState(null);
-  const [selBar,    setSelBar]    = useState(null);
-
-  // Names to auto-match against each list once it loads, so opening the
-  // modal doesn't blank out the user's existing address.
-  const prefill = useRef({
-    region:       values.region       || "",
-    province:     values.province     || "",
-    municipality: values.municipality || values.city || "",
-    barangay:     values.barangay     || "",
-  });
-
-  // Skip pushing a change on each field's very first effect run (mount),
-  // so an unresolved/no-match prefill doesn't wipe out the original value.
-  const firstReg  = useRef(true);
-  const firstProv = useRef(true);
-  const firstMun  = useRef(true);
-  const firstBar  = useRef(true);
-
-  useEffect(() => {
-    setLoadingReg(true);
-    fetchRegions(token).then(setRegions).catch(console.error).finally(() => setLoadingReg(false));
-  }, [token]);
-
-  useEffect(() => {
-    if (!regions.length || selRegion) return;
-    const match = regions.find((r) => r.regionName === prefill.current.region);
-    if (match) setSelRegion(match);
-  }, [regions]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!selRegion) { setProvinces([]); return; }
-    setLoadingProv(true);
-    setProvinces([]); setSelProv(null); setMunicipalities([]); setSelMun(null); setBarangays([]); setSelBar(null);
-    fetchProvinces(selRegion.regionID, token).then(setProvinces).catch(console.error).finally(() => setLoadingProv(false));
-  }, [selRegion]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!provinces.length || selProv) return;
-    const match = provinces.find((p) => p.provinceName === prefill.current.province);
-    if (match) setSelProv(match);
-  }, [provinces]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!selProv) { setMunicipalities([]); return; }
-    setLoadingMun(true);
-    setMunicipalities([]); setSelMun(null); setBarangays([]); setSelBar(null);
-    fetchMunicipalities(selProv.provinceID, token).then(setMunicipalities).catch(console.error).finally(() => setLoadingMun(false));
-  }, [selProv]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!municipalities.length || selMun) return;
-    const match = municipalities.find((m) => m.municipalityName === prefill.current.municipality);
-    if (match) setSelMun(match);
-  }, [municipalities]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!selMun) { setBarangays([]); return; }
-    setLoadingBar(true);
-    setBarangays([]); setSelBar(null);
-    fetchBarangays(selMun.municipalityID, token).then(setBarangays).catch(console.error).finally(() => setLoadingBar(false));
-  }, [selMun]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!barangays.length || selBar) return;
-    const match = barangays.find((b) => b.barangayName === prefill.current.barangay);
-    if (match) setSelBar(match);
-  }, [barangays]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Push each resolved selection up into the parent form.
-  useEffect(() => {
-    if (firstReg.current) { firstReg.current = false; return; }
-    onChange({ region: selRegion?.regionName || "" });
-  }, [selRegion]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (firstProv.current) { firstProv.current = false; return; }
-    onChange({ province: selProv?.provinceName || "" });
-  }, [selProv]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (firstMun.current) { firstMun.current = false; return; }
-    onChange({ city: selMun?.municipalityName || "", municipality: selMun?.municipalityName || "" });
-  }, [selMun]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (firstBar.current) { firstBar.current = false; return; }
-    onChange({ barangay: selBar?.barangayName || "" });
-  }, [selBar]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleRegion = (e) => { prefill.current = {}; setSelRegion(regions.find((r) => r.regionID === e.target.value) || null); };
-  const handleProv   = (e) => { prefill.current = {}; setSelProv(provinces.find((p) => p.provinceID === e.target.value) || null); };
-  const handleMun    = (e) => { prefill.current = {}; setSelMun(municipalities.find((m) => m.municipalityID === e.target.value) || null); };
-  const handleBar    = (e) => { prefill.current = {}; setSelBar(barangays.find((b) => b.barangayID === e.target.value) || null); };
-
-  const selectCls = "w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50 disabled:text-gray-400";
-
-  return (
-    <>
-      <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Region</label>
-        <select className={selectCls} value={selRegion?.regionID || ""} onChange={handleRegion} disabled={loadingReg}>
-          <option value="">{loadingReg ? "Loading…" : "— Select Region —"}</option>
-          {regions.map((r) => <option key={r.regionID} value={r.regionID}>{r.regionName}</option>)}
-        </select>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Province</label>
-        <select className={selectCls} value={selProv?.provinceID || ""} onChange={handleProv} disabled={!selRegion || loadingProv}>
-          <option value="">{loadingProv ? "Loading…" : selRegion ? "— Select Province —" : "— Select a region first —"}</option>
-          {provinces.map((p) => <option key={p.provinceID} value={p.provinceID}>{p.provinceName}</option>)}
-        </select>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Municipality / City</label>
-        <select className={selectCls} value={selMun?.municipalityID || ""} onChange={handleMun} disabled={!selProv || loadingMun}>
-          <option value="">{loadingMun ? "Loading…" : selProv ? "— Select Municipality —" : "— Select a province first —"}</option>
-          {municipalities.map((m) => <option key={m.municipalityID} value={m.municipalityID}>{m.municipalityName}</option>)}
-        </select>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Barangay</label>
-        <select className={selectCls} value={selBar?.barangayID || ""} onChange={handleBar} disabled={!selMun || loadingBar}>
-          <option value="">{loadingBar ? "Loading…" : selMun ? "— Select Barangay —" : "— Select a municipality first —"}</option>
-          {barangays.map((b) => <option key={b.barangayID} value={b.barangayID}>{b.barangayName}</option>)}
-        </select>
-      </div>
-    </>
-  );
-}
-
 /* ── Edit Profile Modal ── */
 function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, onSaved, onCancelledRequest }) {
-  const { getToken } = useAuth();
-  const token = getToken();
   const [form, setForm] = useState(() =>
     Object.fromEntries(EDITABLE_FIELDS.map(f => [f.key, current[f.key] || ""]))
   );
@@ -401,28 +147,31 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
   // without needing to close/reopen it.
   const [activePending, setActivePending] = useState(pendingRequest);
 
-  const handleChange = (key) => (e) => {
-    const val = e.target.value;
-    // Postal Code and Zip Code are the same value stored twice (the
-    // customer backend already does this on save) — keep them in sync
-    // here too so admins don't have to type it twice.
-    if (key === "postalCode") {
-      setForm(f => ({ ...f, postalCode: val, zipCode: val }));
-    } else {
-      setForm(f => ({ ...f, [key]: val }));
-    }
+  const handleChange = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }));
+
+  // Routed through the backend now instead of a direct Firestore
+  // updateDoc/addDoc — same reasoning as ResubmitIdModal's authedFetch:
+  // this bypassed audit logging and (for the direct-apply path) the
+  // server-side role check entirely.
+  const authedFetch = async (method, path, body) => {
+    const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.message || "Request failed.");
+    return json;
   };
 
   const handleCancelRequest = async () => {
     if (!activePending) return;
     setCancelling(true);
     try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/edit-requests/${activePending.id}/cancel`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Could not cancel the pending request.");
+      await authedFetch("PATCH", `/api/profile/edit-requests/${activePending.id}/cancel`);
       setActivePending(null);
       onCancelledRequest?.();
     } catch (e) {
@@ -437,27 +186,19 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
     setError(null);
     try {
       if (canEditDirectly) {
-        // Owner/Admin: applied straight to the underlying docs server-side,
-        // no approval needed — same shape as an edit request's `changes`,
-        // just applied immediately instead of going through review.
-        const changes = [];
-        EDITABLE_FIELDS.forEach(f => {
-          if (form[f.key] === (current[f.key] || "")) return; // unchanged
-          changes.push({ field: f.key, collection: f.source, newValue: form[f.key] });
-        });
+        // Owner/Admin: applies straight to the underlying docs server-side,
+        // no approval needed. Only send fields that actually changed —
+        // mirrors the old direct-Firestore branch's behavior.
+        const changedFields = EDITABLE_FIELDS
+          .filter(f => form[f.key] !== (current[f.key] || ""))
+          .map(f => ({ field: f.key, collection: f.source, newValue: form[f.key] || "" }));
 
-        if (changes.length) {
-          const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/fields`, {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${localStorage.getItem("token")}`,
-            },
-            body: JSON.stringify({ changes }),
-          });
-          const json = await res.json();
-          if (!res.ok) throw new Error(json.message || "Save failed.");
+        if (!changedFields.length) {
+          onClose();
+          return;
         }
+
+        await authedFetch("PUT", "/api/profile/fields", { changes: changedFields });
         onSaved({ submitted: false });
       } else {
         const hasAnyChange = EDITABLE_FIELDS.some(f => form[f.key] !== (current[f.key] || ""));
@@ -477,16 +218,7 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
           newValue: form[f.key] || "",
         }));
 
-        const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/edit-requests`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-          body: JSON.stringify({ role: current.role, changes }),
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.message || "Could not submit request.");
+        await authedFetch("POST", "/api/profile/edit-requests", { role: current.role, changes });
         onSaved({ submitted: true });
       }
     } catch (e) {
@@ -561,55 +293,16 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
                 </div>
               )}
 
-              <div>
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Profile Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  {EDITABLE_FIELDS.filter(f => PROFILE_FIELD_KEYS.includes(f.key)).map(f => (
-                    <EditField
-                      key={f.key}
-                      label={f.label}
-                      type={f.type}
-                      value={form[f.key]}
-                      onChange={handleChange(f.key)}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="pt-4 border-t">
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Address</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <LocationFieldsEditor
-                    values={{
-                      region: form.region, province: form.province,
-                      city: form.city, municipality: form.municipality, barangay: form.barangay,
-                    }}
-                    onChange={(patch) => setForm(f => ({ ...f, ...patch }))}
-                    token={token}
+              <div className="grid grid-cols-2 gap-4">
+                {EDITABLE_FIELDS.map(f => (
+                  <EditField
+                    key={f.key}
+                    label={f.label}
+                    type={f.type}
+                    value={form[f.key]}
+                    onChange={handleChange(f.key)}
                   />
-                  {EDITABLE_FIELDS.filter(f => ADDRESS_TEXT_FIELD_KEYS.includes(f.key)).map(f =>
-                    f.key === "zipCode" ? (
-                      <div key={f.key}>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Zip Code</label>
-                        <input
-                          type="text"
-                          value={form.postalCode || ""}
-                          disabled
-                          className="w-full border rounded-xl px-3 py-2 text-sm outline-none bg-gray-50 text-gray-400 cursor-not-allowed"
-                        />
-                        <p className="text-xs text-gray-400 mt-1">Same as Postal Code</p>
-                      </div>
-                    ) : (
-                      <EditField
-                        key={f.key}
-                        label={f.label}
-                        type={f.type}
-                        value={form[f.key]}
-                        onChange={handleChange(f.key)}
-                      />
-                    )
-                  )}
-                </div>
+                ))}
               </div>
             </div>
 
@@ -632,12 +325,26 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
   );
 }
 
-/* ── Resubmit ID Modal — upload a new license photo for admin review ── */
-function ResubmitIdModal({ current, onClose, onSubmitted }) {
+/* ── Resubmit ID Modal — upload a new license or document photo ──
+   documentKind: "license" | "document". For Driver/Supervisor
+   (canEditDirectly=false) this submits to idResubmitRequests for admin
+   review. For Owner/Admin (canEditDirectly=true) it applies immediately
+   via the direct-apply endpoint, no review step — matching the same
+   trust boundary EditProfileModal already uses for basic fields.
+   Routed through the backend now instead of a direct Firestore
+   addDoc/updateDoc — that bypassed audit logging and (for license) the
+   required-expiry rule entirely. */
+function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSubmitted }) {
   const [file, setFile]       = useState(null);
   const [preview, setPreview] = useState(null);
+  const [expiry, setExpiry]   = useState("");
+  const [docType, setDocType]     = useState(current.documentType || "");
+  const [docNumber, setDocNumber] = useState(current.documentNumber || "");
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState(null);
+
+  const isLicense = documentKind === "license";
+  const currentUrl = isLicense ? current.driverLicenseUrl : current.documentImageUrl;
 
   const handleFile = (e) => {
     const f = e.target.files?.[0];
@@ -646,30 +353,53 @@ function ResubmitIdModal({ current, onClose, onSubmitted }) {
     setPreview(URL.createObjectURL(f));
   };
 
+  const authedFetch = async (path, body) => {
+    const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+      method: canEditDirectly ? "PUT" : "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.message || "Request failed.");
+    return json;
+  };
+
   const handleSubmit = async () => {
-    if (!file) { setError("Please choose a photo of your license first."); return; }
+    if (!file) { setError(`Please choose a photo of your ${isLicense ? "license" : "document"} first.`); return; }
+    if (canEditDirectly && isLicense && !expiry) { setError("Please enter the expiry date shown on the card."); return; }
+    if (!isLicense && (!docType.trim() || !docNumber.trim())) { setError("Please fill in the document type and number shown on the card."); return; }
     setSaving(true);
     setError(null);
     try {
-      const path = `driverLicenseResubmit/${current.uid}_${Date.now()}_${file.name}`;
+      const path = `${isLicense ? "driverLicenseResubmit" : "documentResubmit"}/${current.uid}_${Date.now()}_${file.name}`;
       const storageRef = ref(storage, path);
       await uploadBytes(storageRef, file);
-      const newLicenseUrl = await getDownloadURL(storageRef);
+      const newUrl = await getDownloadURL(storageRef);
 
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/id-resubmit-requests`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
-          role: current.role,
-          currentLicenseUrl: current.driverLicenseUrl || "",
-          newLicenseUrl,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Upload failed. Please try again.");
+      if (canEditDirectly) {
+        // Owner/Admin — applies immediately, no review step.
+        await authedFetch("/api/profile/document", {
+          documentKind,
+          newUrl,
+          ...(isLicense ? { driverLicenseExpiry: expiry } : { documentType: docType.trim(), documentNumber: docNumber.trim() }),
+        });
+      } else {
+        // Driver/Supervisor — goes to admin for review; expiry (for
+        // license) gets entered by the reviewer, not here. Document
+        // type/number are typed here at submission — same as the
+        // original signup flow — and carried straight through on
+        // approval, since there's no per-card verification concept for
+        // these two fields the way there is for a license's expiry date.
+        await authedFetch("/api/profile/id-resubmit-requests", {
+          documentKind,
+          currentUrl: currentUrl || "",
+          newUrl,
+          ...(isLicense ? {} : { documentType: docType.trim(), documentNumber: docNumber.trim() }),
+        });
+      }
       onSubmitted();
     } catch (e) {
       setError(e.message || "Upload failed. Please try again.");
@@ -682,25 +412,27 @@ function ResubmitIdModal({ current, onClose, onSubmitted }) {
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b">
-          <h2 className="font-bold text-lg text-gray-800">Resubmit Driver's License</h2>
+          <h2 className="font-bold text-lg text-gray-800">Resubmit {isLicense ? "Driver's License" : "Document"}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><IconClose /></button>
         </div>
         <div className="p-5 space-y-4">
           <p className="text-xs text-gray-500">
-            Upload a clear photo of your updated (renewed) driver's license. An admin will review it and confirm the new expiry date before it's applied to your account.
+            {canEditDirectly
+              ? `Upload a clear photo of your updated ${isLicense ? "(renewed) driver's license" : "document"}. This applies to your account immediately.`
+              : `Upload a clear photo of your updated ${isLicense ? "(renewed) driver's license" : "document"}. An admin will review it${isLicense ? " and confirm the new expiry date" : ""} before it's applied to your account.`}
           </p>
 
-          {current.driverLicenseUrl && (
+          {currentUrl && (
             <div>
               <p className="text-xs text-gray-400 mb-1">Current on file</p>
-              <img src={current.driverLicenseUrl} alt="Current license" className="w-full h-32 object-cover rounded-xl border" />
+              <img src={currentUrl} alt={`Current ${isLicense ? "license" : "document"}`} className="w-full h-32 object-cover rounded-xl border" />
             </div>
           )}
 
           <label className="block border-2 border-dashed rounded-xl p-4 text-center cursor-pointer hover:bg-gray-50">
             <input type="file" accept="image/*" onChange={handleFile} className="hidden" />
             {preview ? (
-              <img src={preview} alt="New license preview" className="w-full h-32 object-cover rounded-lg mx-auto" />
+              <img src={preview} alt="New photo preview" className="w-full h-32 object-cover rounded-lg mx-auto" />
             ) : (
               <div className="flex flex-col items-center gap-2 text-gray-400 py-4">
                 <IconUpload className="w-6 h-6" />
@@ -709,13 +441,55 @@ function ResubmitIdModal({ current, onClose, onSubmitted }) {
             )}
           </label>
 
+          {canEditDirectly && isLicense && (
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">
+                License Expiry Date <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="date"
+                value={expiry}
+                onChange={(e) => setExpiry(e.target.value)}
+                className="w-full text-sm border rounded-lg px-3 py-1.5"
+              />
+            </div>
+          )}
+
+          {!isLicense && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">
+                  Document Type <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={docType}
+                  onChange={(e) => setDocType(e.target.value)}
+                  placeholder="e.g. Passport"
+                  className="w-full text-sm border rounded-lg px-3 py-1.5"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">
+                  Document Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={docNumber}
+                  onChange={(e) => setDocNumber(e.target.value)}
+                  className="w-full text-sm border rounded-lg px-3 py-1.5"
+                />
+              </div>
+            </div>
+          )}
+
           {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
 
           <div className="flex justify-end gap-3">
             <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
             <button onClick={handleSubmit} disabled={saving}
               className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60">
-              {saving ? "Uploading..." : "Submit for Review"}
+              {saving ? "Uploading..." : canEditDirectly ? "Save" : "Submit for Review"}
             </button>
           </div>
         </div>
@@ -725,57 +499,20 @@ function ResubmitIdModal({ current, onClose, onSubmitted }) {
 }
 
 // Shared by every role (Owner, Admin, Supervisor, Driver).
-export default function Account() {
+export default function Profile() {
   const navigate = useNavigate();
-  const { user, logout, previewRole, setPreviewRole } = useAuth();
-  const { isDark, toggleDark } = useTheme();
+  const { user, logout } = useAuth();
 
   const [profile, setProfile] = useState(null); // merged user + userDetails + userAddress
   const [loading, setLoading] = useState(true);
   const [showEdit, setShowEdit] = useState(false);
-  const [showResubmit, setShowResubmit] = useState(false);
+  const [showResubmit, setShowResubmit] = useState(null); // null | "license" | "document"
   const [notice, setNotice] = useState(null);
   const [profileTab, setProfileTab] = useState("details"); // "details" | "document"
 
   const [pendingProfileReq, setPendingProfileReq] = useState(false);
   const [pendingIdReq, setPendingIdReq]           = useState(false);
   const [allProfileReqs, setAllProfileReqs]       = useState([]);
-
-  // ── Change Password ──
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword,     setNewPassword]     = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [changingPw,      setChangingPw]      = useState(false);
-  const [pwNotice,        setPwNotice]        = useState(null); // { msg, type: "success"|"error" }
-
-  const handleChangePassword = async () => {
-    if (!newPassword || !confirmPassword || !currentPassword) {
-      setPwNotice({ msg: "Please fill in all password fields.", type: "error" }); return;
-    }
-    if (newPassword.length < 6) {
-      setPwNotice({ msg: "New password must be at least 6 characters.", type: "error" }); return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPwNotice({ msg: "Passwords do not match.", type: "error" }); return;
-    }
-    setChangingPw(true);
-    try {
-      const firebaseUser = auth.currentUser;
-      const credential = EmailAuthProvider.credential(firebaseUser.email, currentPassword);
-      await reauthenticateWithCredential(firebaseUser, credential);
-      await updatePassword(firebaseUser, newPassword);
-      setCurrentPassword(""); setNewPassword(""); setConfirmPassword("");
-      setPwNotice({ msg: "Password changed successfully.", type: "success" });
-    } catch (e) {
-      if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential") {
-        setPwNotice({ msg: "Current password is incorrect.", type: "error" });
-      } else {
-        setPwNotice({ msg: e.message, type: "error" });
-      }
-    } finally {
-      setChangingPw(false);
-    }
-  };
 
   const canEditDirectly = user?.role === "Owner" || user?.role === "Admin";
   // Driver's license expiry only matters for Driver/Supervisor accounts —
@@ -817,7 +554,6 @@ export default function Account() {
         ...(addressDoc ? addressDoc.data() : {}),
         driverLicenseUrl: documentDoc?.data()?.driverLicenseUrl || "",
         driverLicenseExpiry: documentDoc?.data()?.driverLicenseExpiry || null,
-        governmentIdUrl: documentDoc?.data()?.governmentIdUrl || "",
         documentImageUrl: documentDoc?.data()?.documentImageUrl || "",
         documentType: documentDoc?.data()?.documentType || "",
         documentNumber: documentDoc?.data()?.documentNumber || "",
@@ -866,25 +602,21 @@ export default function Account() {
     ? `${profile.firstName || ""} ${profile.lastName || ""}`.trim() || user.username || "—"
     : "—";
 
-  const card = `rounded-2xl border shadow-card overflow-hidden ${
-    isDark ? "bg-[#1A5F7A] border-[#4FC3F7]/20" : "bg-white"
-  }`;
-
   return (
-    <div className={`p-4 max-w-2xl mx-auto space-y-6 ${isDark ? "dark" : ""}`}>
+    <div className="p-4 max-w-2xl mx-auto space-y-6">
 
       {notice && (
         <div className={`rounded-2xl border px-4 py-3 text-sm ${notice.submitted ? "border-amber-200 bg-amber-50 text-amber-700" : "border-green-200 bg-green-50 text-green-700"}`}>
           {notice.submitted
             ? notice.idResubmit
-              ? "Your new license photo was submitted and is pending admin review."
+              ? `Your new ${notice.documentKind === "document" ? "document" : "license"} photo was submitted and is pending admin review.`
               : "Your edit request was submitted and is pending admin approval."
             : "Your profile was updated."}
         </div>
       )}
 
       {/* HEADER CARD */}
-      <div className={card}>
+      <div className="bg-white rounded-2xl border shadow-card overflow-hidden">
         <div className="bg-arl-primary px-6 py-8 flex items-center gap-4">
           <div className="w-16 h-16 rounded-full bg-white/15 border-2 border-white/30 flex items-center justify-center text-white text-xl font-bold shrink-0">
             {initials}
@@ -908,32 +640,24 @@ export default function Account() {
         {/* Details / Document sub-tabs */}
         <div className="flex gap-2 px-6 pt-4">
           <button onClick={() => setProfileTab("details")}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-              profileTab === "details"
-                ? "bg-teal-600 text-white shadow"
-                : isDark ? "bg-[#212121]/40 border border-[#4FC3F7]/20 text-[#F5F5F5]/60 hover:bg-[#212121]/60" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"
-            }`}>
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${profileTab === "details" ? "bg-teal-600 text-white shadow" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"}`}>
             Details
           </button>
           <button onClick={() => setProfileTab("document")}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-              profileTab === "document"
-                ? "bg-teal-600 text-white shadow"
-                : isDark ? "bg-[#212121]/40 border border-[#4FC3F7]/20 text-[#F5F5F5]/60 hover:bg-[#212121]/60" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"
-            }`}>
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${profileTab === "document" ? "bg-teal-600 text-white shadow" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"}`}>
             Document
           </button>
         </div>
 
         {loading ? (
           <div className="px-6 py-6 space-y-3">
-            {[...Array(4)].map((_, i) => <div key={i} className={`h-10 rounded-xl animate-pulse ${isDark ? "bg-[#212121]/50" : "bg-gray-100"}`} />)}
+            {[...Array(4)].map((_, i) => <div key={i} className="h-10 bg-gray-100 rounded-xl animate-pulse" />)}
           </div>
         ) : profileTab === "details" ? (
           <div className="px-6 py-2">
             {/* BADGES — sits right before Email, inside the Details panel */}
             {(pendingProfileReq || pendingIdReq || licenseExpiringSoon || licenseExpired) && (
-              <div className={`flex flex-wrap gap-2 py-3.5 border-b ${isDark ? "border-[#4FC3F7]/10" : "border-gray-50"}`}>
+              <div className="flex flex-wrap gap-2 py-3.5 border-b border-gray-50">
                 {pendingProfileReq && (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700">
                     Pending Profile Update Request
@@ -946,7 +670,7 @@ export default function Account() {
                 )}
                 {(licenseExpiringSoon || licenseExpired) && !pendingIdReq && (
                   <button
-                    onClick={() => setShowResubmit(true)}
+                    onClick={() => setShowResubmit("license")}
                     className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
                       licenseExpired ? "bg-red-50 border-red-200 text-red-700 hover:bg-red-100" : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
                     }`}
@@ -960,25 +684,25 @@ export default function Account() {
               </div>
             )}
 
-            <DetailRow icon={<IconMail />}        label="Email"    value={user.email} isDark={isDark} />
-            <DetailRow icon={<IconPhone />}       label="Phone"    value={profile?.phone} isDark={isDark} />
-            <DetailRow icon={<IconUser />}        label="Full Name" value={fullName} isDark={isDark} />
+            <DetailRow icon={<IconMail />}        label="Email"    value={user.email} />
+            <DetailRow icon={<IconPhone />}       label="Phone"    value={profile?.phone} />
+            <DetailRow icon={<IconUser />}        label="Full Name" value={fullName} />
             <DetailRow icon={<IconHome />}        label="Address"
-              value={[profile?.street, profile?.barangay, profile?.city, profile?.province].filter(Boolean).join(", ")} isDark={isDark} />
-            <DetailRow icon={<IconShield />}      label="Role"     value={user.role} isDark={isDark} />
+              value={[profile?.street, profile?.barangay, profile?.city, profile?.province].filter(Boolean).join(", ")} />
+            <DetailRow icon={<IconShield />}      label="Role"     value={user.role} />
           </div>
         ) : (
           <div className="px-6 py-4 space-y-5">
-            {!tracksLicense && !profile?.governmentIdUrl && !profile?.driverLicenseUrl ? (
-              <p className={`text-sm text-center py-6 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>No documents on file.</p>
+            {!tracksLicense && !profile?.documentImageUrl && !profile?.driverLicenseUrl ? (
+              <p className="text-sm text-gray-400 text-center py-6">No documents on file.</p>
             ) : (
               <>
                 {tracksLicense && (
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
-                      <p className={`text-xs font-semibold uppercase ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>Driver's License</p>
+                      <p className="text-xs font-semibold text-gray-400 uppercase">Driver's License</p>
                       <button
-                        onClick={() => setShowResubmit(true)}
+                        onClick={() => setShowResubmit("license")}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700"
                       >
                         <IconEdit className="w-3.5 h-3.5" />
@@ -988,7 +712,7 @@ export default function Account() {
                     {profile?.driverLicenseUrl ? (
                       <img src={profile.driverLicenseUrl} alt="Driver's License" className="w-full h-48 object-cover rounded-xl border" />
                     ) : (
-                      <p className={`text-sm rounded-xl p-4 text-center ${isDark ? "text-[#F5F5F5]/40 bg-[#212121]/40" : "text-gray-400 bg-gray-50"}`}>No license photo on file yet.</p>
+                      <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No license photo on file yet.</p>
                     )}
                     <DetailRow
                       icon={<IconWarning />}
@@ -998,20 +722,30 @@ export default function Account() {
                   </div>
                 )}
 
-                {/* Valid ID / Government ID — display only, no resubmit flow.
-                    Expiry tracking/auto-lock is scoped to the driver's license
-                    only (see earlier decision — PH government ID types don't
-                    expire consistently enough to enforce the same way). */}
-                {(profile?.governmentIdUrl || profile?.documentType) && (
-                  <div className={`space-y-3 pt-2 border-t ${isDark ? "border-[#4FC3F7]/10" : ""}`}>
-                    <p className={`text-xs font-semibold uppercase ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>Valid ID</p>
-                    {profile?.governmentIdUrl ? (
-                      <img src={profile.governmentIdUrl} alt="Valid ID" className="w-full h-48 object-cover rounded-xl border" />
+                {/* Document (government ID etc.) — was display-only with no
+                    resubmit path at all; fixed governmentIdUrl (a field
+                    nothing ever wrote) to the actual documentImageUrl field.
+                    No expiry tracking here by design — see earlier decision;
+                    that's scoped to the driver's license only. */}
+                {(profile?.documentImageUrl || profile?.documentType) && (
+                  <div className="space-y-3 pt-2 border-t">
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs font-semibold text-gray-400 uppercase">Valid ID</p>
+                      <button
+                        onClick={() => setShowResubmit("document")}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700"
+                      >
+                        <IconEdit className="w-3.5 h-3.5" />
+                        Resubmit
+                      </button>
+                    </div>
+                    {profile?.documentImageUrl ? (
+                      <img src={profile.documentImageUrl} alt="Valid ID" className="w-full h-48 object-cover rounded-xl border" />
                     ) : (
-                      <p className={`text-sm rounded-xl p-4 text-center ${isDark ? "text-[#F5F5F5]/40 bg-[#212121]/40" : "text-gray-400 bg-gray-50"}`}>No ID photo on file yet.</p>
+                      <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No ID photo on file yet.</p>
                     )}
-                    <DetailRow icon={<IconUser />} label="ID Type"   value={profile.documentType} isDark={isDark} />
-                    <DetailRow icon={<IconUser />} label="ID Number" value={profile.documentNumber} isDark={isDark} />
+                    <DetailRow icon={<IconUser />} label="ID Type"   value={profile.documentType} />
+                    <DetailRow icon={<IconUser />} label="ID Number" value={profile.documentNumber} />
                   </div>
                 )}
               </>
@@ -1020,87 +754,8 @@ export default function Account() {
         )}
       </div>
 
-      {/* PREFERENCES — Dark Mode (moved here from the old Settings page; this is a personal preference, not a system setting) */}
-      <div className={`${card} px-6 py-4 space-y-3`}>
-        <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
-          <IconPalette className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Appearance
-        </h2>
-        <Toggle label="Dark Mode" checked={isDark} onChange={() => toggleDark()} isDark={isDark} />
-      </div>
-
-      {/* VIEW SYSTEM AS — Admin-only cosmetic role preview. Never shown to
-          Owner/Supervisor/Driver, and gated on the real user.role (not
-          effectiveRole) so this control stays visible and usable no matter
-          which role is currently being previewed — it's how you get back. */}
-      {user.role === "Admin" && (
-        <div className={`${card} px-6 py-4 space-y-3`}>
-          <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
-            <IconEye className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> View System As
-          </h2>
-          <p className={`text-xs ${isDark ? "text-[#F5F5F5]/50" : "text-gray-400"}`}>
-            Preview the sidebar and pages as another role sees them. This only changes what's shown to you —
-            your actions still use your real Admin permissions underneath.
-          </p>
-
-          <div className="space-y-2">
-            {[
-              { value: "", label: "Admin (You) — no preview" },
-              { value: "Owner", label: "Owner" },
-              { value: "Supervisor", label: "Supervisor" },
-              { value: "Driver", label: "Driver" },
-            ].map((opt) => {
-              const checked = (previewRole || "") === opt.value;
-              return (
-                <label
-                  key={opt.value || "off"}
-                  className={`flex items-center gap-3 border rounded-xl px-4 py-3 cursor-pointer transition-colors ${
-                    checked
-                      ? isDark ? "border-[#4FC3F7] bg-[#4FC3F7]/10" : "border-arl-dark bg-arl-dark/5"
-                      : isDark ? "border-[#4FC3F7]/20" : "border-gray-100"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="previewRole"
-                    checked={checked}
-                    onChange={() => setPreviewRole(opt.value || null)}
-                    className="accent-arl-dark"
-                  />
-                  <span className={`text-sm ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>{opt.label}</span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* SECURITY — Change Password (moved here from the old Settings page) */}
-      <div className={`${card} px-6 py-4 space-y-4`}>
-        <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
-          <IconLock className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Security
-        </h2>
-        {pwNotice && (
-          <div className={`rounded-xl border px-4 py-2.5 text-sm ${
-            pwNotice.type === "success"
-              ? isDark ? "bg-[#1A5F7A] text-[#4FC3F7] border-[#4FC3F7]/30" : "bg-green-50 text-green-700 border-green-200"
-              : "bg-[#D32F2F]/10 text-[#D32F2F] border-[#D32F2F]/30"
-          }`}>{pwNotice.msg}</div>
-        )}
-        <PasswordInput label="Current Password"     value={currentPassword} onChange={setCurrentPassword} isDark={isDark} />
-        <PasswordInput label="New Password"         value={newPassword}     onChange={setNewPassword}     isDark={isDark} />
-        <PasswordInput label="Confirm New Password" value={confirmPassword} onChange={setConfirmPassword} isDark={isDark} />
-        <button onClick={handleChangePassword} disabled={changingPw}
-          className={`w-full px-6 py-2.5 rounded-xl shadow text-sm font-medium disabled:opacity-50 transition-all ${
-            isDark
-              ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]"
-              : "bg-arl-dark hover:opacity-90 text-white"
-          }`}>
-          {changingPw ? "Changing Password…" : "Change Password"}
-        </button>
-      </div>
-
       {/* ACTIONS */}
-      <div className={`${card} px-6 py-4`}>
+      <div className="bg-white rounded-2xl border shadow-card px-6 py-4">
         <button
           onClick={handleSignOut}
           className="flex items-center gap-2 text-red-500 text-sm font-semibold hover:text-red-600 transition-colors"
@@ -1129,10 +784,12 @@ export default function Account() {
       {showResubmit && profile && (
         <ResubmitIdModal
           current={profile}
-          onClose={() => setShowResubmit(false)}
+          documentKind={showResubmit}
+          canEditDirectly={canEditDirectly}
+          onClose={() => setShowResubmit(null)}
           onSubmitted={() => {
-            setShowResubmit(false);
-            setNotice({ submitted: true, idResubmit: true });
+            setShowResubmit(null);
+            setNotice({ submitted: !canEditDirectly, idResubmit: true, documentKind: showResubmit });
             fetchProfile();
             setTimeout(() => setNotice(null), 5000);
           }}
