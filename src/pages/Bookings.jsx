@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "../fireabase";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -654,18 +656,36 @@ export default function Bookings() {
     setTimeout(() => setDeleteToast(null), 4000);
   };
 
-  const fetchBookings = useCallback(async () => {
-    setLoading(true); setError(null);
+  // `silent` skips the loading spinner — used by the live-refresh listener below
+  // so a change from another admin/customer doesn't flash the whole table blank.
+  const fetchBookings = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings?status=all`, { headers: { Authorization: `Bearer ${getToken()}` } });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to load bookings");
       setAllBookings(json.data);
-    } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    } catch (err) { if (!silent) setError(err.message); }
+    finally { if (!silent) setLoading(false); }
   }, [getToken]);
 
   useEffect(() => { fetchBookings(); }, [fetchBookings]);
+
+  // ── Live refresh ────────────────────────────────────────────────────────────
+  // The REST endpoint does all the real work (joins car/user/driver info, sorts,
+  // filters), so instead of re-implementing that here off raw Firestore docs,
+  // we just listen for *any* change to the bookings collection and re-run the
+  // existing fetch. Bursts of writes (e.g. a booking + its history doc changing
+  // together) are coalesced with a short debounce so we don't hammer the API.
+  const refetchTimer = useRef(null);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "bookings"), () => {
+      clearTimeout(refetchTimer.current);
+      refetchTimer.current = setTimeout(() => fetchBookings(true), 400);
+    });
+    return () => { unsub(); clearTimeout(refetchTimer.current); };
+  }, [fetchBookings]);
 
   // Opens a specific status tab when linked in via ?tab=<Upcoming|Ongoing|...>
   // (used by Dashboard's stat cards). Runs once, on mount — doesn't need to

@@ -1,5 +1,7 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "../fireabase";
 import { useCurrency } from "../context/CurrencyContext";
 
 // Fire-and-forget audit log write — same pattern as Fleet.jsx's status
@@ -277,18 +279,35 @@ export default function Payments() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const fetchPayments = useCallback(async () => {
-    setLoading(true); setError(null);
+  // `silent` skips the loading spinner — used by the live-refresh listener below
+  // so a change from another admin (or a customer's payment/refund action)
+  // doesn't flash the whole table blank.
+  const fetchPayments = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/payments`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to load payments.");
       setPayments(data.data || []);
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+    } catch (e) { if (!silent) setError(e.message); }
+    finally { if (!silent) setLoading(false); }
   }, [token]);
 
   useEffect(() => { fetchPayments(); }, [fetchPayments]);
+
+  // ── Live refresh ────────────────────────────────────────────────────────────
+  // Same approach as Bookings.jsx: the REST endpoint does the real work
+  // (joins, formatting), so we just listen for any change to the payments
+  // collection and re-run the existing fetch, debounced to coalesce bursts.
+  const refetchTimer = useRef(null);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "payments"), () => {
+      clearTimeout(refetchTimer.current);
+      refetchTimer.current = setTimeout(() => fetchPayments(true), 400);
+    });
+    return () => { unsub(); clearTimeout(refetchTimer.current); };
+  }, [fetchPayments]);
 
   // Deep-link from other pages (e.g. Car Tracking's payment modal linking
   // here with ?bookingID=...) — pre-fill the search box so the relevant
