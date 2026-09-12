@@ -147,6 +147,7 @@ const EMPTY_FORM = {
   overrideTotal: "",
   description: "",
   maintenanceDate: "", nextMaintenanceDate: "", status: "Scheduled",
+  partsAddressed: [], // [{ carID, carPartID, carPartName, tripPhase, bookingID }] — damaged parts this job is meant to fix, resolved on completion
   useToday: false,      // true = maintenanceDate always mirrors today's date
 };
 
@@ -355,6 +356,7 @@ export default function Maintenance() {
         maintenanceDate:      form.maintenanceDate,
         nextMaintenanceDate:  form.nextMaintenanceDate || null,
         status:               form.status,
+        partsAddressed:       form.partsAddressed,
       };
 
       const res = editRecord
@@ -384,6 +386,7 @@ export default function Maintenance() {
       maintenanceDate:      isoDate(r.maintenanceDate),
       nextMaintenanceDate:  isoDate(r.nextMaintenanceDate),
       status:               r.status || "Scheduled",
+      partsAddressed:       r.partsAddressed || [],
     });
     setEditRecord(r);
     setShowAdd(false);
@@ -394,6 +397,29 @@ export default function Maintenance() {
     setCustomName(""); setCustomPrice("");
     setEditRecord(null);
     setShowAdd(true);
+  };
+
+  // Toggles one damaged/stolen/missing part in/out of this maintenance
+  // job's "will be fixed here" checklist. Purely local state until Save —
+  // nothing about the part's actual record changes yet, and even after
+  // saving, the real resolution only happens once this job's own status
+  // becomes "Completed" (see updateMaintenanceStatus on the backend).
+  const toggleAddressedPart = (part) => {
+    setForm(f => {
+      const already = f.partsAddressed.some(p => p.carPartID === part.carPartID);
+      return {
+        ...f,
+        partsAddressed: already
+          ? f.partsAddressed.filter(p => p.carPartID !== part.carPartID)
+          : [...f.partsAddressed, {
+              carID: part.carID,
+              carPartID: part.carPartID,
+              carPartName: part.carPartName,
+              tripPhase: part.source === "after_trip" ? "after" : "before",
+              bookingID: part.bookingID,
+            }],
+      };
+    });
   };
 
   const toggleService = (serviceID, serviceName) => {
@@ -790,6 +816,37 @@ export default function Maintenance() {
                 rows={3} placeholder="Details of the maintenance…"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none resize-none" />
             </Field>
+
+            {/* Damaged/stolen/missing parts this job is meant to fix.
+                Checking a box only records intent — the actual resolution
+                (flipping the part's status back to Good on its trip
+                record) only happens once this record's own status is
+                later set to Completed, not the moment it's checked here.
+                That way a job that ends up Cancelled instead never
+                silently marks a part as fixed that was never worked on. */}
+            {form.carID && (
+              <Field label="Damaged Parts Being Addressed">
+                {damagedParts.filter(p => p.carID === form.carID).length === 0 ? (
+                  <p className="text-xs text-gray-400 px-1">No damaged/stolen/missing parts on record for this vehicle.</p>
+                ) : (
+                  <div className="space-y-1.5 border border-gray-200 rounded-xl p-2 max-h-36 overflow-y-auto">
+                    {damagedParts.filter(p => p.carID === form.carID).map(p => (
+                      <label key={p.id} className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-gray-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="accent-teal-600"
+                          checked={form.partsAddressed.some(sel => sel.carPartID === p.carPartID)}
+                          onChange={() => toggleAddressedPart(p)}
+                        />
+                        <span className="text-sm text-gray-700">{p.carPartName}</span>
+                        <span className="text-xs text-gray-400">({p.status})</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </Field>
+            )}
+
             <Field label="Maintenance Date *">
               <label className="flex items-center gap-2 mb-1.5 cursor-pointer">
                 <input type="checkbox" checked={form.useToday}
