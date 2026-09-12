@@ -54,6 +54,7 @@ const ROUTE_BY_COLLECTION = {
   user: "/users",
   cars: "/car-tracking",
   refundRequests: "/refund-requests",
+  carMaintenance: "/maintenance",
 };
 
 const META_BY_TYPE = {
@@ -64,6 +65,7 @@ const META_BY_TYPE = {
   coding_alert:         { bg: "bg-red-100",    emoji: "🚫", title: "Coding Restriction" },
   pickup_overdue:       { bg: "bg-orange-100", emoji: "⏰", title: "Pickup Overdue" },
   return_overdue:       { bg: "bg-red-100",    emoji: "⏰", title: "Return Overdue" },
+  maintenance_overdue:  { bg: "bg-red-100",    emoji: "🔧", title: "Maintenance Overdue" },
   refund_request:       { bg: "bg-blue-100",   emoji: "💸", title: "Refund Request" },
   refund_due:           { bg: "bg-blue-100",   emoji: "💰", title: "Refund Due" },
   license_expiring:     { bg: "bg-yellow-100", emoji: "🪪", title: "License Expiring Soon" },

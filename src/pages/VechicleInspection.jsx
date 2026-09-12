@@ -720,7 +720,16 @@ export default function VehicleDocs() {
     const keys = Object.keys(editsToCommit);
     if (!keys.length) return;
 
-    const existingInv     = tripType === "before" ? beforeInv : afterInv;
+    // For a first-ever After-trip save (no afterInv exists yet), seed the
+    // merge base from beforeInv instead of nothing. Otherwise a part that's
+    // still damaged and simply wasn't touched in this After session (since
+    // it needed no change — see getEffectivePartStatus's Before-carryover
+    // fallback above) would get silently saved as implicitly "Good" here,
+    // because only *edited* parts get merged in below — the fact that it
+    // displayed as Damaged doesn't put it in `editsToCommit` by itself.
+    // Once a real afterInv exists (any later save), it takes over and
+    // Before is no longer consulted — this is only a one-time seed.
+    const existingInv = tripType === "before" ? beforeInv : (afterInv || beforeInv);
 
     // Merge on top of whatever's already recorded so committing one
     // part's status doesn't clobber damage already saved for another.
@@ -967,9 +976,24 @@ export default function VehicleDocs() {
 
   // Good/Damaged effective status per part — saved record, overridden by
   // whatever's staged locally but not yet saved.
+  //
+  // On the After tab specifically, before any after-trip record has been
+  // saved yet, this used to default straight to "Good" — meaning a part
+  // marked Damaged in Before would silently show as Good the first time
+  // After was opened, with no indication it had ever been flagged. That's
+  // backwards: an unassessed part should carry over whatever Before said,
+  // not reset to the safest-looking value, so staff have to actively
+  // confirm "yes, this got fixed" rather than the form quietly assuming it
+  // did. Falls back to Before's own recorded status first, "Good" only if
+  // Before never recorded anything for this part either.
   const getEffectivePartStatus = (part) => {
-    const savedEntry  = currentInv?.damageParts?.find(d => d.carPartID === part.id);
-    const savedStatus = savedEntry?.status || "Good";
+    const savedEntry = currentInv?.damageParts?.find(d => d.carPartID === part.id);
+    let savedStatus = savedEntry?.status;
+    if (savedStatus === undefined && tripType === "after") {
+      const beforeEntry = beforeInv?.damageParts?.find(d => d.carPartID === part.id);
+      savedStatus = beforeEntry?.status;
+    }
+    savedStatus = savedStatus || "Good";
     return currentStatusEdits[part.id] !== undefined ? currentStatusEdits[part.id] : savedStatus;
   };
 

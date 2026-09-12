@@ -136,7 +136,7 @@ const BASIS_ICON = {
 
 // Fallbacks used only if /api/maintenance/config hasn't loaded yet —
 // the real source of truth is always the backend response.
-const FALLBACK_STATUSES = ["Scheduled", "In Progress", "Completed", "Cancelled", "Overdue"];
+const FALLBACK_STATUSES = ["Scheduled", "Completed", "Cancelled"];
 const FALLBACK_BASIS    = ["Post-Rental", "Monthly", "Mileage-based", "Annual", "Repair/Unplanned"];
 
 const EMPTY_FORM = {
@@ -192,12 +192,27 @@ export default function Maintenance() {
 
   const markAsReplaced = async (part) => {
     try {
-      const res = await authedFetch(`/api/car-parts/${part.carPartID}`, {
+      // The actual fix: writes back into the trip document's damageParts
+      // array — setting status to "Good" removes that entry entirely —
+      // so this part stops showing up here on reload, and on the
+      // Dashboard's live Alert too (it reads this same array), not just
+      // in this browser tab until the next page load.
+      const tripPhase = part.source === "after_trip" ? "after" : "before";
+      const histRes = await authedFetch(`/api/inventory/history/${tripPhase}/${part.bookingID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ carID: part.carID, carPartID: part.carPartID, newStatus: "Good" }),
+      });
+      const histJson = await histRes.json();
+      if (!histRes.ok) throw new Error(histJson.message || "Failed to resolve the damage record.");
+
+      // Keep the parts-catalog record's own status in sync too, purely for
+      // Inventory/Fleet display — this call is cosmetic now; the fetch
+      // above is what actually makes the item disappear for good.
+      authedFetch(`/api/car-parts/${part.carPartID}`, {
         method: "PUT",
         body: JSON.stringify({ markReplaced: true, replacedType: part.status }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Failed to mark as replaced.");
+      }).catch(() => {});
+
       setDamagedParts(prev => prev.filter(p => p.id !== part.id));
       setReplacedParts(prev => {
         if (prev.find(p => p.id === part.id)) return prev;

@@ -186,32 +186,77 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  // REAL-TIME — damaged/stolen carParts
+  // REAL-TIME — damaged/stolen/missing parts, sourced from inventoryAfterTrip.
+  //
+  // Previously this watched `carParts.status in ["Damaged","Stolen"]` — but
+  // that field on the standalone parts-catalog collection is never actually
+  // set to those values anywhere in the codebase (it only ever becomes
+  // "Good" or "Replaced"). Damage/theft is recorded per-trip, as entries
+  // inside a `damageParts` array embedded on the inventoryBeforeTrip/
+  // inventoryAfterTrip document — this alert was watching a field that's
+  // never populated, so it never fired. Fixed to read the real source.
+  //
+  // After-trip only, not before: after-trip is the condition the car was
+  // actually returned in — the most current, most "did this booking cause
+  // damage" signal — matching what the person reviewing this dashboard
+  // actually wants to know. Only the latest after-trip record per car
+  // counts, same as Maintenance.jsx's own derivation, so a car's older
+  // damage history doesn't linger once a newer clean trip supersedes it.
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, "carParts"), where("status", "in", ["Damaged", "Stolen"])),
-      async (snap) => {
-        const parts = snap.docs.map((d) => ({ id: d.id, ...d.data(), _type: "damaged_part" }));
-        const carIDs = [...new Set(parts.map(p => p.carID).filter(Boolean))];
-        let carNameMap = {};
-        if (carIDs.length > 0) {
-          try {
-            const [carsSnap, brandsSnap, modelsSnap] = await Promise.all([
-              getDocs(query(collection(db, "cars"), where("__name__", "in", carIDs))),
-              getDocs(collection(db, "brand")),
-              getDocs(collection(db, "model")),
-            ]);
-            const brandMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data().brandName || ""]));
-            const modelMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, { modelName: d.data().modelName || "", brandID: d.data().brandID }]));
-            carsSnap.docs.forEach(d => {
-              const model = modelMap[d.data().modelID] || {};
-              carNameMap[d.id] = `${brandMap[model.brandID] || ""} ${model.modelName || ""}`.trim() || d.id;
-            });
-          } catch {}
-        }
-        setDamagedParts(parts.map(p => ({ ...p, carName: carNameMap[p.carID] || p.carID || "—" })));
+    const unsub = onSnapshot(collection(db, "inventoryAfterTrip"), async (snap) => {
+      const latestByCarID = {};
+      snap.docs.forEach((d) => {
+        const data = { id: d.id, ...d.data() };
+        const cid = data.carID;
+        if (!cid) return;
+        const ts  = data.recordedAt?._seconds ?? 0;
+        const ets = latestByCarID[cid]?.recordedAt?._seconds ?? -1;
+        if (ts > ets) latestByCarID[cid] = data;
+      });
+
+      const parts = [];
+      Object.values(latestByCarID).forEach((rec) => {
+        (rec.damageParts || []).forEach((p) => {
+          if (!["Damaged", "Stolen", "Missing"].includes(p.status)) return;
+          parts.push({
+            id: `${rec.carID}_${p.carPartID}`,
+            carID: rec.carID,
+            carPartID: p.carPartID,
+            carPartName: p.carPartName || null,
+            status: p.status,
+            bookingID: rec.bookingID,
+            _type: "damaged_part",
+          });
+        });
+      });
+
+      const carIDs = [...new Set(parts.map(p => p.carID).filter(Boolean))];
+      let carNameMap = {};
+      let partNameMap = {};
+      if (carIDs.length > 0) {
+        try {
+          const [carsSnap, brandsSnap, modelsSnap, partsSnap] = await Promise.all([
+            getDocs(query(collection(db, "cars"), where("__name__", "in", carIDs))),
+            getDocs(collection(db, "brand")),
+            getDocs(collection(db, "model")),
+            getDocs(collection(db, "carParts")), // fallback for part names damageParts didn't already carry
+          ]);
+          const brandMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data().brandName || ""]));
+          const modelMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, { modelName: d.data().modelName || "", brandID: d.data().brandID }]));
+          carsSnap.docs.forEach(d => {
+            const model = modelMap[d.data().modelID] || {};
+            carNameMap[d.id] = `${brandMap[model.brandID] || ""} ${model.modelName || ""}`.trim() || d.id;
+          });
+          partNameMap = Object.fromEntries(partsSnap.docs.map(d => [d.id, d.data().carPartName || ""]));
+        } catch {}
       }
-    );
+
+      setDamagedParts(parts.map(p => ({
+        ...p,
+        carName: carNameMap[p.carID] || p.carID || "—",
+        carPartName: p.carPartName || partNameMap[p.carPartID] || "Unknown Part",
+      })));
+    });
     return () => unsub();
   }, []);
 
@@ -440,11 +485,21 @@ export default function Dashboard() {
   const staleRequests = pendingRequestWarnings.filter((r) => requestAgeDays(r) > REQUEST_STALE_DAYS);
   const freshRequests = pendingRequestWarnings.filter((r) => requestAgeDays(r) <= REQUEST_STALE_DAYS);
 
+  // Maintenance still not done, past its own due date — mirrors the
+  // booking pickup_overdue/return_overdue pattern: no separate "Overdue"
+  // status to remember to set, just a date that's slipped by while the
+  // record is still open. No decay either — stays in Alert indefinitely
+  // until someone actually marks it Completed or Cancelled.
+  const overdueMaintenance = upcomingMaintenance
+    .map((m) => ({ ...m, _type: "maintenance_overdue", _due: toJsDate(m.maintenanceDate) }))
+    .filter((m) => m._due && m._due.getTime() < Date.now());
+
   const alerts = [
     ...cancelBookings,
     ...damagedParts,
     ...licenseAlerts.map((l) => ({ ...l, _type: "license" })),
     ...staleRequests.map((r) => ({ ...r, _type: "request", overdue: true, daysWaiting: Math.floor(requestAgeDays(r)) })),
+    ...overdueMaintenance,
   ].sort((a, b) => {
     const ta = a._due?.getTime?.() ?? a.createdAt?._seconds * 1000 ?? a.updatedAt?._seconds * 1000 ?? 0;
     const tb = b._due?.getTime?.() ?? b.createdAt?._seconds * 1000 ?? b.updatedAt?._seconds * 1000 ?? 0;
@@ -556,18 +611,44 @@ export default function Dashboard() {
               </div>
             ) : (
               alerts.map((a) => {
-                const isDamaged = a._type === "damaged_part";
-                const isLicense = a._type === "license";
-                const isRequest = a._type === "request";
-                const isRefund  = isRequest && a.kind === "refundRequest";
-                const isCancel  = a.status === "cancellation_request";
+                const isDamaged  = a._type === "damaged_part";
+                const isLicense  = a._type === "license";
+                const isRequest  = a._type === "request";
+                const isOverdueMaint = a._type === "maintenance_overdue";
+                const isRefund   = isRequest && a.kind === "refundRequest";
+                const isCancel   = a.status === "cancellation_request";
                 const goTo = () => {
-                  if (isDamaged) navigate("/maintenance");
+                  if (isDamaged || isOverdueMaint) navigate("/maintenance");
                   else if (isLicense) navigate(`/users?role=${a.role}&tab=directory&open=${a.userID}`);
                   else if (isRefund) navigate("/refund-requests");
                   else if (isRequest) navigate(`/users?role=${a.role}&tab=editRequests&open=${a.userID}`);
                   else navigate(`/bookings?open=${a.bookingID || a.id}`);
                 };
+
+                if (isOverdueMaint) {
+                  const daysOverdue = Math.max(0, Math.floor((Date.now() - a._due.getTime()) / (24 * 60 * 60 * 1000)));
+                  return (
+                    <div
+                      key={`maint-overdue-${a.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-red-50 border-red-100 hover:bg-red-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-red-500">
+                        <IconWrench className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">Maintenance Overdue</p>
+                        <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.carID || "—"}</p>
+                        <p className="text-xs text-gray-400">
+                          {daysOverdue === 0 ? "Due today" : `${daysOverdue} day${daysOverdue === 1 ? "" : "s"} past due`} — {a.description || "Scheduled service"}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
 
                 if (isRequest) {
                   const isIdReq = a.kind === "idResubmit";
