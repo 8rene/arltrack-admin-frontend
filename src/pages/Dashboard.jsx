@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
@@ -268,18 +268,17 @@ export default function Dashboard() {
   const [licenseWarnings, setLicenseWarnings] = useState([]); // expiring soon, not yet expired
   const [licenseAlerts, setLicenseAlerts]     = useState([]); // already expired — needs action now, not a countdown
 
-  // Driver's-license expiry — computed on load, same pattern as the
-  // booking/maintenance "coming up" warnings below (pure date math, no
-  // write event needed to trigger it — see the earlier discussion on why
-  // this is fine for display even though enforcement needs the cron job).
-  // Not onSnapshot like the others: userDocument doesn't change often
-  // enough to need a live listener, and this needs a join against `user`
-  // for role + name anyway, which onSnapshot alone won't give cheaply.
+  // Driver's-license expiry — the join against `user`/`userDetails` for
+  // role + name isn't cheap to do inside a raw onSnapshot, so instead of a
+  // true live listener this stays a REST-shaped join, but re-triggered by
+  // a lightweight listener on `userDocument` (see the effect below) so a
+  // license correction made mid-shift clears the Alert without a reload,
+  // instead of only updating on the next full page load.
   //
   // Expired goes to Alerts (already happened, needs action now — same
   // tier as a cancellation request or a stolen part), close-to-expiry
   // stays in Warning (a countdown, not yet urgent).
-  const fetchLicenseWarnings = useCallback(async () => {
+  const fetchLicenseWarnings = useCallback(async (silent = false) => {
     try {
       const [docSnap, userSnap, detailsSnap] = await Promise.all([
         getDocs(collection(db, "userDocument")),
@@ -346,15 +345,19 @@ export default function Dashboard() {
 
   useEffect(() => { fetchLicenseWarnings(); }, [fetchLicenseWarnings]);
 
-  const alerts = [
-    ...cancelBookings,
-    ...damagedParts,
-    ...licenseAlerts.map((l) => ({ ...l, _type: "license" })),
-  ].sort((a, b) => {
-    const ta = a._due?.getTime?.() ?? a.createdAt?._seconds * 1000 ?? a.updatedAt?._seconds * 1000 ?? 0;
-    const tb = b._due?.getTime?.() ?? b.createdAt?._seconds * 1000 ?? b.updatedAt?._seconds * 1000 ?? 0;
-    return tb - ta;
-  });
+  // Re-run the license join whenever a userDocument changes (e.g. a driver's
+  // license expiry gets corrected, or a new document is uploaded), instead of
+  // only on initial page load. Debounced since this is a full re-join, not a
+  // cheap merge — one uploaded document shouldn't trigger the whole thing
+  // to re-run 5 times in a row if a form saves in multiple field writes.
+  const licenseRefetchTimer = useRef(null);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "userDocument"), () => {
+      clearTimeout(licenseRefetchTimer.current);
+      licenseRefetchTimer.current = setTimeout(() => fetchLicenseWarnings(true), 500);
+    });
+    return () => { unsub(); clearTimeout(licenseRefetchTimer.current); };
+  }, [fetchLicenseWarnings]);
 
   // Pending edit / ID-resubmit requests — surfaced in Warning as soon as
   // submitted, same "needs admin attention" reasoning as an upcoming
@@ -428,6 +431,37 @@ export default function Dashboard() {
     return () => { unsubEdit(); unsubId(); unsubRefund(); };
   }, []);
 
+  // How long a pending edit/ID-resubmit/refund request can sit untouched
+  // before it escalates from a yellow Warning into a red Alert — same
+  // "close-to-expiry vs already-expired" tiering as the license checks
+  // above, applied to requests instead of dates.
+  const REQUEST_STALE_DAYS = 5;
+  const requestAgeDays = (r) => (Date.now() - r._due.getTime()) / (24 * 60 * 60 * 1000);
+  const staleRequests = pendingRequestWarnings.filter((r) => requestAgeDays(r) > REQUEST_STALE_DAYS);
+  const freshRequests = pendingRequestWarnings.filter((r) => requestAgeDays(r) <= REQUEST_STALE_DAYS);
+
+  const alerts = [
+    ...cancelBookings,
+    ...damagedParts,
+    ...licenseAlerts.map((l) => ({ ...l, _type: "license" })),
+    ...staleRequests.map((r) => ({ ...r, _type: "request", overdue: true, daysWaiting: Math.floor(requestAgeDays(r)) })),
+  ].sort((a, b) => {
+    const ta = a._due?.getTime?.() ?? a.createdAt?._seconds * 1000 ?? a.updatedAt?._seconds * 1000 ?? 0;
+    const tb = b._due?.getTime?.() ?? b.createdAt?._seconds * 1000 ?? b.updatedAt?._seconds * 1000 ?? 0;
+    return tb - ta;
+  });
+
+  // Pending requests get their own list now, separate from the time-based
+  // countdown items below — previously they were interleaved into `warnings`
+  // using their createdAt as a fake "_due" date, which meant an old pending
+  // request could rank above a booking that's actually starting in minutes,
+  // just because "createdAt" and "starts at" were being sorted as if they
+  // meant the same thing. Sorted oldest-first: the most-neglected (but not
+  // yet stale enough to be an Alert) request should surface first.
+  const pendingRequests = freshRequests
+    .map((r) => ({ ...r, _type: "request", daysWaiting: Math.floor(requestAgeDays(r)) }))
+    .sort((a, b) => a._due - b._due);
+
   const warnings = [
     ...upcomingBookings
       .map((b) => ({ ...b, _type: "booking", _due: toJsDate(b.startDateTime) }))
@@ -436,8 +470,10 @@ export default function Dashboard() {
       .map((m) => ({ ...m, _type: "maintenance", _due: toJsDate(m.maintenanceDate) }))
       .filter((m) => withinHours(m._due, MAINTENANCE_WARNING_HOURS)),
     ...licenseWarnings.map((l) => ({ ...l, _type: "license" })),
-    ...pendingRequestWarnings.map((r) => ({ ...r, _type: "request" })),
   ].sort((a, b) => a._due - b._due); // soonest first — this list is a countdown, not a feed
+  // Pending requests (edit/ID-resubmit/refund) are no longer mixed in here —
+  // see `pendingRequests` below, which keeps its own oldest-first ordering
+  // instead of borrowing this countdown's "soonest first" semantics.
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -522,12 +558,43 @@ export default function Dashboard() {
               alerts.map((a) => {
                 const isDamaged = a._type === "damaged_part";
                 const isLicense = a._type === "license";
+                const isRequest = a._type === "request";
+                const isRefund  = isRequest && a.kind === "refundRequest";
                 const isCancel  = a.status === "cancellation_request";
                 const goTo = () => {
                   if (isDamaged) navigate("/maintenance");
                   else if (isLicense) navigate(`/users?role=${a.role}&tab=directory&open=${a.userID}`);
+                  else if (isRefund) navigate("/refund-requests");
+                  else if (isRequest) navigate(`/users?role=${a.role}&tab=editRequests&open=${a.userID}`);
                   else navigate(`/bookings?open=${a.bookingID || a.id}`);
                 };
+
+                if (isRequest) {
+                  const isIdReq = a.kind === "idResubmit";
+                  return (
+                    <div
+                      key={`overdue-request-${a.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-red-50 border-red-100 hover:bg-red-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-red-500">
+                        <IconWarning className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">
+                          {isRefund ? "Refund Request" : isIdReq ? "ID Resubmit Request" : "Profile Edit Request"} · Overdue
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{a.name}</p>
+                        <p className="text-xs text-gray-400">
+                          Waiting {a.daysWaiting} day{a.daysWaiting === 1 ? "" : "s"} — needs review
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
 
                 if (isLicense) {
                   return (
@@ -604,29 +671,30 @@ export default function Dashboard() {
           <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
             <IconClock className="w-4 h-4 text-gray-600" />
             Warning
-            {warnings.length > 0 && (
+            {(warnings.length + pendingRequests.length) > 0 && (
               <span className="bg-yellow-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                {warnings.length}
+                {warnings.length + pendingRequests.length}
               </span>
             )}
           </h2>
-          <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+
+          {/* Time-based countdown — bookings/maintenance coming up, licenses
+              about to expire. Kept separate from the pending-requests list
+              below since "starts in 20 minutes" and "submitted 3 days ago"
+              aren't the same kind of "soon" and shouldn't be sorted together. */}
+          <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
             {warnings.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-28 text-gray-400 text-sm gap-2">
-                <IconClock className="w-8 h-8 text-gray-300" />
+              <div className="flex flex-col items-center justify-center h-20 text-gray-400 text-sm gap-1">
+                <IconClock className="w-6 h-6 text-gray-300" />
                 Nothing coming up soon
               </div>
             ) : (
               warnings.map((w) => {
                 const isMaint   = w._type === "maintenance";
                 const isLicense = w._type === "license";
-                const isRequest = w._type === "request";
-                const isRefund  = isRequest && w.kind === "refundRequest";
                 const goTo = () => {
                   if (isMaint) navigate("/maintenance");
                   else if (isLicense) navigate(`/users?role=${w.role}&tab=directory&open=${w.userID}`);
-                  else if (isRefund) navigate("/refund-requests");
-                  else if (isRequest) navigate(`/users?role=${w.role}&tab=editRequests&open=${w.userID}`);
                   else navigate(`/bookings?open=${w.bookingID || w.id}`);
                 };
                 if (isLicense) {
@@ -646,53 +714,6 @@ export default function Dashboard() {
                         <p className="text-sm font-semibold text-gray-800 leading-snug">Driver's License Expiring Soon</p>
                         <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
                         <p className="text-xs text-gray-400">Expires in {w.daysLeft} day(s)</p>
-                      </div>
-                    </div>
-                  );
-                }
-                if (isRefund) {
-                  return (
-                    <div
-                      key={`request-${w.id}`}
-                      onClick={goTo}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
-                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-blue-50 border-blue-100 hover:bg-blue-100"
-                    >
-                      <span className="shrink-0 mt-0.5 text-blue-500">
-                        <IconBell className="w-5 h-5" />
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800 leading-snug">Refund Request</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
-                        <p className="text-xs text-gray-400">
-                          ₱{Number(w.amount).toLocaleString()} — Awaiting review
-                        </p>
-                      </div>
-                    </div>
-                  );
-                }
-                if (isRequest) {
-                  const isIdReq = w.kind === "idResubmit";
-                  return (
-                    <div
-                      key={`request-${w.id}`}
-                      onClick={goTo}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
-                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-blue-50 border-blue-100 hover:bg-blue-100"
-                    >
-                      <span className="shrink-0 mt-0.5 text-blue-500">
-                        <IconBell className="w-5 h-5" />
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800 leading-snug">
-                          {isIdReq ? "ID Resubmit Request" : "Profile Edit Request"}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
-                        <p className="text-xs text-gray-400">Awaiting review</p>
                       </div>
                     </div>
                   );
@@ -731,6 +752,53 @@ export default function Dashboard() {
                 );
               })
             )}
+          </div>
+
+          {/* Pending requests — status-based, not time-based. Sorted oldest
+              first so the most-neglected one surfaces at the top; anything
+              older than REQUEST_STALE_DAYS has already moved up to Alerts. */}
+          <div className="mt-3 pt-3 border-t">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Pending Requests</p>
+            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+              {pendingRequests.length === 0 ? (
+                <div className="flex items-center justify-center h-12 text-gray-400 text-xs">
+                  No requests awaiting review
+                </div>
+              ) : (
+                pendingRequests.map((w) => {
+                  const isRefund = w.kind === "refundRequest";
+                  const isIdReq  = w.kind === "idResubmit";
+                  const goTo = () => {
+                    if (isRefund) navigate("/refund-requests");
+                    else navigate(`/users?role=${w.role}&tab=editRequests&open=${w.userID}`);
+                  };
+                  return (
+                    <div
+                      key={`request-${w.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-blue-50 border-blue-100 hover:bg-blue-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-blue-500">
+                        <IconBell className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">
+                          {isRefund ? "Refund Request" : isIdReq ? "ID Resubmit Request" : "Profile Edit Request"}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
+                        <p className="text-xs text-gray-400">
+                          {isRefund ? `₱${Number(w.amount).toLocaleString()} — ` : ""}
+                          Waiting {w.daysWaiting} day{w.daysWaiting === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       </div>

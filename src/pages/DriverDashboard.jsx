@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -46,6 +48,19 @@ const IconDoc = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconWarning = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a1.5 1.5 0 001.29 2.25h17.78A1.5 1.5 0 0022.18 18L13.71 3.86a1.5 1.5 0 00-2.42 0z" />
+  </svg>
+);
+
+const IconInfo = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <circle cx="12" cy="12" r="9" />
+    <path strokeLinecap="round" d="M12 11v5M12 8h.01" />
+  </svg>
+);
+
 const fmtDateTime = (val) => {
   if (!val) return "—";
   const d = new Date(val);
@@ -70,36 +85,67 @@ function StatCard({ icon, label, value, tint }) {
 
 export default function DriverDashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, previewRole } = useAuth();
   const token = localStorage.getItem("token");
 
   const [liveTrips, setLiveTrips]   = useState([]);   // upcoming + ongoing
   const [pastTrips, setPastTrips]   = useState([]);   // completed/cancelled/stolen
   const [loading, setLoading]       = useState(true);
+  // Distinguishes "confirmed empty" from "failed to load" — previously both
+  // looked identical ("Nothing on your plate"), which meant a driver had no
+  // way to tell a real day off from a broken fetch.
+  const [error, setError]           = useState(null);
 
   const authedFetch = useCallback((path) =>
     fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } }),
   [token]);
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
+  // `silent` skips the loading spinner — used by the live-refresh listener
+  // below so a newly-assigned trip doesn't blank the screen while it reloads.
+  const fetchAll = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    if (!silent) setError(null);
     try {
       const [liveRes, pastRes] = await Promise.all([
         authedFetch("/api/driver-dispatch/my-trips"),
         authedFetch("/api/driver-dispatch/my-trips/history"),
       ]);
       const [liveJson, pastJson] = await Promise.all([liveRes.json(), pastRes.json()]);
-      setLiveTrips(liveRes.ok ? liveJson.data : []);
-      setPastTrips(pastRes.ok ? pastJson.data : []);
-    } catch {
-      setLiveTrips([]);
-      setPastTrips([]);
+      if (!liveRes.ok) throw new Error(liveJson.message || "Failed to load your trips");
+      if (!pastRes.ok) throw new Error(pastJson.message || "Failed to load your trip history");
+      setLiveTrips(liveJson.data);
+      setPastTrips(pastJson.data);
+    } catch (e) {
+      if (!silent) setError(e.message || "Couldn't load your trips. Check your connection and try again.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [authedFetch]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // ── Live refresh ────────────────────────────────────────────────────────────
+  // Same reasoning as Bookings.jsx/Payments.jsx: the REST endpoint does the
+  // real filtering (which trips belong to this driver), so we just listen for
+  // any change to `bookings` and re-run the existing fetch, debounced. This
+  // is the one dashboard where staleness matters most — a driver waiting on
+  // this screen for their next assignment has no reason to think to refresh.
+  const refetchTimer = useRef(null);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "bookings"), () => {
+      clearTimeout(refetchTimer.current);
+      refetchTimer.current = setTimeout(() => fetchAll(true), 400);
+    });
+    return () => { unsub(); clearTimeout(refetchTimer.current); };
+  }, [fetchAll]);
+
+  // An Admin/Owner/Supervisor using "preview as Driver" hits this same
+  // component, but the API call above is still scoped to their own real
+  // JWT — there's no backend support for "show me driver X's trips" — so
+  // what they see here is their own (almost always empty) trip list, not a
+  // representative sample. Surfacing that plainly beats letting it look
+  // like a real (very boring) driver day.
+  const isPreviewingAsDriver = previewRole === "Driver" && user?.role !== "Driver";
 
   const ongoing        = liveTrips.filter(t => t.status === "ongoing");
   const upcoming        = liveTrips.filter(t => t.status === "upcoming")
@@ -120,6 +166,23 @@ export default function DriverDashboard() {
           {new Date().toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" })}
         </p>
       </div>
+
+      {isPreviewingAsDriver && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-xl text-xs flex items-center gap-2">
+          <IconInfo className="w-4 h-4 shrink-0" />
+          Preview mode: this shows your own account's trips, not a real driver's schedule — there's no assigned trips to preview here.
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <IconWarning className="w-4 h-4 shrink-0" />
+            {error}
+          </span>
+          <button onClick={() => fetchAll()} className="text-red-600 font-semibold underline text-xs ml-4 shrink-0">Retry</button>
+        </div>
+      )}
 
       {/* STATS */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
