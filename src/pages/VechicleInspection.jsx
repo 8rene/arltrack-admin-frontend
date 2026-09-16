@@ -95,6 +95,12 @@ const PART_STATUS_STYLE = {
   Stolen:  "bg-purple-50 border border-purple-200",
 };
 
+// Staff (drivers and admins alike) can only ever set a part to one of
+// these two going forward — New/Worn/Missing/Stolen are legacy values.
+// Existing records with those old statuses still render correctly via
+// PART_STATUS_STYLE above; this list only controls what's selectable.
+const EDITABLE_STATUSES = ["Good", "Damaged"];
+
 const STATUS_STYLE = {
   Active:      "bg-green-50 border border-green-200",
   Inactive:    "bg-gray-100 text-gray-500",
@@ -1457,7 +1463,6 @@ export default function VehicleDocs() {
                                         </span>
                                         <PartEditDropdown
                                           currentStatus={effectiveStatus}
-                                          showStolen={tripType === "after"}
                                           onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
                                         />
                                       </div>
@@ -1589,13 +1594,20 @@ function StatusToggle({ status, isDirty, onChange }) {
   );
 }
 
-/* ── Admin/Owner/Supervisor's full status dropdown — same control the
- * old Inventory.jsx used. Drivers never see this; StatusToggle above is
- * their equivalent, deliberately limited to Good/Damaged. ── */
-function PartEditDropdown({ currentStatus, showStolen, onChange }) {
-  const statuses = showStolen
-    ? ["New", "Good", "Worn", "Damaged", "Missing", "Stolen"]
-    : ["New", "Good", "Worn", "Damaged", "Missing"];
+/* ── Admin/Owner/Supervisor's status dropdown — same control the old
+ * Inventory.jsx used. Restricted to Good/Damaged, same as drivers'
+ * StatusToggle — legacy New/Worn/Missing/Stolen values still display
+ * correctly wherever they're already recorded, just aren't selectable
+ * from here anymore. ── */
+function PartEditDropdown({ currentStatus, onChange }) {
+  // Always includes the part's current value even if it's a legacy
+  // status (Worn/Missing/Stolen/New) not in EDITABLE_STATUSES — so an
+  // old record still displays its true status instead of the <select>
+  // rendering blank. It just isn't offered as a fresh pick for anything
+  // that isn't already Good/Damaged.
+  const options = EDITABLE_STATUSES.includes(currentStatus)
+    ? EDITABLE_STATUSES
+    : [currentStatus, ...EDITABLE_STATUSES];
 
   return (
     <select
@@ -1603,7 +1615,7 @@ function PartEditDropdown({ currentStatus, showStolen, onChange }) {
       onChange={e => onChange(e.target.value)}
       className="text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-teal-300 cursor-pointer"
     >
-      {statuses.map(s => (
+      {options.map(s => (
         <option key={s} value={s}>{s}</option>
       ))}
     </select>
@@ -1951,7 +1963,10 @@ function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPho
                         onChange={(e) => handleStatusChange(p.id, e.target.value)}
                         className={`px-2 py-1 rounded-full text-xs font-semibold border-0 cursor-pointer disabled:opacity-50 ${PART_STATUS_STYLE[p.effectiveStatus] || "bg-gray-100 text-gray-500"}`}
                       >
-                        {Object.keys(PART_STATUS_STYLE).map((s) => (
+                        {(EDITABLE_STATUSES.includes(p.effectiveStatus)
+                          ? EDITABLE_STATUSES
+                          : [p.effectiveStatus, ...EDITABLE_STATUSES]
+                        ).map((s) => (
                           <option key={s} value={s}>{s}</option>
                         ))}
                       </select>

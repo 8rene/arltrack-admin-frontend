@@ -102,14 +102,12 @@ const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
 const STATUS_DOT = {
   Completed:    "bg-green-500",
   Scheduled:    "bg-blue-500",
-  "In Progress":"bg-yellow-400",
   Cancelled:    "bg-gray-400",
   Overdue:      "bg-red-500",
 };
 const STATUS_BG = {
   Completed:    "bg-green-50 border border-green-200",
   Scheduled:    "bg-blue-50 border border-blue-200",
-  "In Progress":"bg-yellow-50 border border-yellow-200",
   Cancelled:    "bg-gray-100 border border-gray-200",
   Overdue:      "bg-red-50 border border-red-200",
 };
@@ -146,7 +144,7 @@ const EMPTY_FORM = {
   useManualTotal: false, // false = auto-compute from itemized services; true = use overrideTotal
   overrideTotal: "",
   description: "",
-  maintenanceDate: "", nextMaintenanceDate: "", status: "Scheduled",
+  maintenanceDate: "", status: "Scheduled",
   partsAddressed: [], // [{ carID, carPartID, carPartName, tripPhase, bookingID }] — damaged parts this job is meant to fix, resolved on completion
   useToday: false,      // true = maintenanceDate always mirrors today's date
 };
@@ -264,8 +262,12 @@ export default function Maintenance() {
           const cid  = data.carID;
           if (!cid) return;
           const existing = byCarID[cid];
-          const ts  = data.recordedAt?._seconds ?? 0;
-          const ets = existing?.recordedAt?._seconds ?? -1;
+          // .seconds, not ._seconds — see Dashboard.jsx's identical fix
+          // for why: these are live client-SDK Timestamps, which expose
+          // the value as a public `.seconds`, not the underscore-prefixed
+          // form the backend's own JSON responses use.
+          const ts  = data.recordedAt?.seconds ?? 0;
+          const ets = existing?.recordedAt?.seconds ?? -1;
           if (!existing || ts > ets) byCarID[cid] = data;
         });
         return Object.values(byCarID);
@@ -323,9 +325,9 @@ export default function Maintenance() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const overdue   = records.filter(r => r.status === "Overdue" || (r.status !== "Completed" && r.status !== "Cancelled" && isPast(r.nextMaintenanceDate))).length;
+  const overdue   = records.filter(r => r.status === "Scheduled" && isPast(r.maintenanceDate)).length;
   const dueSoon   = records.filter(r => isSoon(r.nextMaintenanceDate) && r.status !== "Completed" && r.status !== "Cancelled").length;
-  const inService = records.filter(r => r.status === "In Progress").length;
+  const scheduled = records.filter(r => r.status === "Scheduled").length;
   const completed = records.filter(r => r.status === "Completed").length;
 
   const computedTotal = useMemo(() => {
@@ -354,7 +356,6 @@ export default function Maintenance() {
         overrideTotal:        form.useManualTotal && form.overrideTotal !== "" ? Number(form.overrideTotal) : null,
         description:          form.description,
         maintenanceDate:      form.maintenanceDate,
-        nextMaintenanceDate:  form.nextMaintenanceDate || null,
         status:               form.status,
         partsAddressed:       form.partsAddressed,
       };
@@ -384,7 +385,6 @@ export default function Maintenance() {
       overrideTotal:        r.overrideTotal ?? "",
       description:          r.description || "",
       maintenanceDate:      isoDate(r.maintenanceDate),
-      nextMaintenanceDate:  isoDate(r.nextMaintenanceDate),
       status:               r.status || "Scheduled",
       partsAddressed:       r.partsAddressed || [],
     });
@@ -509,7 +509,7 @@ export default function Maintenance() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard icon={<IconAlertCircle className="w-5 h-5" />} value={overdue}   label="Overdue"       color="red" />
         <StatCard icon={<IconWarning     className="w-5 h-5" />} value={dueSoon}   label="Due This Week" color="yellow" />
-        <StatCard icon={<IconWrench      className="w-5 h-5" />} value={inService} label="In Progress"   color="blue" />
+        <StatCard icon={<IconWrench      className="w-5 h-5" />} value={scheduled} label="Scheduled"     color="blue" />
         <StatCard icon={<IconCheck       className="w-5 h-5" />} value={completed} label="Completed"     color="green" />
       </div>
 
@@ -858,11 +858,6 @@ export default function Maintenance() {
                 onChange={e => setForm(f => ({...f, maintenanceDate: e.target.value}))}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none disabled:bg-gray-50 disabled:text-gray-400" />
             </Field>
-            <Field label="Next Maintenance Date">
-              <input type="date" value={form.nextMaintenanceDate} onChange={e => setForm(f => ({...f, nextMaintenanceDate: e.target.value}))}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
-              <p className="text-[10px] text-gray-400 mt-1">Optional — leave blank if this maintenance has no follow-up scheduled.</p>
-            </Field>
             <Field label="Status">
               <div className="grid grid-cols-2 gap-1.5">
                 {config.statusOptions.map(s => (
@@ -954,7 +949,6 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
   const DOT = {
     Completed:    "bg-green-500",
     Scheduled:    "bg-blue-500",
-    "In Progress":"bg-yellow-500",
     Cancelled:    "bg-gray-400",
     Overdue:      "bg-red-500",
   };

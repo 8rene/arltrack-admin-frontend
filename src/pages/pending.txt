@@ -1,24 +1,77 @@
-pending payments
-discount
+damage setup on vehicle inspection
+
+pickup does it check driver?
+
+payment have a back button
+approve and disapprove no more
+review
 
 
-payments and car tracking should have a edit again if ever th discount was already given
+referral, in accepting t should show the name who referred him/her
 
 
-booking connect the inventory hisotry
+municipality, ncr caloocan pasig, city of manila
+province location
+accept user from notification
+
+users joined recently by default
 
 
-sidebar fix the logs to be in one place
+
+booking not notified to the user
+
+car tracking
+double peso sign
+
+driver sele driver shouldnt e clickable
+
+driuver click same car even locked
+
+driver shouldnt see the psat trip
+driver inspection open instead of select button
+
+driver can pickup without paying
+
+driver location not showend
+driver no gps should be required
+inspection double save, also car track is not auto refresh
+
+damage not working
+
+driver mytrips history 
 
 
-check the archive details things
-its ugly
+audit log return car
+driver didnot change details booking upcoming
 
-username are not getting function as well,
-deleted userarchives should show the info of the user or like have a view details
-
-
-payments as well
+fail test still upcoming
+questions maam
+1. booking driver
 
 
-vehicle inspection make it editable for admin 
+
+
+
+maintenance seperate the next maintenance date
+maintenance audit
+
+partial payment add another column
+
+car track should have a view booking
+connect to the user and list of referral
+
+notification notify customer, 
+
+booking
+view theinventory does not retrieve 
+
+
+1. booking should start with 'to pay' status
+tapos pag nagpay upcoming , then if failed remain to pay
+
+if after 12hours still to pay then auto cancelled
+now if to pay is the system, and like if dapat i check padin niya kung yyung booking time and date is valid
+kasi diba possible na kungkelan siya nagbayad biglang nagmaintenance yunf kotse or like may another booking.
+
+
+

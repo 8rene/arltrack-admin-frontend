@@ -209,8 +209,16 @@ export default function Dashboard() {
         const data = { id: d.id, ...d.data() };
         const cid = data.carID;
         if (!cid) return;
-        const ts  = data.recordedAt?._seconds ?? 0;
-        const ets = latestByCarID[cid]?.recordedAt?._seconds ?? -1;
+        // .seconds (not ._seconds) — these are real client-SDK Timestamp
+        // objects from a live Firestore read, which expose the value as
+        // a public `.seconds` property. `._seconds` only shows up when a
+        // Timestamp gets JSON-serialized through the backend's own API
+        // responses — a different code path entirely. Using the wrong
+        // one here meant `ts`/`ets` were always 0, so whichever record
+        // happened to load first for a car stuck as "latest" forever,
+        // and a genuinely newer damage report never replaced it.
+        const ts  = data.recordedAt?.seconds ?? 0;
+        const ets = latestByCarID[cid]?.recordedAt?.seconds ?? -1;
         if (ts > ets) latestByCarID[cid] = data;
       });
 
@@ -269,10 +277,10 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  // REAL-TIME — maintenance not yet done (still Scheduled or In Progress)
+  // REAL-TIME — maintenance not yet done (still Scheduled)
   useEffect(() => {
     const unsub = onSnapshot(
-      query(collection(db, "carMaintenance"), where("status", "in", ["Scheduled", "In Progress"])),
+      query(collection(db, "carMaintenance"), where("status", "==", "Scheduled")),
       (snap) => setUpcomingMaintenance(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     );
     return () => unsub();
@@ -618,7 +626,7 @@ export default function Dashboard() {
                 const isRefund   = isRequest && a.kind === "refundRequest";
                 const isCancel   = a.status === "cancellation_request";
                 const goTo = () => {
-                  if (isDamaged || isOverdueMaint) navigate("/maintenance");
+                  if (isDamaged || isOverdueMaint) navigate(a.carID ? `/maintenance?carID=${a.carID}` : "/maintenance");
                   else if (isLicense) navigate(`/users?role=${a.role}&tab=directory&open=${a.userID}`);
                   else if (isRefund) navigate("/refund-requests");
                   else if (isRequest) navigate(`/users?role=${a.role}&tab=editRequests&open=${a.userID}`);
