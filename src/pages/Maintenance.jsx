@@ -50,13 +50,6 @@ const IconCalendar = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
-const IconKey = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="8" cy="12" r="4" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M12 12h8M18 12v3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-  </svg>
-);
-
 const IconSiren = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M12 2v2M4.22 4.22l1.42 1.42M2 12h2M20 12h2M18.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
@@ -169,7 +162,6 @@ export default function Maintenance() {
   const [view, setView]                   = useState("table");
   const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [damagedParts, setDamagedParts]   = useState([]);
-  const [replacedParts, setReplacedParts] = useState([]);
   const [customName, setCustomName]       = useState("");
   const [customPrice, setCustomPrice]     = useState("");
 
@@ -188,40 +180,6 @@ export default function Maintenance() {
       },
     });
   }, [token]);
-
-  const markAsReplaced = async (part) => {
-    try {
-      // The actual fix: writes back into the trip document's damageParts
-      // array — setting status to "Good" removes that entry entirely —
-      // so this part stops showing up here on reload, and on the
-      // Dashboard's live Alert too (it reads this same array), not just
-      // in this browser tab until the next page load.
-      const tripPhase = part.source === "after_trip" ? "after" : "before";
-      const histRes = await authedFetch(`/api/inventory/history/${tripPhase}/${part.bookingID}`, {
-        method: "PATCH",
-        body: JSON.stringify({ carID: part.carID, carPartID: part.carPartID, newStatus: "Good" }),
-      });
-      const histJson = await histRes.json();
-      if (!histRes.ok) throw new Error(histJson.message || "Failed to resolve the damage record.");
-
-      // Keep the parts-catalog record's own status in sync too, purely for
-      // Inventory/Fleet display — this call is cosmetic now; the fetch
-      // above is what actually makes the item disappear for good.
-      authedFetch(`/api/car-parts/${part.carPartID}`, {
-        method: "PUT",
-        body: JSON.stringify({ markReplaced: true, replacedType: part.status }),
-      }).catch(() => {});
-
-      setDamagedParts(prev => prev.filter(p => p.id !== part.id));
-      setReplacedParts(prev => {
-        if (prev.find(p => p.id === part.id)) return prev;
-        return [...prev, { ...part, replacedAt: new Date() }];
-      });
-      showToast(`${part.carPartName} marked as replaced.`);
-    } catch (e) {
-      showToast("Failed to mark as replaced: " + e.message, "error");
-    }
-  };
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -399,6 +357,30 @@ export default function Maintenance() {
     setShowAdd(true);
   };
 
+  // Triggered from the "Damaged/Stolen Parts Require Attention" banners
+  // above — instead of resolving the part immediately on the spot, this
+  // opens the normal Schedule Maintenance panel pre-filled to that part's
+  // vehicle, with the part itself already checked under "Fixed Damage
+  // Parts" below. Same rule as checking it manually there: nothing about
+  // the part's actual record changes until this job is saved and later
+  // marked Completed.
+  const openScheduleForPart = (part) => {
+    setForm({
+      ...EMPTY_FORM,
+      carID: part.carID,
+      partsAddressed: [{
+        carID:       part.carID,
+        carPartID:   part.carPartID,
+        carPartName: part.carPartName,
+        tripPhase:   part.source === "after_trip" ? "after" : "before",
+        bookingID:   part.bookingID,
+      }],
+    });
+    setCustomName(""); setCustomPrice("");
+    setEditRecord(null);
+    setShowAdd(true);
+  };
+
   // Toggles one damaged/stolen/missing part in/out of this maintenance
   // job's "will be fixed here" checklist. Purely local state until Save —
   // nothing about the part's actual record changes yet, and even after
@@ -514,9 +496,9 @@ export default function Maintenance() {
       </div>
 
       {/* Parts Attention Panel */}
-      {(damagedParts.length > 0 || replacedParts.length > 0) && (
+      {damagedParts.length > 0 && (
         <div className="space-y-3">
-          {damagedParts.length > 0 && (() => {
+          {(() => {
             const damagedOnly = damagedParts.filter(p => p.status === "Damaged" || p.status === "Missing");
             const stolenOnly  = damagedParts.filter(p => p.status === "Stolen");
             return (
@@ -534,14 +516,14 @@ export default function Maintenance() {
                           <span>{p.carPartName} — {p.carLabel}</span>
                           <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${p.status === "Missing" ? "bg-orange-200 text-orange-800" : "bg-red-200 text-red-800"}`}>{p.status}</span>
                           <span className="text-red-400 text-[10px]">({p.source === "after_trip" ? "after trip" : "before trip"})</span>
-                          <button onClick={() => markAsReplaced(p)}
-                            className="ml-1 px-2 py-0.5 rounded-lg bg-green-500 text-white text-[10px] font-bold hover:bg-green-600 transition-colors">
-                            ✓ Mark Replaced
+                          <button onClick={() => openScheduleForPart(p)}
+                            className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
+                            🔧 Schedule Fix
                           </button>
                         </div>
                       ))}
                     </div>
-                    <p className="text-xs text-red-500">Schedule maintenance for affected vehicles. Click <strong>Mark Replaced</strong> once the part has been replaced.</p>
+                    <p className="text-xs text-red-500">Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part checked below.</p>
                   </div>
                 )}
                 {stolenOnly.length > 0 && (
@@ -557,69 +539,19 @@ export default function Maintenance() {
                           <span>{p.carPartName} — {p.carLabel}</span>
                           <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-200 text-purple-800">Stolen</span>
                           <span className="text-purple-400 text-[10px]">({p.source === "after_trip" ? "after trip" : "before trip"})</span>
-                          <button onClick={() => markAsReplaced(p)}
-                            className="ml-1 px-2 py-0.5 rounded-lg bg-green-500 text-white text-[10px] font-bold hover:bg-green-600 transition-colors">
-                            ✓ Mark Replaced
+                          <button onClick={() => openScheduleForPart(p)}
+                            className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
+                            🔧 Schedule Fix
                           </button>
                         </div>
                       ))}
                     </div>
-                    <p className="text-xs text-purple-500">File a police report if needed. Click <strong>Mark Replaced</strong> once the stolen part has been replaced.</p>
+                    <p className="text-xs text-purple-500">File a police report if needed. Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part checked below.</p>
                   </div>
                 )}
               </>
             );
           })()}
-
-          {replacedParts.filter(p => p.status !== "Stolen").length > 0 && (
-            <div className="bg-green-50 border border-green-200 rounded-2xl p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <IconWrench className="w-4 h-4 text-green-600 shrink-0" />
-                <span className="text-green-600 font-bold text-sm">Replaced Damaged Car Parts</span>
-                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">{replacedParts.filter(p => p.status !== "Stolen").length}</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {replacedParts.filter(p => p.status !== "Stolen").map(p => (
-                  <span key={p.id} className="flex items-center gap-1.5 bg-green-100 text-green-700 px-3 py-1.5 rounded-xl text-xs font-medium">
-                    <IconCheck className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                    <span>{p.carPartName} — {p.carLabel}</span>
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-200 text-green-800">Replaced</span>
-                    {p.replacedAt && (
-                      <span className="text-green-400 text-[10px]">
-                        {p.replacedAt instanceof Date ? p.replacedAt.toLocaleDateString("en-PH", { month: "short", day: "numeric" }) : ""}
-                      </span>
-                    )}
-                  </span>
-                ))}
-              </div>
-              <p className="text-xs text-green-600">These damaged parts have been replaced and resolved. Consider scheduling a full maintenance checkup.</p>
-            </div>
-          )}
-
-          {replacedParts.filter(p => p.status === "Stolen").length > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <IconKey className="w-4 h-4 text-blue-600 shrink-0" />
-                <span className="text-blue-600 font-bold text-sm">Replaced Stolen Car Parts</span>
-                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">{replacedParts.filter(p => p.status === "Stolen").length}</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {replacedParts.filter(p => p.status === "Stolen").map(p => (
-                  <span key={p.id} className="flex items-center gap-1.5 bg-blue-100 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-medium">
-                    <IconCheck className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                    <span>{p.carPartName} — {p.carLabel}</span>
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-200 text-blue-800">Replaced</span>
-                    {p.replacedAt && (
-                      <span className="text-blue-400 text-[10px]">
-                        {p.replacedAt instanceof Date ? p.replacedAt.toLocaleDateString("en-PH", { month: "short", day: "numeric" }) : ""}
-                      </span>
-                    )}
-                  </span>
-                ))}
-              </div>
-              <p className="text-xs text-blue-600">These stolen parts have been replaced. Ensure all insurance and police report documentation is filed.</p>
-            </div>
-          )}
         </div>
       )}
 
@@ -825,7 +757,7 @@ export default function Maintenance() {
                 That way a job that ends up Cancelled instead never
                 silently marks a part as fixed that was never worked on. */}
             {form.carID && (
-              <Field label="Damaged Parts Being Addressed">
+              <Field label="Fixed Damage Parts">
                 {damagedParts.filter(p => p.carID === form.carID).length === 0 ? (
                   <p className="text-xs text-gray-400 px-1">No damaged/stolen/missing parts on record for this vehicle.</p>
                 ) : (

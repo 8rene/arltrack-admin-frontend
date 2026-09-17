@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   collection, getDocs, query, where, doc, getDoc,
 } from "firebase/firestore";
@@ -121,7 +121,6 @@ const BOOKING_STATUS_STYLE = {
 ═══════════════════════════════════════════════ */
 export default function VehicleDocs() {
   const [searchParams] = useSearchParams();
-  const navigate        = useNavigate();
   const { user, effectiveRole } = useAuth();
   const isDriver         = user?.role === "Driver";
   // Direct edit of past-trip history — Admin only. effectiveRole (not raw
@@ -205,8 +204,6 @@ export default function VehicleDocs() {
   const [uploading, setUploading] = useState({});
   const [saving, setSaving]       = useState(false);
   const [toast, setToast]         = useState(null);
-  const [completingPickup, setCompletingPickup] = useState(false);
-  const [completingReturn, setCompletingReturn] = useState(false);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -1003,79 +1000,12 @@ export default function VehicleDocs() {
     return currentStatusEdits[part.id] !== undefined ? currentStatusEdits[part.id] : savedStatus;
   };
 
-  const handleCompletePickup = async () => {
-    if (!activeBooking || !canCompletePickup) return;
-    setCompletingPickup(true);
-    try {
-      // Drivers and staff hit different endpoints here — VehicleDocs is
-      // shared between both (staff via Inventory, drivers via My Trips'
-      // deep link), but PATCH /api/bookings/:id is role-gated to
-      // Supervisor/Admin/Owner only. A Driver hitting it got a 403. The
-      // driver-scoped route does an ownership check (this driver actually
-      // owns this booking) then calls the exact same underlying
-      // updateBooking(...,{status:"ongoing"}) the staff route uses, so
-      // behavior is identical either way — just correctly authorized.
-      const url = isDriver
-        ? `${API_URL}/api/driver-dispatch/my-trips/${activeBooking.id}/pickup`
-        : `${API_URL}/api/bookings/${activeBooking.id}`;
-
-      const res = await fetch(url, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        ...(isDriver ? {} : { body: JSON.stringify({ status: "ongoing" }) }),
-      });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.message || "Pickup failed.");
-      showToast("Pickup complete — GPS tracking is now active.");
-      setActiveBooking({ ...activeBooking, status: "ongoing" });
-      // Only auto-jump if they're still in the guided pickup focus — if
-      // they cancelled it, they're back to browsing freely and shouldn't
-      // get yanked to another page unexpectedly. Drivers land on My Trips
-      // (their own page) rather than Car Tracking, which is staff-only —
-      // see pagePermissions.js.
-      if (inPickupMode) setTimeout(() => navigate(isDriver ? "/my-trips" : "/car-tracking"), 900);
-    } catch (e) {
-      showToast(e.message, "error");
-    } finally {
-      setCompletingPickup(false);
-    }
-  };
-
-  const handleCompleteReturn = async () => {
-    if (!activeBooking || !canCompleteReturn) return;
-    setCompletingReturn(true);
-    try {
-      // Same driver-vs-staff endpoint split as Pickup — driverReturn()
-      // ownership-checks then calls the exact same underlying
-      // updateBooking(...,{status:"completed"}) the staff route uses.
-      const url = isDriver
-        ? `${API_URL}/api/driver-dispatch/my-trips/${activeBooking.id}/return`
-        : `${API_URL}/api/bookings/${activeBooking.id}`;
-
-      const res = await fetch(url, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        ...(isDriver ? {} : { body: JSON.stringify({ status: "completed" }) }),
-      });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.message || "Return failed.");
-      showToast("Car marked returned — trip history saved.");
-      setActiveBooking({ ...activeBooking, status: "completed" });
-      // Only auto-jump back if they're still in the guided return focus —
-      // if they cancelled it, they're back to browsing freely.
-      if (inReturnMode) setTimeout(() => navigate(isDriver ? "/my-trips" : "/car-tracking"), 900);
-    } catch (e) {
-      showToast(e.message, "error");
-    } finally {
-      setCompletingReturn(false);
-    }
-  };
+  // NOTE: Pickup/Return are no longer completed from this page. The actual
+  // status-change PATCH (previously handleCompletePickup/handleCompleteReturn
+  // here) now happens from Car Tracking (staff) and My Trips (driver), since
+  // those pages carry payment and driver-assignment data this page doesn't.
+  // canCompletePickup/canCompleteReturn above still drive the "photos ready"
+  // banners on this page.
 
   return (
     <div className="p-4 bg-gray-50">
@@ -1388,46 +1318,38 @@ export default function VehicleDocs() {
                           ))}
                         </div>
 
-                        {/* Complete Pickup */}
+                        {/* Pickup/Return are no longer completed from this page. This
+                            page is documentation-only now — the actual status change
+                            (with payment + driver-assignment checks) happens back on
+                            Car Tracking (staff) or My Trips (driver), which have that
+                            data available and this page doesn't. Once required photos
+                            are saved, send the person back to finish there. */}
                         {tripType === "before" && activeBooking.status?.toLowerCase() === "upcoming" && (
-                          <button
-                            onClick={handleCompletePickup}
-                            disabled={!canCompletePickup || completingPickup}
-                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                              canCompletePickup
-                                ? "bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99]"
-                                : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                            }`}
-                          >
-                            {completingPickup
-                              ? "Marking picked up…"
-                              : canCompletePickup
-                                ? "▶  Complete Pickup"
-                                : hasUnsavedChanges
-                                  ? "Save changes to continue"
-                                  : "Complete required photos to continue"}
-                          </button>
+                          <div className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-center ${
+                            hasRequiredBeforePhotos && !hasUnsavedChanges
+                              ? "bg-green-50 border border-green-200 text-green-800"
+                              : "bg-gray-100 text-gray-400"
+                          }`}>
+                            {hasUnsavedChanges
+                              ? "Save changes to continue"
+                              : hasRequiredBeforePhotos
+                                ? `✅ Photos saved — go back to ${isDriver ? "My Trips" : "Car Tracking"} to complete pickup.`
+                                : "Complete required photos to continue"}
+                          </div>
                         )}
 
-                        {/* Complete Return */}
                         {tripType === "after" && activeBooking.status?.toLowerCase() === "ongoing" && (
-                          <button
-                            onClick={handleCompleteReturn}
-                            disabled={!canCompleteReturn || completingReturn}
-                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                              canCompleteReturn
-                                ? "bg-teal-600 text-white hover:bg-teal-700 active:scale-[0.99]"
-                                : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                            }`}
-                          >
-                            {completingReturn
-                              ? "Marking returned…"
-                              : canCompleteReturn
-                                ? "🏁  Complete Return"
-                                : hasUnsavedChanges
-                                  ? "Save changes to continue"
-                                  : "Complete required photos to continue"}
-                          </button>
+                          <div className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-center ${
+                            hasRequiredAfterPhotos && !hasUnsavedChanges
+                              ? "bg-green-50 border border-green-200 text-green-800"
+                              : "bg-gray-100 text-gray-400"
+                          }`}>
+                            {hasUnsavedChanges
+                              ? "Save changes to continue"
+                              : hasRequiredAfterPhotos
+                                ? `✅ Photos saved — go back to ${isDriver ? "My Trips" : "Car Tracking"} to complete the return.`
+                                : "Complete required photos to continue"}
+                          </div>
                         )}
 
                         {/* Parts */}
@@ -1506,8 +1428,13 @@ export default function VehicleDocs() {
             )}
 
             {/* Past Trips — shown regardless of whether there's a current
-                active booking, since history persists independent of that. */}
-            {!bookingLoading && pastBookings.length > 0 && (
+                active booking, since history persists independent of that.
+                Hidden entirely for Drivers: this section lists every past
+                booking for the car regardless of who drove it, which would
+                expose other drivers' and other customers' trip history to
+                a Driver viewing this page. Staff (Owner/Admin/Supervisor)
+                still see the full history. */}
+            {!isDriver && !bookingLoading && pastBookings.length > 0 && (
               <PastTripsSection
                 pastBookings={pastBookings}
                 pastBookingNames={pastBookingNames}

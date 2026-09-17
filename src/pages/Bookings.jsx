@@ -409,7 +409,92 @@ function EditModal({ booking, onClose, onSave }) {
 
 // ─── VIEW DETAILS MODAL ───────────────────────────────────────────────────────
 
-function ViewModal({ booking, onClose }) {
+// ─── CUSTOMER PROFILE MODAL ─────────────────────────────────────────────
+// Opened from the Customer name in either the table row or ViewModal,
+// instead of navigating to /users. Pulls the base user doc (by-uid) and
+// the userDetails doc (details) — the same two pieces Customers.jsx's own
+// detail view uses for its "Account" and "Personal Details" sections.
+// Address/document images live in separate collections with no REST
+// endpoint yet, so this stays a lighter, quicker profile than the full
+// Customers.jsx view rather than trying to replicate all of it here.
+function CustomerProfileModal({ userID, onClose }) {
+  const { getToken } = useAuth();
+  const [basic, setBasic]     = useState(null);
+  const [details, setDetails] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+
+  useEffect(() => {
+    if (!userID) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const headers = { Authorization: `Bearer ${getToken()}` };
+    Promise.all([
+      fetch(`${process.env.REACT_APP_API_URL}/api/users/by-uid/${userID}`, { headers }).then((r) => r.json()),
+      fetch(`${process.env.REACT_APP_API_URL}/api/users/details/${userID}`, { headers }).then((r) => r.json()).catch(() => null),
+    ])
+      .then(([basicRes, detailsRes]) => {
+        if (cancelled) return;
+        if (!basicRes?.success) throw new Error(basicRes?.message || "Could not load customer profile.");
+        setBasic(basicRes.data);
+        // Details 404s for a customer who never filled in personal info —
+        // that's a normal state here, not an error worth surfacing.
+        setDetails(detailsRes?.success ? detailsRes.data : null);
+      })
+      .catch((e) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [userID, getToken]);
+
+  const fullName = details
+    ? `${details.firstName || ""} ${details.middleName ? details.middleName + " " : ""}${details.lastName || ""}`.trim()
+    : "";
+
+  const row = (label, value) => (
+    <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
+      <span className="text-gray-500 font-medium w-32 shrink-0">{label}</span>
+      <span className="text-gray-800 text-right break-words">{value || "—"}</span>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-2 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="font-bold text-lg text-gray-800">
+            {fullName || basic?.username || "Customer Profile"}
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <IconX className="w-5 h-5" />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
+        ) : error ? (
+          <div className="py-8 text-center text-sm text-red-500">{error}</div>
+        ) : (
+          <div>
+            {row("Email",     basic?.email)}
+            {row("Phone",     basic?.phone)}
+            {row("Username",  basic?.username)}
+            {row("Status",    basic?.status)}
+            {row("ID Status", basic?.isVerified ? "✓ Verified" : "Pending")}
+            {row("Joined",    fmtDate(basic?.createdAt))}
+            {details && (
+              <>
+                {row("Birth Date", details.birthDate ? fmtDate(details.birthDate) : "—")}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ViewModal({ booking, onClose, onViewCustomer }) {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
   const navigate = useNavigate();
@@ -484,7 +569,19 @@ function ViewModal({ booking, onClose }) {
         <div className="grid md:grid-cols-2 gap-6">
           <div>
             {row("Booking ID",      booking.bookingID || booking.id)}
-            {row("Customer",        booking.customerName)}
+            <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
+              <span className="text-gray-500 font-medium w-36 shrink-0">Customer</span>
+              {booking.userID ? (
+                <button
+                  onClick={() => onViewCustomer(booking.userID)}
+                  className="text-indigo-600 hover:underline font-medium text-right"
+                >
+                  {booking.customerName || "—"}
+                </button>
+              ) : (
+                <span className="text-gray-800 text-right">{booking.customerName || "—"}</span>
+              )}
+            </div>
             {row("Phone",           booking.phone)}
             {row("Vehicle",         booking.vehicleName)}
             {row("Service Type",    booking.serviceTypeName)}
@@ -638,6 +735,10 @@ export default function Bookings() {
   const [deleteBooking, setDeleteBooking]   = useState(null);
   const [deleting, setDeleting]             = useState(false);
   const [deleteToast, setDeleteToast]       = useState(null);
+  // Customer name → profile modal, in place, instead of navigating to /users.
+  // Shared by both the table row and ViewModal (ViewModal passes its own
+  // trigger down to this same modal via the userID it's given).
+  const [profileUserID, setProfileUserID]   = useState(null);
   const [searchParams, setSearchParams]     = useSearchParams();
   const [sortKey, setSortKey]               = useState(null);  // null = default/unsorted (API order)
   const [sortDir, setSortDir]               = useState("asc");
@@ -873,7 +974,13 @@ export default function Bookings() {
                         {b.bookingID || b.id}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-gray-800">{b.customerName}</div>
+                        <button
+                          onClick={() => setProfileUserID(b.userID)}
+                          disabled={!b.userID}
+                          className="font-medium text-gray-800 hover:text-indigo-600 hover:underline text-left disabled:no-underline disabled:cursor-default disabled:hover:text-gray-800"
+                        >
+                          {b.customerName}
+                        </button>
                         <div className="text-xs text-gray-400">{b.phone}</div>
                       </td>
                       <td className="px-4 py-3">
@@ -912,8 +1019,9 @@ export default function Bookings() {
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
-      {viewBooking   && <ViewModal booking={viewBooking} onClose={() => setViewBooking(null)} />}
+      {viewBooking   && <ViewModal booking={viewBooking} onClose={() => setViewBooking(null)} onViewCustomer={setProfileUserID} />}
       {editBooking   && <EditModal booking={editBooking} onClose={() => setEditBooking(null)} onSave={() => { setEditBooking(null); fetchBookings(); }} />}
+      {profileUserID && <CustomerProfileModal userID={profileUserID} onClose={() => setProfileUserID(null)} />}
       {deleteBooking && (
         <DeleteModal
           booking={deleteBooking}

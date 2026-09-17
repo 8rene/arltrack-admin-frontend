@@ -146,17 +146,41 @@ function ActiveTripsTab() {
 
   useEffect(() => { fetchTrips(); }, [fetchTrips]);
 
+  // Same shape as Car Tracking's smart trigger:
+  //  - unresolved payment → hard block right here, no navigation.
+  //  - payment resolved but before-trip photos not done → send to Vehicle
+  //    Documentation (bookingID passed explicitly so it loads THIS exact
+  //    booking rather than guessing "nearest booking for this car" — that
+  //    heuristic, built for the Inventory page, can pick a stale/wrong
+  //    booking for the same car and silently block completion).
+  //  - both ready → complete pickup directly, no detour.
   const handlePickup = (trip) => {
-    // Same rule as staff: pickup goes through Vehicle Documentation first,
-    // not straight to "ongoing". The before-trip photos are required
-    // there (server-enforced), and that page is what actually flips the
-    // booking to "ongoing" once they're saved.
-    // bookingID is passed explicitly so Vehicle Documentation loads THIS
-    // exact booking rather than guessing "nearest booking for this car" —
-    // that heuristic (built for the Inventory page, which has no specific
-    // booking context) can pick a stale/wrong booking for the same car
-    // and silently block the Complete Pickup button.
-    navigate(`/vehicle-documentation?carID=${trip.carID}&bookingID=${trip.id}&action=pickup`);
+    const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
+    if (!paymentReady) {
+      showToast("Payment still requires action before pickup.", "error");
+      return;
+    }
+    if (!trip.beforeDocsComplete) {
+      navigate(`/vehicle-documentation?carID=${trip.carID}&bookingID=${trip.id}&action=pickup`);
+      return;
+    }
+    completeTripAction(trip, "pickup", "Pickup complete — GPS tracking is now active.");
+  };
+
+  // No payment gate on Return — only the photo requirement.
+  const completeTripAction = async (trip, action, successMsg) => {
+    setBusyID(trip.id);
+    try {
+      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${trip.id}/${action}`, { method: "PATCH" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Action failed.");
+      showToast(successMsg);
+      fetchTrips();
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally {
+      setBusyID(null);
+    }
   };
 
   const handleDropoff = async (trip) => {
@@ -175,11 +199,11 @@ function ActiveTripsTab() {
   };
 
   const handleReturn = (trip) => {
-    // Same rule as Pickup: Return goes through Vehicle Documentation first,
-    // not straight to "completed". The after-trip photos are required
-    // there (server-enforced), and that page is what actually flips the
-    // booking to "completed" once they're saved.
-    navigate(`/vehicle-documentation?carID=${trip.carID}&bookingID=${trip.id}&action=return`);
+    if (!trip.afterDocsComplete) {
+      navigate(`/vehicle-documentation?carID=${trip.carID}&bookingID=${trip.id}&action=return`);
+      return;
+    }
+    completeTripAction(trip, "return", "Car marked returned — trip history saved.");
   };
 
   // Driver confirming a cash/in-person initial payment — right here in My
@@ -306,6 +330,14 @@ function ActiveTripsTab() {
                 </div>
               )}
 
+              {!isOngoing && (() => {
+                const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
+                return !paymentReady ? (
+                  <p className="text-[11px] font-medium text-amber-600 mb-1">Payment still requires action</p>
+                ) : !trip.beforeDocsComplete ? (
+                  <p className="text-[11px] text-gray-400 mb-1">Photos not taken yet — Start Pickup opens Vehicle Documentation</p>
+                ) : null;
+              })()}
               <div className="flex gap-2">
                 {!isOngoing ? (
                   <>
@@ -327,8 +359,9 @@ function ActiveTripsTab() {
                       <IconPeso className="w-4 h-4" /> Payment
                     </button>
                     <button onClick={() => handlePickup(trip)}
-                      className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all">
-                      ▶ Start Pickup
+                      disabled={busyID === trip.id || !(["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0)}
+                      className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                      {busyID === trip.id ? "…" : "▶ Start Pickup"}
                     </button>
                   </>
                 ) : (

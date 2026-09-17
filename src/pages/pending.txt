@@ -42,7 +42,7 @@ driver mytrips history
 
 
 audit log return car
-driver didnot change details booking upcoming
+
 
 fail test still upcoming
 questions maam
@@ -75,3 +75,25 @@ kasi diba possible na kungkelan siya nagbayad biglang nagmaintenance yunf kotse 
 
 
 
+
+
+pending not yet done or handled
+
+once booking and such are done in the 001
+
+change the code of like the audit log for it.
+
+after that audit log, you can check and test the dashboard and other parts
+
+
+pending user, -> connect the user referral code
+and add it to account
+
+booking should add cancelled and to pay payment
+annalyze the issue with refund and payment
+
+the car track of payment add? should create transaction log
+and add it to the current payment modal
+
+
+connected modals should have a back or return button when opened

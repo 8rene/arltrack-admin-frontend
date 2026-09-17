@@ -14,6 +14,7 @@ const typeBadge = {
   Refund:   "bg-blue-50 border border-blue-200",
   Deposit:  "bg-teal-50 border border-teal-200",
   Discount: "bg-orange-50 border border-orange-200",
+  Expense:  "bg-pink-50 border border-pink-200",
 };
 
 function formatDate(val) {
@@ -278,6 +279,7 @@ export default function TransactionLogs() {
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Transaction ID</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Type</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Method</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Description</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Date</th>
@@ -288,7 +290,7 @@ export default function TransactionLogs() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <td key={j} className="px-5 py-4">
                       <div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />
                     </td>
@@ -297,7 +299,7 @@ export default function TransactionLogs() {
               ))
             ) : paginated.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-center py-16 text-gray-400 text-sm">
+                <td colSpan={8} className="text-center py-16 text-gray-400 text-sm">
                   {search || dateFrom || dateTo ? "No transaction logs match your filters." : "No transaction logs found."}
                 </td>
               </tr>
@@ -324,6 +326,13 @@ export default function TransactionLogs() {
                     </td>
                     <td className="px-5 py-3.5 text-gray-700 font-medium text-xs">
                       {formatAmount(log.amount, fmt)}
+                    </td>
+                    <td className="px-5 py-3.5 text-xs">
+                      {log.paymentMethod && log.paymentMethod !== "Not recorded" ? (
+                        <span className="text-gray-700 font-medium">{log.paymentMethod}</span>
+                      ) : (
+                        <span className="text-gray-400 italic">Not recorded</span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${sBadge}`}><span className={`w-2 h-2 rounded-full shrink-0 ${sBadge.includes("green") ? "bg-green-500" : sBadge.includes("red") ? "bg-red-500" : sBadge.includes("yellow") ? "bg-yellow-400" : sBadge.includes("blue") ? "bg-blue-500" : "bg-gray-400"}`} />

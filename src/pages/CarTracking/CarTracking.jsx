@@ -834,21 +834,37 @@ export default function CarTracking() {
     }
   };
 
-  // Pickup no longer marks the booking "ongoing" directly — it routes to
-  // Vehicle Documentation first. The before-trip photos (front/side/back)
-  // are required there, and that page is what actually calls the PATCH to
-  // "ongoing" once they're saved. booking.service.js enforces this
-  // server-side too, so this redirect is about the right flow, not the
-  // only thing stopping a bypass.
-  const handlePickup  = (b) => navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=pickup`);
+  // Pickup is now a smart trigger instead of an unconditional navigate to
+  // Vehicle Documentation:
+  //  - unresolved payment (not approved/paid, or balance still owed) →
+  //    hard block right here, no navigation. Vehicle Documentation has no
+  //    way to resolve payment, so sending staff there wouldn't help.
+  //  - payment resolved but before-trip photos aren't done yet → send them
+  //    to Vehicle Documentation to take the photos, same as before.
+  //  - both ready → complete the pickup directly, no detour. Still backed
+  //    by the same server-side checks in booking.service.js either way.
+  const handlePickup = (b) => {
+    const paymentReady = ["approved", "paid"].includes((b.paymentStatus || "").toLowerCase()) && (b.balance ?? 0) <= 0;
+    if (!paymentReady) {
+      setNotice({ type: "error", msg: "Payment still requires action — collect or confirm the remaining balance before pickup." });
+      return;
+    }
+    if (!b.beforeDocsComplete) {
+      navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=pickup`);
+      return;
+    }
+    runBookingAction(b.id, "ongoing", "Pickup complete — GPS tracking is now active.");
+  };
 
-  // Return now follows the exact same pattern as Pickup — it routes to
-  // Vehicle Documentation first instead of PATCHing straight to
-  // "completed". The after-trip photos (front/side/back) are required
-  // there, and that page is what actually calls the PATCH once they're
-  // saved. booking.service.js enforces this server-side too, so this
-  // redirect is about the right flow, not the only thing stopping a bypass.
-  const handleReturn  = (b) => navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=return`);
+  // Return has no payment/chauffeur gate — only the photo requirement,
+  // same smart-trigger shape as Pickup.
+  const handleReturn = (b) => {
+    if (!b.afterDocsComplete) {
+      navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=return`);
+      return;
+    }
+    runBookingAction(b.id, "completed", "Car marked returned — trip history saved.");
+  };
 
   // Chauffeur-only, separate from Return/runBookingAction above — this
   // hits its own endpoint (PATCH /:id/dropoff) since it doesn't change
@@ -1421,6 +1437,11 @@ export default function CarTracking() {
                   {(showAllUpcoming ? upcoming : upcoming.slice(0, 2)).map((b, i) => {
                     const isChauffeur = b.modeOfDriving === "With Chauffeur";
                     const hasDriver   = !!b.driverID;
+                    // Payment must be approved/paid AND fully settled (balance <= 0)
+                    // before Pickup — a hard block, not just informational, same rule
+                    // the backend now enforces in updateBooking().
+                    const paymentReady = ["approved", "paid"].includes((b.paymentStatus || "").toLowerCase()) && (b.balance ?? 0) <= 0;
+                    const photosReady  = !!b.beforeDocsComplete;
                     return (
                     <div
                       key={b.id}
@@ -1471,38 +1492,51 @@ export default function CarTracking() {
                             </button>
                           </div>
                         ) : (
-                          <div className="shrink-0 flex items-center gap-1.5">
-                            {isChauffeur && hasDriver && (
+                          <div className="shrink-0 flex flex-col items-end gap-1">
+                            <div className="flex items-center gap-1.5">
+                              {isChauffeur && hasDriver && (
+                                <button
+                                  onClick={() => navigate(`/driver-dispatch?driver=${b.driverID}`)}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg text-xs font-semibold hover:bg-indigo-100 active:scale-95 transition-all"
+                                >
+                                  <Icons.UserCheck className="w-3 h-3" />
+                                  View Driver
+                                </button>
+                              )}
                               <button
-                                onClick={() => navigate(`/driver-dispatch?driver=${b.driverID}`)}
-                                className="flex items-center gap-1 px-2.5 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg text-xs font-semibold hover:bg-indigo-100 active:scale-95 transition-all"
+                                onClick={() => setPaymentModalBooking(b)}
+                                title="View payment breakdown"
+                                className={`flex items-center gap-1 px-2.5 py-1.5 border rounded-lg text-xs font-semibold active:scale-95 transition-all ${
+                                  b.balance > 0
+                                    ? "border-amber-300 text-amber-700 hover:bg-amber-50"
+                                    : "border-green-300 text-green-700 hover:bg-green-50"
+                                }`}
                               >
-                                <Icons.UserCheck className="w-3 h-3" />
-                                View Driver
+                                <Icons.Peso className="w-3 h-3" />
+                                {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
                               </button>
+                              <button
+                                onClick={() => handlePickup(b)}
+                                disabled={actionBusyId === b.id || !paymentReady}
+                                title={!paymentReady ? "Payment still requires action" : undefined}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-white rounded-lg text-xs font-semibold active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                                  isChauffeur ? "bg-indigo-600 hover:bg-indigo-700" : "bg-blue-600 hover:bg-blue-700"
+                                }`}
+                              >
+                                <Icons.Play className="w-3 h-3" />
+                                {actionBusyId === b.id ? "…" : "Pickup"}
+                              </button>
+                            </div>
+                            {!paymentReady && (
+                              <span className="text-[11px] font-medium text-amber-600">
+                                Payment still requires action
+                              </span>
                             )}
-                            <button
-                              onClick={() => setPaymentModalBooking(b)}
-                              title="View payment breakdown"
-                              className={`flex items-center gap-1 px-2.5 py-1.5 border rounded-lg text-xs font-semibold active:scale-95 transition-all ${
-                                b.balance > 0
-                                  ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-                                  : "border-green-300 text-green-700 hover:bg-green-50"
-                              }`}
-                            >
-                              <Icons.Peso className="w-3 h-3" />
-                              {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
-                            </button>
-                            <button
-                              onClick={() => handlePickup(b)}
-                              disabled={actionBusyId === b.id}
-                              className={`flex items-center gap-1.5 px-3 py-1.5 text-white rounded-lg text-xs font-semibold active:scale-95 transition-all disabled:opacity-50 ${
-                                isChauffeur ? "bg-indigo-600 hover:bg-indigo-700" : "bg-blue-600 hover:bg-blue-700"
-                              }`}
-                            >
-                              <Icons.Play className="w-3 h-3" />
-                              {actionBusyId === b.id ? "…" : "Pickup"}
-                            </button>
+                            {paymentReady && !photosReady && (
+                              <span className="text-[11px] text-gray-400">
+                                Photos not taken yet — Pickup opens Vehicle Documentation
+                              </span>
+                            )}
                           </div>
                         )
                       ) : (
