@@ -533,7 +533,14 @@ export default function VehicleDocs() {
       const snap = await getDocs(
         query(collection(db, "bookings"), where("carID", "==", car.carID || car.id))
       );
-      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const all = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        // A driver only ever gets their own bookings for this car — this
+        // is what makes it safe to show them the Past Trips section
+        // below at all (see the toggled condition on that section).
+        // Without this, a driver deep-linked here would see every other
+        // driver's/customer's trip history for the same car.
+        .filter(b => !isDriver || b.driverID === user?.uid);
 
       if (!target) {
         // Trust status, not scheduled dates, to decide what's "active."
@@ -1423,12 +1430,15 @@ export default function VehicleDocs() {
 
             {/* Past Trips — shown regardless of whether there's a current
                 active booking, since history persists independent of that.
-                Hidden entirely for Drivers: this section lists every past
-                booking for the car regardless of who drove it, which would
-                expose other drivers' and other customers' trip history to
-                a Driver viewing this page. Staff (Owner/Admin/Supervisor)
-                still see the full history. */}
-            {!isDriver && !bookingLoading && pastBookings.length > 0 && (
+                Now shown to Drivers too (previously hidden outright): the
+                `all` bookings list above is filtered to the driver's own
+                bookings when isDriver, so pastBookings here can only ever
+                contain trips this driver actually drove — never another
+                driver's or a different customer's. Staff (Owner/Admin/
+                Supervisor) still see every past trip for the car, same as
+                before. Edit controls stay Admin-only either way via
+                canEditHistory. */}
+            {!bookingLoading && pastBookings.length > 0 && (
               <PastTripsSection
                 pastBookings={pastBookings}
                 pastBookingNames={pastBookingNames}

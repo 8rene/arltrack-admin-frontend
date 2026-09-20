@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import TripMapModal from "../components/TripMapModal";
 import PaymentStatusModal from "../components/PaymentStatusModal";
+import TripDetailModal from "../components/TripDetailModal";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -54,6 +55,13 @@ const IconHistory = ({ className = "w-6 h-6" }) => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M3 12a9 9 0 109-9 9 9 0 00-6.36 2.64L3 8" />
     <path strokeLinecap="round" d="M3 3v5h5" />
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 3" />
+  </svg>
+);
+
+const IconEye = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+    <circle cx="12" cy="12" r="3" />
   </svg>
 );
 
@@ -418,12 +426,14 @@ function ActiveTripsTab() {
 
 // ─── HISTORY TAB (completed/cancelled/stolen) ─────────────────────────────
 function HistoryTab() {
+  const navigate = useNavigate();
   const token = localStorage.getItem("token");
 
   const [trips, setTrips]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
+  const [detailTrip, setDetailTrip] = useState(null);
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
@@ -488,14 +498,12 @@ function HistoryTab() {
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
               <span className="flex items-center gap-1"><IconClock /> {fmtDateTimeLong(trip.startDateTime)} → {fmtDateTimeLong(trip.endDateTime)}</span>
               <span className="flex items-center gap-1"><IconPin /> {trip.location}</span>
-              {tripStops(trip).length > 0 && (
-                <button
-                  onClick={() => setMapTrip(trip)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 ml-auto"
-                >
-                  <IconMap /> Show Map
-                </button>
-              )}
+              <button
+                onClick={() => setDetailTrip(trip)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 ml-auto"
+              >
+                <IconEye /> View
+              </button>
             </div>
 
             {trip.status === "completed" && (trip.pickupTime || trip.customerDroppedOffAt || trip.returnTime) && (
@@ -516,6 +524,17 @@ function HistoryTab() {
         onClose={() => setMapTrip(null)}
         title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
         stops={mapTrip ? tripStops(mapTrip) : []}
+      />
+      <TripDetailModal
+        open={!!detailTrip}
+        onClose={() => setDetailTrip(null)}
+        trip={detailTrip}
+        onShowMap={() => { setMapTrip(detailTrip); setDetailTrip(null); }}
+        onViewHistory={
+          detailTrip?.carID
+            ? () => navigate(`/vehicle-documentation?carID=${detailTrip.carID}&bookingID=${detailTrip.id}`)
+            : undefined
+        }
       />
     </div>
   );

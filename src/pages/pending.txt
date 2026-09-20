@@ -118,3 +118,33 @@ Kung sakali po na more than 22 hours po yung booking, Example po nagbook ako Sun
 2. Pagdating naman po ma'am sa gas, tama poba ma'am Si client po magbabayad ng gas kung may driver?
 
 
+
+
+
+117 pending driver view history 
+before and after shows no record despite
+
+map dont show the all locations picked
+
+
+
+dashboard
+id expired still remains in warning despite it expired alread
+
+customer paying dont allow partial anymore
+paymongo refuses to change it
+
+driver dispatch make it view or close details so they dont stack big
+
+map dont show the all locations picked
+
+start pickup on mytrips
+keep on refusing to have the vehicle inspection checked, not responding and instead shows that vehicle inspection was not yet done
+
+payments ref dont save
+
+refunds dont notify correctly and the status dont change when refunding 
+even the amount it should check the total balance instead of the initial payment
+
+what status does the refund of payment changes into?
+bookings status didnot change when refund was there
