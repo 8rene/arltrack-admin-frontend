@@ -1024,12 +1024,6 @@ export default function VehicleDocs() {
           <h1 className="text-2xl font-bold text-arl-dark">Vehicle Inspections</h1>
           <p className="text-sm text-gray-400 mt-0.5">Before &amp; after trip photo documentation per booking</p>
         </div>
-        {selectedCar && hasUnsavedChanges && (
-          <button onClick={saveAll} disabled={saving}
-            className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-semibold hover:bg-teal-700 disabled:opacity-50 flex items-center gap-2">
-            {saving ? "Saving…" : `💾 Save ${pendingChangeCount} Change${pendingChangeCount > 1 ? "s" : ""}`}
-          </button>
-        )}
       </div>
 
       <div className="flex gap-4">

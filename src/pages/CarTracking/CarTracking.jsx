@@ -894,7 +894,7 @@ export default function CarTracking() {
   // Owner/Admin/Supervisor confirming a cash/in-person initial payment —
   // right here on Car Tracking, no detour to the Payments page. Keyed by
   // bookingID (not the booking doc id), matching the backend route.
-  const handleConfirmPayment = async () => {
+  const handleConfirmPayment = async (paymentMethod) => {
     if (!paymentModalBooking) return;
     setConfirmingPayment(true);
     setConfirmPaymentError(null);
@@ -902,7 +902,8 @@ export default function CarTracking() {
       const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
       const res  = await fetch(`${API}/api/payments/booking/${bID}/confirm`, {
         method:  "PATCH",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body:    JSON.stringify({ paymentMethod }),
       });
       const json = await res.json();
       if (json.success) {
@@ -922,7 +923,7 @@ export default function CarTracking() {
   // Owner/Admin/Supervisor collecting cash/in-person payment of the
   // remaining balance — e.g. right before Pickup. Keyed by bookingID
   // (not the booking doc id), matching the backend route.
-  const handleCollectBalance = async () => {
+  const handleCollectBalance = async (paymentMethod) => {
     if (!paymentModalBooking) return;
     setCollectingBalance(true);
     setCollectBalanceError(null);
@@ -930,7 +931,8 @@ export default function CarTracking() {
       const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
       const res  = await fetch(`${API}/api/payments/booking/${bID}/collect-balance`, {
         method:  "PATCH",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body:    JSON.stringify({ paymentMethod }),
       });
       const json = await res.json();
       if (json.success) {

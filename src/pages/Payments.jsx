@@ -117,6 +117,8 @@ const statusDot = {
   Rejected:  "bg-red-500",
   Cancelled: "bg-gray-400",
   Paid:      "bg-green-500",
+  Failed:    "bg-red-500",
+  Refunded:  "bg-purple-500",
 };
 const statusBg = {
   Pending:   "bg-yellow-50 border border-yellow-200",
@@ -124,6 +126,8 @@ const statusBg = {
   Rejected:  "bg-red-50 border border-red-200",
   Cancelled: "bg-gray-100 border border-gray-200",
   Paid:      "bg-green-50 border border-green-200",
+  Failed:    "bg-red-50 border border-red-200",
+  Refunded:  "bg-purple-50 border border-purple-200",
 };
 function StatusBadge({ status }) {
   const dot = statusDot[status] || "bg-gray-400";
@@ -137,7 +141,7 @@ function StatusBadge({ status }) {
 }
 
 const PAGE_SIZE = 15;
-const STATUSES  = ["All", "Pending", "Approved", "Rejected", "Cancelled"];
+const STATUSES  = ["All", "Pending", "Approved", "Rejected", "Cancelled", "Failed", "Refunded"];
 const TIME_RANGES = ["All Time", "Today", "Last 7 Days", "This Month", "Custom Range"];
 
 // ─── PAGINATION (same shared pattern as Bookings.jsx / Users.jsx) ─────────────
@@ -498,7 +502,8 @@ export default function Payments() {
   const totalCollected = payments.filter(p => ["Approved","Paid"].includes(p.status)).reduce((s,p) => s + p.amountPaid, 0);
   const approved  = payments.filter(p => ["Approved","Paid"].includes(p.status)).length;
   const pending   = payments.filter(p => p.status === "Pending").length;
-  const totalBal  = payments.filter(p => !["Cancelled","Rejected"].includes(p.status)).reduce((s,p) => s + p.balance, 0);
+  // Nothing is owed on cancelled/rejected bookings, failed payments, or refunded ones.
+  const totalBal  = payments.filter(p => !["Cancelled","Rejected","Failed","Refunded"].includes(p.status)).reduce((s,p) => s + p.balance, 0);
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -537,7 +542,7 @@ export default function Payments() {
                   {/* Status + Actions */}
                   <div className="flex items-center gap-3 flex-wrap">
                     <StatusBadge status={selected.status} />
-                    {!["Cancelled","Approved"].includes(selected.status) && (
+                    {!["Cancelled","Approved","Refunded"].includes(selected.status) && (
                       <>
                         <button disabled={updating} onClick={() => updateStatus(selected.id, "Approved")}
                           className="px-3 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50">
@@ -756,10 +761,14 @@ export default function Payments() {
 
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard icon={<IconMoney      className="w-5 h-5" />} value={peso(totalCollected)} label="Total Collected"    color="teal" />
-        <StatCard icon={<IconCheck      className="w-5 h-5" />} value={approved}             label="Approved Payments"  color="green" />
-        <StatCard icon={<IconClock      className="w-5 h-5" />} value={pending}              label="Awaiting Review"    color="yellow" />
-        <StatCard icon={<IconCreditCard className="w-5 h-5" />} value={peso(totalBal)}       label="Total Balance Due"  color="purple" />
+        <StatCard icon={<IconMoney      className="w-5 h-5" />} value={peso(totalCollected, fmtCurrency)} label="Total Collected"    color="teal" />
+        <StatCard icon={<IconCheck      className="w-5 h-5" />} value={approved}             label="Approved Payments"  color="green"
+          active={statusF === "Approved"}
+          onClick={() => setStatusF(statusF === "Approved" ? "All" : "Approved")} />
+        <StatCard icon={<IconClock      className="w-5 h-5" />} value={pending}              label="Awaiting Review"    color="yellow"
+          active={statusF === "Pending"}
+          onClick={() => setStatusF(statusF === "Pending" ? "All" : "Pending")} />
+        <StatCard icon={<IconCreditCard className="w-5 h-5" />} value={peso(totalBal, fmtCurrency)} label="Total Balance Due"  color="purple" />
       </div>
 
       {/* Filter Bar */}
@@ -907,15 +916,18 @@ export default function Payments() {
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
 
-function StatCard({ icon, value, label, color }) {
+// Optional onClick makes the card a filter shortcut (used for Approved / Awaiting
+// Review on this page). `active` highlights it while its filter is applied;
+// clicking it again clears the filter back to "All".
+function StatCard({ icon, value, label, color, onClick, active }) {
   const bgColors = {
     teal:   "bg-teal-50 text-teal-600",
     green:  "bg-green-50 text-green-600",
     yellow: "bg-yellow-50 text-yellow-600",
     purple: "bg-purple-50 text-purple-600",
   };
-  return (
-    <div className="bg-white rounded-2xl shadow-soft p-4 flex items-center gap-4">
+  const body = (
+    <>
       <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>
         {icon}
       </div>
@@ -923,7 +935,23 @@ function StatCard({ icon, value, label, color }) {
         <div className="text-xl font-bold text-arl-dark">{value}</div>
         <div className="text-xs text-gray-500">{label}</div>
       </div>
-    </div>
+    </>
+  );
+
+  if (!onClick) {
+    return <div className="bg-white rounded-2xl shadow-soft p-4 flex items-center gap-4">{body}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!!active}
+      title={active ? "Click to clear this filter" : `Filter by ${label}`}
+      className={`bg-white rounded-2xl shadow-soft p-4 flex items-center gap-4 text-left w-full transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-arl-light ${active ? "ring-2 ring-arl-light" : ""}`}
+    >
+      {body}
+    </button>
   );
 }
 

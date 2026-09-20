@@ -85,14 +85,14 @@ const STATUS_STYLE = {
 };
 
 // Shared: turn a trip's pickupLocation/dropoffLocation into the `stops`
-// shape TripMapModal expects. Dropoff is only included when it's a
-// genuinely different address — most bookings return to the same spot.
+// shape TripMapModal expects. Both are included whenever present — even
+// when dropoff shares pickup's address (e.g. a round trip back to the
+// same spot), it's still a real stop the driver needs to log/confirm,
+// so it stays on the list rather than being silently collapsed away.
 const tripStops = (trip) => {
   const stops = [];
   if (trip.pickupLocation) stops.push({ key: "pickup", type: "pickup", ...trip.pickupLocation });
-  if (trip.dropoffLocation && trip.dropoffLocation.address !== trip.pickupLocation?.address) {
-    stops.push({ key: "dropoff", type: "dropoff", ...trip.dropoffLocation });
-  }
+  if (trip.dropoffLocation) stops.push({ key: "dropoff", type: "dropoff", ...trip.dropoffLocation });
   return stops;
 };
 
@@ -208,12 +208,15 @@ function ActiveTripsTab() {
 
   // Driver confirming a cash/in-person initial payment — right here in My
   // Trips, no Payments page access needed (drivers can't reach it anyway).
-  const handleConfirmPayment = async () => {
+  const handleConfirmPayment = async (paymentMethod) => {
     if (!paymentTrip) return;
     setConfirmingPayment(true);
     setConfirmPaymentError(null);
     try {
-      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/confirm-payment`, { method: "PATCH" });
+      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/confirm-payment`, {
+        method: "PATCH",
+        body: JSON.stringify({ paymentMethod }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Could not confirm payment.");
       showToast("Payment marked as received.");
@@ -228,12 +231,15 @@ function ActiveTripsTab() {
 
   // Driver receiving cash/in-person payment of the remaining balance —
   // e.g. right before Start Pickup, same as staff can do on Car Tracking.
-  const handleCollectBalance = async () => {
+  const handleCollectBalance = async (paymentMethod) => {
     if (!paymentTrip) return;
     setCollectingBalance(true);
     setCollectBalanceError(null);
     try {
-      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/collect-balance`, { method: "PATCH" });
+      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/collect-balance`, {
+        method: "PATCH",
+        body: JSON.stringify({ paymentMethod }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Could not mark balance as received.");
       showToast("Balance marked as received.");
