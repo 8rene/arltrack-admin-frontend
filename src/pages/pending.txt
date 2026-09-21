@@ -148,3 +148,8 @@ even the amount it should check the total balance instead of the initial payment
 
 what status does the refund of payment changes into?
 bookings status didnot change when refund was there
+
+pending status of booking and payment is on main claude
+
+
+car tracking make it viiew and transport it to booking 

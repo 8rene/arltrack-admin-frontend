@@ -451,6 +451,14 @@ function CustomerProfileModal({ userID, onClose }) {
     ? `${details.firstName || ""} ${details.middleName ? details.middleName + " " : ""}${details.lastName || ""}`.trim()
     : "";
 
+  const refBy = basic?.referral?.referredBy;
+  const refByText = refBy
+    ? (refBy.removed
+        ? `${refBy.code || "—"} (account removed)`
+        : (refBy.name && refBy.username ? `${refBy.name} (@${refBy.username})`
+          : refBy.name || (refBy.username ? `@${refBy.username}` : refBy.code)))
+    : "None";
+
   const row = (label, value) => (
     <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
       <span className="text-gray-500 font-medium w-32 shrink-0">{label}</span>
@@ -482,6 +490,16 @@ function CustomerProfileModal({ userID, onClose }) {
             {row("Status",    basic?.status)}
             {row("ID Status", basic?.isVerified ? "✓ Verified" : "Pending")}
             {row("Joined",    fmtDate(basic?.createdAt))}
+            {row("Referral Code", basic?.referral?.code)}
+            {row("Referred By",   refByText)}
+            {row("Invited",       String(basic?.referral?.invitedCount || 0))}
+            {basic?.referral?.invited?.length > 0 && (
+              <ul className="mt-1 mb-1 text-xs text-gray-600 list-disc pl-5 space-y-0.5">
+                {basic.referral.invited.map((p) => (
+                  <li key={p.id}>{p.name || "—"}{p.username ? ` (@${p.username})` : ""}</li>
+                ))}
+              </ul>
+            )}
             {details && (
               <>
                 {row("Birth Date", details.birthDate ? fmtDate(details.birthDate) : "—")}

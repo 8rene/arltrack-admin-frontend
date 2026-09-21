@@ -93,6 +93,12 @@ const Icons = {
       <polyline points="20 6 9 17 4 12" />
     </svg>
   ),
+  Eye: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
   X: (props) => (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
       <line x1="18" y1="6" x2="6" y2="18" />
@@ -232,6 +238,49 @@ function toMillis(val) {
 // up/down chevrons icon when the column isn't the active sort (so it reads
 // as "sortable" even before you've clicked it), and a bold single arrow in
 // the active color once it is.
+// ─── REFERRAL / NEW-SIGNUP HELPERS ────────────────────────────────────────────
+// `user.referral` is added by the admin backend (attachReferralInfo in
+// user.controller.js): { code, referredBy, invited[], invitedCount }.
+
+// A brand-new signup = locked account whose ID hasn't been verified yet.
+const isNewSignup = (u) =>
+  String(u?.status || "").toLowerCase() === "locked" && u?.isVerified !== true;
+
+function NewSignupBadge() {
+  return (
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-teal-50 border border-teal-200 text-teal-700">
+      New signup
+    </span>
+  );
+}
+
+// "Juan Dela Cruz (@juan)" / "@juan" / "ARL-XXXX (account removed)" / null
+function referrerLabel(by) {
+  if (!by) return null;
+  if (by.removed) return `${by.code || "—"} (account removed)`;
+  if (by.name && by.username) return `${by.name} (@${by.username})`;
+  if (by.name)     return by.name;
+  if (by.username) return `@${by.username}`;
+  if (by.code)     return `${by.code} (no matching account)`;
+  return null;
+}
+
+function ReferralCell({ u }) {
+  const r  = u.referral || {};
+  const by = referrerLabel(r.referredBy);
+  return (
+    <div className="text-xs space-y-0.5">
+      <p className="text-gray-400">
+        Referred by:{" "}
+        {by ? <span className="font-medium text-gray-700">{by}</span> : <span className="text-gray-300">—</span>}
+      </p>
+      <p className="text-gray-400">
+        Invited: <span className="font-semibold text-gray-700">{r.invitedCount || 0}</span>
+      </p>
+    </div>
+  );
+}
+
 function IconChevronsUpDown({ className = "w-3.5 h-3.5" }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -668,7 +717,8 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
   const filtered = users.filter(u => {
     const q = search.toLowerCase();
     const fullName = `${u.details?.firstName || ""} ${u.details?.lastName || ""}`.toLowerCase();
-    const matchSearch = !search || fullName.includes(q) || (u.email || "").toLowerCase().includes(q) || (u.username || "").toLowerCase().includes(q);
+    const matchSearch = !search || fullName.includes(q) || (u.email || "").toLowerCase().includes(q) || (u.username || "").toLowerCase().includes(q)
+      || (u.referral?.code || "").toLowerCase().includes(q);
     const matchStatus =
       filterStatus === "All" ||
       (filterStatus === "flagged"  && u.isFlagged) ||
@@ -682,6 +732,11 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
     if (sortKey === "name") return sortDir === "asc"
       ? fullNameOf(a).localeCompare(fullNameOf(b))
       : fullNameOf(b).localeCompare(fullNameOf(a));
+    if (sortKey === "invited") {
+      const av = a.referral?.invitedCount || 0;
+      const bv = b.referral?.invitedCount || 0;
+      return sortDir === "asc" ? av - bv : bv - av;
+    }
     if (sortKey === "bookings") {
       const av = a.bookingCount || 0;
       const bv = b.bookingCount || 0;
@@ -730,6 +785,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                   <SortableTh label={roleLabelSingular} sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">Contact</th>
                   <th className="px-5 py-3 text-left">ID Status</th>
+                  {showBookings && <SortableTh label="Referral" sortKey="invited" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />}
                   {showBookings && <SortableTh label="Bookings" sortKey="bookings" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />}
                   <SortableTh label="Account" sortKey="account" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Joined" sortKey="joined" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -755,6 +811,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                               {u.isFlagged && (
                                 <Icons.Flag className="w-3.5 h-3.5 text-red-500 fill-red-500 stroke-red-500" />
                               )}
+                              {isNewSignup(u) && <NewSignupBadge />}
                             </p>
                             <p className="text-xs text-gray-400">@{u.username || "—"}</p>
                           </div>
@@ -774,6 +831,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                             </span>
                         }
                       </td>
+                      {showBookings && <td className="px-5 py-3"><ReferralCell u={u} /></td>}
                       {showBookings && <td className="px-5 py-3 font-semibold text-gray-700">{u.bookingCount}</td>}
                       <td className="px-5 py-3">
                         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium capitalize text-black ${
@@ -813,7 +871,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
-      {detailUser    && <ViewDetailsModal user={detailUser} roleLabelSingular={roleLabelSingular} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
+      {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
       {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }}
         viewerRole={viewerRole} currentRoleName={currentRoleName} />}
       {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} error={deleteError} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => { setConfirmDelete(null); setDeleteError(null); }} />}
@@ -822,14 +880,22 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
 }
 
 // ─── VIEW DETAILS MODAL (Information / Documents sub-tabs) ────────────────────
-function ViewDetailsModal({ user, roleLabelSingular, onClose, onEdit }) {
+function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
   const [tab, setTab] = useState("information"); // "information" | "documents"
+  // Drilling into a referrer's or an invited user's own record, without
+  // leaving this modal — resolved locally from the already-loaded `users`
+  // list (same role tab, which referrals are always within in practice),
+  // so this costs no extra request. Recursive: the nested modal is the
+  // same component, so a referrer's own referrer can be drilled into too.
+  const [nestedUserID, setNestedUserID] = useState(null);
+  const nestedUser = nestedUserID ? users?.find((u) => u.id === nestedUserID) : null;
   const det  = user.details  || {};
   const addr = user.address  || {};
   const docu = user.document || {};
   const fullName = `${det.firstName || ""} ${det.middleName ? det.middleName + " " : ""}${det.lastName || ""}${det.suffix ? " " + det.suffix : ""}`.trim() || user.username || "—";
   const imgs = getDocImages(docu);
   const hasImgs = Object.values(imgs).some(v => v && v.trim() !== "");
+  const ref = user.referral || {};
 
   const Field = ({ label, value }) => (
     <div className="bg-gray-50 rounded-xl p-3">
@@ -856,10 +922,12 @@ function ViewDetailsModal({ user, roleLabelSingular, onClose, onEdit }) {
             <p className="text-sm text-gray-400">{roleLabelSingular} · @{user.username || "—"} · {user.email}</p>
           </div>
           <div className="flex gap-2 items-center">
-            <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
-              <Icons.Edit className="w-4 h-4" />
-              Edit
-            </button>
+            {onEdit && (
+              <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
+                <Icons.Edit className="w-4 h-4" />
+                Edit
+              </button>
+            )}
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
               <Icons.Close className="w-5 h-5" />
             </button>
@@ -890,6 +958,53 @@ function ViewDetailsModal({ user, roleLabelSingular, onClose, onEdit }) {
                 <Field label="Flagged"   value={user.isFlagged ? "Yes" : "No"} />
                 <Field label="Joined"    value={fmtDate(user.createdAt)} />
               </Section>
+              <Section title="Referral">
+                <Field label="Referral Code"  value={ref.code} />
+                <div className="bg-gray-50 rounded-xl p-3 flex items-end justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs text-gray-400">Referred By</p>
+                    <p className="font-medium text-gray-800 mt-0.5 break-words">{referrerLabel(ref.referredBy) || "None"}</p>
+                  </div>
+                  {ref.referredBy?.id && users?.some((u) => u.id === ref.referredBy.id) && (
+                    <button
+                      onClick={() => setNestedUserID(ref.referredBy.id)}
+                      className="shrink-0 flex items-center gap-1 px-2.5 py-1 border border-teal-200 text-teal-700 rounded-lg text-xs font-semibold hover:bg-teal-50"
+                    >
+                      <Icons.Eye className="w-3.5 h-3.5" /> View
+                    </button>
+                  )}
+                </div>
+                <Field label="People Invited" value={String(ref.invitedCount || 0)} />
+              </Section>
+              {ref.invited?.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">Invited Users</h3>
+                  <ul className="divide-y border rounded-xl">
+                    {ref.invited.map((p) => (
+                      <li key={p.id} className="flex items-center justify-between px-3 py-2 text-sm gap-2">
+                        <span className="text-gray-700 min-w-0 truncate">
+                          {p.name || "—"} {p.username && <span className="text-gray-400">(@{p.username})</span>}
+                        </span>
+                        <span className="flex items-center gap-2 text-xs text-gray-400 shrink-0">
+                          {fmtDate(p.createdAt)}
+                          <span className={`px-2 py-0.5 rounded-full font-medium capitalize ${
+                            p.status?.toLowerCase() === "locked" ? "bg-red-50 text-red-600" :
+                            p.status?.toLowerCase() === "active" ? "bg-blue-50 text-blue-600" : "bg-gray-50 text-gray-600"
+                          }`}>{p.status || "—"}</span>
+                          {users?.some((u) => u.id === p.id) && (
+                            <button
+                              onClick={() => setNestedUserID(p.id)}
+                              className="flex items-center gap-1 px-2 py-0.5 border border-teal-200 text-teal-700 rounded-lg font-semibold hover:bg-teal-50"
+                            >
+                              <Icons.Eye className="w-3 h-3" /> View
+                            </button>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <Section title="Personal Details">
                 <Field label="First Name"  value={det.firstName} />
                 <Field label="Middle Name" value={det.middleName} />
@@ -936,6 +1051,14 @@ function ViewDetailsModal({ user, roleLabelSingular, onClose, onEdit }) {
           )}
         </div>
       </div>
+      {nestedUser && (
+        <ViewDetailsModal
+          user={nestedUser}
+          users={users}
+          roleLabelSingular={roleLabelSingular}
+          onClose={() => setNestedUserID(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1040,6 +1163,7 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
                   <SortableTh label={roleLabel.replace(/s$/, "")} sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">Document Type</th>
                   <th className="px-5 py-3 text-left">Document No.</th>
+                  <th className="px-5 py-3 text-left">Referred By</th>
                   <th className="px-5 py-3 text-left">ID Status</th>
                   <th className="px-5 py-3 text-left">Flagged</th>
                   <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -1062,13 +1186,19 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
                         <div className="flex items-center gap-3">
                           <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">{initials}</div>
                           <div>
-                            <p className="font-semibold text-gray-800">{fullName}</p>
+                            <p className="font-semibold text-gray-800 flex items-center gap-1.5">
+                              {fullName}
+                              {isNewSignup(u) && <NewSignupBadge />}
+                            </p>
                             <p className="text-xs text-gray-400">@{u.username || "—"}</p>
                           </div>
                         </div>
                       </td>
                       <td className="px-5 py-3 text-gray-600">{u.document?.documentType || "—"}</td>
                       <td className="px-5 py-3 text-gray-600">{u.document?.documentNumber || "—"}</td>
+                      <td className="px-5 py-3 text-gray-600 text-xs">
+                        {referrerLabel(u.referral?.referredBy) || <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="px-5 py-3">
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium">
                           <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending
@@ -1585,6 +1715,13 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
             ))}
           </div>
 
+          <div className="bg-gray-50 rounded-xl p-3 text-sm">
+            <p className="text-xs text-gray-400">Referred By</p>
+            <p className="font-medium text-gray-800 mt-0.5">
+              {referrerLabel(user.referral?.referredBy) || "No referral code used"}
+            </p>
+          </div>
+
           <div>
             <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Uploaded IDs</h3>
             {!hasUploads ? (
@@ -1762,12 +1899,24 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
           </button>
         </div>
         <div className="p-5 space-y-4">
+          {/* New signup awaiting approval — this is the "unlock" moment, so show who referred them */}
+          {isNewSignup(user) && (
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 text-sm text-teal-800">
+              <p className="font-semibold">New signup — waiting for account review</p>
+              <p className="text-xs mt-0.5">
+                Referred by: <span className="font-medium">{referrerLabel(user.referral?.referredBy) || "nobody (no code used)"}</span>
+              </p>
+              <p className="text-xs mt-0.5 text-teal-700">Set Status to Active to unlock the account.</p>
+            </div>
+          )}
+
           {/* Read-only info */}
           <div className="bg-gray-50 rounded-xl p-3 space-y-1 text-sm">
             <p className="text-xs text-gray-400 font-medium mb-2">Account Info (read-only)</p>
             <p className="text-gray-600"><span className="font-medium">Email:</span> {user.email || "—"}</p>
             <p className="text-gray-600"><span className="font-medium">Phone:</span> {user.phone || "—"}</p>
             <p className="text-gray-600"><span className="font-medium">Username:</span> {user.username || "—"}</p>
+            <p className="text-gray-600"><span className="font-medium">Referred by:</span> {referrerLabel(user.referral?.referredBy) || "None"}</p>
           </div>
 
           {/* Status */}

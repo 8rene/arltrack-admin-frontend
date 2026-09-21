@@ -523,7 +523,7 @@ export default function Profile() {
     if (!user) return;
     setLoading(true);
     try {
-      const [userSnap, detailsSnap, addressSnap, docSnap, editReqSnap, idReqSnap] = await Promise.all([
+      const [userSnap, detailsSnap, addressSnap, docSnap, editReqSnap, idReqSnap, invitedSnap] = await Promise.all([
         getDoc(doc(db, "user", user.uid)),
         getDocs(query(collection(db, "userDetails"), where("userID", "==", user.uid))),
         getDocs(query(collection(db, "userAddress"), where("userID", "==", user.uid))),
@@ -534,9 +534,37 @@ export default function Profile() {
         // needing an index created per collection.
         getDocs(query(collection(db, "editRequests"), where("requestedBy", "==", user.uid))),
         getDocs(query(collection(db, "idResubmitRequests"), where("requestedBy", "==", user.uid))),
+        // People THIS account referred — the reverse direction of
+        // referredBy above. Not previously queried here at all, so
+        // "who did I refer" had no way to show up on this page.
+        getDocs(query(collection(db, "user"), where("referredBy", "==", user.uid))),
       ]);
 
       const userData    = userSnap.exists() ? userSnap.data() : {};
+
+      // Referral info (only shown when this account has any). The referrer's
+      // name is a best-effort lookup — falls back to the code they typed.
+      let referredByLabel = "";
+      if (userData.referredBy) {
+        try {
+          const refSnap = await getDoc(doc(db, "user", userData.referredBy));
+          referredByLabel = refSnap.exists()
+            ? (refSnap.data().username ? `@${refSnap.data().username}` : "")
+            : "Account no longer available";
+        } catch (e) { /* not readable for this role — fall back to the typed code */ }
+      }
+      if (!referredByLabel) referredByLabel = userData.referredByCode || "";
+
+      const invitedUsers = invitedSnap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          label: data.username ? `@${data.username}` : (data.email || "Unnamed account"),
+          status: data.status || "active",
+          createdAt: data.createdAt || null,
+        };
+      });
+
       const detailsDoc   = detailsSnap.docs[0];
       const addressDoc   = addressSnap.docs[0];
       const documentDoc  = docSnap.docs[0];
@@ -550,6 +578,10 @@ export default function Profile() {
         status: userData.status || "active",
         isVerified: userData.isVerified || false,
         createdAt: userData.createdAt || null,
+        referralCode: userData.referralCode || "",
+        referredByLabel,
+        invitedUsers,
+        invitedCount: invitedUsers.length,
         ...(detailsDoc ? detailsDoc.data() : {}),
         ...(addressDoc ? addressDoc.data() : {}),
         driverLicenseUrl: documentDoc?.data()?.driverLicenseUrl || "",
@@ -690,6 +722,34 @@ export default function Profile() {
             <DetailRow icon={<IconHome />}        label="Address"
               value={[profile?.street, profile?.barangay, profile?.city, profile?.province].filter(Boolean).join(", ")} />
             <DetailRow icon={<IconShield />}      label="Role"     value={user.role} />
+            {profile?.referralCode && (
+              <DetailRow icon={<IconUser />} label="Referral Code" value={profile.referralCode} />
+            )}
+            {profile?.referredByLabel && (
+              <DetailRow icon={<IconUser />} label="Referred By" value={profile.referredByLabel} />
+            )}
+            {profile?.referralCode && (
+              <div className="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
+                <IconUser className="w-4 h-4 text-gray-400 mt-1 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-gray-400">People You've Referred</p>
+                  {profile.invitedCount > 0 ? (
+                    <ul className="mt-1.5 space-y-1">
+                      {profile.invitedUsers.map((p) => (
+                        <li key={p.id} className="flex items-center justify-between text-sm text-gray-800">
+                          <span>{p.label}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
+                            p.status?.toLowerCase() === "locked" ? "bg-red-50 text-red-600" : "bg-blue-50 text-blue-600"
+                          }`}>{p.status}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-gray-800 mt-0.5">You haven't referred anyone yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="px-6 py-4 space-y-5">
