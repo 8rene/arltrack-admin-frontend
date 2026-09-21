@@ -97,10 +97,30 @@ const STATUS_STYLE = {
 // when dropoff shares pickup's address (e.g. a round trip back to the
 // same spot), it's still a real stop the driver needs to log/confirm,
 // so it stays on the list rather than being silently collapsed away.
+// Roughly "same point" — ~55m, generous enough that a geofence zone
+// centered on the exact pickup/dropoff coordinate (which the customer
+// backend's makeZone() may include alongside genuine extra stops) is
+// recognized as a duplicate rather than shown as its own pin.
+const SAME_SPOT_DEG = 0.0005;
+const isSameSpot = (a, b) =>
+  !!a && !!b && Math.abs(a.lat - b.lat) < SAME_SPOT_DEG && Math.abs(a.lng - b.lng) < SAME_SPOT_DEG;
+
 const tripStops = (trip) => {
   const stops = [];
   if (trip.pickupLocation) stops.push({ key: "pickup", type: "pickup", ...trip.pickupLocation });
   if (trip.dropoffLocation) stops.push({ key: "dropoff", type: "dropoff", ...trip.dropoffLocation });
+  // Extra stops selected during booking — the same geofenceZones
+  // CarTracking's live map already draws for staff. Filtered to genuine
+  // extras: skip anything whose own label calls it out as pickup/dropoff,
+  // or that sits on (near) the same coordinate as one — either would just
+  // double up a pin that's already shown above.
+  (trip.geofenceZones || []).forEach((zone, i) => {
+    if (typeof zone.lat !== "number" || typeof zone.lng !== "number") return;
+    const label = (zone.label || "").toLowerCase();
+    if (label.includes("pickup") || label.includes("drop")) return;
+    if (isSameSpot(zone, trip.pickupLocation) || isSameSpot(zone, trip.dropoffLocation)) return;
+    stops.push({ key: `stop-${i}`, type: "stop", address: zone.label || `Stop ${i + 1}`, lat: zone.lat, lng: zone.lng });
+  });
   return stops;
 };
 

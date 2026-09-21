@@ -37,11 +37,24 @@ const IconExpand = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconWaypoint = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 // ─── Stop type styling — single source of truth for color/icon so the
 // list, the map markers, and the legend can never drift out of sync ──────
 const STOP_STYLE = {
-  pickup:  { color: "#4f46e5", label: "Pickup",  Icon: IconPin,  shape: "50% 50% 50% 0", rotate: "-45deg" },
-  dropoff: { color: "#f59e0b", label: "Dropoff", Icon: IconFlag, shape: "50% 50% 50% 0", rotate: "-45deg" },
+  pickup:  { color: "#4f46e5", label: "Pickup",  Icon: IconPin,      shape: "50% 50% 50% 0", rotate: "-45deg" },
+  dropoff: { color: "#f59e0b", label: "Dropoff", Icon: IconFlag,     shape: "50% 50% 50% 0", rotate: "-45deg" },
+  // Extra stop selected during booking (session.geofenceZones), distinct
+  // from pickup/dropoff — round instead of a pin, teal instead of indigo/
+  // amber, so it never gets mistaken for either endpoint on the map or in
+  // the legend. label is set per-stop (the zone's own label) rather than
+  // a fixed string here — see tripStops() in MyTrips.jsx.
+  stop:    { color: "#0d9488", label: "Stop",    Icon: IconWaypoint, shape: "50%",            rotate: "0deg" },
 };
 
 function stopDivIcon(type) {
@@ -72,7 +85,8 @@ function buildDirectionsUrl(dest, driverPos) {
 }
 
 /**
- * Full-size map modal for a trip's stops (pickup / dropoff).
+ * Full-size map modal for a trip's stops (pickup / dropoff / any extra
+ * stops selected during booking).
  *
  * Layout mirrors CarTracking: a left list of stops (click to focus) next
  * to a big Leaflet map. Selecting a stop — from the list OR by tapping its
@@ -84,7 +98,7 @@ function buildDirectionsUrl(dest, driverPos) {
  * @param {boolean} open
  * @param {() => void} onClose
  * @param {string} title
- * @param {Array<{ key: string, type: "pickup"|"dropoff", address?: string, lat: number, lng: number }>} stops
+ * @param {Array<{ key: string, type: "pickup"|"dropoff"|"stop", address?: string, lat: number, lng: number }>} stops
  */
 export default function TripMapModal({ open, onClose, title = "Trip Route", stops = [] }) {
   const mapElRef      = useRef(null);

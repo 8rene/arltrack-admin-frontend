@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
@@ -318,8 +318,12 @@ export default function Dashboard() {
     return `in ${h}h ${m}m`;
   };
 
-  const [licenseWarnings, setLicenseWarnings] = useState([]); // expiring soon, not yet expired
-  const [licenseAlerts, setLicenseAlerts]     = useState([]); // already expired — needs action now, not a countdown
+  // Raw license rows (ONE per Driver/Supervisor — their latest expiry). Whether
+  // a row is a Warning (expiring soon) or an Alert (already expired) is worked
+  // out below from the current time, so an open dashboard moves a license from
+  // Warning to Alerts on its own without re-reading Firestore.
+  const [licenseRows, setLicenseRows] = useState([]);
+  const [licenseNow, setLicenseNow]   = useState(() => Date.now());
 
   // Driver's-license expiry — the join against `user`/`userDetails` for
   // role + name isn't cheap to do inside a raw onSnapshot, so instead of a
@@ -349,8 +353,6 @@ export default function Dashboard() {
         return null;
       };
 
-      const now = Date.now();
-      const LICENSE_WARNING_DAYS = 14; // kept in sync by hand with Profile.jsx / admin-backend's cron threshold
       // Firestore `user` docs store roleID (see backend/models/user/user.model.js),
       // not a human-readable role name — these two IDs are copied by hand from
       // backend/utils/roles/role.util.js's ROLE_IDS. No shared config between
@@ -359,8 +361,11 @@ export default function Dashboard() {
       const DRIVER_ROLE_ID     = "Na0Jpt86nldSO5SjfcLa";
       const SUPERVISOR_ROLE_ID = "fFA8G2R2ANLbVsH00jlv";
 
-      const warningResults = [];
-      const alertResults = [];
+      // One row per person. A driver can end up with more than one
+      // `userDocument` record (old data, re-uploads) — reading every record
+      // separately could show the same driver as both expired AND expiring.
+      // Keep only the record with the LATEST expiry (the current license).
+      const latestByUser = new Map();
       docSnap.docs.forEach((d) => {
         const data = d.data();
         const expiry = toJs(data.driverLicenseExpiry);
@@ -368,35 +373,68 @@ export default function Dashboard() {
         if (!expiry || !u) return;
         // Driver/Supervisor only — matches the cron job's scope.
         if (u.roleID !== DRIVER_ROLE_ID && u.roleID !== SUPERVISOR_ROLE_ID) return;
+        const prev = latestByUser.get(data.userID);
+        if (!prev || expiry.getTime() > prev.expiry.getTime()) latestByUser.set(data.userID, { data, expiry, u });
+      });
 
-        const daysLeft = Math.ceil((expiry.getTime() - now) / (24 * 60 * 60 * 1000));
-        if (daysLeft > LICENSE_WARNING_DAYS) return; // not close enough yet
-
+      const rows = [...latestByUser.values()].map(({ data, expiry, u }) => {
         const det = detailsMap[data.userID] || {};
         const name = `${det.firstName || ""} ${det.lastName || ""}`.trim() || u.username || u.email || data.userID;
-        const entry = {
+        return {
           id: data.userID,
           userID: data.userID,
           name,
-          daysLeft,
-          isExpired: daysLeft < 0,
           _due: expiry,
+          locked: String(u.status || "").toLowerCase() === "locked",
           // Lowercase to match Users.jsx's ROLE_TABS key ("driver"/"supervisor"),
           // not the capitalized ROLES.DRIVER/"Driver" string.
           role: u.roleID === DRIVER_ROLE_ID ? "driver" : "supervisor",
         };
-        if (entry.isExpired) alertResults.push(entry);
-        else warningResults.push(entry);
       });
-
-      setLicenseWarnings(warningResults.sort((a, b) => a._due - b._due));
-      setLicenseAlerts(alertResults.sort((a, b) => a._due - b._due));
+      setLicenseRows(rows);
     } catch (e) {
       console.error("License warning fetch error:", e);
     }
   }, []);
 
   useEffect(() => { fetchLicenseWarnings(); }, [fetchLicenseWarnings]);
+
+  // Warning vs Alert, decided from the CURRENT time. Uses the exact expiry
+  // moment (same rule as the nightly job in admin-backend's
+  // midinghtFlush.job.js), not rounded whole days — rounding used to keep a
+  // license in Warning for up to 24h after it had already expired.
+  const LICENSE_WARNING_DAYS = 14; // kept in sync by hand with Profile.jsx / admin-backend's cron threshold
+  const { licenseWarnings, licenseAlerts } = useMemo(() => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const warningResults = [];
+    const alertResults = [];
+    licenseRows.forEach((r) => {
+      const msLeft = r._due.getTime() - licenseNow;
+      const isExpired = msLeft < 0;
+      const daysLeft = Math.ceil(msLeft / DAY);
+      if (!isExpired && daysLeft > LICENSE_WARNING_DAYS) return; // not close enough yet
+      const entry = { ...r, daysLeft, isExpired };
+      if (isExpired) alertResults.push(entry);
+      else warningResults.push(entry);
+    });
+    return {
+      licenseWarnings: warningResults.sort((a, b) => a._due - b._due),
+      licenseAlerts: alertResults.sort((a, b) => a._due - b._due),
+    };
+  }, [licenseRows, licenseNow]);
+
+  // Keep the clock moving while the dashboard is open (so a license flips
+  // from Warning to Alerts at its expiry time), and re-read the data when the
+  // tab comes back into view after being in the background.
+  useEffect(() => {
+    const tick = () => setLicenseNow(Date.now());
+    const timer = setInterval(tick, 60 * 1000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") { tick(); fetchLicenseWarnings(true); }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [fetchLicenseWarnings]);
 
   // Re-run the license join whenever a userDocument changes (e.g. a driver's
   // license expiry gets corrected, or a new document is uploaded), instead of
@@ -701,7 +739,9 @@ export default function Dashboard() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-800 leading-snug">Driver's License Expired</p>
                         <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.name}</p>
-                        <p className="text-xs text-gray-400">Account auto-locked</p>
+                        <p className="text-xs text-gray-400">
+                          {a.locked ? "Account auto-locked" : "Expired — account locks at midnight"}
+                        </p>
                       </div>
                     </div>
                   );
