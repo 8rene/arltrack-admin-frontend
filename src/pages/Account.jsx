@@ -523,6 +523,9 @@ export default function Profile() {
     if (!user) return;
     setLoading(true);
     try {
+      // If the referral list can't be read (e.g. Firestore rules for this
+      // role), only that list is skipped — the rest of the page still loads.
+      let invitedFailed = false;
       const [userSnap, detailsSnap, addressSnap, docSnap, editReqSnap, idReqSnap, invitedSnap] = await Promise.all([
         getDoc(doc(db, "user", user.uid)),
         getDocs(query(collection(db, "userDetails"), where("userID", "==", user.uid))),
@@ -534,10 +537,9 @@ export default function Profile() {
         // needing an index created per collection.
         getDocs(query(collection(db, "editRequests"), where("requestedBy", "==", user.uid))),
         getDocs(query(collection(db, "idResubmitRequests"), where("requestedBy", "==", user.uid))),
-        // People THIS account referred — the reverse direction of
-        // referredBy above. Not previously queried here at all, so
-        // "who did I refer" had no way to show up on this page.
-        getDocs(query(collection(db, "user"), where("referredBy", "==", user.uid))),
+        // People THIS account referred — the reverse direction of referredBy.
+        getDocs(query(collection(db, "user"), where("referredBy", "==", user.uid)))
+          .catch((e) => { console.error("Referral list fetch error:", e); invitedFailed = true; return { docs: [] }; }),
       ]);
 
       const userData    = userSnap.exists() ? userSnap.data() : {};
@@ -554,6 +556,21 @@ export default function Profile() {
         } catch (e) { /* not readable for this role — fall back to the typed code */ }
       }
       if (!referredByLabel) referredByLabel = userData.referredByCode || "";
+
+      // Accounts that don't have their own referral code yet get one the
+      // first time they open this page (created + saved on their `user`
+      // doc by the backend — same idea as the customer profile page).
+      let ownReferralCode = userData.referralCode || "";
+      if (!ownReferralCode) {
+        try {
+          const codeRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/me/referral-code`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+          });
+          const codeJson = await codeRes.json().catch(() => ({}));
+          if (codeRes.ok && codeJson?.data?.referralCode) ownReferralCode = codeJson.data.referralCode;
+        } catch (e) { console.error("Referral code fetch error:", e); }
+      }
 
       const invitedUsers = invitedSnap.docs.map((d) => {
         const data = d.data();
@@ -578,10 +595,11 @@ export default function Profile() {
         status: userData.status || "active",
         isVerified: userData.isVerified || false,
         createdAt: userData.createdAt || null,
-        referralCode: userData.referralCode || "",
+        referralCode: ownReferralCode,
         referredByLabel,
         invitedUsers,
         invitedCount: invitedUsers.length,
+        invitedFailed,
         ...(detailsDoc ? detailsDoc.data() : {}),
         ...(addressDoc ? addressDoc.data() : {}),
         driverLicenseUrl: documentDoc?.data()?.driverLicenseUrl || "",
@@ -733,7 +751,9 @@ export default function Profile() {
                 <IconUser className="w-4 h-4 text-gray-400 mt-1 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-gray-400">People You've Referred</p>
-                  {profile.invitedCount > 0 ? (
+                  {profile.invitedFailed ? (
+                    <p className="text-sm text-gray-400 mt-0.5">Couldn't load this list right now.</p>
+                  ) : profile.invitedCount > 0 ? (
                     <ul className="mt-1.5 space-y-1">
                       {profile.invitedUsers.map((p) => (
                         <li key={p.id} className="flex items-center justify-between text-sm text-gray-800">
