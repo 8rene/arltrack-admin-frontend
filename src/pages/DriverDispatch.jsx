@@ -51,6 +51,31 @@ const fmtDateTime = (val) => {
   return d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 };
 
+const fmtDay = (val) => {
+  const d = new Date(val);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+};
+
+// How many "Needs a Driver" cards show before "See more" — keeps a long
+// queue from stacking down the page.
+const QUEUE_PREVIEW = 3;
+
+// Driver's-license note for the assign UI; null when there's nothing to warn about.
+// (Comes from the board's `license` field — see driverDispatch.service.js.)
+const licenseWarning = (lic) => {
+  if (!lic) return null;
+  if (lic.status === "expired") {
+    return { level: "expired", short: "license expired",
+             long: `Driver's license expired${lic.expiry ? ` on ${fmtDay(lic.expiry)}` : ""}.` };
+  }
+  if (lic.status === "expiring") {
+    return { level: "expiring", short: `license expires in ${lic.daysLeft}d`,
+             long: `Driver's license expires in ${lic.daysLeft} day${lic.daysLeft === 1 ? "" : "s"}.` };
+  }
+  return null;
+};
+
 const StatCard = ({ icon, value, label, color }) => {
   const colors = {
     red:    "bg-red-50 text-red-600",
@@ -102,6 +127,7 @@ export default function DriverDispatch() {
   const [busyID, setBusyID]     = useState(null);  // bookingDocID currently being assigned/unassigned
   const [conflict, setConflict] = useState(null);  // { bookingDocID, driverID, message }
   const [expanded, setExpanded] = useState({});    // { [driverID]: bool }
+  const [showAllQueue, setShowAllQueue] = useState(false); // "Needs a Driver": See more / See less
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -154,7 +180,7 @@ export default function DriverDispatch() {
   }, [assignForBooking, loading]);
 
   const driverOptions = useMemo(
-    () => board.drivers.map((d) => ({ id: d.driverID, name: d.name })),
+    () => board.drivers.map((d) => ({ id: d.driverID, name: d.name, license: d.license })),
     [board.drivers]
   );
 
@@ -218,6 +244,17 @@ export default function DriverDispatch() {
   };
 
   const toggleExpand = (driverID) => setExpanded((prev) => ({ ...prev, [driverID]: !prev[driverID] }));
+
+  // "Needs a Driver" shows the first few, then See more / See less. If we
+  // arrived here to assign one specific booking that's further down the list,
+  // keep the whole list open so that card is actually on screen.
+  const assignTargetIndex = assignForBooking
+    ? board.unassigned.findIndex((b) => b.id === assignForBooking.bookingId)
+    : -1;
+  const queueForcedOpen  = assignTargetIndex >= QUEUE_PREVIEW;
+  const queueExpanded    = showAllQueue || queueForcedOpen;
+  const visibleUnassigned = queueExpanded ? board.unassigned : board.unassigned.slice(0, QUEUE_PREVIEW);
+  const hiddenCount      = board.unassigned.length - visibleUnassigned.length;
 
   const activeTripCount = board.drivers.reduce((sum, d) => sum + d.assignments.length, 0);
 
@@ -297,7 +334,7 @@ export default function DriverDispatch() {
             <p className="text-xs text-gray-400 py-6 text-center">All chauffeur bookings are assigned. 🎉</p>
           ) : (
             <div className="space-y-2">
-              {board.unassigned.map((b) => (
+              {visibleUnassigned.map((b) => (
                 <div key={b.id} id={`booking-${b.id}`} className={`border rounded-xl p-3 space-y-2 transition-all ${
                   assignForBooking?.bookingId === b.id ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200"
                 }`}>
@@ -330,22 +367,47 @@ export default function DriverDispatch() {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex gap-2">
-                      <select
-                        value={picked[b.id] || ""}
-                        onChange={(e) => setPicked((prev) => ({ ...prev, [b.id]: e.target.value }))}
-                        className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-arl-light">
-                        <option value="">Select driver…</option>
-                        {driverOptions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                      </select>
-                      <button onClick={() => doAssign(b.id, picked[b.id])} disabled={busyID === b.id}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-arl-dark text-white hover:opacity-90 disabled:opacity-40">
-                        Assign
-                      </button>
+                    <div className="space-y-1.5">
+                      <div className="flex gap-2">
+                        <select
+                          value={picked[b.id] || ""}
+                          onChange={(e) => setPicked((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                          className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-arl-light">
+                          <option value="">Select driver…</option>
+                          {driverOptions.map((d) => {
+                            const w = licenseWarning(d.license);
+                            return <option key={d.id} value={d.id}>{d.name}{w ? ` — ${w.short}` : ""}</option>;
+                          })}
+                        </select>
+                        <button onClick={() => doAssign(b.id, picked[b.id])} disabled={busyID === b.id}
+                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-arl-dark text-white hover:opacity-90 disabled:opacity-40">
+                          Assign
+                        </button>
+                      </div>
+                      {(() => {
+                        const w = licenseWarning(driverOptions.find((d) => d.id === picked[b.id])?.license);
+                        if (!w) return null;
+                        return (
+                          <p className={`flex items-center gap-1.5 text-[11px] rounded-lg px-2 py-1.5 border ${
+                            w.level === "expired"
+                              ? "bg-red-50 border-red-200 text-red-700"
+                              : "bg-amber-50 border-amber-200 text-amber-700"
+                          }`}>
+                            <IconWarning className="w-3.5 h-3.5 shrink-0" /> {w.long}
+                            {w.level === "expired" ? " You'll be asked to confirm before assigning." : ""}
+                          </p>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
               ))}
+              {board.unassigned.length > QUEUE_PREVIEW && !queueForcedOpen && (
+                <button type="button" onClick={() => setShowAllQueue((v) => !v)}
+                  className="w-full py-2 text-xs font-semibold text-arl-primary rounded-lg border border-dashed border-gray-200 hover:bg-gray-50">
+                  {queueExpanded ? "See less" : `See more (${hiddenCount} more)`}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -386,6 +448,15 @@ export default function DriverDispatch() {
                       <div>
                         <div className="text-sm font-semibold text-arl-dark">{d.name}</div>
                         <div className="text-xs text-gray-400">{d.phone}</div>
+                        {licenseWarning(d.license) && (
+                          <span className={`inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                            licenseWarning(d.license).level === "expired"
+                              ? "bg-red-50 text-red-700 border-red-200"
+                              : "bg-amber-50 text-amber-700 border-amber-200"
+                          }`}>
+                            {licenseWarning(d.license).short}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg ${

@@ -385,7 +385,6 @@ export default function Dashboard() {
           userID: data.userID,
           name,
           _due: expiry,
-          locked: String(u.status || "").toLowerCase() === "locked",
           // Lowercase to match Users.jsx's ROLE_TABS key ("driver"/"supervisor"),
           // not the capitalized ROLES.DRIVER/"Driver" string.
           role: u.roleID === DRIVER_ROLE_ID ? "driver" : "supervisor",
@@ -739,9 +738,7 @@ export default function Dashboard() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-800 leading-snug">Driver's License Expired</p>
                         <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.name}</p>
-                        <p className="text-xs text-gray-400">
-                          {a.locked ? "Account auto-locked" : "Expired — account locks at midnight"}
-                        </p>
+                        <p className="text-xs text-gray-400">Expired — a warning shows when assigning a trip</p>
                       </div>
                     </div>
                   );
