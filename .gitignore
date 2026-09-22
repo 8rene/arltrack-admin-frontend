@@ -144,3 +144,5 @@ vite.config.ts.timestamp-*
 
 
 file_python_test/
+
+src/pages/pending.txt

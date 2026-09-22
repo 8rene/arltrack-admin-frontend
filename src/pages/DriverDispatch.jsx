@@ -35,6 +35,14 @@ const IconWarning = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconDots = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <circle cx="5" cy="12" r="1.8" />
+    <circle cx="12" cy="12" r="1.8" />
+    <circle cx="19" cy="12" r="1.8" />
+  </svg>
+);
+
 const IconUser = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <circle cx="12" cy="8" r="3.5" />
@@ -59,7 +67,7 @@ const fmtDay = (val) => {
 
 // How many "Needs a Driver" cards show before "See more" — keeps a long
 // queue from stacking down the page.
-const QUEUE_PREVIEW = 3;
+const QUEUE_PREVIEW = 8;
 
 // Driver's-license note for the assign UI; null when there's nothing to warn about.
 // (Comes from the board's `license` field — see driverDispatch.service.js.)
@@ -128,6 +136,7 @@ export default function DriverDispatch() {
   const [conflict, setConflict] = useState(null);  // { bookingDocID, driverID, message }
   const [expanded, setExpanded] = useState({});    // { [driverID]: bool }
   const [showAllQueue, setShowAllQueue] = useState(false); // "Needs a Driver": See more / See less
+  const [openCards, setOpenCards] = useState({});          // { [bookingDocID]: bool } — details row expanded
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -334,74 +343,98 @@ export default function DriverDispatch() {
             <p className="text-xs text-gray-400 py-6 text-center">All chauffeur bookings are assigned. 🎉</p>
           ) : (
             <div className="space-y-2">
-              {visibleUnassigned.map((b) => (
-                <div key={b.id} id={`booking-${b.id}`} className={`border rounded-xl p-3 space-y-2 transition-all ${
+              {visibleUnassigned.map((b) => {
+                // Collapsed by default — one row per booking. Opens on its own
+                // when we arrived to assign this booking, or when a conflict
+                // prompt needs to be seen; an explicit click always wins.
+                const forcedOpen = assignForBooking?.bookingId === b.id || conflict?.bookingDocID === b.id;
+                const isOpen = openCards[b.id] !== undefined ? openCards[b.id] : forcedOpen;
+                return (
+                <div key={b.id} id={`booking-${b.id}`} className={`border rounded-xl px-2.5 py-2 transition-all ${
                   assignForBooking?.bookingId === b.id ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200"
                 }`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-semibold text-arl-dark">{b.customerName}</div>
-                      <div className="text-xs text-gray-400">{b.vehicleName}</div>
-                    </div>
-                    <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg bg-yellow-50 text-yellow-700 border border-yellow-200">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-arl-dark" title={b.customerName}>{b.customerName}</span>
+                    <span className="shrink-0 flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap">
+                      <IconClock className="w-3.5 h-3.5" /> {fmtDateTime(b.startDateTime)}
+                    </span>
+                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg bg-yellow-50 text-yellow-700 border border-yellow-200">
                       Upcoming
                     </span>
-                  </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-                    <span className="flex items-center gap-1"><IconClock /> {fmtDateTime(b.startDateTime)}</span>
-                    <span className="flex items-center gap-1"><IconPin /> {b.location}</span>
+                    <button type="button"
+                      onClick={() => setOpenCards((prev) => ({ ...prev, [b.id]: !isOpen }))}
+                      aria-expanded={isOpen}
+                      title={isOpen ? "Hide details" : "Show details"}
+                      className={`shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
+                        isOpen ? "bg-gray-100 border-gray-300 text-arl-dark" : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                      }`}>
+                      <IconDots className="w-4 h-4" />
+                    </button>
                   </div>
 
-                  {conflict?.bookingDocID === b.id ? (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 space-y-2">
-                      <p className="text-xs text-red-700">{conflict.message}</p>
-                      <div className="flex gap-2">
-                        <button onClick={() => doAssign(b.id, conflict.driverID, true)} disabled={busyID === b.id}
-                          className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-arl-cta text-white hover:opacity-90 disabled:opacity-40">
-                          Assign Anyway
-                        </button>
-                        <button onClick={() => setConflict(null)}
-                          className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
-                          Cancel
-                        </button>
+                  {isOpen && (
+                    <div className="mt-2 pt-2 border-t border-gray-100 space-y-1.5">
+                      <div className="text-xs text-gray-400">{b.vehicleName}</div>
+                      <div className="flex items-start gap-1 text-xs text-gray-500">
+                        <IconPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span className="min-w-0 break-words">{b.location}</span>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      <div className="flex gap-2">
-                        <select
-                          value={picked[b.id] || ""}
-                          onChange={(e) => setPicked((prev) => ({ ...prev, [b.id]: e.target.value }))}
-                          className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-arl-light">
-                          <option value="">Select driver…</option>
-                          {driverOptions.map((d) => {
-                            const w = licenseWarning(d.license);
-                            return <option key={d.id} value={d.id}>{d.name}{w ? ` — ${w.short}` : ""}</option>;
-                          })}
-                        </select>
-                        <button onClick={() => doAssign(b.id, picked[b.id])} disabled={busyID === b.id}
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-arl-dark text-white hover:opacity-90 disabled:opacity-40">
-                          Assign
-                        </button>
+
+                    {conflict?.bookingDocID === b.id ? (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 space-y-2">
+                        <p className="text-xs text-red-700">{conflict.message}</p>
+                        <div className="flex gap-2">
+                          <button onClick={() => doAssign(b.id, conflict.driverID, true)} disabled={busyID === b.id}
+                            className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-arl-cta text-white hover:opacity-90 disabled:opacity-40">
+                            Assign Anyway
+                          </button>
+                          <button onClick={() => setConflict(null)}
+                            className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+                            Cancel
+                          </button>
+                        </div>
                       </div>
-                      {(() => {
-                        const w = licenseWarning(driverOptions.find((d) => d.id === picked[b.id])?.license);
-                        if (!w) return null;
-                        return (
-                          <p className={`flex items-center gap-1.5 text-[11px] rounded-lg px-2 py-1.5 border ${
-                            w.level === "expired"
-                              ? "bg-red-50 border-red-200 text-red-700"
-                              : "bg-amber-50 border-amber-200 text-amber-700"
-                          }`}>
-                            <IconWarning className="w-3.5 h-3.5 shrink-0" /> {w.long}
-                            {w.level === "expired" ? " You'll be asked to confirm before assigning." : ""}
-                          </p>
-                        );
-                      })()}
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="flex gap-2">
+                          <select
+                            value={picked[b.id] || ""}
+                            onChange={(e) => setPicked((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                            className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-arl-light">
+                            <option value="">Select driver…</option>
+                            {driverOptions.map((d) => {
+                              const w = licenseWarning(d.license);
+                              return <option key={d.id} value={d.id}>{d.name}{w ? ` — ${w.short}` : ""}</option>;
+                            })}
+                          </select>
+                          <button onClick={() => doAssign(b.id, picked[b.id])} disabled={busyID === b.id || !picked[b.id]}
+                            title={!picked[b.id] ? "Select a driver first" : undefined}
+                            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-arl-dark text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
+                            Assign
+                          </button>
+                        </div>
+                        {(() => {
+                          const w = licenseWarning(driverOptions.find((d) => d.id === picked[b.id])?.license);
+                          if (!w) return null;
+                          return (
+                            <p className={`flex items-center gap-1.5 text-[11px] rounded-lg px-2 py-1.5 border ${
+                              w.level === "expired"
+                                ? "bg-red-50 border-red-200 text-red-700"
+                                : "bg-amber-50 border-amber-200 text-amber-700"
+                            }`}>
+                              <IconWarning className="w-3.5 h-3.5 shrink-0" /> {w.long}
+                              {w.level === "expired" ? " You'll be asked to confirm before assigning." : ""}
+                            </p>
+                          );
+                        })()}
+                      </div>
+                    )}
+
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
               {board.unassigned.length > QUEUE_PREVIEW && !queueForcedOpen && (
                 <button type="button" onClick={() => setShowAllQueue((v) => !v)}
                   className="w-full py-2 text-xs font-semibold text-arl-primary rounded-lg border border-dashed border-gray-200 hover:bg-gray-50">

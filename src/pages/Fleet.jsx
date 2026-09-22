@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import {
-  collection, getDocs, query, where, orderBy,
+  collection, getDocs, getDoc, doc, query, where,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
@@ -347,18 +347,13 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
 
   useEffect(() => {
     if (car.status === "Rented" || car.status === "Reserved") {
-      const now = new Date();
       getDocs(query(
         collection(db, "bookings"),
-        where("carID", "==", car.id),
-        where("status", "==", "approved")
+        where("carID", "==", car.carID || car.id)
       )).then(snap => {
         const future = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
-          .filter(b => {
-            const end = b.endDateTime?.toDate ? b.endDateTime.toDate() : new Date(b.endDateTime);
-            return end >= now;
-          })
+          .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
           .sort((a, b) => {
             const aD = a.startDateTime?.toDate ? a.startDateTime.toDate() : new Date(a.startDateTime);
             const bD = b.startDateTime?.toDate ? b.startDateTime.toDate() : new Date(b.startDateTime);
@@ -367,7 +362,7 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
         setNearestBooking(future[0] || null);
       }).catch(() => {});
     }
-  }, [car.id, car.status]);
+  }, [car.id, car.carID, car.status]);
 
   const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.plateNumber || car.id;
 
@@ -594,6 +589,7 @@ function StatusReasonModal({ carLabel, status, saving, onConfirm, onCancel }) {
 // ─── VIEW DETAILS MODAL ───────────────────────────────────────────────────────
 function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
   const { fmt } = useCurrency();
+  const navigate = useNavigate();
   const [bookings, setBookings]   = useState([]);
   const [loading, setLoading]     = useState(true);
   const [allImages, setAllImages] = useState([]);
@@ -608,38 +604,50 @@ function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
         setAllImages(imgs);
         if (imgs.length > 0) setActiveImg(imgs[0]);
 
-        const now = new Date();
-        let future = [];
-        try {
-          const bSnap = await getDocs(query(
-            collection(db, "bookings"),
-            where("carID", "==", car.id),
-            where("status", "in", ["approved", "pending"]),
-            orderBy("startDateTime", "asc")
-          ));
-          future = bSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-            .filter(b => {
-              const end = b.endDateTime?.toDate ? b.endDateTime.toDate() : new Date(b.endDateTime);
-              return end >= now;
-            });
-        } catch {
-          const bSnap = await getDocs(query(
-            collection(db, "bookings"),
-            where("carID", "==", car.id),
-            where("status", "in", ["approved", "pending"])
-          ));
-          future = bSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-            .filter(b => {
-              const end = b.endDateTime?.toDate ? b.endDateTime.toDate() : new Date(b.endDateTime);
-              return end >= now;
-            })
-            .sort((a, b) => {
-              const aD = a.startDateTime?.toDate ? a.startDateTime.toDate() : new Date(a.startDateTime);
-              const bD = b.startDateTime?.toDate ? b.startDateTime.toDate() : new Date(b.startDateTime);
-              return aD - bD;
-            });
-        }
-        setBookings(future);
+        // Query by carID only — status is written by the customer-facing
+        // backend, so its exact casing isn't guaranteed here. Filter
+        // client-side with toLowerCase(), same as Vehicle Inspection's
+        // Past Trips does for this same status check.
+        const bSnap = await getDocs(query(
+          collection(db, "bookings"),
+          where("carID", "==", car.carID || car.id)
+        ));
+        // "upcoming"/"ongoing" ARE the "still open" states — same as the
+        // backend's own definition (see dashboard.service.js's upcoming
+        // count and midinghtFlush.job.js's checkOverdueBookings), both of
+        // which key off status alone. Neither status auto-clears itself
+        // once its date passes — a no-show pickup stays "upcoming" and an
+        // overdue return stays "ongoing" until staff act on it — so an
+        // extra endDateTime >= now check here only hid bookings that are
+        // still genuinely open, including every real case in this car's
+        // data.
+        const future = bSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
+          .sort((a, b) => {
+            const aD = a.startDateTime?.toDate ? a.startDateTime.toDate() : new Date(a.startDateTime);
+            const bD = b.startDateTime?.toDate ? b.startDateTime.toDate() : new Date(b.startDateTime);
+            return aD - bD;
+          });
+
+        // Resolve booker names — same lookup Vehicle Inspection uses for
+        // an active booking's customer: userDetails (firstName/lastName)
+        // falling back to user (username/email), both keyed by userID.
+        const withNames = await Promise.all(future.map(async (b) => {
+          if (!b.userID) return { ...b, customerName: "Customer" };
+          try {
+            const [detailDoc, userDoc] = await Promise.all([
+              getDoc(doc(db, "userDetails", b.userID)),
+              getDoc(doc(db, "user", b.userID)),
+            ]);
+            const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
+            const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+            const { username = "", email = "" } = userDoc.exists() ? userDoc.data() : {};
+            return { ...b, customerName: fullName || username || email || "Customer" };
+          } catch {
+            return { ...b, customerName: "Customer" };
+          }
+        }));
+        setBookings(withNames);
       } catch (e) {
         console.error("ViewDetails error:", e);
       } finally {
@@ -647,7 +655,7 @@ function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
       }
     };
     load();
-  }, [car.id]);
+  }, [car.id, car.carID]);
 
   const sorted = sortPricing(car.pricing || []);
 
@@ -761,12 +769,21 @@ function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
                 {bookings.map(b => (
                   <div key={b.id} className="flex justify-between items-center bg-gray-50 rounded-xl px-4 py-3">
                     <div>
-                      <p className="text-sm font-medium text-gray-800">{b.userID || "Customer"}</p>
+                      <p className="text-sm font-medium text-gray-800">{b.customerName || "Customer"}</p>
                       <p className="text-xs text-gray-400">{fmtDate(b.startDateTime)} → {fmtDate(b.endDateTime)}</p>
                     </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      b.status === "approved" ? "bg-blue-50 border border-blue-200 text-black" : "bg-yellow-50 border border-yellow-200 text-black"
-                    }`}>{b.status}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
+                        b.status?.toLowerCase() === "ongoing" ? "bg-blue-50 border border-blue-200 text-black" : "bg-yellow-50 border border-yellow-200 text-black"
+                      }`}>{b.status}</span>
+                      <button
+                        onClick={() => navigate(`/bookings?open=${b.bookingID || b.id}`)}
+                        className="flex items-center gap-1 text-xs font-medium text-teal-600 hover:text-teal-700 px-2 py-1 rounded-lg hover:bg-teal-50"
+                      >
+                        View
+                        <Icons.ArrowRight className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

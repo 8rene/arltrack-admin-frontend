@@ -1482,7 +1482,7 @@ export default function CarTracking() {
                                   : "border-green-300 text-green-700 hover:bg-green-50"
                               }`}
                             >
-                              <Icons.Peso className="w-3 h-3" />
+                              {!(b.balance > 0) && <Icons.Peso className="w-3 h-3" />}
                               {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
                             </button>
                             <button
@@ -1514,7 +1514,7 @@ export default function CarTracking() {
                                     : "border-green-300 text-green-700 hover:bg-green-50"
                                 }`}
                               >
-                                <Icons.Peso className="w-3 h-3" />
+                                {!(b.balance > 0) && <Icons.Peso className="w-3 h-3" />}
                                 {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
                               </button>
                               <button
@@ -1576,7 +1576,7 @@ export default function CarTracking() {
                                 : "border-green-300 text-green-700 hover:bg-green-50"
                             }`}
                           >
-                            <Icons.Peso className="w-3 h-3" />
+                            {!(b.balance > 0) && <Icons.Peso className="w-3 h-3" />}
                             {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
                           </button>
                           <span className={`text-[11px] italic px-1 ${isChauffeur ? "text-indigo-300" : "text-blue-300"}`}>Upcoming</span>

@@ -48,12 +48,141 @@ function StatusBadge({ status }) {
 // on PayMongo for. "History" = resolved, permanent record — money already
 // moved (or definitively didn't). Tab lives above the status chips; the
 // chips themselves narrow further within whichever tab is selected.
+const PAGE_SIZE = 15;
+
+// --- PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Users.jsx) -----
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  // Clamp if the list shrinks (filter/search/refresh) and we were on a now-empty page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+
+  const rangeEnd = Math.min(start + pageSize, count);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const TABS = [
   { key: "active",  label: "Active Queue", statuses: ["Pending", "Approved"] },
   { key: "history", label: "History",      statuses: ["Refunded", "Rejected", "Failed"] },
 ];
 
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
+
+// ─── SORT HEADER ────────────────────────────────────────────────────────────
+// Same clickable <th> as Bookings/Users: toggles asc/desc, neutral chevrons when
+// the column isn't the active sort. (px-5 here to line up with this table's cells.)
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg
+    className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`}
+    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-5 py-3 text-left select-none ${className}`}>
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wider text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
+// ─── DATES ──────────────────────────────────────────────────────────────────
+// createdAt / updatedAt / processedAt come back from the API as Firestore
+// timestamps ({_seconds}) — or ISO strings, depending on the path.
+const toDate = (val) => {
+  if (!val) return null;
+  let d;
+  if (typeof val.toDate === "function") d = val.toDate();
+  else if (val._seconds !== undefined)  d = new Date(val._seconds * 1000);
+  else if (val.seconds !== undefined)   d = new Date(val.seconds * 1000);
+  else d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+};
+const toMillis = (d) => (d ? d.getTime() : -Infinity);
+
+// "Updated" only means something once the request changed after it was filed;
+// a still-untouched Pending request shows "—" instead of repeating the request date.
+// Keyed off status, not a time gap — a quick Approve/Reject right after filing
+// is still a real change and must show its own Updated date.
+const updatedDate = (r) => {
+  if (r.status === "Pending") return null;
+  return toDate(r.updatedAt) || toDate(r.processedAt);
+};
+
+const stampParts = (d) => d && ({
+  date: d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }),
+  time: d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }),
+});
+
+const DateCell = ({ date }) => {
+  const p = stampParts(date);
+  if (!p) return <span className="text-gray-300">—</span>;
+  return (
+    <>
+      <p className="text-sm text-gray-700">{p.date}</p>
+      <p className="text-xs text-gray-400">{p.time}</p>
+    </>
+  );
+};
 
 export default function RefundRequests() {
   const [requests, setRequests] = useState([]);
@@ -66,6 +195,17 @@ export default function RefundRequests() {
   const [busyId, setBusyId]     = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null); // request being rejected
   const [rejectReason, setRejectReason] = useState("");
+  const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
+  const [sortDir, setSortDir] = useState("asc");
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
 
   const token = localStorage.getItem("token");
   const { fmt } = useCurrency();
@@ -143,6 +283,30 @@ export default function RefundRequests() {
     const matchS = statusF === "All" || r.status === statusF;
     return matchQ && matchTab && matchS;
   });
+
+  // Numbered pagination (same shared component as Bookings/Payments). The hook
+  // clamps the page if approving/rejecting shrinks the list underneath us.
+  // Sort after search/tab/status filtering, before pagination, so Page 1 is the
+  // top of whatever sort is active.
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sortKey) return 0;
+    if (sortKey === "customer") {
+      const c = (a.customerName || "").localeCompare(b.customerName || "", undefined, { sensitivity: "base" });
+      return sortDir === "asc" ? c : -c;
+    }
+    let av, bv;
+    if (sortKey === "amount")         { av = Number(a.amount) || 0;             bv = Number(b.amount) || 0; }
+    else if (sortKey === "requested") { av = toMillis(toDate(a.createdAt));     bv = toMillis(toDate(b.createdAt)); }
+    else if (sortKey === "updated")   { av = toMillis(updatedDate(a));          bv = toMillis(updatedDate(b)); }
+    else return 0;
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [search, statusF, tab, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // History is a closed record — nothing left to approve/reject — so no Actions column there.
+  const showActions = tab !== "history";
 
   const pendingCount = requests.filter((r) => r.status === "Pending").length;
 
@@ -251,83 +415,102 @@ export default function RefundRequests() {
       </div>
 
       {/* Table */}
-      <div className="rounded-2xl border border-gray-100 bg-white shadow-soft overflow-x-auto">
-        {loading ? (
-          <div className="p-10 text-center text-sm text-gray-400">Loading refund requests…</div>
-        ) : error ? (
-          <div className="p-10 text-center text-sm text-red-500">{error}</div>
-        ) : filtered.length === 0 ? (
-          <div className="p-10 text-center text-sm text-gray-400">
-            {tab === "history" ? "No resolved refunds yet." : "No refund requests found."}
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
-                <th className="px-5 py-3 font-semibold">Customer</th>
-                <th className="px-5 py-3 font-semibold">Booking</th>
-                <th className="px-5 py-3 font-semibold">Reason</th>
-                <th className="px-5 py-3 font-semibold">Amount</th>
-                <th className="px-5 py-3 font-semibold">Status</th>
-                <th className="px-5 py-3 font-semibold text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => (
-                <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
-                  <td className="px-5 py-4">
-                    <p className="font-semibold text-arl-dark">{r.customerName || "—"}</p>
-                    <p className="text-xs text-gray-400">{r.paymentID}</p>
-                  </td>
-                  <td className="px-5 py-4">
-                    {r.bookingID ? (
-                      <button
-                        onClick={() => navigate(`/payments?bookingID=${encodeURIComponent(r.bookingID)}`)}
-                        className="text-arl-dark font-medium hover:underline"
-                        title="View payment for this booking"
-                      >
-                        {r.bookingID}
-                      </button>
-                    ) : "—"}
-                  </td>
-                  <td className="px-5 py-4">
-                    <p className="text-gray-700">{r.reason}</p>
-                    {r.notes && <p className="text-xs text-gray-400 max-w-[220px] truncate" title={r.notes}>{r.notes}</p>}
-                    {r.status === "Rejected" && r.rejectReason && (
-                      <p className="text-xs text-red-500 max-w-[220px] truncate" title={r.rejectReason}>Reason: {r.rejectReason}</p>
-                    )}
-                  </td>
-                  <td className="px-5 py-4 font-semibold text-arl-dark">{fmt(r.amount)}</td>
-                  <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
-                  <td className="px-5 py-4 text-right">
-                    {r.status === "Pending" ? (
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => approve(r.refundRequestID)}
-                          disabled={busyId === r.refundRequestID}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
-                        >
-                          <IconCheck /> {busyId === r.refundRequestID ? "…" : "Approve"}
-                        </button>
-                        <button
-                          onClick={() => { setRejectTarget(r); setRejectReason(""); }}
-                          disabled={busyId === r.refundRequestID}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50"
-                        >
-                          <IconX /> Reject
-                        </button>
-                      </div>
-                    ) : r.status === "Approved" ? (
-                      <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>
-                    ) : (
-                      <span className="text-xs text-gray-300">—</span>
-                    )}
-                  </td>
+      <div className="rounded-2xl border border-gray-100 bg-white shadow-soft overflow-hidden">
+        <div className="overflow-x-auto">
+          {loading ? (
+            <div className="p-10 text-center text-sm text-gray-400">Loading refund requests…</div>
+          ) : error ? (
+            <div className="p-10 text-center text-sm text-red-500">{error}</div>
+          ) : filtered.length === 0 ? (
+            <div className="p-10 text-center text-sm text-gray-400">
+              {tab === "history" ? "No resolved refunds yet." : "No refund requests found."}
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
+                  <SortableTh label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th className="px-5 py-3 font-semibold">Booking</th>
+                  <th className="px-5 py-3 font-semibold">Reason</th>
+                  <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th className="px-5 py-3 font-semibold">Status</th>
+                  {showActions && <th className="px-5 py-3 font-semibold text-right">Actions</th>}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody>
+                {paginated.map((r) => (
+                  <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
+                    <td className="px-5 py-4">
+                      <p className="font-semibold text-arl-dark">{r.customerName || "—"}</p>
+                      {r.paymentID ? (
+                        <button
+                          onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
+                          className="text-xs font-medium text-teal-600 hover:text-teal-700 hover:underline"
+                          title="Open this payment"
+                        >
+                          {r.paymentID}
+                        </button>
+                      ) : (
+                        <p className="text-xs text-gray-400">—</p>
+                      )}
+                    </td>
+                    <td className="px-5 py-4">
+                      {r.bookingID ? (
+                        <button
+                          onClick={() => navigate(`/bookings?open=${encodeURIComponent(r.bookingID)}`)}
+                          className="font-medium text-teal-600 hover:text-teal-700 hover:underline"
+                          title="Open this booking"
+                        >
+                          {r.bookingID}
+                        </button>
+                      ) : "—"}
+                    </td>
+                    <td className="px-5 py-4">
+                      <p className="text-gray-700">{r.reason}</p>
+                      {r.notes && <p className="text-xs text-gray-400 max-w-[220px] truncate" title={r.notes}>{r.notes}</p>}
+                      {r.status === "Rejected" && r.rejectReason && (
+                        <p className="text-xs text-red-500 max-w-[220px] truncate" title={r.rejectReason}>Reason: {r.rejectReason}</p>
+                      )}
+                    </td>
+                    <td className="px-5 py-4 font-semibold text-arl-dark">{fmt(r.amount)}</td>
+                    <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.createdAt)} /></td>
+                    <td className="px-5 py-4 whitespace-nowrap"><DateCell date={updatedDate(r)} /></td>
+                    <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
+                    {showActions && (
+                      <td className="px-5 py-4 text-right">
+                        {r.status === "Pending" ? (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => approve(r.refundRequestID)}
+                              disabled={busyId === r.refundRequestID}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                            >
+                              <IconCheck /> {busyId === r.refundRequestID ? "…" : "Approve"}
+                            </button>
+                            <button
+                              onClick={() => { setRejectTarget(r); setRejectReason(""); }}
+                              disabled={busyId === r.refundRequestID}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              <IconX /> Reject
+                            </button>
+                          </div>
+                        ) : r.status === "Approved" ? (
+                          <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
     </div>
   );

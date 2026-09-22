@@ -4,6 +4,60 @@ import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
 
 const API_URL = process.env.REACT_APP_API_URL;
+const PAGE_SIZE = 15;
+
+// --- PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Users.jsx) -----
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  // Clamp if the list shrinks (filter/search/refresh) and we were on a now-empty page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+
+  const rangeEnd = Math.min(start + pageSize, count);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
@@ -83,6 +137,34 @@ const isoDate = (val) => {
   if (!d || isNaN(d)) return "";
   return d.toISOString().split("T")[0];
 };
+// ─── SORT HEADER — same clickable <th> as Bookings/Users/Refund Requests ───
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-4 py-3 text-left font-semibold select-none ${className}`}>
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs px-1.5 py-1 -mx-1.5 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
 const isPast = (val) => { const d = toDate(val); return d && d < new Date(); };
 const isSoon = (val) => {
   const d = toDate(val);
@@ -91,6 +173,11 @@ const isSoon = (val) => {
   return diff >= 0 && diff <= 7;
 };
 const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
+// Same rule the "Overdue" stat card counts by: a Scheduled job whose own
+// maintenanceDate has already passed. Kept as one shared predicate so the
+// card's number, the row highlight, and the default sort order can never
+// silently drift apart from each other.
+const isOverdueJob = (r) => r.status === "Scheduled" && isPast(r.maintenanceDate);
 
 const STATUS_DOT = {
   Completed:    "bg-green-500",
@@ -164,6 +251,31 @@ export default function Maintenance() {
   const [damagedParts, setDamagedParts]   = useState([]);
   const [customName, setCustomName]       = useState("");
   const [customPrice, setCustomPrice]     = useState("");
+  const [sortKey, setSortKey] = useState(null); // null = default (open first, soonest due on top)
+  const [sortDir, setSortDir] = useState("asc");
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+  // Predicate + highlight color for each stat card, keyed the same as the
+  // card labels. Only one card can be "active" at a time (clicking a second
+  // one swaps to it, clicking the active one again clears it). Matching
+  // rows get pushed to the top of the default sort and get a tinted
+  // highlight — nothing is filtered out of the table.
+  const STAT_FILTERS = {
+    overdue:   { predicate: isOverdueJob, rowClass: "bg-red-50/60 ring-1 ring-inset ring-red-200" },
+    dueSoon:   { predicate: (r) => r.status === "Scheduled" && isSoon(r.maintenanceDate), rowClass: "bg-yellow-50/60 ring-1 ring-inset ring-yellow-200" },
+    scheduled: { predicate: (r) => r.status === "Scheduled", rowClass: "bg-blue-50/60 ring-1 ring-inset ring-blue-200" },
+    completed: { predicate: (r) => r.status === "Completed", rowClass: "bg-green-50/60 ring-1 ring-inset ring-green-200" },
+  };
+  const [activeStatFilter, setActiveStatFilter] = useState(null); // null | "overdue" | "dueSoon" | "scheduled" | "completed"
+  const toggleStatFilter = (key) => {
+    setActiveStatFilter((v) => {
+      const next = v === key ? null : key;
+      if (next) { setSortKey(null); setSortDir("asc"); }
+      return next;
+    });
+  };
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -284,7 +396,7 @@ export default function Maintenance() {
   }, []);
 
   const overdue   = records.filter(r => r.status === "Scheduled" && isPast(r.maintenanceDate)).length;
-  const dueSoon   = records.filter(r => isSoon(r.nextMaintenanceDate) && r.status !== "Completed" && r.status !== "Cancelled").length;
+  const dueSoon   = records.filter(r => r.status === "Scheduled" && isSoon(r.maintenanceDate)).length;
   const scheduled = records.filter(r => r.status === "Scheduled").length;
   const completed = records.filter(r => r.status === "Completed").length;
 
@@ -429,7 +541,38 @@ export default function Maintenance() {
   };
 
   const ALL_STATUSES = ["All", ...config.statusOptions];
-  const filtered = records.filter(r => {
+  // Table order: unfinished work first, soonest due date on top (overdue lands
+  // above everything), so nothing urgent hides on a later page. Finished /
+  // cancelled records follow in the backend's newest-first order (stable sort).
+  // Clicking a header switches to that sort; with no header chosen, fall
+  // back to the original business-rule order (open work first, soonest due
+  // date on top of that).
+  const sortedRecords = sortKey ? [...records].sort((a, b) => {
+    let av, bv;
+    if (sortKey === "vehicle") {
+      const c = (a.carLabel || "").localeCompare(b.carLabel || "");
+      return sortDir === "asc" ? c : -c;
+    } else if (sortKey === "date") { av = toDate(a.maintenanceDate)?.getTime() || 0; bv = toDate(b.maintenanceDate)?.getTime() || 0; }
+    else if (sortKey === "cost")   { av = a.totalCost || 0; bv = b.totalCost || 0; }
+    return sortDir === "asc" ? av - bv : bv - av;
+  }) : [...records].sort((a, b) => {
+    if (activeStatFilter) {
+      const pred = STAT_FILTERS[activeStatFilter].predicate;
+      const aM = pred(a), bM = pred(b);
+      if (aM !== bM) return aM ? -1 : 1;
+    }
+    const aOD = isOverdueJob(a), bOD = isOverdueJob(b);
+    if (aOD !== bOD) return aOD ? -1 : 1;
+    const aOpen = !["Completed", "Cancelled"].includes(a.status);
+    const bOpen = !["Completed", "Cancelled"].includes(b.status);
+    if (aOpen !== bOpen) return aOpen ? -1 : 1;
+    if (!aOpen) return 0;
+    const da = toDate(a.maintenanceDate)?.getTime() || Infinity;
+    const db_ = toDate(b.maintenanceDate)?.getTime() || Infinity;
+    return da === db_ ? 0 : da < db_ ? -1 : 1;
+  });
+
+  const filtered = sortedRecords.filter(r => {
     const q = search.toLowerCase();
     const serviceNames = (r.services || []).map(s => s.serviceName).join(" ").toLowerCase();
     const matchQ = !q
@@ -441,6 +584,10 @@ export default function Maintenance() {
     const matchS = statusFilter === "All" || r.status === statusFilter;
     return matchQ && matchS;
   });
+
+  // Table view only — the calendar and stat cards keep reading all records.
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [search, statusFilter, sortKey, sortDir, activeStatFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isOpen = showAdd || !!editRecord;
 
@@ -489,10 +636,14 @@ export default function Maintenance() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard icon={<IconAlertCircle className="w-5 h-5" />} value={overdue}   label="Overdue"       color="red" />
-        <StatCard icon={<IconWarning     className="w-5 h-5" />} value={dueSoon}   label="Due This Week" color="yellow" />
-        <StatCard icon={<IconWrench      className="w-5 h-5" />} value={scheduled} label="Scheduled"     color="blue" />
-        <StatCard icon={<IconCheck       className="w-5 h-5" />} value={completed} label="Completed"     color="green" />
+        <StatCard icon={<IconAlertCircle className="w-5 h-5" />} value={overdue}   label="Overdue"       color="red"
+          onClick={() => toggleStatFilter("overdue")} active={activeStatFilter === "overdue"} />
+        <StatCard icon={<IconWarning     className="w-5 h-5" />} value={dueSoon}   label="Due This Week" color="yellow"
+          onClick={() => toggleStatFilter("dueSoon")} active={activeStatFilter === "dueSoon"} />
+        <StatCard icon={<IconWrench      className="w-5 h-5" />} value={scheduled} label="Scheduled"     color="blue"
+          onClick={() => toggleStatFilter("scheduled")} active={activeStatFilter === "scheduled"} />
+        <StatCard icon={<IconCheck       className="w-5 h-5" />} value={completed} label="Completed"     color="green"
+          onClick={() => toggleStatFilter("completed")} active={activeStatFilter === "completed"} />
       </div>
 
       {/* Parts Attention Panel */}
@@ -570,17 +721,15 @@ export default function Maintenance() {
         <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
           <table className="w-full text-sm table-fixed">
             <colgroup>
-              <col style={{width:"20%"}} /><col style={{width:"18%"}} /><col style={{width:"13%"}} />
-              <col style={{width:"13%"}} /><col style={{width:"10%"}} /><col style={{width:"12%"}} />
-              <col style={{width:"14%"}} />
+              <col style={{width:"22%"}} /><col style={{width:"20%"}} /><col style={{width:"15%"}} />
+              <col style={{width:"12%"}} /><col style={{width:"15%"}} /><col style={{width:"16%"}} />
             </colgroup>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
-                <th className="px-4 py-3 text-left font-semibold">Vehicle</th>
+                <SortableTh label="Vehicle" sortKey="vehicle" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left font-semibold">Basis</th>
-                <th className="px-4 py-3 text-left font-semibold">Date</th>
-                <th className="px-4 py-3 text-left font-semibold">Next Due</th>
-                <th className="px-4 py-3 text-left font-semibold">Cost</th>
+                <SortableTh label="Date" sortKey="date" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Cost" sortKey="cost" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left font-semibold">Status</th>
                 <th className="px-4 py-3 text-left font-semibold">Action</th>
               </tr>
@@ -589,16 +738,24 @@ export default function Maintenance() {
               {loading ? (
                 Array.from({length:5}).map((_,i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    {Array.from({length:7}).map((_,j) => (
+                    {Array.from({length:6}).map((_,j) => (
                       <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4"/></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">No maintenance records found.</td></tr>
-              ) : filtered.map((r, i) => (
+                <tr><td colSpan={6} className="text-center py-16 text-gray-400 text-sm">No maintenance records found.</td></tr>
+              ) : paginated.map((r, i) => {
+                const isEditing = editRecord?.id === r.id;
+                const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(r);
+                const rowClass = isEditing
+                  ? "bg-teal-50/50 ring-1 ring-inset ring-teal-200"
+                  : statMatch
+                  ? STAT_FILTERS[activeStatFilter].rowClass
+                  : i % 2 === 1 ? "bg-gray-50/20" : "";
+                return (
                 <tr key={r.id} onClick={() => openEdit(r)}
-                  className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-teal-50/30 transition-colors ${editRecord?.id === r.id ? "bg-teal-50/50 ring-1 ring-inset ring-teal-200" : i%2===1 ? "bg-gray-50/20" : ""}`}>
+                  className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-teal-50/30 transition-colors ${rowClass}`}>
                   <td className="px-4 py-3">
                     <div className="font-semibold text-gray-800 text-xs truncate">{r.carLabel}</div>
                     <div className="text-xs text-gray-400">{r.plateNumber}</div>
@@ -609,9 +766,13 @@ export default function Maintenance() {
                       <div className="text-[10px] text-gray-400">{r.services.length} service{r.services.length > 1 ? "s" : ""}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtDate(r.maintenanceDate)}</td>
-                  <td className={`px-4 py-3 text-xs whitespace-nowrap font-semibold ${isPast(r.nextMaintenanceDate) && r.status !== "Completed" ? "text-red-500" : isSoon(r.nextMaintenanceDate) ? "text-yellow-600" : "text-gray-500"}`}>
-                    {fmtDate(r.nextMaintenanceDate)}
+                  <td className={`px-4 py-3 text-xs whitespace-nowrap ${isOverdueJob(r) ? "text-red-500 font-semibold" : "text-gray-500"}`}>
+                    <span className="inline-flex items-center gap-1">
+                      {fmtDate(r.maintenanceDate)}
+                      {isOverdueJob(r) && (
+                        <IconAlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                      )}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700">
                     {r.totalCost ? peso(r.totalCost) : "—"}
@@ -626,9 +787,11 @@ export default function Maintenance() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
         </div>
 
         {/* Edit / Add Panel */}
@@ -782,7 +945,12 @@ export default function Maintenance() {
             <Field label="Maintenance Date *">
               <label className="flex items-center gap-2 mb-1.5 cursor-pointer">
                 <input type="checkbox" checked={form.useToday}
-                  onChange={e => setForm(f => ({...f, useToday: e.target.checked, maintenanceDate: e.target.checked ? isoDate(new Date()) : f.maintenanceDate}))}
+                  onChange={e => setForm(f => ({
+                    ...f,
+                    useToday: e.target.checked,
+                    maintenanceDate: e.target.checked ? isoDate(new Date()) : f.maintenanceDate,
+                    status: e.target.checked ? "Completed" : f.status,
+                  }))}
                   className="accent-teal-600" />
                 <span className="text-xs text-gray-600">Today</span>
               </label>
@@ -823,11 +991,26 @@ export default function Maintenance() {
 
 // ─── STAT CARD ────────────────────────────────────────────────────────────────
 
-function StatCard({ icon, value, label, color }) {
+function StatCard({ icon, value, label, color, onClick, active }) {
   const colors = { red: "text-red-500", yellow: "text-yellow-600", blue: "text-blue-600", green: "text-green-600" };
   const bgColors = { red: "bg-red-50 text-red-500", yellow: "bg-yellow-50 text-yellow-600", blue: "bg-blue-50 text-blue-600", green: "bg-green-50 text-green-600" };
+  const activeRing = {
+    red: "border-red-300 ring-2 ring-red-100",
+    yellow: "border-yellow-300 ring-2 ring-yellow-100",
+    blue: "border-blue-300 ring-2 ring-blue-100",
+    green: "border-green-300 ring-2 ring-green-100",
+  };
+  const clickable = typeof onClick === "function";
+  const Tag = clickable ? "button" : "div";
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4 flex items-center gap-3">
+    <Tag
+      type={clickable ? "button" : undefined}
+      onClick={onClick}
+      aria-pressed={clickable ? !!active : undefined}
+      className={`w-full text-left bg-white rounded-2xl border shadow-soft p-4 flex items-center gap-3 transition-all ${
+        active ? activeRing[color] || "border-gray-300 ring-2 ring-gray-100" : "border-gray-100"
+      } ${clickable ? "cursor-pointer hover:border-gray-200 hover:shadow-md" : ""}`}
+    >
       <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>
         {icon}
       </div>
@@ -835,7 +1018,7 @@ function StatCard({ icon, value, label, color }) {
         <div className={`text-2xl font-bold ${colors[color] || "text-gray-800"}`}>{value}</div>
         <div className="text-xs text-gray-500">{label}</div>
       </div>
-    </div>
+    </Tag>
   );
 }
 
@@ -868,13 +1051,6 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
       const k = d.getDate();
       if (!dayMap[k]) dayMap[k] = [];
       dayMap[k].push(r);
-    }
-    const nd = toDate(r.nextMaintenanceDate);
-    if (!nd || isNaN(nd)) return;
-    if (nd.getFullYear() === y && nd.getMonth() === m) {
-      const k = `next_${nd.getDate()}`;
-      if (!dayMap[k]) dayMap[k] = [];
-      dayMap[k].push({ ...r, _isNext: true });
     }
   });
 
@@ -912,13 +1088,11 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
           {cells.map((day, i) => {
             if (!day) return <div key={i} />;
             const isToday  = today.getDate() === day && today.getMonth() === m && today.getFullYear() === y;
-            const dayRecs  = dayMap[day]           || [];
-            const nextRecs = dayMap[`next_${day}`] || [];
-            const allRecs  = [...dayRecs, ...nextRecs];
-            const hasRecs  = allRecs.length > 0;
+            const dayRecs  = dayMap[day] || [];
+            const hasRecs  = dayRecs.length > 0;
             return (
               <button key={i}
-                onClick={() => setSelected(hasRecs ? { day, recs: allRecs } : null)}
+                onClick={() => setSelected(hasRecs ? { day, recs: dayRecs } : null)}
                 className={`relative min-h-[60px] p-1.5 rounded-xl text-left transition-all border ${
                   isToday ? "border-teal-500 bg-teal-50"
                   : hasRecs ? "border-gray-200 hover:border-teal-300 hover:bg-gray-50"
@@ -929,11 +1103,8 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
                   {dayRecs.slice(0, 3).map((r, ri) => (
                     <span key={ri} className={`w-2 h-2 rounded-full ${DOT[r.status] || "bg-gray-300"}`} title={`${r.basis} — ${r.status}`} />
                   ))}
-                  {nextRecs.slice(0, 2).map((r, ri) => (
-                    <span key={`n${ri}`} className="w-2 h-2 rounded-full bg-purple-400 border border-purple-300" title={`Next: ${r.basis}`} />
-                  ))}
-                  {allRecs.length > 3 && (
-                    <span className="text-xs text-gray-400 leading-none">+{allRecs.length - 3}</span>
+                  {dayRecs.length > 3 && (
+                    <span className="text-xs text-gray-400 leading-none">+{dayRecs.length - 3}</span>
                   )}
                 </div>
               </button>
@@ -946,9 +1117,6 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
               <span className={`w-2.5 h-2.5 rounded-full ${cls}`}/>{s}
             </span>
           ))}
-          <span className="flex items-center gap-1.5 text-xs text-gray-500">
-            <span className="w-2.5 h-2.5 rounded-full bg-purple-400"/>Next Due
-          </span>
         </div>
       </div>
 
@@ -965,17 +1133,17 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
           <div className="space-y-2">
             {selected.recs.map((r, i) => (
               <div key={i}
-                className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer hover:border-teal-300 transition-colors ${r._isNext ? "border-purple-200 bg-purple-50" : "border-gray-100 bg-gray-50"}`}
+                className="flex items-center justify-between p-3 rounded-xl border cursor-pointer hover:border-teal-300 transition-colors border-gray-100 bg-gray-50"
                 onClick={() => { onEditRecord(r); setSelected(null); }}>
                 <div className="flex items-center gap-3">
-                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${r._isNext ? "bg-purple-400" : DOT[r.status] || "bg-gray-300"}`}/>
+                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${DOT[r.status] || "bg-gray-300"}`}/>
                   <div>
                     <p className="text-xs font-semibold text-gray-800">{r.carLabel}</p>
-                    <p className="text-xs text-gray-500">{r.basis}{r._isNext ? " (Next Due)" : ""}</p>
+                    <p className="text-xs text-gray-500">{r.basis}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {!r._isNext && <MainStatusBadge status={r.status} />}
+                  <MainStatusBadge status={r.status} />
                   <span className="text-xs text-teal-500 font-medium">Edit →</span>
                 </div>
               </div>

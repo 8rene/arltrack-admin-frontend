@@ -167,6 +167,10 @@ export default function VehicleDocs() {
 
   // Active tab: "before" | "after"  — same as Inventory's activeTab
   const [tripType, setTripType] = useState("before");
+  // Before/After photo card can be folded away when someone only wants the Past Trips
+  // history below it. Just a view preference: staged uploads/status edits live in
+  // state above, and the body stays mounted (CSS-hidden), so nothing is lost.
+  const [docsCollapsed, setDocsCollapsed] = useState(false);
 
   // Existing docs per phase (same as Inventory's beforeRecord / afterRecord)
   const [beforeDoc, setBeforeDoc] = useState(null);
@@ -642,6 +646,9 @@ export default function VehicleDocs() {
     } finally {
       setBookingLoading(false);
     }
+    // Intentionally not re-created when isDriver/user change — this only
+    // runs on car/booking switches, same as before these sort changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadPhotoDocs, loadInventoryStatus]);
 
   // ── Deep-link from Car Tracking's Pickup button (?carID=&action=pickup) ──
@@ -969,6 +976,8 @@ export default function VehicleDocs() {
   const hasUnsavedStatusEdits   = Object.keys(currentStatusEdits).length > 0;
   const hasUnsavedChanges       = hasUnsavedUploads || hasUnsavedStatusEdits;
   const pendingChangeCount      = Object.keys(uploads).length + Object.keys(currentStatusEdits).length;
+  // Pickup/Return focus mode exists to get these photos taken, so it always shows them.
+  const docsHidden              = docsCollapsed && !inPickupMode && !inReturnMode;
   const canCompletePickup =
     activeBooking?.status?.toLowerCase() === "upcoming" &&
     hasRequiredBeforePhotos &&
@@ -1153,10 +1162,12 @@ export default function VehicleDocs() {
             {bookingLoading || docsLoading ? (
               <div className="bg-white rounded-2xl border border-gray-100 p-5 animate-pulse h-48" />
             ) : !activeBooking ? (
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-8 text-center">
-                <div className="text-3xl mb-2">📋</div>
-                <p className="text-sm font-semibold text-gray-500">No upcoming booking for this vehicle</p>
-                <p className="text-xs text-gray-400 mt-1">Photo documentation is tied to bookings. Check back when a booking is approved.</p>
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-soft px-5 py-3 flex items-center gap-3">
+                <span className="text-xl">📋</span>
+                <div>
+                  <p className="text-sm font-semibold text-gray-500">No upcoming booking for this vehicle</p>
+                  <p className="text-xs text-gray-400">Photo documentation is tied to bookings. Trip history is below.</p>
+                </div>
               </div>
             ) : (
               <div className="space-y-4">
@@ -1200,7 +1211,7 @@ export default function VehicleDocs() {
                 {/* Before / After Tabs — same as Inventory */}
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
                   {/* Tab bar */}
-                  <div className="flex bg-gray-50 border-b border-gray-100 p-1 gap-1">
+                  <div className={`flex items-center bg-gray-50 border-gray-100 p-1 gap-1 ${docsHidden ? "" : "border-b"}`}>
                     <TabButton
                       active={tripType === "before"}
                       onClick={() => {
@@ -1208,6 +1219,7 @@ export default function VehicleDocs() {
                         // backing out of the focused return task — same as
                         // hitting Cancel, just via a different door.
                         if (inReturnMode) cancelReturnFocus();
+                        setDocsCollapsed(false);
                         setTripType("before");
                         setUploads({});
                       }}
@@ -1224,6 +1236,7 @@ export default function VehicleDocs() {
                         // backing out of the focused pickup task — same as
                         // hitting Cancel, just via a different door.
                         if (inPickupMode) cancelPickupFocus();
+                        setDocsCollapsed(false);
                         setTripType("after");
                         setUploads({});
                       }}
@@ -1233,10 +1246,29 @@ export default function VehicleDocs() {
                       badgeColor="bg-blue-100 text-blue-700"
                       dimmed={inPickupMode}
                     />
+
+                    {/* Hide / Show — not offered during a pickup/return task */}
+                    {!inPickupMode && !inReturnMode && (
+                      <div className="flex items-center gap-2 pl-1 shrink-0">
+                        {docsHidden && hasUnsavedChanges && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 whitespace-nowrap">
+                            {pendingChangeCount} unsaved
+                          </span>
+                        )}
+                        <button type="button"
+                          onClick={() => setDocsCollapsed((v) => !v)}
+                          aria-expanded={!docsHidden}
+                          title={docsHidden ? "Show the Before/After photos" : "Hide the Before/After photos (unsaved changes are kept)"}
+                          className="flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold text-gray-500 hover:text-gray-700 hover:bg-white/60 transition-colors">
+                          {docsHidden ? "Show" : "Hide"}
+                          <span className={`transition-transform ${docsHidden ? "" : "rotate-180"}`}>▾</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Tab content */}
-                  <div className="p-5 space-y-5">
+                  <div className={`p-5 space-y-5 ${docsHidden ? "hidden" : ""}`}>
 
                     {/* Instruction banner */}
                     <div className={`px-3 py-2 rounded-xl text-xs font-medium ${
@@ -1453,6 +1485,7 @@ export default function VehicleDocs() {
                 canEditHistory={canEditHistory}
                 onEditPart={handleEditHistoryPart}
                 onReplacePhoto={handleReplaceHistoryPhoto}
+                onPageChange={() => setExpandedHistoryID(null)}
               />
             )}
           </div>
@@ -1603,9 +1636,141 @@ function PhotoSlot({ fieldKey, label, sub, icon, image, uploading, isPending, on
   );
 }
 
+// --- PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Users.jsx) -----
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+
+  const rangeEnd = Math.min(start + pageSize, count);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const PAST_TRIPS_PAGE_SIZE = 10;
+// One grid template shared by the header and every row so the columns line up.
+// Booking ID only appears from lg up; below that the template drops it.
+const PAST_TRIPS_GRID =
+  "grid-cols-[108px_minmax(0,1fr)_190px_72px_16px] lg:grid-cols-[108px_minmax(0,1.4fr)_minmax(0,1fr)_190px_72px_16px]";
+
+const tripDays = (b) => {
+  const st = toSec(b.startDateTime), en = toSec(b.endDateTime);
+  if (!isFinite(st) || !isFinite(en) || en < st) return "—";
+  const n = Math.max(1, Math.ceil((en - st) / 86400));
+  return `${n} day${n > 1 ? "s" : ""}`;
+};
+
 /* ── Past Trips — moved over from the old Inventory page. Lazy-loads
  * each row's before/after status + photo docs only when expanded. ── */
-function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expandedHistoryID, historyRecords, onToggleRow, getPartFieldKey, onViewPhoto, highlightRowID, canEditHistory, onEditPart, onReplacePhoto }) {
+// Same clickable-header sort as Bookings/Users/Refund Requests, adapted to
+// this section's CSS-grid rows (there's no <table> here).
+const IconChevronsUpDown = ({ className = "w-3 h-3" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3 h-3" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableHeader({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <button
+      onClick={() => onSort(key)}
+      className={`flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 -mx-1 rounded transition-colors ${className} ${
+        active ? "text-teal-700" : "text-gray-400 hover:text-gray-600"
+      }`}
+    >
+      {label}
+      {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+    </button>
+  );
+}
+
+function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expandedHistoryID, historyRecords, onToggleRow, getPartFieldKey, onViewPhoto, highlightRowID, canEditHistory, onEditPart, onReplacePhoto, onPageChange }) {
+  const [page, setPage] = useState(1);
+  const [jumpedFor, setJumpedFor] = useState(null);
+  const [sortKey, setSortKey] = useState(null); // null = default (API order)
+  const [sortDir, setSortDir] = useState("asc");
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+    setPage(1);
+  };
+
+  const sortedBookings = !sortKey ? pastBookings : [...pastBookings].sort((a, b) => {
+    const aID = a.bookingID || a.id, bID = b.bookingID || b.id;
+    if (sortKey === "customer") {
+      const c = (pastBookingNames[aID] || aID || "").localeCompare(pastBookingNames[bID] || bID || "");
+      return sortDir === "asc" ? c : -c;
+    }
+    let av, bv;
+    if (sortKey === "dates")        { av = toSec(a.startDateTime) || 0; bv = toSec(b.startDateTime) || 0; }
+    else if (sortKey === "duration"){
+      const aSt = toSec(a.startDateTime), aEn = toSec(a.endDateTime);
+      const bSt = toSec(b.startDateTime), bEn = toSec(b.endDateTime);
+      av = isFinite(aSt) && isFinite(aEn) ? aEn - aSt : -Infinity;
+      bv = isFinite(bSt) && isFinite(bEn) ? bEn - bSt : -Infinity;
+    }
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  // Deep links (Car Tracking / Bookings / Dashboard) expand + scroll to one
+  // row by id. That row has to be on the visible page or the scroll finds
+  // nothing, so whenever the focused row changes, jump to the page containing
+  // it. Focus = the highlighted row, else the expanded one (the expanded row
+  // outlives the 2s highlight, which matters if the list mounts late). Manual
+  // Prev/Next collapses the open row, so this never fights the user's paging.
+  // Done during render (not in an effect) so the right page is already in the
+  // DOM by the time the parent's scroll effect runs.
+  const focusID = highlightRowID || expandedHistoryID;
+  if (focusID !== jumpedFor) {
+    setJumpedFor(focusID);
+    if (focusID) {
+      const idx = sortedBookings.findIndex((b) => (b.bookingID || b.id) === focusID);
+      if (idx >= 0) setPage(Math.floor(idx / PAST_TRIPS_PAGE_SIZE) + 1);
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(sortedBookings.length / PAST_TRIPS_PAGE_SIZE));
+  const safePage   = Math.min(page, totalPages);
+  const visible    = sortedBookings.slice((safePage - 1) * PAST_TRIPS_PAGE_SIZE, safePage * PAST_TRIPS_PAGE_SIZE);
+  const goToPage   = (n) => { setPage(n); if (onPageChange) onPageChange(); };
+
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
       <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100">
@@ -1619,16 +1784,18 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
           the labels line up exactly instead of floating disconnected
           from what they're labeling. */}
       {pastBookings.length > 0 && (
-        <div className="grid grid-cols-[108px_minmax(0,1fr)_180px_16px] gap-4 px-5 py-2 border-b border-gray-100 bg-gray-50/50">
+        <div className={`grid ${PAST_TRIPS_GRID} gap-4 px-5 py-2 border-b border-gray-100 bg-gray-50/50`}>
           <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Status</span>
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Customer</span>
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide text-right">Trip Dates</span>
+          <SortableHeader label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+          <span className="hidden lg:block text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Booking ID</span>
+          <SortableHeader label="Trip Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+          <SortableHeader label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
           <span />
         </div>
       )}
 
       <div className="divide-y divide-gray-50">
-        {pastBookings.map((booking) => {
+        {visible.map((booking) => {
           const bID = booking.bookingID || booking.id;
           const isExpanded = expandedHistoryID === bID;
           const record = historyRecords[bID];
@@ -1642,27 +1809,29 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
             >
               <button
                 onClick={() => onToggleRow(booking)}
-                className="w-full grid grid-cols-[108px_minmax(0,1fr)_180px_16px] items-center gap-4 px-5 py-2.5 hover:bg-gray-50/60 transition-colors text-left"
+                className={`w-full grid ${PAST_TRIPS_GRID} items-center gap-4 px-5 py-2.5 hover:bg-gray-50/60 transition-colors text-left`}
               >
                 <span className={`inline-flex items-center justify-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
                   {status?.replace("_", " ") || "—"}
                 </span>
 
                 {/* Customer name is what staff actually want to scan for
-                    here — the raw booking ID used to sit in this slot
-                    instead. Falls back to the ID only while the name is
-                    still resolving or has no user on file. */}
-                <span className="min-w-0 flex items-baseline gap-2">
-                  <span className="text-xs font-semibold text-gray-700 truncate">
-                    {pastBookingNames[bID] || bID}
-                  </span>
-                  {pastBookingNames[bID] && (
-                    <span className="hidden lg:inline text-[10px] font-mono text-gray-300 truncate">{bID}</span>
-                  )}
+                    here. Falls back to the ID only while the name is still
+                    resolving or has no user on file. */}
+                <span className="min-w-0 text-xs font-semibold text-gray-700 truncate">
+                  {pastBookingNames[bID] || bID}
                 </span>
 
-                <span className="text-xs text-gray-400 text-right tabular-nums whitespace-nowrap">
+                <span className="hidden lg:block min-w-0 text-[10px] font-mono text-gray-400 truncate" title={bID}>
+                  {bID}
+                </span>
+
+                <span className="text-xs text-gray-500 tabular-nums whitespace-nowrap">
                   {fmtDateShort(booking.startDateTime)} – {fmtDateShort(booking.endDateTime)}
+                </span>
+
+                <span className="text-xs text-gray-400 tabular-nums whitespace-nowrap">
+                  {tripDays(booking)}
                 </span>
 
                 <span className={`text-gray-400 text-xs justify-self-end transition-transform ${isExpanded ? "rotate-180" : ""}`}>▾</span>
@@ -1681,6 +1850,15 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
           );
         })}
       </div>
+
+      <Pagination
+        page={safePage}
+        totalPages={totalPages}
+        onChange={goToPage}
+        start={(safePage - 1) * PAST_TRIPS_PAGE_SIZE}
+        pageSize={PAST_TRIPS_PAGE_SIZE}
+        count={pastBookings.length}
+      />
     </div>
   );
 }

@@ -318,10 +318,16 @@ export default function Payments() {
   // payment is right there in the filtered table, and jump straight into
   // its detail panel if it's the only match.
   useEffect(() => {
+    // ?paymentID= (e.g. from Refund Requests) is the precise link; ?bookingID=
+    // is the looser one and can match more than one payment.
+    const paymentID = searchParams.get("paymentID");
     const bookingID = searchParams.get("bookingID");
-    if (!bookingID || payments.length === 0) return;
-    setSearch(bookingID);
-    const matches = payments.filter((p) => p.bookingID === bookingID);
+    const key = paymentID || bookingID;
+    if (!key || payments.length === 0) return;
+    setSearch(key);
+    const matches = paymentID
+      ? payments.filter((p) => p.paymentID === paymentID || p.id === paymentID)
+      : payments.filter((p) => p.bookingID === bookingID);
     if (matches.length === 1) openDetail(matches[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payments, searchParams]);
