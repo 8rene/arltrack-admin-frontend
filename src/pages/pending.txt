@@ -164,3 +164,11 @@ refund request , should have a view button of booking or payments
 maintenance make it clickable the buttons
 make highlight when the maintenance table was selected
 overdue make it have a sign beside the date
+
+
+
+
+
+car tracking show the booking info
+give notification bell customer when  discount was given
+discount received show profile

@@ -155,6 +155,12 @@ const Icons = {
       <line x1="3" y1="18" x2="3.01" y2="18" />
     </svg>
   ),
+  Eye: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
 };
 
 // Car SVG string for the Leaflet divIcon (can't use React components there).
@@ -1486,6 +1492,14 @@ export default function CarTracking() {
                               {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
                             </button>
                             <button
+                              onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.bookingID || b.id)}`)}
+                              title="View this booking"
+                              className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                            >
+                              <Icons.Eye className="w-3 h-3" />
+                              View
+                            </button>
+                            <button
                               onClick={() => navigate("/driver-dispatch", { state: { assignBookingId: b.id, assignCustomerName: b.customerName, assignCarLabel: getCarLabel(car) } })}
                               className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold hover:bg-amber-600 active:scale-95 transition-all"
                             >
@@ -1516,6 +1530,14 @@ export default function CarTracking() {
                               >
                                 {!(b.balance > 0) && <Icons.Peso className="w-3 h-3" />}
                                 {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
+                              </button>
+                              <button
+                                onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.bookingID || b.id)}`)}
+                                title="View this booking"
+                                className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                              >
+                                <Icons.Eye className="w-3 h-3" />
+                                View
                               </button>
                               <button
                                 onClick={() => handlePickup(b)}
@@ -1578,6 +1600,14 @@ export default function CarTracking() {
                           >
                             {!(b.balance > 0) && <Icons.Peso className="w-3 h-3" />}
                             {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
+                          </button>
+                          <button
+                            onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.bookingID || b.id)}`)}
+                            title="View this booking"
+                            className="flex items-center gap-1 px-2 py-1 border border-gray-200 text-gray-500 rounded-lg text-[11px] font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                          >
+                            <Icons.Eye className="w-3 h-3" />
+                            View
                           </button>
                           <span className={`text-[11px] italic px-1 ${isChauffeur ? "text-indigo-300" : "text-blue-300"}`}>Upcoming</span>
                         </div>
