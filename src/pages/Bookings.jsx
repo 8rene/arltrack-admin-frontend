@@ -75,12 +75,17 @@ const IconActivity = ({ className = "w-5 h-5" }) => (
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
-const STATUS_TABS = ["All", "Upcoming", "Ongoing", "Cancelled", "Completed"];
+// "To Pay" = the customer created the booking but the deposit hasn't cleared yet.
+// Nothing has been paid, so staff can't act on it (no pickup/driver) — it's listed so
+// pending bookings (and the car being held for them) are visible. It flips to
+// "Upcoming" by itself the moment the deposit is paid, or auto-cancels after 12 hours.
+const STATUS_TABS = ["All", "To Pay", "Upcoming", "Ongoing", "Cancelled", "Completed"];
 
 // Icon + color per stat tab — colors match STATUS_DOT/STATUS_BG below so a
 // status looks the same in the tab card as it does in the table badge.
 const TAB_ICON = {
   All:       IconGrid,
+  "To Pay":  IconClock,
   Upcoming:  IconClock,
   Ongoing:   IconActivity,
   Cancelled: IconX,
@@ -89,6 +94,7 @@ const TAB_ICON = {
 
 const TAB_ICON_COLOR = {
   All:       "bg-teal-50 text-teal-600",
+  "To Pay":  "bg-orange-50 text-orange-600",
   Upcoming:  "bg-yellow-50 text-yellow-600",
   Ongoing:   "bg-blue-50 text-blue-600",
   Cancelled: "bg-red-50 text-red-600",
@@ -99,6 +105,7 @@ const TAB_ICON_COLOR = {
 // Dashboard.jsx so the same status always looks the same on both pages.
 // If a new status is added, update both files.
 const STATUS_DOT = {
+  "to pay":  "bg-orange-400",
   upcoming:  "bg-yellow-400",
   ongoing:   "bg-blue-500",
   completed: "bg-green-500",
@@ -107,6 +114,7 @@ const STATUS_DOT = {
 };
 
 const STATUS_BG = {
+  "to pay":  "bg-orange-50 border border-orange-200",
   upcoming:  "bg-yellow-50 border border-yellow-200",
   ongoing:   "bg-blue-50 border border-blue-200",
   completed: "bg-green-50 border border-green-200",
@@ -848,6 +856,7 @@ export default function Bookings() {
 
   const counts = {
     All:       allBookings.length,
+    "To Pay":  allBookings.filter((b) => b.status?.toLowerCase() === "to pay").length,
     Upcoming:  allBookings.filter((b) => b.status?.toLowerCase() === "upcoming").length,
     Ongoing:   allBookings.filter((b) => b.status?.toLowerCase() === "ongoing").length,
     Cancelled: allBookings.filter((b) => b.status?.toLowerCase() === "cancelled").length,
@@ -899,7 +908,7 @@ export default function Bookings() {
       )}
 
       {/* STAT TABS */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
         {STATUS_TABS.map((tab) => {
           const TabIcon = TAB_ICON[tab];
           return (

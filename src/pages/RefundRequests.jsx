@@ -195,6 +195,8 @@ export default function RefundRequests() {
   const [busyId, setBusyId]     = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null); // request being rejected
   const [rejectReason, setRejectReason] = useState("");
+  // Which method staff picked when handing the in-person part of a refund back, per request id.
+  const [manualMethod, setManualMethod] = useState({});
   const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
   const [sortDir, setSortDir] = useState("asc");
 
@@ -248,8 +250,28 @@ export default function RefundRequests() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to approve refund.");
       showToast(data.message || "Refund approved and sent to PayMongo.");
-      setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, status: "Approved", paymongoRefundID: data.paymongoRefundID || r.paymongoRefundID } : r));
-    } catch (e) { showToast(e.message, "error"); }
+      // Approval can now change the amount (recomputed from what the customer has
+      // actually paid), split it into PayMongo refunds + a manual part, and cancel the
+      // booking — so take the server's version of the request rather than guessing.
+      setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, ...(data.data || {}), status: "Approved", planPreview: undefined } : r));
+    } catch (e) { showToast(e.message, "error"); fetchRequests(); }
+    finally { setBusyId(null); }
+  };
+
+  // Staff confirm they physically handed back the part PayMongo can't return.
+  const markManualIssued = async (id) => {
+    setBusyId(id);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/${id}/manual-issued`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ method: manualMethod[id] || "Cash" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to mark as handed back.");
+      showToast(data.message || "Marked as handed back.");
+      setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, ...(data.data || {}) } : r));
+    } catch (e) { showToast(e.message, "error"); fetchRequests(); }
     finally { setBusyId(null); }
   };
 
@@ -474,7 +496,36 @@ export default function RefundRequests() {
                         <p className="text-xs text-red-500 max-w-[220px] truncate" title={r.rejectReason}>Reason: {r.rejectReason}</p>
                       )}
                     </td>
-                    <td className="px-5 py-4 font-semibold text-arl-dark">{fmt(r.amount)}</td>
+                    <td className="px-5 py-4">
+                      <p className="font-semibold text-arl-dark">{fmt(r.planPreview ? r.planPreview.total : r.amount)}</p>
+                      {r.autoCreated && (
+                        <p className="text-[11px] text-amber-600 max-w-[200px]">Opened automatically — payment arrived after the booking was cancelled.</p>
+                      )}
+                      {r.status === "Pending" && r.planPreview && (
+                        <p className="text-[11px] text-gray-500 max-w-[220px]">
+                          {fmt(r.planPreview.onlineAmount)} via PayMongo
+                          {r.planPreview.manualAmount > 0 && <> · <span className="text-orange-600 font-semibold">{fmt(r.planPreview.manualAmount)} to hand back in person</span></>}
+                          {r.planPreview.total !== r.amount && <> · <span className="text-gray-400">(was {fmt(r.amount)} when requested)</span></>}
+                        </p>
+                      )}
+                      {Array.isArray(r.parts) && r.parts.length > 0 && (
+                        <div className="mt-1 space-y-0.5">
+                          {r.parts.map((pt, i) => (
+                            <p key={i} className="text-[11px] text-gray-500">
+                              {pt.kind === "balance" ? "Balance" : "Deposit"} {fmt(pt.amount)} —{" "}
+                              <span className={pt.status === "succeeded" ? "text-green-600" : pt.status === "failed" ? "text-red-600" : "text-blue-600"}>
+                                {pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed" : "processing"}
+                              </span>
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      {r.manualRefund && (
+                        <p className={`text-[11px] mt-0.5 ${r.manualRefund.issued ? "text-green-600" : "text-orange-600 font-semibold"}`}>
+                          {fmt(r.manualRefund.amount)} in person — {r.manualRefund.issued ? `handed back${r.manualRefund.method ? ` (${r.manualRefund.method})` : ""}` : "not yet handed back"}
+                        </p>
+                      )}
+                    </td>
                     <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.createdAt)} /></td>
                     <td className="px-5 py-4 whitespace-nowrap"><DateCell date={updatedDate(r)} /></td>
                     <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
@@ -497,8 +548,30 @@ export default function RefundRequests() {
                               <IconX /> Reject
                             </button>
                           </div>
+                        ) : r.status === "Approved" && r.manualRefund && !r.manualRefund.issued ? (
+                          <div className="flex flex-col items-end gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={manualMethod[r.refundRequestID] || "Cash"}
+                                onChange={(e) => setManualMethod((m) => ({ ...m, [r.refundRequestID]: e.target.value }))}
+                                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
+                              >
+                                <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
+                              </select>
+                              <button
+                                onClick={() => markManualIssued(r.refundRequestID)}
+                                disabled={busyId === r.refundRequestID}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50"
+                              >
+                                <IconCheck /> {busyId === r.refundRequestID ? "…" : `Mark ${fmt(r.manualRefund.amount)} returned`}
+                              </button>
+                            </div>
+                            <span className="text-[11px] text-gray-400 italic">Booking already cancelled.</span>
+                          </div>
                         ) : r.status === "Approved" ? (
                           <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>
+                        ) : r.status === "Failed" ? (
+                          <span className="text-xs text-red-500 italic">Needs manual follow-up</span>
                         ) : (
                           <span className="text-xs text-gray-300">—</span>
                         )}

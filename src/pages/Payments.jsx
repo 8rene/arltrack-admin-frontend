@@ -119,6 +119,9 @@ const statusDot = {
   Paid:      "bg-green-500",
   Failed:    "bg-red-500",
   Refunded:  "bg-purple-500",
+  Partial:      "bg-orange-400",
+  Completed:    "bg-green-500",
+  "For Refund": "bg-amber-500",
 };
 const statusBg = {
   Pending:   "bg-yellow-50 border border-yellow-200",
@@ -128,6 +131,9 @@ const statusBg = {
   Paid:      "bg-green-50 border border-green-200",
   Failed:    "bg-red-50 border border-red-200",
   Refunded:  "bg-purple-50 border border-purple-200",
+  Partial:      "bg-orange-50 border border-orange-200",
+  Completed:    "bg-green-50 border border-green-200",
+  "For Refund": "bg-amber-50 border border-amber-200",
 };
 function StatusBadge({ status }) {
   const dot = statusDot[status] || "bg-gray-400";
@@ -141,7 +147,15 @@ function StatusBadge({ status }) {
 }
 
 const PAGE_SIZE = 15;
-const STATUSES  = ["All", "Pending", "Approved", "Rejected", "Cancelled", "Failed", "Refunded"];
+const STATUSES  = ["All", "Pending", "Partial", "Completed", "For Refund", "Refunded", "Cancelled", "Failed"];
+const stageOf   = (p) => p.paymentStage || p.status;
+
+const CHANNEL_LABEL = { gcash: "GCash", paymaya: "Maya", qrph: "QRPH" };
+const channelOf = (p) => CHANNEL_LABEL[String(p.paymongoChannel || "").toLowerCase()] || p.paymongoChannel || p.paymentMethod;
+const refOf = (p) => {
+  const r = p.depositPaymongoPaymentID || p.paymongoPaymentID || p.referenceNumber;
+  return r && r !== "—" && r !== "N/A" ? r : null;
+};
 const TIME_RANGES = ["All Time", "Today", "Last 7 Days", "This Month", "Custom Range"];
 
 // ─── PAGINATION (same shared pattern as Bookings.jsx / Users.jsx) ─────────────
@@ -482,7 +496,7 @@ export default function Payments() {
       || (p.customerName || "").toLowerCase().includes(q)
       || (p.bookingID || "").toLowerCase().includes(q)
       || (p.vehicleName || "").toLowerCase().includes(q);
-    const matchS = statusF === "All" || p.status === statusF;
+    const matchS = statusF === "All" || stageOf(p) === statusF;
     const matchM = methodF === "All" || p.paymentMethod === methodF;
     const matchT = inTimeRange(p.createdAt, timeF, customFrom, customTo);
     return matchQ && matchS && matchM && matchT;
@@ -506,8 +520,8 @@ export default function Payments() {
 
   // ── stat cards ──
   const totalCollected = payments.filter(p => ["Approved","Paid"].includes(p.status)).reduce((s,p) => s + p.amountPaid, 0);
-  const approved  = payments.filter(p => ["Approved","Paid"].includes(p.status)).length;
-  const pending   = payments.filter(p => p.status === "Pending").length;
+  const completed = payments.filter(p => stageOf(p) === "Completed").length;
+  const pending   = payments.filter(p => stageOf(p) === "Pending").length;
   // Nothing is owed on cancelled/rejected bookings, failed payments, or refunded ones.
   const totalBal  = payments.filter(p => !["Cancelled","Rejected","Failed","Refunded"].includes(p.status)).reduce((s,p) => s + p.balance, 0);
 
@@ -547,7 +561,7 @@ export default function Payments() {
                 <div className="p-6 space-y-5">
                   {/* Status + Actions */}
                   <div className="flex items-center gap-3 flex-wrap">
-                    <StatusBadge status={selected.status} />
+                    <StatusBadge status={stageOf(selected)} />
                     {!["Cancelled","Approved","Refunded"].includes(selected.status) && (
                       <>
                         <button disabled={updating} onClick={() => updateStatus(selected.id, "Approved")}
@@ -568,13 +582,44 @@ export default function Payments() {
                     <Row label="Vehicle" value={selected.vehicleName} />
                   </Section>
 
+                  {selected.refundRequestID && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                      A refund request ({selected.refundRequestStatus}) is open for this payment — manage it on the Refund Requests page.
+                    </div>
+                  )}
+                  {selected.heldAfterCancel && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                      This booking was cancelled but {peso(selected.amountPaid, fmtCurrency)} the customer paid is still being held and no refund has been opened. Ask the customer to request one, or arrange the return.
+                    </div>
+                  )}
+
                   <Section title="Payment Info">
                     <Row label="Payment ID" value={selected.paymentID} mono />
-                    <Row label="Reference #" value={selected.referenceNumber} />
+                    <Row label="PayMongo Ref" value={refOf(selected)} mono />
+                    {selected.balancePaymongoPaymentID && <Row label="Balance Ref" value={selected.balancePaymongoPaymentID} mono />}
                     <Row label="Payment Type" value={selected.methodOfPayment} />
-                    <Row label="Gateway" value={selected.paymentMethod} />
+                    <Row label="Channel" value={channelOf(selected)} />
+                    <Row label="Paid at" value={fmtDate(selected.paidAt || selected.confirmedAt)} />
+                    {selected.confirmedBy && <Row label="Confirmed by" value={selected.confirmedBy} />}
                     <Row label="Submitted" value={fmtDate(selected.createdAt)} />
                   </Section>
+
+                  {selected.payType !== "Full" && (
+                    <Section title="Balance">
+                      <Row label="Status" value={
+                        selected.balanceCollected ? "Collected in person"
+                        : selected.balanceStatus === "paid" ? "Paid online (PayMongo)"
+                        : selected.balance > 0 ? "Outstanding" : "—"} />
+                      {selected.balanceCollected && (
+                        <>
+                          <Row label="Method" value={selected.balanceMethod || "—"} />
+                          <Row label="Collected by" value={selected.balanceCollectedBy} />
+                          <Row label="Collected at" value={fmtDate(selected.balanceCollectedAt)} />
+                        </>
+                      )}
+                      {selected.balanceStatus === "paid" && <Row label="Paid at" value={fmtDate(selected.balancePaidAt)} />}
+                    </Section>
+                  )}
 
                   <Section title="Fee Breakdown">
                     <Row label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
@@ -768,10 +813,10 @@ export default function Payments() {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard icon={<IconMoney      className="w-5 h-5" />} value={peso(totalCollected, fmtCurrency)} label="Total Collected"    color="teal" />
-        <StatCard icon={<IconCheck      className="w-5 h-5" />} value={approved}             label="Approved Payments"  color="green"
-          active={statusF === "Approved"}
-          onClick={() => setStatusF(statusF === "Approved" ? "All" : "Approved")} />
-        <StatCard icon={<IconClock      className="w-5 h-5" />} value={pending}              label="Awaiting Review"    color="yellow"
+        <StatCard icon={<IconCheck      className="w-5 h-5" />} value={completed}            label="Fully Paid"         color="green"
+          active={statusF === "Completed"}
+          onClick={() => setStatusF(statusF === "Completed" ? "All" : "Completed")} />
+        <StatCard icon={<IconClock      className="w-5 h-5" />} value={pending}              label="Awaiting Payment"   color="yellow"
           active={statusF === "Pending"}
           onClick={() => setStatusF(statusF === "Pending" ? "All" : "Pending")} />
         <StatCard icon={<IconCreditCard className="w-5 h-5" />} value={peso(totalBal, fmtCurrency)} label="Total Balance Due"  color="purple" />
@@ -899,9 +944,9 @@ export default function Payments() {
                 <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
                   {peso(p.balance, fmtCurrency)}
                 </td>
-                <td className="px-4 py-3 text-xs text-gray-600">{p.paymentMethod}</td>
-                <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.referenceNumber || "—"}</td>
-                <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
+                <td className="px-4 py-3 text-xs text-gray-600">{channelOf(p)}</td>
+                <td className="px-4 py-3 text-xs font-mono text-gray-600" title={p.balancePaymongoPaymentID ? `Balance: ${p.balancePaymongoPaymentID}` : undefined}>{refOf(p) || "—"}</td>
+                <td className="px-4 py-3"><StatusBadge status={stageOf(p)} /></td>
                 <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                 <td className="px-4 py-3">
                   <button onClick={() => openDetail(p.id)}
