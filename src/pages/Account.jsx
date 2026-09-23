@@ -136,7 +136,7 @@ const EDITABLE_FIELDS = [
 ];
 
 /* ── Edit Profile Modal ── */
-function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, onSaved, onCancelledRequest }) {
+function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, onSaved, onCancelledRequest, onUserFieldsUpdated }) {
   const [form, setForm] = useState(() =>
     Object.fromEntries(EDITABLE_FIELDS.map(f => [f.key, current[f.key] || ""]))
   );
@@ -199,6 +199,17 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
         }
 
         await authedFetch("PUT", "/api/profile/fields", { changes: changedFields });
+
+        // Fields that live on the "user" doc (username, phone) are also
+        // mirrored in the session's user object (AuthContext + localStorage),
+        // which is what Header.jsx and friends display — patch those now so
+        // the top-right corner updates immediately instead of showing stale
+        // data until the next login.
+        const userPatch = Object.fromEntries(
+          changedFields.filter(c => c.collection === "user").map(c => [c.field, c.newValue])
+        );
+        if (Object.keys(userPatch).length) onUserFieldsUpdated?.(userPatch);
+
         onSaved({ submitted: false });
       } else {
         const hasAnyChange = EDITABLE_FIELDS.some(f => form[f.key] !== (current[f.key] || ""));
@@ -501,7 +512,7 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
 // Shared by every role (Owner, Admin, Supervisor, Driver).
 export default function Profile() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
 
   const [profile, setProfile] = useState(null); // merged user + userDetails + userAddress
   const [loading, setLoading] = useState(true);
@@ -858,6 +869,7 @@ export default function Profile() {
             setTimeout(() => setNotice(null), 5000);
           }}
           onCancelledRequest={fetchProfile}
+          onUserFieldsUpdated={updateUser}
         />
       )}
 

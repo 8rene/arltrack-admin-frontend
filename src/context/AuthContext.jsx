@@ -279,8 +279,22 @@ export function AuthProvider({ children }) {
 
   const getToken = () => localStorage.getItem("token");
 
+  // ── Patch the in-session user (e.g. after an Account.jsx profile edit
+  //    that changes a "user"-collection field like username/phone) so
+  //    every consumer of useAuth() — and localStorage, which Header.jsx
+  //    and a couple of other places read independently — stays in sync
+  //    without requiring a logout/login or a full page reload. ─────────
+  const updateUser = useCallback((patch) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      try { localStorage.setItem("user", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, getToken, previewRole, setPreviewRole, effectiveRole }}>
+    <AuthContext.Provider value={{ user, login, logout, getToken, previewRole, setPreviewRole, effectiveRole, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

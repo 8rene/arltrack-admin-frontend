@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { db } from "../fireabase";
+import { useAuth } from "../context/AuthContext";
 import {
   collection,
   query,
@@ -139,14 +140,14 @@ export default function Header({ title = "Dashboard" }) {
   const navigate = useNavigate();
   const [notifOpen, setNotifOpen]         = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [user, setUser]                   = useState(null);
+  // Sourced from AuthContext (backed by localStorage under the hood) rather
+  // than reading localStorage directly here — that used to be a one-time
+  // read on mount, so a username/profile edit never showed up until the
+  // next full login. AuthContext's `user` updates live via updateUser(),
+  // so this now re-renders immediately when a profile edit changes it.
+  const { user } = useAuth();
 
   const notifRef = useRef(null);
-
-  useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) setUser(JSON.parse(storedUser));
-  }, []);
 
   // Single query, single listener: every notification type now fans out
   // to specific people with a real userID (Owner/Admin/Supervisor for
