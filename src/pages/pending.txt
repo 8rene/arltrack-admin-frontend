@@ -172,3 +172,15 @@ overdue make it have a sign beside the date
 car tracking show the booking info
 give notification bell customer when  discount was given
 discount received show profile
+
+
+booking discount notification
+booking failed
+booking refund
+
+
+
+3 days 1k deposit
+more than 3 days walang 1k deposit?
+
+time request instead kung kelan inapprove
