@@ -117,8 +117,11 @@ export default function PaymentStatusModal({
   const handleDiscountSubmit = () => {
     const amount = Number(discountInput);
     if (!Number.isFinite(amount) || amount < 0) return;
+    if (amount > (p.totalFee || 0)) return;
     onApplyDiscount(amount, reasonInput.trim());
   };
+
+  const discountTooHigh = discountInput !== "" && Number(discountInput) > (p.totalFee || 0);
 
   return (
     <div className="fixed inset-0 z-[2000] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -287,7 +290,7 @@ export default function PaymentStatusModal({
                     <div className="relative flex-1">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
                       <input
-                        type="number" min="0" step="1" placeholder="0"
+                        type="number" min="0" max={p.totalFee} step="1" placeholder="0"
                         value={discountInput}
                         onChange={(e) => setDiscountInput(e.target.value)}
                         className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
@@ -300,9 +303,12 @@ export default function PaymentStatusModal({
                       className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
                     />
                   </div>
+                  {discountTooHigh && (
+                    <p className="text-xs text-red-500">Discount can't exceed the total fee ({peso(p.totalFee)}).</p>
+                  )}
                   <button
                     onClick={handleDiscountSubmit}
-                    disabled={applyingDiscount || discountInput === ""}
+                    disabled={applyingDiscount || discountInput === "" || discountTooHigh}
                     className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-arl-light/30 active:scale-[0.99] transition-all disabled:opacity-50"
                   >
                     {applyingDiscount ? "Applying…" : hasDiscount ? "Edit Discount" : "Apply Discount"}

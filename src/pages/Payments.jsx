@@ -421,6 +421,10 @@ export default function Payments() {
     if (!selected) return;
     const amount = Number(discountInput);
     if (!Number.isFinite(amount) || amount < 0) return;
+    if (amount > (selected.totalFee || 0)) {
+      showToast(`Discount can't exceed the total fee of ${peso(selected.totalFee, fmtCurrency)}.`, "error");
+      return;
+    }
     if (selected.discountAmount > 0) {
       setConfirmEditDiscount(true);
       return;
@@ -483,6 +487,10 @@ export default function Payments() {
     if (!selected) return;
     const amount = Number(correctionInput);
     if (!Number.isFinite(amount) || amount < 0) return;
+    if (amount > (selected.totalFee || 0)) {
+      showToast(`Discount can't exceed the total fee of ${peso(selected.totalFee, fmtCurrency)}.`, "error");
+      return;
+    }
     if (!correctionReasonInput.trim()) { showToast("A reason is required for a correction.", "error"); return; }
     setConfirmCorrection(true);
   };
@@ -668,7 +676,7 @@ export default function Payments() {
                             <div className="relative flex-1">
                               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
                               <input
-                                type="number" min="0" step="1" placeholder="0"
+                                type="number" min="0" max={selected.totalFee} step="1" placeholder="0"
                                 value={correctionInput}
                                 onChange={(e) => setCorrectionInput(e.target.value)}
                                 className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
@@ -681,9 +689,12 @@ export default function Payments() {
                               className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
                             />
                           </div>
+                          {Number(correctionInput) > (selected.totalFee || 0) && (
+                            <p className="text-xs text-red-500">Discount can't exceed the total fee of {peso(selected.totalFee, fmtCurrency)}.</p>
+                          )}
                           <button
                             onClick={handleSubmitCorrection}
-                            disabled={correctingDiscount || correctionInput === "" || !correctionReasonInput.trim()}
+                            disabled={correctingDiscount || correctionInput === "" || !correctionReasonInput.trim() || Number(correctionInput) > (selected.totalFee || 0)}
                             className="w-full py-2 rounded-xl text-sm font-semibold border border-amber-500 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all disabled:opacity-50"
                           >
                             {correctingDiscount ? "Correcting…" : "Correct Discount Record"}
@@ -715,7 +726,7 @@ export default function Payments() {
                         <div className="relative flex-1">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
                           <input
-                            type="number" min="0" step="1" placeholder="0"
+                            type="number" min="0" max={selected.totalFee} step="1" placeholder="0"
                             value={discountInput}
                             onChange={(e) => setDiscountInput(e.target.value)}
                             className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
@@ -728,9 +739,12 @@ export default function Payments() {
                           className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
                         />
                       </div>
+                      {Number(discountInput) > (selected.totalFee || 0) && (
+                        <p className="text-xs text-red-500">Discount can't exceed the total fee of {peso(selected.totalFee, fmtCurrency)}.</p>
+                      )}
                       <button
                         onClick={handleApplyDiscount}
-                        disabled={applyingDiscount || discountInput === ""}
+                        disabled={applyingDiscount || discountInput === "" || Number(discountInput) > (selected.totalFee || 0)}
                         className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-white active:scale-[0.99] transition-all disabled:opacity-50"
                       >
                         {applyingDiscount ? "Applying…" : selected.discountAmount > 0 ? "Edit Discount" : "Apply Discount"}
