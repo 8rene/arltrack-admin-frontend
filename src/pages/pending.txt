@@ -184,3 +184,47 @@ booking refund
 more than 3 days walang 1k deposit?
 
 time request instead kung kelan inapprove
+
+
+
+pending status payment have approve reject  
+payment should have a vei booking 
+
+when returned and late should have 100 pesos
+so return should show the penalty
++ column in payments Penalty,  
+and hte idea pending 1000 to return 
+
+
+terms and condition -  
+
+return with 1k deposit - > terms and condition
+
+pending the 12 hours -> palugid
+pending compelte list of database location
+
+
+payment seperate 1k security columnd
+seperate penalties
+
+adjust date ng booking b4 return
+
+customer 1 day disable after post rental
+customer booking should add that to verify
+
+
+pickuup automate the maintenance schedule
+
+terms and condition 
+driver
+
+schematic diagram ng int
+
+pending list access ng users
+
+
+vehicle inspection
+
+pending remove driver inspection
+fleet
+penalty issue

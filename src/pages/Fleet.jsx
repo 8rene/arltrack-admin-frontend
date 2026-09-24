@@ -9,18 +9,6 @@ import { db, storage } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
 
-// Fire-and-forget audit log write — used by any status/data change below
-// that should show up in the Audit Log page. Never blocks or fails the
-// action it's logging; a logging hiccup shouldn't stop a real update.
-const logAuditEvent = (action, description) => {
-  const token = localStorage.getItem("token");
-  fetch(`${process.env.REACT_APP_API_URL}/api/audit-logs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ action, description }),
-  }).catch((e) => console.error("Audit log write failed:", e));
-};
-
 // Authenticated call to this app's own backend (/api/fleet/...) instead of
 // writing to Firestore directly from the browser. This is what actually
 // makes verifyToken + requireRole run on every car/pricing/brand/model
@@ -42,6 +30,28 @@ const apiFetch = async (path, options = {}) => {
     throw new Error(json?.message || `Request failed (${res.status})`);
   }
   return json?.data;
+};
+
+// Same idea as apiFetch, but returns the FULL response body instead of just
+// .data — needed for /api/auth/send-otp, which reports success even when
+// the email itself failed to send (emailSent: false, e.g. a missing EmailJS
+// env var). apiFetch's "just give me .data" shape would silently swallow
+// that distinction.
+const apiFetchFull = async (path, options = {}) => {
+  const token = localStorage.getItem("token");
+  const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || `Request failed (${res.status})`);
+  }
+  return json || {};
 };
 
 // ─── SVG ICONS ────────────────────────────────────────────────────────────────
@@ -342,7 +352,10 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
   const [nearestBooking, setNearestBooking] = useState(null);
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
-  const [reasonModalStatus, setReasonModalStatus] = useState(null); // null | "Maintenance" | "Inactive"
+  // null | "Maintenance" | "Inactive" — target status the reason → confirm →
+  // OTP flow (StatusChangeFlow below) is currently running for. Active
+  // never sets this; it writes immediately, no gate needed.
+  const [statusChangeTarget, setStatusChangeTarget] = useState(null);
   const CAR_STATUSES = ["Active", "Maintenance", "Inactive"];
 
   useEffect(() => {
@@ -366,40 +379,19 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
 
   const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.plateNumber || car.id;
 
-  // Applies a status change. Active writes immediately; Maintenance and
-  // Inactive both collect a reason first via the shared reason modal below
-  // (see reasonModalStatus / confirmStatusReason) since staff should
-  // always be able to say *why* a car left service, not just Inactive.
-  const applyStatusChange = async (newStatus, extra = {}) => {
+  // Active writes immediately — no reason, no bookings to worry about
+  // leaving service. Maintenance/Inactive never come through here; they're
+  // handled entirely by StatusChangeFlow below (reason → refund any
+  // upcoming bookings → OTP), which calls the gated PATCH /status endpoint
+  // itself and reports back via onDone.
+  const applyActiveStatus = async () => {
     setStatusSaving(true);
     try {
-      // PUT /api/fleet/cars/:carID accepts any subset of car fields, so
-      // status + statusReason go in one call — runs through
-      // verifyToken + requireRole on the backend now, unlike the old
-      // direct Firestore updateDoc.
-      await apiFetch(`/api/fleet/cars/${car.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          status: newStatus,
-          // Clear any previously-recorded reason once the car leaves
-          // Maintenance/Inactive, so it doesn't show stale info if the
-          // car goes back into one of those statuses later without a
-          // new reason being set.
-          statusReason: extra.statusReason ?? null,
-        }),
+      await apiFetch(`/api/fleet/cars/${car.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "Active" }),
       });
-      onStatusChange?.(car.id, newStatus, { statusReason: extra.statusReason ?? null });
-      logAuditEvent(
-        "update",
-        `Status changed for ${carLabel} from ${car.status || "—"} to ${newStatus}${extra.statusReason ? `: ${extra.statusReason}` : "."}`
-      );
-
-      // Soft redirect: switching to Maintenance sends staff straight to
-      // the Maintenance page, prefilled to this car, instead of leaving
-      // them to remember to go log it there themselves.
-      if (newStatus === "Maintenance") {
-        navigate(`/maintenance?carID=${car.id}`);
-      }
+      onStatusChange?.(car.id, "Active", { statusReason: null });
     } catch (e) { console.error(e); }
     finally { setStatusSaving(false); setStatusOpen(false); }
   };
@@ -407,19 +399,22 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
   const handleStatusChange = (newStatus) => {
     if (newStatus === car.status) { setStatusOpen(false); return; }
     if (newStatus === "Inactive" || newStatus === "Maintenance") {
-      // Both need a reason first — open the shared modal instead of
-      // writing immediately.
       setStatusOpen(false);
-      setReasonModalStatus(newStatus);
+      setStatusChangeTarget(newStatus);
       return;
     }
-    applyStatusChange(newStatus);
+    applyActiveStatus();
   };
 
-  const confirmStatusReason = async (reason) => {
-    const targetStatus = reasonModalStatus;
-    setReasonModalStatus(null);
-    await applyStatusChange(targetStatus, { statusReason: reason });
+  // The gated flow finished and the PATCH already went through — just
+  // reflect it locally and, for Maintenance, send staff straight to the
+  // Maintenance page prefilled to this car.
+  const handleStatusChangeDone = (newStatus, reason) => {
+    setStatusChangeTarget(null);
+    onStatusChange?.(car.id, newStatus, { statusReason: reason });
+    if (newStatus === "Maintenance") {
+      navigate(`/maintenance?carID=${car.id}`);
+    }
   };
 
   const basePrice = car.pricing?.find(p =>
@@ -534,13 +529,13 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
           </div>
         </div>
       </div>
-      {reasonModalStatus && (
-        <StatusReasonModal
+      {statusChangeTarget && (
+        <StatusChangeFlow
+          car={car}
           carLabel={carLabel}
-          status={reasonModalStatus}
-          saving={statusSaving}
-          onConfirm={confirmStatusReason}
-          onCancel={() => setReasonModalStatus(null)}
+          targetStatus={statusChangeTarget}
+          onCancel={() => setStatusChangeTarget(null)}
+          onDone={handleStatusChangeDone}
         />
       )}
     </div>
@@ -579,6 +574,282 @@ function StatusReasonModal({ carLabel, status, saving, onConfirm, onCancel }) {
           <button onClick={() => onConfirm(trimmed)} disabled={saving || !trimmed}
             className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
             {saving ? "Saving…" : "Confirm"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── STATUS CHANGE FLOW (reason → refund upcoming bookings → OTP) ────────────
+// Orchestrates the full gate before a car can be switched to Maintenance or
+// Inactive. Shared by the quick status badge (VehicleCard) and the Edit
+// Vehicle modal's Status field — the only two places a car's status can be
+// changed — so this gate can never be bypassed from either one. Owns the
+// actual PATCH /status call itself; callers just get onDone(newStatus, reason)
+// once it's genuinely done, or onCancel() if staff back out at any step.
+function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
+  const [step, setStep] = useState("reason"); // "reason" | "confirm" | "otp"
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [otpError, setOtpError] = useState(null);
+
+  const submitWithOtp = async (otp) => {
+    setSaving(true);
+    setOtpError(null);
+    try {
+      await apiFetch(`/api/fleet/cars/${car.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: targetStatus, statusReason: reason, otp }),
+      });
+      onDone(targetStatus, reason);
+    } catch (e) {
+      // Stay on the OTP step so staff can retry without losing the reason
+      // or having to re-refund anything already refunded in the previous step.
+      setOtpError(e.message);
+      setSaving(false);
+    }
+  };
+
+  if (step === "reason") {
+    return (
+      <StatusReasonModal
+        carLabel={carLabel}
+        status={targetStatus}
+        saving={false}
+        onConfirm={(r) => { setReason(r); setStep("confirm"); }}
+        onCancel={onCancel}
+      />
+    );
+  }
+
+  if (step === "confirm") {
+    return (
+      <AreYouSureRefundModal
+        car={car}
+        carLabel={carLabel}
+        targetStatus={targetStatus}
+        reason={reason}
+        onConfirmed={() => setStep("otp")}
+        onCancel={onCancel}
+      />
+    );
+  }
+
+  return (
+    <OtpConfirmModal
+      carLabel={carLabel}
+      targetStatus={targetStatus}
+      saving={saving}
+      error={otpError}
+      onConfirm={submitWithOtp}
+      onCancel={onCancel}
+    />
+  );
+}
+
+// ─── ARE YOU SURE + REFUND MODAL ──────────────────────────────────────────────
+// Step 2 of StatusChangeFlow. Lists every upcoming booking on this car with
+// a Refund button + live ₱ amount (must ALL read "Refunded" before Confirm
+// unlocks), plus every ongoing booking as an FYI-only row — the car's
+// already with that customer, so there's nothing to refund or cancel here;
+// see staffRefundBooking() on the backend for why ongoing is excluded.
+function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, onConfirmed, onCancel }) {
+  const { fmt } = useCurrency();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [upcoming, setUpcoming] = useState([]); // [{ ...booking, refundPreview, refundState, refundError }]
+  const [ongoing, setOngoing] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    apiFetch(`/api/fleet/cars/${car.id}/status-change-preview`)
+      .then((data) => {
+        if (cancelled) return;
+        setUpcoming((data?.upcoming || []).map((b) => ({ ...b, refundState: "idle", refundError: null })));
+        setOngoing(data?.ongoing || []);
+      })
+      .catch((e) => !cancelled && setLoadError(e.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [car.id]);
+
+  const refundBooking = async (bookingID) => {
+    setUpcoming((list) => list.map((b) => b.bookingID === bookingID ? { ...b, refundState: "refunding", refundError: null } : b));
+    try {
+      await apiFetch(`/api/refund-requests/staff-refund/${bookingID}`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      });
+      setUpcoming((list) => list.map((b) => b.bookingID === bookingID ? { ...b, refundState: "done" } : b));
+    } catch (e) {
+      setUpcoming((list) => list.map((b) => b.bookingID === bookingID ? { ...b, refundState: "error", refundError: e.message } : b));
+    }
+  };
+
+  const dateRange = (b) => {
+    const fmtDate = (v) => {
+      const d = v?.toDate ? v.toDate() : (v ? new Date(v) : null);
+      return d && !isNaN(d) ? d.toLocaleDateString() : "—";
+    };
+    return `${fmtDate(b.startDateTime)} – ${fmtDate(b.endDateTime)}`;
+  };
+
+  const allRefunded = upcoming.length === 0 || upcoming.every((b) => b.refundState === "done");
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+        <div>
+          <h3 className="font-bold text-gray-800 text-lg">Are you sure?</h3>
+          <p className="text-sm text-gray-500 mt-1">
+            Switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
+          </p>
+        </div>
+
+        {loading ? (
+          <p className="text-sm text-gray-400 py-6 text-center">Checking bookings…</p>
+        ) : loadError ? (
+          <p className="text-sm text-red-600 py-4">{loadError}</p>
+        ) : upcoming.length === 0 && ongoing.length === 0 ? (
+          <p className="text-sm text-gray-500 py-4">No upcoming or ongoing bookings on this car right now.</p>
+        ) : (
+          <div className="space-y-4">
+            {upcoming.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">
+                  Upcoming bookings — must be refunded before {targetStatus} can be confirmed
+                </p>
+                <div className="space-y-2">
+                  {upcoming.map((b) => (
+                    <div key={b.bookingID} className="border rounded-xl p-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
+                        <p className="text-xs text-gray-500">{dateRange(b)}</p>
+                        <p className="text-xs text-gray-500">{fmt(b.refundPreview?.total || 0)} to refund</p>
+                        {b.refundState === "error" && (
+                          <p className="text-xs text-red-600 mt-1">{b.refundError}</p>
+                        )}
+                      </div>
+                      {b.refundState === "done" ? (
+                        <span className="shrink-0 text-xs font-medium text-emerald-600 px-3 py-1.5">Refunded ✓</span>
+                      ) : (
+                        <button
+                          onClick={() => refundBooking(b.bookingID)}
+                          disabled={b.refundState === "refunding"}
+                          className="shrink-0 px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 disabled:opacity-50">
+                          {b.refundState === "refunding" ? "Refunding…" : `Refund ${fmt(b.refundPreview?.total || 0)}`}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {ongoing.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">Ongoing — car is currently with the customer</p>
+                <div className="space-y-2">
+                  {ongoing.map((b) => (
+                    <div key={b.bookingID} className="border rounded-xl p-3 bg-gray-50">
+                      <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
+                      <p className="text-xs text-gray-500">{dateRange(b)}</p>
+                      <p className="text-xs text-gray-400 mt-1">No refund needed — trip already in progress.</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-2">
+          <button onClick={onCancel}
+            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button onClick={onConfirmed} disabled={loading || !!loadError || !allRefunded}
+            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── OTP CONFIRM MODAL ─────────────────────────────────────────────────────
+// Final step of StatusChangeFlow. Confirms the STAFF member making the
+// change (not the customer) — same "prove it's really you" mechanic already
+// used for role changes: a code sent to the logged-in admin/supervisor/
+// owner's own email via POST /api/auth/send-otp, verified server-side by
+// consumeOtp() when the actual status PATCH goes through.
+function OtpConfirmModal({ carLabel, targetStatus, saving, error, onConfirm, onCancel }) {
+  const { user } = useAuth();
+  const [otp, setOtp] = useState("");
+  const [sendState, setSendState] = useState("sending"); // "sending" | "sent" | "error"
+  const [sendMessage, setSendMessage] = useState(null);
+
+  const sendCode = useCallback(async () => {
+    setSendState("sending");
+    setSendMessage(null);
+    try {
+      const json = await apiFetchFull("/api/auth/send-otp", { method: "POST" });
+      if (json.emailSent === false) {
+        setSendState("error");
+        setSendMessage(json.message || "Couldn't send the code — check the email configuration.");
+      } else {
+        setSendState("sent");
+      }
+    } catch (e) {
+      setSendState("error");
+      setSendMessage(e.message);
+    }
+  }, []);
+
+  useEffect(() => { sendCode(); }, [sendCode]);
+
+  const trimmed = otp.trim();
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
+        <div>
+          <h3 className="font-bold text-gray-800 text-lg">Confirm it's you</h3>
+          <p className="text-sm text-gray-500 mt-1">
+            Enter the code sent to <span className="font-medium text-gray-700">{user?.email || "your email"}</span> to finish
+            switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
+          </p>
+        </div>
+
+        {sendState === "sending" && <p className="text-xs text-gray-400">Sending code…</p>}
+        {sendState === "error" && <p className="text-xs text-red-600">{sendMessage}</p>}
+
+        <div>
+          <label className="text-xs font-medium text-gray-500">6-digit code</label>
+          <input type="text" inputMode="numeric" maxLength={6} value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+            placeholder="000000" autoFocus
+            className="w-full mt-1 border rounded-xl px-3 py-2 text-sm tracking-widest outline-none focus:ring-2 focus:ring-teal-400" />
+        </div>
+
+        {error && <p className="text-xs text-red-600">{error}</p>}
+
+        <button onClick={sendCode} disabled={sendState === "sending"}
+          className="text-xs text-teal-600 hover:underline disabled:opacity-50">
+          Resend code
+        </button>
+
+        <div className="flex gap-3">
+          <button onClick={onCancel} disabled={saving}
+            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={() => onConfirm(trimmed)} disabled={saving || trimmed.length !== 6}
+            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
+            {saving ? "Confirming…" : "Confirm"}
           </button>
         </div>
       </div>
@@ -804,7 +1075,7 @@ const PricingIcon = (props) => (
 );
 
 // ─── DETAILS FORM ─────────────────────────────────────────────────────────────
-function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, models }) {
+function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, models, currentStatus, onStatusChangeRequest }) {
   const filteredModels = models.filter(m => m.brandID === form.brandID);
 
   const Field = ({ label, name, type = "text", options }) => (
@@ -874,7 +1145,27 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
         <Field label="Seats"          name="seatingCapacity" type="number" />
         <Field label="Fuel Type"      name="fuelType"     options={["Gasoline","Diesel","Electric","Hybrid"]} />
         <Field label="Transmission"   name="transmission" options={["Automatic","Manual"]} />
-        <Field label="Status"         name="status"       options={["Active","Maintenance","Inactive"]} />
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
+          <select
+            value={form.status || "Active"}
+            onChange={(e) => {
+              const newStatus = e.target.value;
+              // Gate only applies when a handler was given (EditCarModal;
+              // AddCarModal has no car yet so no bookings to worry about)
+              // and it's an actual move INTO Maintenance/Inactive.
+              if (onStatusChangeRequest && ["Maintenance", "Inactive"].includes(newStatus) && newStatus !== currentStatus) {
+                onStatusChangeRequest(newStatus); // opens reason → refund → OTP; form.status only updates once that succeeds
+                return;
+              }
+              setForm(f => ({ ...f, status: newStatus }));
+            }}
+            className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
+            <option value="Active">Active</option>
+            <option value="Maintenance">Maintenance</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </div>
       </div>
 
       {/* Short Description */}
@@ -1113,12 +1404,43 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
   const [imagePreview, setImagePreview] = useState(car.imageURL || null);
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState(null);
+  // The status actually applied so far (starts as the car's real live
+  // status). Only ever updated once StatusChangeFlow's gated PATCH call
+  // genuinely succeeds — form.status can show Maintenance/Inactive mid-flow
+  // for display, but the write itself never happens until that resolves,
+  // so this is what the rest of Save Changes (and the bypass guard on the
+  // backend's PUT) actually treats as "current".
+  const [confirmedStatus, setConfirmedStatus] = useState(car.status || "Active");
+  // null | "Maintenance" | "Inactive" — same gate as VehicleCard's, just
+  // triggered from this modal's Status dropdown instead of the quick badge.
+  const [statusChangeTarget, setStatusChangeTarget] = useState(null);
+
+  const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.platenumber || car.plateNumber || car.id;
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
+  };
+
+  // Status dropdown asked to move to Maintenance/Inactive — opens the same
+  // reason → refund → OTP gate the quick badge uses, instead of letting it
+  // slip into the plain form field it used to be. Active needs no gate.
+  const handleStatusChangeRequest = (newStatus) => {
+    if (newStatus === "Active") {
+      // Same clearing applyActiveStatus()'s PATCH does elsewhere — a
+      // leftover reason shouldn't survive the car coming back into service.
+      setForm((f) => ({ ...f, status: newStatus, statusReason: null }));
+      return;
+    }
+    setStatusChangeTarget(newStatus);
+  };
+
+  const handleStatusChangeDone = (newStatus, reason) => {
+    setStatusChangeTarget(null);
+    setConfirmedStatus(newStatus);
+    setForm((f) => ({ ...f, status: newStatus, statusReason: reason }));
   };
 
   const handleSave = async () => {
@@ -1222,7 +1544,8 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
           {activeTab === "details" ? (
             <CarDetailsForm form={form} setForm={setForm}
               imagePreview={imagePreview} onImageChange={handleImageChange}
-              brands={brands} models={models} />
+              brands={brands} models={models}
+              currentStatus={confirmedStatus} onStatusChangeRequest={handleStatusChangeRequest} />
           ) : (
             <PricingForm pricing={pricing} setPricing={setPricing} />
           )}
@@ -1236,13 +1559,22 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
           </div>
           <div className="flex gap-3">
             <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 bg-white">Cancel</button>
-            <button onClick={handleSave} disabled={saving}
+            <button onClick={handleSave} disabled={saving || !!statusChangeTarget}
               className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
               {saving ? "Saving..." : "Save Changes"}
             </button>
           </div>
         </div>
       </div>
+      {statusChangeTarget && (
+        <StatusChangeFlow
+          car={car}
+          carLabel={carLabel}
+          targetStatus={statusChangeTarget}
+          onCancel={() => setStatusChangeTarget(null)}
+          onDone={handleStatusChangeDone}
+        />
+      )}
     </div>
   );
 }
