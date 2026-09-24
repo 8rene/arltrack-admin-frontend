@@ -510,7 +510,7 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
 }
 
 // Shared by every role (Owner, Admin, Supervisor, Driver).
-export default function Profile() {
+export default function Account() {
   const navigate = useNavigate();
   const { user, logout, updateUser } = useAuth();
 
