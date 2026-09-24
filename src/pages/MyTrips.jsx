@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import TripMapModal from "../components/TripMapModal";
 import PaymentStatusModal from "../components/PaymentStatusModal";
 import TripDetailModal from "../components/TripDetailModal";
@@ -124,9 +124,54 @@ const tripStops = (trip) => {
   return stops;
 };
 
+// mm:ss for the Remind Staff cooldown.
+const fmtCountdown = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+
+// Where the vehicle inspection stands for one phase of a trip. Drivers no
+// longer fill the inspection in — a supervisor does — so this is a
+// read-only checklist plus a Remind Staff nudge. The button's cooldown is
+// enforced by the server (10 min per trip + phase); `remaining` here is
+// only the display of it.
+function InspectionPanel({ inspection, phase, remaining, sending, onRemind }) {
+  if (inspection.complete) {
+    return (
+      <p className="text-[11px] font-medium text-green-600 mb-1">
+        ✓ Vehicle inspection complete — {phase === "before" ? "ready for pickup" : "ready to return"}
+      </p>
+    );
+  }
+  const Row = ({ done, label }) => (
+    <span className={`flex items-center gap-1.5 ${done ? "text-green-700" : "text-gray-500"}`}>
+      <span className="font-bold w-3 text-center">{done ? "✓" : "○"}</span> {label}
+    </span>
+  );
+  const cooling = remaining > 0;
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 mb-1 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <p className="text-xs font-semibold text-amber-800">
+            Waiting for a supervisor to complete the {phase === "before" ? "pickup" : "return"} inspection
+          </p>
+          <div className="text-[11px] space-y-0.5">
+            <Row done={inspection.photos} label="Front, side & back photos" />
+            <Row done={inspection.parts} label="Parts condition" />
+          </div>
+        </div>
+        <button
+          onClick={onRemind}
+          disabled={sending || cooling}
+          className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+        >
+          {sending ? "Sending…" : cooling ? `Remind again in ${fmtCountdown(remaining)}` : "🔔 Remind Staff"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── ACTIVE TRIPS TAB (upcoming + ongoing, with pickup/dropoff/return actions) ──
 function ActiveTripsTab() {
-  const navigate = useNavigate();
   const token = localStorage.getItem("token");
 
   const [trips, setTrips]     = useState([]);
@@ -141,6 +186,12 @@ function ActiveTripsTab() {
   const [confirmPaymentError, setConfirmPaymentError] = useState(null);
   const [markingRefund, setMarkingRefund] = useState(false);
   const [refundError, setRefundError] = useState(null);
+  // Remind Staff cooldowns: "<tripID>:<phase>" → epoch ms when the button
+  // unlocks. Seeded from the server on every fetch (so a page refresh
+  // doesn't reset it) and bumped locally right after a reminder is sent.
+  const [remindUntil, setRemindUntil]   = useState({});
+  const [now, setNow]                   = useState(Date.now());
+  const [remindingKey, setRemindingKey] = useState(null);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -158,30 +209,59 @@ function ActiveTripsTab() {
     });
   }, [token]);
 
-  const fetchTrips = useCallback(async () => {
-    setLoading(true);
+  // { silent: true } = background refresh: no loading spinner, no error toast.
+  const fetchTrips = useCallback(async (opts) => {
+    const silent = opts?.silent === true;
+    if (!silent) setLoading(true);
     try {
       const res  = await authedFetch("/api/driver-dispatch/my-trips");
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to load your trips.");
       setTrips(json.data);
+
+      // Server sends seconds-remaining (not a timestamp) so this phone's
+      // clock can't skew the countdown.
+      const t0 = Date.now();
+      const until = {};
+      json.data.forEach((t) => ["before", "after"].forEach((ph) => {
+        const secs = t.inspectionReminder?.[ph]?.retryAfterSeconds || 0;
+        if (secs > 0) until[`${t.id}:${ph}`] = t0 + secs * 1000;
+      }));
+      setRemindUntil(until);
+      setNow(t0);
     } catch (e) {
-      showToast(e.message, "error");
+      if (!silent) showToast(e.message, "error");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [authedFetch]);
 
   useEffect(() => { fetchTrips(); }, [fetchTrips]);
 
-  // Same shape as Car Tracking's smart trigger:
-  //  - unresolved payment → hard block right here, no navigation.
-  //  - payment resolved but before-trip photos not done → send to Vehicle
-  //    Documentation (bookingID passed explicitly so it loads THIS exact
-  //    booking rather than guessing "nearest booking for this car" — that
-  //    heuristic, built for the Inventory page, can pick a stale/wrong
-  //    booking for the same car and silently block completion).
-  //  - both ready → complete pickup directly, no detour.
+  // The driver is often standing at the car waiting on a supervisor, so
+  // pick up their inspection finishing without a manual Refresh.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") fetchTrips({ silent: true });
+    }, 30000);
+    return () => clearInterval(id);
+  }, [fetchTrips]);
+
+  // 1-second tick, only while at least one Remind Staff cooldown is running.
+  useEffect(() => {
+    if (!Object.values(remindUntil).some((t) => t > now)) return undefined;
+    const id = setTimeout(() => setNow(Date.now()), 1000);
+    return () => clearTimeout(id);
+  }, [remindUntil, now]);
+
+  const remainingFor = (tripID, phase) =>
+    Math.max(0, Math.ceil(((remindUntil[`${tripID}:${phase}`] || 0) - now) / 1000));
+
+  // Two hard blocks before pickup, both re-checked server-side:
+  //  - unresolved payment.
+  //  - vehicle inspection not complete. Drivers can't fill the inspection in
+  //    any more (a supervisor does), so instead of being sent to the
+  //    inspection page they get the checklist + Remind Staff on the card.
   const handlePickup = (trip) => {
     const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
     if (!paymentReady) {
@@ -189,13 +269,43 @@ function ActiveTripsTab() {
       return;
     }
     if (!trip.beforeDocsComplete) {
-      navigate(`/vehicle-documentation?carID=${trip.carID}&bookingID=${trip.id}&action=pickup`);
+      showToast("The vehicle inspection isn't complete yet — a supervisor needs to finish it first.", "error");
       return;
     }
     completeTripAction(trip, "pickup", "Pickup complete — GPS tracking is now active.");
   };
 
-  // No payment gate on Return — only the photo requirement.
+  // Driver nudging Owner/Admin/Supervisor because the inspection they're
+  // waiting on isn't done. The server enforces the 10-minute cooldown (429
+  // carries retryAfterSeconds), so this stays right even across reloads.
+  const handleRemindStaff = async (trip, phase) => {
+    const key = `${trip.id}:${phase}`;
+    setRemindingKey(key);
+    try {
+      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${trip.id}/remind-inspection`, {
+        method: "POST",
+        body: JSON.stringify({ phase }),
+      });
+      const json = await res.json();
+      const t0 = Date.now();
+      if (res.status === 429) {
+        setRemindUntil((prev) => ({ ...prev, [key]: t0 + (json.retryAfterSeconds || 600) * 1000 }));
+        setNow(t0);
+        showToast("Staff were just reminded — you can remind them again shortly.", "error");
+        return;
+      }
+      if (!res.ok) throw new Error(json.message || "Could not send the reminder.");
+      setRemindUntil((prev) => ({ ...prev, [key]: t0 + (json.data?.retryAfterSeconds || 600) * 1000 }));
+      setNow(t0);
+      showToast("Staff have been reminded.");
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally {
+      setRemindingKey(null);
+    }
+  };
+
+  // No payment gate on Return — only the inspection requirement.
   const completeTripAction = async (trip, action, successMsg) => {
     setBusyID(trip.id);
     try {
@@ -228,7 +338,7 @@ function ActiveTripsTab() {
 
   const handleReturn = (trip) => {
     if (!trip.afterDocsComplete) {
-      navigate(`/vehicle-documentation?carID=${trip.carID}&bookingID=${trip.id}&action=return`);
+      showToast("The vehicle inspection isn't complete yet — a supervisor needs to finish it first.", "error");
       return;
     }
     completeTripAction(trip, "return", "Car marked returned — trip history saved.");
@@ -364,13 +474,26 @@ function ActiveTripsTab() {
                 </div>
               )}
 
-              {!isOngoing && (() => {
+              {(() => {
+                const phase = isOngoing ? "after" : "before";
                 const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
-                return !paymentReady ? (
-                  <p className="text-[11px] font-medium text-amber-600 mb-1">Payment still requires action</p>
-                ) : !trip.beforeDocsComplete ? (
-                  <p className="text-[11px] text-gray-400 mb-1">Photos not taken yet — Start Pickup opens Vehicle Documentation</p>
-                ) : null;
+                // Payment is the blocker that matters first for pickup —
+                // no point nudging staff about the inspection until that's
+                // sorted (the server refuses the reminder then too).
+                if (!isOngoing && !paymentReady) {
+                  return <p className="text-[11px] font-medium text-amber-600 mb-1">Payment still requires action</p>;
+                }
+                const inspection = (isOngoing ? trip.afterInspection : trip.beforeInspection)
+                  || { photos: false, parts: false, complete: !!(isOngoing ? trip.afterDocsComplete : trip.beforeDocsComplete) };
+                return (
+                  <InspectionPanel
+                    inspection={inspection}
+                    phase={phase}
+                    remaining={remainingFor(trip.id, phase)}
+                    sending={remindingKey === `${trip.id}:${phase}`}
+                    onRemind={() => handleRemindStaff(trip, phase)}
+                  />
+                );
               })()}
               <div className="flex gap-2">
                 {!isOngoing ? (
@@ -393,7 +516,7 @@ function ActiveTripsTab() {
                       <IconPeso className="w-4 h-4" /> Payment
                     </button>
                     <button onClick={() => handlePickup(trip)}
-                      disabled={busyID === trip.id || !(["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0)}
+                      disabled={busyID === trip.id || !trip.beforeDocsComplete || !(["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0)}
                       className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                       {busyID === trip.id ? "…" : "▶ Start Pickup"}
                     </button>
@@ -406,8 +529,8 @@ function ActiveTripsTab() {
                         <IconPin className="w-3.5 h-3.5" /> Mark Dropped Off
                       </button>
                     )}
-                    <button onClick={() => handleReturn(trip)} disabled={busyID === trip.id}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50">
+                    <button onClick={() => handleReturn(trip)} disabled={busyID === trip.id || !trip.afterDocsComplete}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                       <IconFlag className="w-3.5 h-3.5" /> {busyID === trip.id ? "…" : "Return"}
                     </button>
                   </>
@@ -446,7 +569,6 @@ function ActiveTripsTab() {
 
 // ─── HISTORY TAB (completed/cancelled/stolen) ─────────────────────────────
 function HistoryTab() {
-  const navigate = useNavigate();
   const token = localStorage.getItem("token");
 
   const [trips, setTrips]     = useState([]);
@@ -550,11 +672,7 @@ function HistoryTab() {
         onClose={() => setDetailTrip(null)}
         trip={detailTrip}
         onShowMap={() => { setMapTrip(detailTrip); setDetailTrip(null); }}
-        onViewHistory={
-          detailTrip?.carID
-            ? () => navigate(`/vehicle-documentation?carID=${detailTrip.carID}&bookingID=${detailTrip.id}`)
-            : undefined
-        }
+        // No "View Full Inspection" link: Vehicle Inspections is staff-only.
       />
     </div>
   );

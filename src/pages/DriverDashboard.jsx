@@ -42,12 +42,6 @@ const IconCalendar = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
-const IconDoc = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z" />
-  </svg>
-);
-
 const IconWarning = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a1.5 1.5 0 001.29 2.25h17.78A1.5 1.5 0 0022.18 18L13.71 3.86a1.5 1.5 0 00-2.42 0z" />
@@ -267,17 +261,13 @@ export default function DriverDashboard() {
         </div>
       )}
 
-      {/* QUICK LINKS */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* QUICK LINKS — Vehicle Inspections is staff-only now (a supervisor
+          completes it; the driver's pickup/return waits on it in My Trips). */}
+      <div className="grid grid-cols-1 gap-3">
         <button onClick={() => navigate("/my-trips")}
           className="bg-white rounded-2xl shadow-soft p-4 flex flex-col items-center gap-2 hover:bg-gray-50 transition-colors">
           <IconSteering className="w-5 h-5 text-arl-primary" />
           <span className="text-xs font-semibold text-arl-dark">My Trips</span>
-        </button>
-        <button onClick={() => navigate("/vehicle-documentation")}
-          className="bg-white rounded-2xl shadow-soft p-4 flex flex-col items-center gap-2 hover:bg-gray-50 transition-colors">
-          <IconDoc className="w-5 h-5 text-arl-primary" />
-          <span className="text-xs font-semibold text-arl-dark">Vehicle Documentation</span>
         </button>
       </div>
     </div>

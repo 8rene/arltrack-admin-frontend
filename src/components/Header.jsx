@@ -72,6 +72,10 @@ const META_BY_TYPE = {
   license_expiring:     { bg: "bg-yellow-100", emoji: "🪪", title: "License Expiring Soon" },
   license_expired:      { bg: "bg-red-100",    emoji: "🪪", title: "License Expired" },
   driver_assigned:      { bg: "bg-teal-100",   emoji: "🚗", title: "Trip Assigned" },
+  // A driver hit "Remind Staff" in My Trips — they can't start pickup /
+  // return until the vehicle inspection is completed.
+  inspection_pickup_needed: { bg: "bg-orange-100", emoji: "📋", title: "Pickup Inspection Needed" },
+  inspection_return_needed: { bg: "bg-orange-100", emoji: "📋", title: "Return Inspection Needed" },
 };
 
 /* ── Notification Row ── */
@@ -220,6 +224,15 @@ export default function Header({ title = "Dashboard" }) {
   // adding a second, redundant way to do the same thing.
   const handleOpen = (n) => {
     setNotifOpen(false);
+    // Driver waiting on the inspection → straight to that booking's
+    // Vehicle Inspections page, in the same pickup/return "focus" mode
+    // Car Tracking uses. refID is the booking doc ID; carID/phase were
+    // stored on the notification when the driver sent the reminder.
+    if ((n.type === "inspection_pickup_needed" || n.type === "inspection_return_needed") && n.refID && n.carID) {
+      const action = n.type === "inspection_return_needed" ? "return" : "pickup";
+      navigate(`/vehicle-documentation?carID=${n.carID}&bookingID=${n.refID}&action=${action}`);
+      return;
+    }
     if (n.refCollection === "cars" && n.refID) {
       navigate("/car-tracking", { state: { selectCarId: n.refID } });
       return;

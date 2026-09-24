@@ -207,6 +207,7 @@ export default function VehicleDocs() {
   const [uploads, setUploads]     = useState({});
   const [uploading, setUploading] = useState({});
   const [saving, setSaving]       = useState(false);
+  const [confirmingParts, setConfirmingParts] = useState(false);
   const [toast, setToast]         = useState(null);
 
   const showToast = (msg, type = "success") => {
@@ -732,10 +733,15 @@ export default function VehicleDocs() {
    * writes — so a driver's check and an admin's edit land in one place,
    * not two disconnected records. Never called on toggle; only from
    * uploadSlot/saveAll, i.e. whenever the person hits Save or Save All.
+   *
+   * `force` writes the record even with nothing staged — that's the
+   * "Confirm parts condition" button. The pickup/return gate needs a saved
+   * parts record, and an untouched all-Good car would otherwise never get
+   * one (Good is the implicit default, so nothing ever gets staged).
    */
-  const commitStatusEdits = async (bID, editsToCommit) => {
+  const commitStatusEdits = async (bID, editsToCommit, { force = false } = {}) => {
     const keys = Object.keys(editsToCommit);
-    if (!keys.length) return;
+    if (!keys.length && !force) return;
 
     // For a first-ever After-trip save (no afterInv exists yet), seed the
     // merge base from beforeInv instead of nothing. Otherwise a part that's
@@ -942,6 +948,24 @@ export default function VehicleDocs() {
     }
   };
 
+  // Records the parts condition as-is (Good unless flagged Damaged; on the
+  // After tab, damage carried over from Before stays flagged) without
+  // touching any photos. Part of the inspection the driver's pickup/return
+  // waits on — see hasPartsRecord below.
+  const confirmParts = async () => {
+    if (!activeBooking || !selectedCar) return;
+    setConfirmingParts(true);
+    try {
+      await commitStatusEdits(activeBooking.bookingID || activeBooking.id, {}, { force: true });
+      showToast("Parts condition recorded.");
+    } catch (e) {
+      console.error(e);
+      showToast("Could not record parts condition: " + e.message, "error");
+    } finally {
+      setConfirmingParts(false);
+    }
+  };
+
   const getSlotImage = (fieldKey) => {
     if (uploads[fieldKey]?.preview) return uploads[fieldKey].preview;
     const currentDoc = tripType === "before" ? beforeDoc : afterDoc;
@@ -978,9 +1002,15 @@ export default function VehicleDocs() {
   const pendingChangeCount      = Object.keys(uploads).length + Object.keys(currentStatusEdits).length;
   // Pickup/Return focus mode exists to get these photos taken, so it always shows them.
   const docsHidden              = docsCollapsed && !inPickupMode && !inReturnMode;
+  // Whether a saved parts-condition record exists for the tab being viewed
+  // (After deliberately doesn't fall back to Before's — the After trip needs
+  // its own). Photos alone no longer complete an inspection; the backend
+  // gate (getPhaseChecklist) requires this record too.
+  const hasPartsRecord      = !!currentInv;
   const canCompletePickup =
     activeBooking?.status?.toLowerCase() === "upcoming" &&
     hasRequiredBeforePhotos &&
+    !!beforeInv &&
     !hasUnsavedChanges;
 
   // ── Return completion — same required-photos rule as Pickup, mirrored
@@ -991,6 +1021,7 @@ export default function VehicleDocs() {
   const canCompleteReturn =
     activeBooking?.status?.toLowerCase() === "ongoing" &&
     hasRequiredAfterPhotos &&
+    !!afterInv &&
     !hasUnsavedChanges;
 
   // Good/Damaged effective status per part — saved record, overridden by
@@ -1302,11 +1333,11 @@ export default function VehicleDocs() {
                         <span className="shrink-0">{canCompletePickup ? "✅" : "📋"}</span>
                         <p>
                           {canCompletePickup ? (
-                            <>Front, side, and back photos are all in — this trip is ready for pickup.</>
+                            <>Photos and parts condition are both recorded — this trip is ready for pickup.</>
                           ) : (
                             <>
-                              <span className="font-semibold">Pickup requires vehicle documentation first.</span>{" "}
-                              Fill in the front, side, and back view photos below, then Save, before this car can be marked picked up.
+                              <span className="font-semibold">Pickup requires the vehicle inspection first.</span>{" "}
+                              Fill in the front, side, and back view photos and record the parts condition below, then Save, before this car can be picked up.
                             </>
                           )}
                         </p>
@@ -1323,11 +1354,11 @@ export default function VehicleDocs() {
                         <span className="shrink-0">{canCompleteReturn ? "✅" : "📋"}</span>
                         <p>
                           {canCompleteReturn ? (
-                            <>Front, side, and back photos are all in — this trip is ready to be marked returned.</>
+                            <>Photos and parts condition are both recorded — this trip is ready to be marked returned.</>
                           ) : (
                             <>
-                              <span className="font-semibold">Return requires vehicle documentation first.</span>{" "}
-                              Fill in the front, side, and back view photos below, then Save, before this car can be marked returned.
+                              <span className="font-semibold">Return requires the vehicle inspection first.</span>{" "}
+                              Fill in the front, side, and back view photos and record the parts condition below, then Save, before this car can be marked returned.
                             </>
                           )}
                         </p>
@@ -1359,29 +1390,56 @@ export default function VehicleDocs() {
                             are saved, send the person back to finish there. */}
                         {tripType === "before" && activeBooking.status?.toLowerCase() === "upcoming" && (
                           <div className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-center ${
-                            hasRequiredBeforePhotos && !hasUnsavedChanges
+                            canCompletePickup
                               ? "bg-green-50 border border-green-200 text-green-800"
                               : "bg-gray-100 text-gray-400"
                           }`}>
                             {hasUnsavedChanges
                               ? "Save changes to continue"
-                              : hasRequiredBeforePhotos
-                                ? `✅ Photos saved — go back to ${isDriver ? "My Trips" : "Car Tracking"} to complete pickup.`
-                                : "Complete required photos to continue"}
+                              : canCompletePickup
+                                ? "✅ Inspection complete — pickup can now go ahead."
+                                : !hasRequiredBeforePhotos && !hasPartsRecord
+                                  ? "Still needed: required photos and parts condition"
+                                  : !hasRequiredBeforePhotos
+                                    ? "Still needed: required photos"
+                                    : "Still needed: parts condition"}
                           </div>
                         )}
 
                         {tripType === "after" && activeBooking.status?.toLowerCase() === "ongoing" && (
                           <div className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-center ${
-                            hasRequiredAfterPhotos && !hasUnsavedChanges
+                            canCompleteReturn
                               ? "bg-green-50 border border-green-200 text-green-800"
                               : "bg-gray-100 text-gray-400"
                           }`}>
                             {hasUnsavedChanges
                               ? "Save changes to continue"
-                              : hasRequiredAfterPhotos
-                                ? `✅ Photos saved — go back to ${isDriver ? "My Trips" : "Car Tracking"} to complete the return.`
-                                : "Complete required photos to continue"}
+                              : canCompleteReturn
+                                ? "✅ Inspection complete — the return can now go ahead."
+                                : !hasRequiredAfterPhotos && !hasPartsRecord
+                                  ? "Still needed: required photos and parts condition"
+                                  : !hasRequiredAfterPhotos
+                                    ? "Still needed: required photos"
+                                    : "Still needed: parts condition"}
+                          </div>
+                        )}
+
+                        {/* No parts-condition record saved yet for this trip phase.
+                            Good is the implicit default, so an all-Good car never
+                            stages anything to Save — this explicit confirm is what
+                            creates the record the pickup/return gate requires.
+                            (Staged toggles + Save All create it too, hence hidden
+                            while those are pending.) */}
+                        {!hasPartsRecord && !hasUnsavedStatusEdits && (
+                          <div className="flex items-center justify-between gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+                            <p className="text-xs text-blue-800">
+                              <span className="font-semibold">Parts condition not recorded yet.</span>{" "}
+                              Review the parts below — anything not flagged Damaged is recorded as Good — then confirm.
+                            </p>
+                            <button onClick={confirmParts} disabled={confirmingParts || saving}
+                              className="shrink-0 text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
+                              {confirmingParts ? "Saving…" : "Confirm parts condition"}
+                            </button>
                           </div>
                         )}
 

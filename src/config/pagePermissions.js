@@ -37,10 +37,13 @@ export const PAGE_ACCESS = {
   "/driver-dispatch": [OWNER, ADMIN, SUPERVISOR],
   "/maintenance": [OWNER, ADMIN, SUPERVISOR],
   // Inventory = parts catalog (edited occasionally, Owner/Admin/Supervisor
-  // only, no Driver — matches its old access level). Vehicle Documentation
-  // = per-trip status + photos + history, Driver included.
+  // only, no Driver — matches its old access level). Vehicle Inspections
+  // (this path) = per-trip status + photos + history — staff only now.
+  // Drivers no longer fill in or even open it: a supervisor completes the
+  // inspection, and the driver's Start Pickup / Return in My Trips waits on
+  // it. Backend equivalent: routes/vehicleDocumentation (Driver removed).
   "/inventory": [OWNER, ADMIN, SUPERVISOR],
-  "/vehicle-documentation": [OWNER, ADMIN, SUPERVISOR, DRIVER],
+  "/vehicle-documentation": [OWNER, ADMIN, SUPERVISOR],
   "/analytics": [OWNER, ADMIN, SUPERVISOR],
   "/payments": [OWNER, ADMIN, SUPERVISOR],
   "/refund-requests": [OWNER, ADMIN, SUPERVISOR],
