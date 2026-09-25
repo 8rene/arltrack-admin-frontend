@@ -239,3 +239,7 @@ driver was removed but hte
 
 
 drivers left view main claude 11:50pm
+and also remove the supervisor capability to change user
+and the analytics remove it 
+
+117 11:50 pm pending the refund fixes

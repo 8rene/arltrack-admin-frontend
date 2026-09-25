@@ -581,33 +581,53 @@ function StatusReasonModal({ carLabel, status, saving, onConfirm, onCancel }) {
   );
 }
 
-// ─── STATUS CHANGE FLOW (reason → refund upcoming bookings → OTP) ────────────
+// ─── STATUS CHANGE FLOW (reason → OTP → confirm+refund, batch-fired once) ────
 // Orchestrates the full gate before a car can be switched to Maintenance or
 // Inactive. Shared by the quick status badge (VehicleCard) and the Edit
 // Vehicle modal's Status field — the only two places a car's status can be
-// changed — so this gate can never be bypassed from either one. Owns the
-// actual PATCH /status call itself; callers just get onDone(newStatus, reason)
-// once it's genuinely done, or onCancel() if staff back out at any step.
+// changed — so this gate can never be bypassed from either one.
+//
+// The OTP screen comes right after the reason, but the code it collects
+// ISN'T checked yet — it just gets carried forward and verified server-side
+// at the very last step, in the same call that actually fires the refunds.
+// That's deliberate: OTP codes are single-use, so checking it early and
+// checking it at the point money actually moves can't both be true. If a
+// batch stops partway (one booking fails), that code is already spent —
+// this drops back to the OTP step for a fresh one rather than trying to
+// reuse it, carrying forward what already succeeded so staff aren't
+// starting over blind.
 function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
-  const [step, setStep] = useState("reason"); // "reason" | "confirm" | "otp"
+  const [step, setStep] = useState("reason"); // "reason" | "otp" | "confirm"
   const [reason, setReason] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [otpError, setOtpError] = useState(null);
+  const [otp, setOtp] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+  const [lastResults, setLastResults] = useState(null); // refundResults from a stopped attempt, for context on retry
 
-  const submitWithOtp = async (otp) => {
-    setSaving(true);
-    setOtpError(null);
+  const submitBatch = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
     try {
-      await apiFetch(`/api/fleet/cars/${car.id}/status`, {
+      const data = await apiFetch(`/api/fleet/cars/${car.id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status: targetStatus, statusReason: reason, otp }),
       });
-      onDone(targetStatus, reason);
+      if (data.statusChanged) {
+        onDone(targetStatus, reason);
+        return;
+      }
+      // Stopped partway — anything in data.refundResults before the
+      // "failed" entry already happened for real and can't be undone. The
+      // OTP that was just checked is now spent; back to that step for a
+      // fresh one, carrying the results forward so the next "confirm"
+      // screen (and this message) has context instead of starting blind.
+      setLastResults(data.refundResults || []);
+      setOtp("");
+      setStep("otp");
     } catch (e) {
-      // Stay on the OTP step so staff can retry without losing the reason
-      // or having to re-refund anything already refunded in the previous step.
-      setOtpError(e.message);
-      setSaving(false);
+      setSubmitError(e.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -617,176 +637,45 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
         carLabel={carLabel}
         status={targetStatus}
         saving={false}
-        onConfirm={(r) => { setReason(r); setStep("confirm"); }}
+        onConfirm={(r) => { setReason(r); setStep("otp"); }}
         onCancel={onCancel}
       />
     );
   }
 
-  if (step === "confirm") {
+  if (step === "otp") {
     return (
-      <AreYouSureRefundModal
-        car={car}
+      <OtpConfirmModal
         carLabel={carLabel}
         targetStatus={targetStatus}
-        reason={reason}
-        onConfirmed={() => setStep("otp")}
+        priorResults={lastResults}
+        onNext={(code) => { setOtp(code); setStep("confirm"); }}
         onCancel={onCancel}
       />
     );
   }
 
   return (
-    <OtpConfirmModal
+    <AreYouSureRefundModal
+      car={car}
       carLabel={carLabel}
       targetStatus={targetStatus}
-      saving={saving}
-      error={otpError}
-      onConfirm={submitWithOtp}
+      reason={reason}
+      submitting={submitting}
+      submitError={submitError}
+      onSubmit={submitBatch}
       onCancel={onCancel}
     />
   );
 }
 
-// ─── ARE YOU SURE + REFUND MODAL ──────────────────────────────────────────────
-// Step 2 of StatusChangeFlow. Lists every upcoming booking on this car with
-// a Refund button + live ₱ amount (must ALL read "Refunded" before Confirm
-// unlocks), plus every ongoing booking as an FYI-only row — the car's
-// already with that customer, so there's nothing to refund or cancel here;
-// see staffRefundBooking() on the backend for why ongoing is excluded.
-function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, onConfirmed, onCancel }) {
-  const { fmt } = useCurrency();
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
-  const [upcoming, setUpcoming] = useState([]); // [{ ...booking, refundPreview, refundState, refundError }]
-  const [ongoing, setOngoing] = useState([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    apiFetch(`/api/fleet/cars/${car.id}/status-change-preview`)
-      .then((data) => {
-        if (cancelled) return;
-        setUpcoming((data?.upcoming || []).map((b) => ({ ...b, refundState: "idle", refundError: null })));
-        setOngoing(data?.ongoing || []);
-      })
-      .catch((e) => !cancelled && setLoadError(e.message))
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [car.id]);
-
-  const refundBooking = async (bookingID) => {
-    setUpcoming((list) => list.map((b) => b.bookingID === bookingID ? { ...b, refundState: "refunding", refundError: null } : b));
-    try {
-      await apiFetch(`/api/refund-requests/staff-refund/${bookingID}`, {
-        method: "POST",
-        body: JSON.stringify({ reason }),
-      });
-      setUpcoming((list) => list.map((b) => b.bookingID === bookingID ? { ...b, refundState: "done" } : b));
-    } catch (e) {
-      setUpcoming((list) => list.map((b) => b.bookingID === bookingID ? { ...b, refundState: "error", refundError: e.message } : b));
-    }
-  };
-
-  const dateRange = (b) => {
-    const fmtDate = (v) => {
-      const d = v?.toDate ? v.toDate() : (v ? new Date(v) : null);
-      return d && !isNaN(d) ? d.toLocaleDateString() : "—";
-    };
-    return `${fmtDate(b.startDateTime)} – ${fmtDate(b.endDateTime)}`;
-  };
-
-  const allRefunded = upcoming.length === 0 || upcoming.every((b) => b.refundState === "done");
-
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[85vh] overflow-y-auto">
-        <div>
-          <h3 className="font-bold text-gray-800 text-lg">Are you sure?</h3>
-          <p className="text-sm text-gray-500 mt-1">
-            Switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
-          </p>
-        </div>
-
-        {loading ? (
-          <p className="text-sm text-gray-400 py-6 text-center">Checking bookings…</p>
-        ) : loadError ? (
-          <p className="text-sm text-red-600 py-4">{loadError}</p>
-        ) : upcoming.length === 0 && ongoing.length === 0 ? (
-          <p className="text-sm text-gray-500 py-4">No upcoming or ongoing bookings on this car right now.</p>
-        ) : (
-          <div className="space-y-4">
-            {upcoming.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-2">
-                  Upcoming bookings — must be refunded before {targetStatus} can be confirmed
-                </p>
-                <div className="space-y-2">
-                  {upcoming.map((b) => (
-                    <div key={b.bookingID} className="border rounded-xl p-3 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
-                        <p className="text-xs text-gray-500">{dateRange(b)}</p>
-                        <p className="text-xs text-gray-500">{fmt(b.refundPreview?.total || 0)} to refund</p>
-                        {b.refundState === "error" && (
-                          <p className="text-xs text-red-600 mt-1">{b.refundError}</p>
-                        )}
-                      </div>
-                      {b.refundState === "done" ? (
-                        <span className="shrink-0 text-xs font-medium text-emerald-600 px-3 py-1.5">Refunded ✓</span>
-                      ) : (
-                        <button
-                          onClick={() => refundBooking(b.bookingID)}
-                          disabled={b.refundState === "refunding"}
-                          className="shrink-0 px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 disabled:opacity-50">
-                          {b.refundState === "refunding" ? "Refunding…" : `Refund ${fmt(b.refundPreview?.total || 0)}`}
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {ongoing.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-2">Ongoing — car is currently with the customer</p>
-                <div className="space-y-2">
-                  {ongoing.map((b) => (
-                    <div key={b.bookingID} className="border rounded-xl p-3 bg-gray-50">
-                      <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
-                      <p className="text-xs text-gray-500">{dateRange(b)}</p>
-                      <p className="text-xs text-gray-400 mt-1">No refund needed — trip already in progress.</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="flex gap-3 pt-2">
-          <button onClick={onCancel}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
-            Cancel
-          </button>
-          <button onClick={onConfirmed} disabled={loading || !!loadError || !allRefunded}
-            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
-            Confirm
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── OTP CONFIRM MODAL ─────────────────────────────────────────────────────
-// Final step of StatusChangeFlow. Confirms the STAFF member making the
-// change (not the customer) — same "prove it's really you" mechanic already
-// used for role changes: a code sent to the logged-in admin/supervisor/
-// owner's own email via POST /api/auth/send-otp, verified server-side by
-// consumeOtp() when the actual status PATCH goes through.
-function OtpConfirmModal({ carLabel, targetStatus, saving, error, onConfirm, onCancel }) {
+// Step 2 of StatusChangeFlow — collects the code but does NOT verify it
+// here (see the flow's own comment above for why). Confirms the STAFF
+// member making the change, not the customer: a code sent to the logged-in
+// admin/supervisor/owner's own email via POST /api/auth/send-otp, same
+// "prove it's really you" mechanic already used for role changes.
+function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCancel }) {
   const { user } = useAuth();
   const [otp, setOtp] = useState("");
   const [sendState, setSendState] = useState("sending"); // "sending" | "sent" | "error"
@@ -812,6 +701,8 @@ function OtpConfirmModal({ carLabel, targetStatus, saving, error, onConfirm, onC
   useEffect(() => { sendCode(); }, [sendCode]);
 
   const trimmed = otp.trim();
+  const resolvedCount = priorResults?.filter((r) => r.outcome !== "failed").length || 0;
+  const failedResult = priorResults?.find((r) => r.outcome === "failed");
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
@@ -819,10 +710,18 @@ function OtpConfirmModal({ carLabel, targetStatus, saving, error, onConfirm, onC
         <div>
           <h3 className="font-bold text-gray-800 text-lg">Confirm it's you</h3>
           <p className="text-sm text-gray-500 mt-1">
-            Enter the code sent to <span className="font-medium text-gray-700">{user?.email || "your email"}</span> to finish
-            switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
+            Enter the code sent to <span className="font-medium text-gray-700">{user?.email || "your email"}</span> to
+            {priorResults ? " finish" : " start"} switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
           </p>
         </div>
+
+        {priorResults && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+            {resolvedCount} booking(s) were already resolved before the last attempt stopped
+            {failedResult ? ` at ${failedResult.bookingID} (${failedResult.error})` : ""}. That code's already used —
+            this one will pick up where it left off; anything already resolved won't be touched again.
+          </div>
+        )}
 
         {sendState === "sending" && <p className="text-xs text-gray-400">Sending code…</p>}
         {sendState === "error" && <p className="text-xs text-red-600">{sendMessage}</p>}
@@ -835,21 +734,187 @@ function OtpConfirmModal({ carLabel, targetStatus, saving, error, onConfirm, onC
             className="w-full mt-1 border rounded-xl px-3 py-2 text-sm tracking-widest outline-none focus:ring-2 focus:ring-teal-400" />
         </div>
 
-        {error && <p className="text-xs text-red-600">{error}</p>}
-
         <button onClick={sendCode} disabled={sendState === "sending"}
           className="text-xs text-teal-600 hover:underline disabled:opacity-50">
           Resend code
         </button>
 
         <div className="flex gap-3">
-          <button onClick={onCancel} disabled={saving}
+          <button onClick={onCancel}
+            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button onClick={() => onNext(trimmed)} disabled={trimmed.length !== 6}
+            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ARE YOU SURE + REFUND MODAL ──────────────────────────────────────────────
+// Final step of StatusChangeFlow. Shows the reason up top, then every
+// upcoming booking on this car with a Refund row + live ₱ amount (each one
+// staged locally with its own confirm click — nothing is sent to the
+// server yet), every ongoing booking as an FYI-only row (car's already
+// with that customer, nothing to refund there), and — for context on a
+// retry — every booking already resolved by an earlier attempt on this
+// same car. "Confirm & Change Status" is the ONLY thing that talks to the
+// server: it fires the whole batch (refunds + cancels + the status write)
+// in one call, all or nothing up to the first real failure — see
+// StatusChangeFlow.submitBatch and changeCarStatus() on the backend.
+function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting, submitError, onSubmit, onCancel }) {
+  const { fmt } = useCurrency();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [upcoming, setUpcoming] = useState([]); // [{ ...booking, refundPreview, staged }]
+  const [ongoing, setOngoing] = useState([]);
+  const [resolved, setResolved] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    apiFetch(`/api/fleet/cars/${car.id}/status-change-preview`)
+      .then((data) => {
+        if (cancelled) return;
+        setUpcoming((data?.upcoming || []).map((b) => ({ ...b, staged: false })));
+        setOngoing(data?.ongoing || []);
+        setResolved(data?.resolved || []);
+      })
+      .catch((e) => !cancelled && setLoadError(e.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [car.id]);
+
+  const toggleStaged = (bookingID) => {
+    setUpcoming((list) => list.map((b) => b.bookingID === bookingID ? { ...b, staged: !b.staged } : b));
+  };
+
+  const dateRange = (b) => {
+    const fmtDate = (v) => {
+      const d = v?.toDate ? v.toDate() : (v ? new Date(v) : null);
+      return d && !isNaN(d) ? d.toLocaleDateString() : "—";
+    };
+    return `${fmtDate(b.startDateTime)} – ${fmtDate(b.endDateTime)}`;
+  };
+
+  const resolvedLabel = (r) => {
+    if (r.outcome === "refunded") return `Refunded ${fmt(r.amount || 0)}`;
+    if (r.outcome === "already_refunded") return "Cancelled — already refunded earlier";
+    if (r.outcome === "nothing_owed") return "Cancelled — nothing had been paid";
+    return "Resolved";
+  };
+
+  const allStaged = upcoming.length === 0 || upcoming.every((b) => b.staged);
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+        <div>
+          <h3 className="font-bold text-gray-800 text-lg">Are you sure?</h3>
+          <p className="text-sm text-gray-500 mt-1">
+            Switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
+          </p>
+          <p className="text-sm text-gray-600 bg-gray-50 border rounded-lg px-3 py-2 mt-2">
+            <span className="font-medium">Reason:</span> {reason}
+          </p>
+        </div>
+
+        {loading ? (
+          <p className="text-sm text-gray-400 py-6 text-center">Checking bookings…</p>
+        ) : loadError ? (
+          <p className="text-sm text-red-600 py-4">{loadError}</p>
+        ) : (
+          <div className="space-y-4">
+            {upcoming.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">
+                  Upcoming bookings — confirm each one below; nothing is actually refunded until "Confirm & Change Status" is clicked
+                </p>
+                <div className="space-y-2">
+                  {upcoming.map((b) => (
+                    <div key={b.bookingID}
+                      className={`border rounded-xl p-3 flex items-center justify-between gap-3 ${b.refundPreview?.alreadyRefunded ? "bg-amber-50 border-amber-200" : ""}`}>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
+                        <p className="text-xs text-gray-500">{dateRange(b)}</p>
+                        {b.refundPreview?.alreadyRefunded ? (
+                          <p className="text-xs text-amber-700 mt-1">Payment already refunded earlier — this will just cancel the booking to match.</p>
+                        ) : (
+                          <p className="text-xs text-gray-500">{fmt(b.refundPreview?.total || 0)} to refund</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => toggleStaged(b.bookingID)}
+                        className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium ${
+                          b.staged
+                            ? "bg-emerald-600 text-white"
+                            : b.refundPreview?.alreadyRefunded
+                              ? "bg-amber-600 text-white hover:bg-amber-700"
+                              : "bg-red-600 text-white hover:bg-red-700"
+                        }`}>
+                        {b.staged
+                          ? "Confirmed ✓"
+                          : b.refundPreview?.alreadyRefunded
+                            ? "Confirm cancel"
+                            : `Refund ${fmt(b.refundPreview?.total || 0)}`}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {ongoing.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">Ongoing — car is currently with the customer</p>
+                <div className="space-y-2">
+                  {ongoing.map((b) => (
+                    <div key={b.bookingID} className="border rounded-xl p-3 bg-gray-50">
+                      <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
+                      <p className="text-xs text-gray-500">{dateRange(b)}</p>
+                      <p className="text-xs text-gray-400 mt-1">No refund needed — trip already in progress.</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {resolved.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">Already resolved</p>
+                <div className="space-y-2">
+                  {resolved.map((b) => (
+                    <div key={b.bookingID} className="border rounded-xl p-3 bg-gray-50 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
+                        <p className="text-xs text-gray-500">{dateRange(b)}</p>
+                      </div>
+                      <span className="shrink-0 text-xs font-medium text-emerald-600">{resolvedLabel(b)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {upcoming.length === 0 && ongoing.length === 0 && resolved.length === 0 && (
+              <p className="text-sm text-gray-500 py-4">No upcoming or ongoing bookings on this car right now.</p>
+            )}
+          </div>
+        )}
+
+        {submitError && <p className="text-xs text-red-600">{submitError}</p>}
+
+        <div className="flex gap-3 pt-2">
+          <button onClick={onCancel} disabled={submitting}
             className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
             Cancel
           </button>
-          <button onClick={() => onConfirm(trimmed)} disabled={saving || trimmed.length !== 6}
+          <button onClick={onSubmit} disabled={loading || !!loadError || !allStaged || submitting}
             className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
-            {saving ? "Confirming…" : "Confirm"}
+            {submitting ? "Processing…" : "Confirm & Change Status"}
           </button>
         </div>
       </div>

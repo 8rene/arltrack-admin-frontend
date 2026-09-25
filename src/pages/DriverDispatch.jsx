@@ -412,10 +412,21 @@ export default function DriverDispatch() {
 
                   {isOpen && (
                     <div className="mt-2 pt-2 border-t border-gray-100 space-y-1.5">
-                      <div className="text-xs text-gray-400">{b.vehicleName}</div>
-                      <div className="flex items-start gap-1 text-xs text-gray-500">
-                        <IconPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                        <span className="min-w-0 break-words">{b.location}</span>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 space-y-1.5">
+                          <div className="text-xs text-gray-400">{b.vehicleName}</div>
+                          <div className="flex items-start gap-1 text-xs text-gray-500">
+                            <IconPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span className="min-w-0 break-words">{b.location}</span>
+                          </div>
+                        </div>
+                        {/* Full booking record — Bookings.jsx opens straight to it via
+                            ?open=<id>, the same deep-link pattern the notification bell
+                            already uses (Header.jsx), so this needs no new page support. */}
+                        <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.id)}`)}
+                          className="shrink-0 text-[11px] font-semibold text-arl-dark border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-50">
+                          View Booking
+                        </button>
                       </div>
 
                     {conflict?.bookingDocID === b.id ? (
@@ -560,10 +571,16 @@ export default function DriverDispatch() {
                                 b.status === "ongoing" ? "bg-green-50 text-green-700" : "bg-yellow-50 text-yellow-700"
                               }`}>{b.status}</span>
                             </div>
-                            <button onClick={() => doUnassign(b.id)} disabled={busyID === b.id}
-                              className="text-[11px] font-semibold text-arl-cta hover:underline disabled:opacity-40 shrink-0">
-                              Unassign
-                            </button>
+                            <div className="shrink-0 flex flex-col items-end gap-1.5">
+                              <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.id)}`)}
+                                className="text-[11px] font-semibold text-arl-dark border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-50">
+                                View Booking
+                              </button>
+                              <button onClick={() => doUnassign(b.id)} disabled={busyID === b.id}
+                                className="text-[11px] font-semibold text-arl-cta hover:underline disabled:opacity-40">
+                                Unassign
+                              </button>
+                            </div>
                           </div>
                         ))
                       )}
