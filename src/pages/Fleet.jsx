@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import {
@@ -680,6 +680,16 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCance
   const [otp, setOtp] = useState("");
   const [sendState, setSendState] = useState("sending"); // "sending" | "sent" | "error"
   const [sendMessage, setSendMessage] = useState(null);
+  // Guards against React StrictMode's intentional double-invoke of effects
+  // in development (mount → effect → cleanup → effect again, on the same
+  // instance). Without this, that double-invoke fires sendCode() twice on
+  // mount — two real /send-otp calls, two emails, and since the backend
+  // stores the code with a plain overwrite (adminOtpCodes/{email}.set(...)),
+  // whichever of the two calls' writes lands second silently invalidates
+  // the code in the email that arrived first. A ref survives the
+  // double-invoke (only the effect re-runs, not the component instance),
+  // so this makes sure the real network call only ever fires once per mount.
+  const sentOnceRef = useRef(false);
 
   const sendCode = useCallback(async () => {
     setSendState("sending");
@@ -698,11 +708,36 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCance
     }
   }, []);
 
-  useEffect(() => { sendCode(); }, [sendCode]);
+  useEffect(() => {
+    if (sentOnceRef.current) return;
+    sentOnceRef.current = true;
+    sendCode();
+  }, [sendCode]);
 
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState(null);
   const trimmed = otp.trim();
   const resolvedCount = priorResults?.filter((r) => r.outcome !== "failed").length || 0;
   const failedResult = priorResults?.find((r) => r.outcome === "failed");
+
+  // Real check (peekOtp on the backend — wrong digits, expired, locked out
+  // all genuinely apply) but doesn't burn the code, since nothing's
+  // actually happening yet at this screen. Lets staff know right away if
+  // they mistyped it instead of finding out only after staging every
+  // booking on the next screen. The code still gets verified for real
+  // (and actually consumed) at the final "Confirm & Change Status" step.
+  const handleContinue = async () => {
+    setChecking(true);
+    setCheckError(null);
+    try {
+      await apiFetch("/api/auth/check-otp", { method: "POST", body: JSON.stringify({ otp: trimmed }) });
+      onNext(trimmed);
+    } catch (e) {
+      setCheckError(e.message);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
@@ -734,19 +769,21 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCance
             className="w-full mt-1 border rounded-xl px-3 py-2 text-sm tracking-widest outline-none focus:ring-2 focus:ring-teal-400" />
         </div>
 
+        {checkError && <p className="text-xs text-red-600">{checkError}</p>}
+
         <button onClick={sendCode} disabled={sendState === "sending"}
           className="text-xs text-teal-600 hover:underline disabled:opacity-50">
           Resend code
         </button>
 
         <div className="flex gap-3">
-          <button onClick={onCancel}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+          <button onClick={onCancel} disabled={checking}
+            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
             Cancel
           </button>
-          <button onClick={() => onNext(trimmed)} disabled={trimmed.length !== 6}
+          <button onClick={handleContinue} disabled={trimmed.length !== 6 || checking}
             className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
-            Continue
+            {checking ? "Checking…" : "Continue"}
           </button>
         </div>
       </div>
@@ -772,6 +809,11 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
   const [upcoming, setUpcoming] = useState([]); // [{ ...booking, refundPreview, staged }]
   const [ongoing, setOngoing] = useState([]);
   const [resolved, setResolved] = useState([]);
+  // bookingID of the row whose mini confirm modal is open, or null. Clicking
+  // a row's button never stages it directly anymore — it opens this modal
+  // (booking details + who booked + the payment breakdown) and staging only
+  // happens from a real Confirm click inside that modal.
+  const [activeBookingID, setActiveBookingID] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -808,6 +850,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
   };
 
   const allStaged = upcoming.length === 0 || upcoming.every((b) => b.staged);
+  const activeBooking = upcoming.find((b) => b.bookingID === activeBookingID) || null;
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
@@ -839,7 +882,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
                       className={`border rounded-xl p-3 flex items-center justify-between gap-3 ${b.refundPreview?.alreadyRefunded ? "bg-amber-50 border-amber-200" : ""}`}>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
-                        <p className="text-xs text-gray-500">{dateRange(b)}</p>
+                        <p className="text-xs text-gray-500">{b.customerName || "—"} · {dateRange(b)}</p>
                         {b.refundPreview?.alreadyRefunded ? (
                           <p className="text-xs text-amber-700 mt-1">Payment already refunded earlier — this will just cancel the booking to match.</p>
                         ) : (
@@ -847,10 +890,10 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
                         )}
                       </div>
                       <button
-                        onClick={() => toggleStaged(b.bookingID)}
+                        onClick={() => setActiveBookingID(b.bookingID)}
                         className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium ${
                           b.staged
-                            ? "bg-emerald-600 text-white"
+                            ? "bg-emerald-600 text-white hover:bg-emerald-700"
                             : b.refundPreview?.alreadyRefunded
                               ? "bg-amber-600 text-white hover:bg-amber-700"
                               : "bg-red-600 text-white hover:bg-red-700"
@@ -916,6 +959,77 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
             className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
             {submitting ? "Processing…" : "Confirm & Change Status"}
           </button>
+        </div>
+      </div>
+
+      {activeBooking && (
+        <BookingConfirmModal
+          booking={activeBooking}
+          fmt={fmt}
+          dateRange={dateRange}
+          onConfirm={() => { toggleStaged(activeBooking.bookingID); setActiveBookingID(null); }}
+          onUnconfirm={() => { toggleStaged(activeBooking.bookingID); setActiveBookingID(null); }}
+          onClose={() => setActiveBookingID(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── BOOKING CONFIRM MODAL ─────────────────────────────────────────────────
+// Opens on top of AreYouSureRefundModal when a booking's row is clicked —
+// booking ID, who booked it, the dates, and the payment breakdown, with its
+// own real Confirm button. Nothing gets staged just from clicking the row
+// button anymore; this is the actual "are you sure about THIS one"
+// step — the row button only opens it.
+function BookingConfirmModal({ booking, fmt, dateRange, onConfirm, onUnconfirm, onClose }) {
+  const already = booking.refundPreview?.alreadyRefunded;
+  const hasManual = !already && (booking.refundPreview?.manualAmount || 0) > 0;
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
+        <h4 className="font-bold text-gray-800 text-lg">
+          {booking.staged ? "Already confirmed" : "Confirm this booking"}
+        </h4>
+
+        <div className="text-sm space-y-1.5">
+          <p><span className="text-gray-500">Booking:</span> <span className="font-medium text-gray-800">{booking.bookingID}</span></p>
+          <p><span className="text-gray-500">Booked by:</span> <span className="font-medium text-gray-800">{booking.customerName || "—"}</span></p>
+          <p><span className="text-gray-500">Dates:</span> {dateRange(booking)}</p>
+
+          {already ? (
+            <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+              Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued.
+            </p>
+          ) : (
+            <div className="bg-gray-50 border rounded-lg px-3 py-2 mt-2 space-y-0.5">
+              <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(booking.refundPreview?.total || 0)}</span></p>
+              {hasManual && (
+                <p className="text-xs text-gray-500">
+                  {fmt(booking.refundPreview.onlineAmount || 0)} via PayMongo + {fmt(booking.refundPreview.manualAmount)} handed back in person
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3 pt-2">
+          <button onClick={onClose}
+            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+            Close
+          </button>
+          {booking.staged ? (
+            <button onClick={onUnconfirm}
+              className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-300">
+              Un-confirm
+            </button>
+          ) : (
+            <button onClick={onConfirm}
+              className={`flex-1 px-4 py-2 text-white rounded-xl text-sm font-medium ${already ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
+              {already ? "Confirm cancel" : `Confirm refund ${fmt(booking.refundPreview?.total || 0)}`}
+            </button>
+          )}
         </div>
       </div>
     </div>
