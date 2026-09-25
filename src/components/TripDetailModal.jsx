@@ -20,12 +20,6 @@ const IconMap = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-const IconArrowRight = ({ className = "w-3.5 h-3.5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
-  </svg>
-);
-
 function Row({ label, value, bold, color }) {
   return (
     <div className="flex items-center justify-between text-sm">
@@ -35,60 +29,24 @@ function Row({ label, value, bold, color }) {
   );
 }
 
-// Read-only Good/Has Damage summary for one side (before or after) of the
-// vehicle condition check — no edit controls, matches what VehicleDocs.jsx
-// records but never lets this screen touch it.
-function ConditionSummary({ title, snapshot }) {
-  if (!snapshot) {
-    return (
-      <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-        <p className="text-xs font-semibold text-gray-500">{title}</p>
-        <p className="text-xs text-gray-400 mt-1">Not recorded yet.</p>
-      </div>
-    );
-  }
-  const hasDamage = snapshot.overallStatus === "has damage" || (snapshot.damageParts || []).length > 0;
-  return (
-    <div className={`rounded-xl border p-3 space-y-1.5 ${hasDamage ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"}`}>
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold text-gray-600">{title}</p>
-        <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${hasDamage ? "bg-red-600 text-white" : "bg-green-600 text-white"}`}>
-          {hasDamage ? "Has Damage" : "Good"}
-        </span>
-      </div>
-      {hasDamage && (
-        <ul className="text-xs text-red-700 space-y-0.5 pl-1">
-          {(snapshot.damageParts || []).map((p, i) => (
-            <li key={p.carPartID || i}>• {p.carPartName || "Unnamed part"}{p.status ? ` — ${p.status}` : ""}</li>
-          ))}
-        </ul>
-      )}
-      <p className="text-[11px] text-gray-400">{fmtDateTimeLong(snapshot.recordedAt)}</p>
-    </div>
-  );
-}
-
 /**
  * Read-only "View" modal for a completed trip in My Trips' History tab —
  * consolidates what used to be a bare "Show Map" button into one place:
  * who booked it and when, the payment breakdown (including mode of
- * payment, now that confirm/collect capture it), the before/after vehicle
- * condition snapshot, a link to the full inspection history, and Show Map
- * at the bottom. Nothing here is editable — corrections happen on Vehicle
- * Documentation (staff) or Payments (staff), not from this screen.
+ * payment, now that confirm/collect capture it), and Show Map at the
+ * bottom. Nothing here is editable — corrections happen on Payments
+ * (staff), not from this screen.
  *
  * @param {boolean} open
  * @param {() => void} onClose
  * @param {object} trip - shaped trip object from /my-trips/history
  * @param {() => void} onShowMap - opens TripMapModal for this trip
- * @param {() => void} [onViewHistory] - navigates to Vehicle Documentation, deep-linked + scrolled to this booking's row. Omitted if the trip has no carID to link to.
  */
-export default function TripDetailModal({ open, onClose, trip, onShowMap, onViewHistory }) {
+export default function TripDetailModal({ open, onClose, trip, onShowMap }) {
   if (!open || !trip) return null;
 
   const p = trip.payment || {};
   const hasStops = !!(trip.pickupLocation || trip.dropoffLocation);
-  const inv = trip.inventory || { before: null, after: null };
 
   return (
     <div className="fixed inset-0 z-[2000] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -131,26 +89,6 @@ export default function TripDetailModal({ open, onClose, trip, onShowMap, onView
             <div className="h-px bg-gray-200" />
             <Row label="Mode of Payment" value={p.paymentMethod || "—"} />
             <Row label="Status" value={p.paymentStatus || "—"} />
-          </div>
-
-          {/* Vehicle condition — read-only Good/Has Damage snapshot for
-              before and after; no edit controls anywhere on this screen. */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Vehicle Condition</p>
-              {onViewHistory && (
-                <button
-                  onClick={onViewHistory}
-                  className="flex items-center gap-1 text-xs font-semibold text-arl-dark hover:underline"
-                >
-                  View Full Inspection <IconArrowRight />
-                </button>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <ConditionSummary title="Before Trip" snapshot={inv.before} />
-              <ConditionSummary title="After Trip" snapshot={inv.after} />
-            </div>
           </div>
 
           {hasStops && (

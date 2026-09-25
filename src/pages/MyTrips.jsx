@@ -238,13 +238,34 @@ function ActiveTripsTab() {
 
   useEffect(() => { fetchTrips(); }, [fetchTrips]);
 
-  // The driver is often standing at the car waiting on a supervisor, so
-  // pick up their inspection finishing without a manual Refresh.
+  // The driver is often standing at the car waiting on a supervisor to
+  // finish the inspection, or waiting on a payment to clear, or a new
+  // booking to land — none of which the driver themself triggers, so this
+  // page needs to notice on its own instead of only updating after the
+  // driver's own actions. The bell (Header.jsx) is a live Firestore
+  // listener, but it only pings the driver for a new assignment or a
+  // discount — it doesn't touch this page's own trip cards (payment
+  // status, inspection checklist, reminder cooldown), which come from a
+  // plain API call. So this page still refreshes itself:
+  //  - a 1-minute poll while the tab is open and visible — the inspection
+  //    checklist and Remind Staff cooldown don't need anything tighter, and
+  //  - an immediate refetch the moment the app is foregrounded again
+  //    (switching back from another app, or waking the phone screen),
+  //    rather than waiting for the next poll tick — this is what actually
+  //    catches most "just got back to it" cases.
   useEffect(() => {
     const id = setInterval(() => {
       if (document.visibilityState === "visible") fetchTrips({ silent: true });
-    }, 30000);
-    return () => clearInterval(id);
+    }, 60000);
+    const onForeground = () => fetchTrips({ silent: true });
+    const onVisibilityChange = () => { if (document.visibilityState === "visible") onForeground(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onForeground);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onForeground);
+    };
   }, [fetchTrips]);
 
   // 1-second tick, only while at least one Remind Staff cooldown is running.
@@ -515,11 +536,21 @@ function ActiveTripsTab() {
                     >
                       <IconPeso className="w-4 h-4" /> Payment
                     </button>
-                    <button onClick={() => handlePickup(trip)}
-                      disabled={busyID === trip.id || !trip.beforeDocsComplete || !(["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0)}
-                      className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                      {busyID === trip.id ? "…" : "▶ Start Pickup"}
-                    </button>
+                    {(() => {
+                      const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
+                      // "Not Available Yet" covers both blockers (payment or
+                      // inspection) — the card above already says which one;
+                      // the button itself just needs to read as blocked, not
+                      // as a live "Start Pickup" that happens to be greyed out.
+                      const blocked = !trip.beforeDocsComplete || !paymentReady;
+                      return (
+                        <button onClick={() => handlePickup(trip)}
+                          disabled={busyID === trip.id || blocked}
+                          className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 disabled:hover:bg-gray-300">
+                          {busyID === trip.id ? "…" : blocked ? "Not Available Yet" : "▶ Start Pickup"}
+                        </button>
+                      );
+                    })()}
                   </>
                 ) : (
                   <>
@@ -530,8 +561,8 @@ function ActiveTripsTab() {
                       </button>
                     )}
                     <button onClick={() => handleReturn(trip)} disabled={busyID === trip.id || !trip.afterDocsComplete}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                      <IconFlag className="w-3.5 h-3.5" /> {busyID === trip.id ? "…" : "Return"}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 disabled:hover:bg-gray-300">
+                      {trip.afterDocsComplete && <IconFlag className="w-3.5 h-3.5" />} {busyID === trip.id ? "…" : trip.afterDocsComplete ? "Return" : "Not Available Yet"}
                     </button>
                   </>
                 )}

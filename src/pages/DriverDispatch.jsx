@@ -65,9 +65,10 @@ const fmtDay = (val) => {
   return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
 };
 
-// How many "Needs a Driver" cards show before "See more" — keeps a long
-// queue from stacking down the page.
-const QUEUE_PREVIEW = 8;
+// Rows per page — applies to both "Needs a Driver" and "Drivers". Real
+// pagination (Prev/Next), not a "See more" that keeps appending to an
+// ever-growing list.
+const PAGE_SIZE = 10;
 
 // Driver's-license note for the assign UI; null when there's nothing to warn about.
 // (Comes from the board's `license` field — see driverDispatch.service.js.)
@@ -102,6 +103,26 @@ const StatCard = ({ icon, value, label, color }) => {
   );
 };
 
+// Real Prev/Next pagination — used by both "Needs a Driver" and "Drivers".
+// Only renders once there's more than one page, so a short list (≤10) shows
+// nothing extra.
+function Pager({ page, totalPages, onChange }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between pt-1">
+      <button type="button" onClick={() => onChange(page - 1)} disabled={page <= 1}
+        className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent">
+        ‹ Prev
+      </button>
+      <span className="text-xs text-gray-400">Page {page} of {totalPages}</span>
+      <button type="button" onClick={() => onChange(page + 1)} disabled={page >= totalPages}
+        className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent">
+        Next ›
+      </button>
+    </div>
+  );
+}
+
 export default function DriverDispatch() {
   const token = localStorage.getItem("token");
   const [searchParams] = useSearchParams();
@@ -135,8 +156,9 @@ export default function DriverDispatch() {
   const [busyID, setBusyID]     = useState(null);  // bookingDocID currently being assigned/unassigned
   const [conflict, setConflict] = useState(null);  // { bookingDocID, driverID, message }
   const [expanded, setExpanded] = useState({});    // { [driverID]: bool }
-  const [showAllQueue, setShowAllQueue] = useState(false); // "Needs a Driver": See more / See less
   const [openCards, setOpenCards] = useState({});          // { [bookingDocID]: bool } — details row expanded
+  const [queuePage, setQueuePage]     = useState(1);        // "Needs a Driver" — 1-based
+  const [driversPage, setDriversPage] = useState(1);        // "Drivers" — 1-based
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -161,6 +183,8 @@ export default function DriverDispatch() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to load driver dispatch board.");
       setBoard(json.data);
+      setQueuePage(1);
+      setDriversPage(1);
     } catch (e) {
       showToast(e.message, "error");
     } finally {
@@ -174,19 +198,29 @@ export default function DriverDispatch() {
   // and scroll to that driver's card instead of leaving it collapsed.
   useEffect(() => {
     if (!highlightDriverID || loading) return;
+    const idx = board.drivers.findIndex((d) => d.driverID === highlightDriverID);
+    if (idx >= 0) setDriversPage(Math.floor(idx / PAGE_SIZE) + 1);
     setExpanded((prev) => ({ ...prev, [highlightDriverID]: true }));
-    const el = document.getElementById(`driver-${highlightDriverID}`);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [highlightDriverID, loading]);
+    // Page state update above needs a render before the target row exists in
+    // the DOM, so scroll on the next frame rather than immediately.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`driver-${highlightDriverID}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [highlightDriverID, loading, board.drivers]);
 
   // Arrived via "Assign Driver" on Car Tracking — scroll to this booking's
   // card in the "Needs a Driver" queue so its conflict prompt (if any) is
   // visible once a driver is clicked below.
   useEffect(() => {
     if (!assignForBooking || loading) return;
-    const el = document.getElementById(`booking-${assignForBooking.bookingId}`);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [assignForBooking, loading]);
+    const idx = board.unassigned.findIndex((b) => b.id === assignForBooking.bookingId);
+    if (idx >= 0) setQueuePage(Math.floor(idx / PAGE_SIZE) + 1);
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`booking-${assignForBooking.bookingId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [assignForBooking, loading, board.unassigned]);
 
   const driverOptions = useMemo(
     () => board.drivers.map((d) => ({ id: d.driverID, name: d.name, license: d.license })),
@@ -254,16 +288,14 @@ export default function DriverDispatch() {
 
   const toggleExpand = (driverID) => setExpanded((prev) => ({ ...prev, [driverID]: !prev[driverID] }));
 
-  // "Needs a Driver" shows the first few, then See more / See less. If we
-  // arrived here to assign one specific booking that's further down the list,
-  // keep the whole list open so that card is actually on screen.
-  const assignTargetIndex = assignForBooking
-    ? board.unassigned.findIndex((b) => b.id === assignForBooking.bookingId)
-    : -1;
-  const queueForcedOpen  = assignTargetIndex >= QUEUE_PREVIEW;
-  const queueExpanded    = showAllQueue || queueForcedOpen;
-  const visibleUnassigned = queueExpanded ? board.unassigned : board.unassigned.slice(0, QUEUE_PREVIEW);
-  const hiddenCount      = board.unassigned.length - visibleUnassigned.length;
+  // "Needs a Driver" — real pagination, 10 per page. The deep-link effect
+  // above already moved queuePage to wherever assignForBooking's target
+  // booking lives, so it's simply on-screen by the time this renders.
+  const queueTotalPages   = Math.max(1, Math.ceil(board.unassigned.length / PAGE_SIZE));
+  const visibleUnassigned = board.unassigned.slice((queuePage - 1) * PAGE_SIZE, queuePage * PAGE_SIZE);
+
+  const driversTotalPages = Math.max(1, Math.ceil(board.drivers.length / PAGE_SIZE));
+  const visibleDrivers    = board.drivers.slice((driversPage - 1) * PAGE_SIZE, driversPage * PAGE_SIZE);
 
   const activeTripCount = board.drivers.reduce((sum, d) => sum + d.assignments.length, 0);
 
@@ -361,6 +393,12 @@ export default function DriverDispatch() {
                     <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg bg-yellow-50 text-yellow-700 border border-yellow-200">
                       Upcoming
                     </span>
+                    {/* Every row in this column is unassigned by definition —
+                        spelled out explicitly rather than left implicit in
+                        which section it's in, so it reads at a glance. */}
+                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200">
+                      No Driver
+                    </span>
                     <button type="button"
                       onClick={() => setOpenCards((prev) => ({ ...prev, [b.id]: !isOpen }))}
                       aria-expanded={isOpen}
@@ -435,14 +473,9 @@ export default function DriverDispatch() {
                 </div>
                 );
               })}
-              {board.unassigned.length > QUEUE_PREVIEW && !queueForcedOpen && (
-                <button type="button" onClick={() => setShowAllQueue((v) => !v)}
-                  className="w-full py-2 text-xs font-semibold text-arl-primary rounded-lg border border-dashed border-gray-200 hover:bg-gray-50">
-                  {queueExpanded ? "See less" : `See more (${hiddenCount} more)`}
-                </button>
-              )}
             </div>
           )}
+          <Pager page={queuePage} totalPages={queueTotalPages} onChange={setQueuePage} />
         </div>
 
         {/* ── Drivers list ─────────────────────────────────────── */}
@@ -457,7 +490,7 @@ export default function DriverDispatch() {
             <p className="text-xs text-gray-400 py-6 text-center">No drivers found. Add one from Users.</p>
           ) : (
             <div className="space-y-2">
-              {board.drivers.map((d) => {
+              {visibleDrivers.map((d) => {
                 const isAssignTarget = !!assignForBooking;
                 const isAssigning    = busyID === assignForBooking?.bookingId;
                 return (
@@ -492,11 +525,22 @@ export default function DriverDispatch() {
                         )}
                       </div>
                     </div>
-                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg ${
-                      d.assignments.length > 0 ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-gray-50 text-gray-500 border border-gray-200"
-                    }`}>
-                      {isAssignTarget && isAssigning ? "Assigning…" : `${d.assignments.length} trip${d.assignments.length === 1 ? "" : "s"}`}
-                    </span>
+                    <div className="shrink-0 flex flex-col items-end gap-1">
+                      {/* "Has Driver / No Driver" answers "does this BOOKING
+                          have a driver" — that's the Needs a Driver badge.
+                          Every row here already IS a driver, so the same
+                          phrase would read as self-contradictory; the
+                          parallel question for this list is whether this
+                          PERSON currently has a trip. */}
+                      <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg ${
+                        d.assignments.length > 0 ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-gray-50 text-gray-500 border border-gray-200"
+                      }`}>
+                        {d.assignments.length > 0 ? "On a Trip" : "Available"}
+                      </span>
+                      <span className="text-[10px] text-gray-400">
+                        {isAssignTarget && isAssigning ? "Assigning…" : `${d.assignments.length} trip${d.assignments.length === 1 ? "" : "s"}`}
+                      </span>
+                    </div>
                   </button>
 
                   {!isAssignTarget && expanded[d.driverID] && (
@@ -530,6 +574,7 @@ export default function DriverDispatch() {
               })}
             </div>
           )}
+          <Pager page={driversPage} totalPages={driversTotalPages} onChange={setDriversPage} />
         </div>
       </div>
     </div>
