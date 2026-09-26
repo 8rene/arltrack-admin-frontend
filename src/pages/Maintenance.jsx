@@ -218,7 +218,7 @@ const FALLBACK_STATUSES = ["Scheduled", "Completed", "Cancelled"];
 const FALLBACK_BASIS    = ["Post-Rental", "Monthly", "Mileage-based", "Annual", "Repair/Unplanned"];
 
 const EMPTY_FORM = {
-  carID: "", basis: "",
+  carID: "", bookingID: "", basis: "",
   services: [],        // [{ serviceID, serviceName, price }] — from the catalog
   customServices: [],  // [{ name, price }] — free-text "Other" entries
   useManualTotal: false, // false = auto-compute from itemized services; true = use overrideTotal
@@ -386,10 +386,18 @@ export default function Maintenance() {
   // Arrived via a "View Maintenance" / status-switch link from Fleet.jsx
   // (?carID=...) — open the add-record form pre-filled to that car instead
   // of leaving staff to find and select it themselves.
+  //
+  // Also handles ?bookingID=..., set alongside carID by Bookings.jsx's
+  // "+ Post-Rental Maintenance" button (goToMaintenance). When a booking
+  // is present this is a customer-caused repair being filed against a
+  // specific rental, so basis defaults to "Post-Rental" too — staff can
+  // still change it if that's wrong, this just saves the click for the
+  // common case.
   useEffect(() => {
     const carID = searchParams.get("carID");
+    const bookingID = searchParams.get("bookingID");
     if (carID) {
-      setForm((f) => ({ ...f, carID }));
+      setForm((f) => ({ ...f, carID, bookingID: bookingID || "", basis: bookingID ? "Post-Rental" : f.basis }));
       setShowAdd(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -421,6 +429,7 @@ export default function Maintenance() {
 
       const payload = {
         carID:               form.carID,
+        bookingID:           form.bookingID || null,
         basis:                form.basis,
         services,
         overrideTotal:        form.useManualTotal && form.overrideTotal !== "" ? Number(form.overrideTotal) : null,
@@ -448,6 +457,7 @@ export default function Maintenance() {
     const allServices = r.services || [];
     setForm({
       carID:               r.carID || "",
+      bookingID:           r.bookingID || "",
       basis:                r.basis || "",
       services:             allServices.filter(s => s.serviceID !== "other"),
       customServices:       allServices.filter(s => s.serviceID === "other").map(s => ({ name: s.serviceName, price: s.price })),
@@ -814,6 +824,16 @@ export default function Maintenance() {
                 {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.plateNumber ? `· ${c.plateNumber}` : ""}</option>)}
               </select>
             </Field>
+
+            {form.bookingID && (
+              <div className="rounded-xl bg-teal-50 border border-teal-200 px-3 py-2 text-xs text-teal-700 flex items-center justify-between gap-2">
+                <span>Linked to booking <span className="font-semibold">{form.bookingID}</span></span>
+                <button type="button" onClick={() => setForm(f => ({ ...f, bookingID: "" }))}
+                  className="text-teal-500 hover:text-teal-700 underline shrink-0">
+                  Unlink
+                </button>
+              </div>
+            )}
 
             <Field label="Maintenance Basis *">
               <div className="flex flex-wrap gap-1.5">

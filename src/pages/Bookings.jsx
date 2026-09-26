@@ -1,210 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { collection, onSnapshot } from "firebase/firestore";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
-import { useCurrency } from "../context/CurrencyContext";
-import { useAuth } from "../context/AuthContext";
 
-// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+const API_URL = process.env.REACT_APP_API_URL;
+const PAGE_SIZE = 15;
 
-const IconTrash = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <polyline points="3 6 5 6 21 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-const IconWarning = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-  </svg>
-);
-
-const IconCheck = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-const IconBlock = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
-    <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-  </svg>
-);
-
-const IconClock = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-  </svg>
-);
-
-const IconRefresh = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-const IconX = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
-
-// Used for the "All Bookings" stat tab icon.
-const IconGrid = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
-    <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
-    <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
-    <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
-  </svg>
-);
-
-// Used for the "Ongoing" stat tab icon — a pulse/activity line.
-const IconActivity = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3 12h4l3 8 4-16 3 8h4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-// ─── DATA ────────────────────────────────────────────────────────────────────
-
-// "To Pay" = the customer created the booking but the deposit hasn't cleared yet.
-// Nothing has been paid, so staff can't act on it (no pickup/driver) — it's listed so
-// pending bookings (and the car being held for them) are visible. It flips to
-// "Upcoming" by itself the moment the deposit is paid, or auto-cancels after 12 hours.
-const STATUS_TABS = ["All", "To Pay", "Upcoming", "Ongoing", "Cancelled", "Completed"];
-
-// Icon + color per stat tab — colors match STATUS_DOT/STATUS_BG below so a
-// status looks the same in the tab card as it does in the table badge.
-const TAB_ICON = {
-  All:       IconGrid,
-  "To Pay":  IconClock,
-  Upcoming:  IconClock,
-  Ongoing:   IconActivity,
-  Cancelled: IconX,
-  Completed: IconCheck,
-};
-
-const TAB_ICON_COLOR = {
-  All:       "bg-teal-50 text-teal-600",
-  "To Pay":  "bg-orange-50 text-orange-600",
-  Upcoming:  "bg-yellow-50 text-yellow-600",
-  Ongoing:   "bg-blue-50 text-blue-600",
-  Cancelled: "bg-red-50 text-red-600",
-  Completed: "bg-green-50 text-green-600",
-};
-
-// STATUS_DOT / STATUS_BG / StatusBadge — kept identical to the copy in
-// Dashboard.jsx so the same status always looks the same on both pages.
-// If a new status is added, update both files.
-const STATUS_DOT = {
-  "to pay":  "bg-orange-400",
-  upcoming:  "bg-yellow-400",
-  ongoing:   "bg-blue-500",
-  completed: "bg-green-500",
-  cancelled: "bg-red-500",
-  stolen:    "bg-red-700",
-};
-
-const STATUS_BG = {
-  "to pay":  "bg-orange-50 border border-orange-200",
-  upcoming:  "bg-yellow-50 border border-yellow-200",
-  ongoing:   "bg-blue-50 border border-blue-200",
-  completed: "bg-green-50 border border-green-200",
-  cancelled: "bg-red-50 border border-red-200",
-  stolen:    "bg-red-100 border border-red-300",
-};
-
-function StatusBadge({ status }) {
-  const s   = (status || "").toLowerCase();
-  const dot = STATUS_DOT[s] || "bg-gray-400";
-  const bg  = STATUS_BG[s]  || "bg-gray-50 border border-gray-200";
-  return (
-    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${bg}`}>
-      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
-      {status?.replace("_", " ")}
-    </span>
-  );
-}
-
-const fmtDate = (val) => {
-  if (!val) return "—";
-  try {
-    let d;
-    if (typeof val?.toDate === "function") d = val.toDate();
-    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
-    else d = new Date(val);
-    if (isNaN(d.getTime())) return "—";
-    return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-  } catch { return "—"; }
-};
-
-// Same Firestore-Timestamp-or-string-or-seconds handling as fmtDate above,
-// but returns a raw millisecond number (or -Infinity for unparsable/empty
-// values) so sort() has something numeric to compare rather than strings.
-const toMillis = (val) => {
-  if (!val) return -Infinity;
-  try {
-    let d;
-    if (typeof val?.toDate === "function") d = val.toDate();
-    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
-    else d = new Date(val);
-    const ms = d.getTime();
-    return isNaN(ms) ? -Infinity : ms;
-  } catch { return -Infinity; }
-};
-
-// ─── SORT HEADER ────────────────────────────────────────────────────────────
-// Clickable <th> that toggles asc/desc on the given sortKey. Shows a neutral
-// up/down chevrons icon when the column isn't the active sort (so it reads
-// as "sortable" even before you've clicked it), and a bold single arrow in
-// the active color once it is. Keeps Bookings/Users sort UI visually and
-// behaviorally identical.
-const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
-  <svg
-    className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`}
-    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
-  >
-    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
-  const active = sortKeyState === key;
-  return (
-    <th className={`px-4 py-3 text-left select-none ${className}`}>
-      <button
-        onClick={() => onSort(key)}
-        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
-          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-        }`}
-      >
-        {label}
-        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
-      </button>
-    </th>
-  );
-}
-
-const canEdit  = (status) => ["upcoming", "ongoing"].includes(status?.toLowerCase());
-const isLocked = (status) => ["completed", "cancelled", "stolen"].includes(status?.toLowerCase());
-
-const PAGE_SIZE = 10;
-
-// ─── PAGINATION ───────────────────────────────────────────────────────────────
+// --- PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Users.jsx) -----
 function usePagination(items, pageSize = PAGE_SIZE) {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
@@ -257,805 +59,1117 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
   );
 }
 
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
-// ─── DELETE CONFIRM MODAL ─────────────────────────────────────────────────────
+const IconAlertCircle = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <line x1="12" y1="8" x2="12" y2="12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="16" x2="12.01" y2="16" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
 
-function DeleteModal({ booking, onClose, onConfirm, deleting }) {
+const IconWarning = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWrench = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconCheck = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClipboard = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCalendar = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconSiren = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 2v2M4.22 4.22l1.42 1.42M2 12h2M20 12h2M18.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M7 13a5 5 0 0110 0v1H7v-1z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
+    <rect x="5" y="14" width="14" height="3" rx="1" stroke="currentColor" strokeWidth="1.75" />
+  </svg>
+);
+
+const IconX = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+const toDate = (val) => {
+  if (!val) return null;
+  if (val?.toDate) return val.toDate();
+  if (val?._seconds) return new Date(val._seconds * 1000);
+  return new Date(val);
+};
+const fmtDate = (val) => {
+  const d = toDate(val);
+  if (!d || isNaN(d)) return "—";
+  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+};
+const isoDate = (val) => {
+  const d = toDate(val);
+  if (!d || isNaN(d)) return "";
+  return d.toISOString().split("T")[0];
+};
+// ─── SORT HEADER — same clickable <th> as Bookings/Users/Refund Requests ───
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600">
-            <IconTrash className="w-5 h-5" />
-          </div>
-          <h2 className="font-bold text-lg text-gray-800">Delete Booking</h2>
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-1">
-          <p className="text-sm font-semibold text-amber-800">This will cascade-delete:</p>
-          <ul className="text-sm text-amber-700 list-disc ml-4 space-y-0.5">
-            <li>The booking record</li>
-            <li>Its linked payment (if any)</li>
-            <li>All linked reviews (if any)</li>
-          </ul>
-          <p className="text-xs text-amber-600 mt-2">All records will be archived before deletion and can be found in their respective Archive pages.</p>
-        </div>
-        <p className="text-sm text-gray-600">
-          Are you sure you want to delete booking <span className="font-mono font-semibold text-gray-800">{booking.bookingID || booking.id}</span>?
-        </p>
-        <div className="flex gap-3 justify-end pt-1">
-          <button onClick={onClose} disabled={deleting} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Cancel</button>
-          <button
-            onClick={onConfirm}
-            disabled={deleting}
-            className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
-          >
-            {deleting ? "Deleting…" : "Yes, Delete"}
-          </button>
-        </div>
-      </div>
-    </div>
+    <th className={`px-4 py-3 text-left font-semibold select-none ${className}`}>
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs px-1.5 py-1 -mx-1.5 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
   );
 }
 
-// ─── EDIT MODAL ───────────────────────────────────────────────────────────────
+const isPast = (val) => { const d = toDate(val); return d && d < new Date(); };
+const isSoon = (val) => {
+  const d = toDate(val);
+  if (!d) return false;
+  const diff = (d - new Date()) / (1000 * 60 * 60 * 24);
+  return diff >= 0 && diff <= 7;
+};
+const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
+// Same rule the "Overdue" stat card counts by: a Scheduled job whose own
+// maintenanceDate has already passed. Kept as one shared predicate so the
+// card's number, the row highlight, and the default sort order can never
+// silently drift apart from each other.
+const isOverdueJob = (r) => r.status === "Scheduled" && isPast(r.maintenanceDate);
 
-function EditModal({ booking, onClose, onSave }) {
-  const currentStatus     = booking.status?.toLowerCase() || "";
-  const defaultNextStatus = currentStatus === "upcoming" ? "ongoing" : "completed";
-  const [form, setForm] = useState({
-    location:   booking.location || "",
-    notesAdmin: booking.notesAdmin || "",
-    status:     defaultNextStatus,
-  });
-  const [saving, setSaving]                 = useState(false);
-  const [error, setError]                   = useState(null);
-  const [paymentStatus, setPaymentStatus]   = useState(null);
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const { getToken } = useAuth();
+const STATUS_DOT = {
+  Completed:    "bg-green-500",
+  Scheduled:    "bg-blue-500",
+  Cancelled:    "bg-gray-400",
+  Overdue:      "bg-red-500",
+};
+const STATUS_BG = {
+  Completed:    "bg-green-50 border border-green-200",
+  Scheduled:    "bg-blue-50 border border-blue-200",
+  Cancelled:    "bg-gray-100 border border-gray-200",
+  Overdue:      "bg-red-50 border border-red-200",
+};
 
-  useEffect(() => {
-    const bID = booking.bookingID || booking.id;
-    if (!bID || currentStatus !== "upcoming") return;
-    setPaymentLoading(true);
-    fetch(`${process.env.REACT_APP_API_URL}/api/payments?bookingID=${encodeURIComponent(bID)}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    })
-      .then(r => r.json())
-      .then(json => {
-        const list  = json.data || json.payments || [];
-        const match = list.find(p => p.bookingID === bID);
-        setPaymentStatus(match?.status ?? null);
-      })
-      .catch(() => setPaymentStatus(null))
-      .finally(() => setPaymentLoading(false));
-  }, [booking, currentStatus, getToken]);
-
-  const approvedStatuses = ["approved", "paid"];
-  const isApprovingWithUnpaidPayment =
-    form.status === "ongoing" &&
-    currentStatus === "upcoming" &&
-    !paymentLoading &&
-    (paymentStatus === null || !approvedStatuses.includes(paymentStatus?.toLowerCase()));
-
-  const handleSave = async () => {
-    setSaving(true); setError(null);
-    try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-        body: JSON.stringify(form),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Failed to save");
-      onSave();
-    } catch (err) { setError(err.message); }
-    finally { setSaving(false); }
-  };
-
+function MainStatusBadge({ status }) {
+  const dot = STATUS_DOT[status] || "bg-gray-400";
+  const bg  = STATUS_BG[status]  || "bg-gray-50 border border-gray-200";
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
-        <h2 className="font-bold text-lg text-gray-800">Edit Booking</h2>
-        <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
-        {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
-        {form.status === "ongoing" && currentStatus === "upcoming" && (
-          paymentLoading ? (
-            <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 border border-gray-200 p-3 rounded-xl">
-              <IconClock className="w-4 h-4 shrink-0" />
-              Checking payment status…
-            </div>
-          ) : paymentStatus === null ? (
-            <div className="flex items-start gap-2 bg-red-50 border border-red-200 p-3 rounded-xl">
-              <IconBlock className="w-5 h-5 shrink-0 text-red-500 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-red-700">No payment record found</p>
-                <p className="text-xs text-red-600 mt-0.5">Cannot mark as picked up / ongoing — no payment has been submitted for this booking yet.</p>
-              </div>
-            </div>
-          ) : approvedStatuses.includes(paymentStatus?.toLowerCase()) ? (
-            <div className="flex items-center gap-2 bg-green-50 border border-green-200 p-3 rounded-xl">
-              <IconCheck className="w-5 h-5 text-green-600 shrink-0" />
-              <p className="text-sm text-green-700 font-medium">Payment is <span className="font-bold">{paymentStatus}</span> — booking can be marked as picked up (ongoing).</p>
-            </div>
-          ) : (
-            <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 p-3 rounded-xl">
-              <IconWarning className="w-5 h-5 shrink-0 text-amber-500 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-amber-800">Payment not yet approved</p>
-                <p className="text-xs text-amber-700 mt-0.5">Payment status is currently <span className="font-bold">"{paymentStatus}"</span>. Go to the <span className="font-semibold">Payments page</span> and approve the payment first.</p>
-              </div>
-            </div>
-          )
-        )}
-        <div className="space-y-3">
-          <label className="block text-sm font-medium text-gray-700">Location
-            <input className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-          </label>
-          <label className="block text-sm font-medium text-gray-700">Admin Notes
-            <textarea rows={3} className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" value={form.notesAdmin} onChange={(e) => setForm({ ...form, notesAdmin: e.target.value })} />
-          </label>
-          <label className="block text-sm font-medium text-gray-700">Status
-            <select className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-              {booking.status?.toLowerCase() === "upcoming" ? (
-                <><option value="ongoing">Ongoing (Picked Up)</option><option value="cancelled">Cancelled</option></>
-              ) : (
-                <><option value="completed">Completed</option><option value="cancelled">Cancelled</option></>
-              )}
-            </select>
-          </label>
-        </div>
-        <div className="flex gap-3 justify-end pt-2">
-          <button onClick={onClose} className="px-4 py-2 border rounded-xl text-sm">Cancel</button>
-          <button onClick={handleSave} disabled={saving || isApprovingWithUnpaidPayment} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-            {saving ? "Saving…" : "Save Changes"}
-          </button>
-        </div>
-      </div>
-    </div>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-black ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      {status}
+    </span>
   );
 }
 
-// ─── VIEW DETAILS MODAL ───────────────────────────────────────────────────────
+// Emoji shown next to each basis option — purely cosmetic, not stored.
+const BASIS_ICON = {
+  "Post-Rental":      "🔄",
+  "Monthly":          "📅",
+  "Mileage-based":    "📍",
+  "Annual":           "📆",
+  "Repair/Unplanned": "🔧",
+};
 
-// ─── CUSTOMER PROFILE MODAL ─────────────────────────────────────────────
-// Opened from the Customer name in either the table row or ViewModal,
-// instead of navigating to /users. Pulls the base user doc (by-uid) and
-// the userDetails doc (details) — the same two pieces Customers.jsx's own
-// detail view uses for its "Account" and "Personal Details" sections.
-// Address/document images live in separate collections with no REST
-// endpoint yet, so this stays a lighter, quicker profile than the full
-// Customers.jsx view rather than trying to replicate all of it here.
-function CustomerProfileModal({ userID, onClose }) {
-  const { getToken } = useAuth();
-  const [basic, setBasic]     = useState(null);
-  const [details, setDetails] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
+// Fallbacks used only if /api/maintenance/config hasn't loaded yet —
+// the real source of truth is always the backend response.
+const FALLBACK_STATUSES = ["Scheduled", "Completed", "Cancelled"];
+const FALLBACK_BASIS    = ["Post-Rental", "Monthly", "Mileage-based", "Annual", "Repair/Unplanned"];
 
-  useEffect(() => {
-    if (!userID) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    const headers = { Authorization: `Bearer ${getToken()}` };
-    Promise.all([
-      fetch(`${process.env.REACT_APP_API_URL}/api/users/by-uid/${userID}`, { headers }).then((r) => r.json()),
-      fetch(`${process.env.REACT_APP_API_URL}/api/users/details/${userID}`, { headers }).then((r) => r.json()).catch(() => null),
-    ])
-      .then(([basicRes, detailsRes]) => {
-        if (cancelled) return;
-        if (!basicRes?.success) throw new Error(basicRes?.message || "Could not load customer profile.");
-        setBasic(basicRes.data);
-        // Details 404s for a customer who never filled in personal info —
-        // that's a normal state here, not an error worth surfacing.
-        setDetails(detailsRes?.success ? detailsRes.data : null);
-      })
-      .catch((e) => !cancelled && setError(e.message))
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [userID, getToken]);
+const EMPTY_FORM = {
+  carID: "", bookingID: "", basis: "",
+  services: [],        // [{ serviceID, serviceName, price }] — from the catalog
+  customServices: [],  // [{ name, price }] — free-text "Other" entries
+  useManualTotal: false, // false = auto-compute from itemized services; true = use overrideTotal
+  overrideTotal: "",
+  description: "",
+  maintenanceDate: "", status: "Scheduled",
+  partsAddressed: [], // [{ carID, carPartID, carPartName, tripPhase, bookingID }] — damaged parts this job is meant to fix, resolved on completion
+  useToday: false,      // true = maintenanceDate always mirrors today's date
+};
 
-  const fullName = details
-    ? `${details.firstName || ""} ${details.middleName ? details.middleName + " " : ""}${details.lastName || ""}`.trim()
-    : "";
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
-  const refBy = basic?.referral?.referredBy;
-  const refByText = refBy
-    ? (refBy.removed
-        ? `${refBy.code || "—"} (account removed)`
-        : (refBy.name && refBy.username ? `${refBy.name} (@${refBy.username})`
-          : refBy.name || (refBy.username ? `@${refBy.username}` : refBy.code)))
-    : "None";
+export default function Maintenance() {
+  const token = localStorage.getItem("token");
+  const [searchParams] = useSearchParams();
 
-  const row = (label, value) => (
-    <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
-      <span className="text-gray-500 font-medium w-32 shrink-0">{label}</span>
-      <span className="text-gray-800 text-right break-words">{value || "—"}</span>
-    </div>
-  );
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-2 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="font-bold text-lg text-gray-800">
-            {fullName || basic?.username || "Customer Profile"}
-          </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <IconX className="w-5 h-5" />
-          </button>
-        </div>
-
-        {loading ? (
-          <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
-        ) : error ? (
-          <div className="py-8 text-center text-sm text-red-500">{error}</div>
-        ) : (
-          <div>
-            {row("Email",     basic?.email)}
-            {row("Phone",     basic?.phone)}
-            {row("Username",  basic?.username)}
-            {row("Status",    basic?.status)}
-            {row("ID Status", basic?.isVerified ? "✓ Verified" : "Pending")}
-            {row("Joined",    fmtDate(basic?.createdAt))}
-            {row("Referral Code", basic?.referral?.code)}
-            {row("Referred By",   refByText)}
-            {row("Invited",       String(basic?.referral?.invitedCount || 0))}
-            {basic?.referral?.invited?.length > 0 && (
-              <ul className="mt-1 mb-1 text-xs text-gray-600 list-disc pl-5 space-y-0.5">
-                {basic.referral.invited.map((p) => (
-                  <li key={p.id}>{p.name || "—"}{p.username ? ` (@${p.username})` : ""}</li>
-                ))}
-              </ul>
-            )}
-            {details && (
-              <>
-                {row("Birth Date", details.birthDate ? fmtDate(details.birthDate) : "—")}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ViewModal({ booking, onClose, onViewCustomer }) {
-  const { fmt } = useCurrency();
-  const { getToken } = useAuth();
-  const navigate = useNavigate();
-  const row = (label, value) => (
-    <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
-      <span className="text-gray-500 font-medium w-36 shrink-0">{label}</span>
-      <span className="text-gray-800 text-right">{value || "—"}</span>
-    </div>
-  );
-
-  // Inline check: does THIS booking actually have before/after-trip
-  // inventory records? Don't just link off to Vehicle Inspections and
-  // hope it lands on the right one — that page defaults to a car's
-  // nearest/upcoming booking, which for a completed booking is very
-  // likely the wrong record entirely.
-  const [inventoryCheck, setInventoryCheck]     = useState(null); // { before, after } | null
-  const [inventoryLoading, setInventoryLoading] = useState(true);
-
-  useEffect(() => {
-    const bID = booking.bookingID || booking.id;
-    if (!bID) { setInventoryLoading(false); return; }
-    setInventoryLoading(true);
-    fetch(`${process.env.REACT_APP_API_URL}/api/inventory/booking/${encodeURIComponent(bID)}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    })
-      .then((r) => r.json())
-      .then((json) => setInventoryCheck(json.data || { before: null, after: null }))
-      .catch(() => setInventoryCheck(null))
-      .finally(() => setInventoryLoading(false));
-  }, [booking, getToken]);
-
-  const goToHistory = () => {
-    navigate("/car-tracking", {
-      state: {
-        tab: "history",
-        carID: booking.carID,
-        bookingID: booking.bookingID || booking.id,
-      },
-    });
-  };
-
-  const goToPayments = () => {
-    navigate(`/payments?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
-  };
-
-  // Vehicle Inspections page (system inventory: before/after-trip part
-  // condition + photos) is keyed by carID first, bookingID second — same
-  // deep-link shape it already reads elsewhere (?carID=...&bookingID=...).
-  const goToInventory = () => {
-    const params = new URLSearchParams({
-      carID: booking.carID || "",
-      bookingID: booking.bookingID || booking.id || "",
-    });
-    navigate(`/vehicle-documentation?${params.toString()}`);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold text-lg text-gray-800">Booking Details</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <IconX className="w-5 h-5" />
-          </button>
-        </div>
-        <StatusBadge status={booking.status} />
-
-        {/* Two columns side by side: core booking details on the left,
-            payment + driving mode (each with a jump-to-page button) on
-            the right — instead of one long stacked list where the
-            payment/chauffeur rows were easy to scroll past. */}
-        <div className="grid md:grid-cols-2 gap-6">
-          <div>
-            {row("Booking ID",      booking.bookingID || booking.id)}
-            <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
-              <span className="text-gray-500 font-medium w-36 shrink-0">Customer</span>
-              {booking.userID ? (
-                <button
-                  onClick={() => onViewCustomer(booking.userID)}
-                  className="text-indigo-600 hover:underline font-medium text-right"
-                >
-                  {booking.customerName || "—"}
-                </button>
-              ) : (
-                <span className="text-gray-800 text-right">{booking.customerName || "—"}</span>
-              )}
-            </div>
-            {row("Phone",           booking.phone)}
-            {row("Vehicle",         booking.vehicleName)}
-            {row("Service Type",    booking.serviceTypeName)}
-            {row("Car ID",          booking.carID)}
-            {row("Start Date",      fmtDate(booking.startDateTime))}
-            {row("End Date",        fmtDate(booking.endDateTime))}
-            {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
-            {row("Location",        booking.location)}
-          </div>
-
-          <div>
-            {row("Rental Fee",  fmt(booking.rentalFee))}
-            {row("Deposit Fee", fmt(booking.depositFee))}
-            {row("Service Fee", fmt(booking.serviceFee))}
-            {row("Extra Fee",   fmt(booking.extraFee))}
-            {row("Total Fee",   fmt(booking.totalFee))}
-
-            {/* Payment Method — paired with a jump straight to the matching
-                Payments record instead of just showing the method as inert
-                text, since "what's the actual payment status/proof" is the
-                natural next question. Payments.jsx already supports
-                ?bookingID= to pre-filter to this booking (same pattern as
-                goToHistory's Car Tracking link below). */}
-            <div className="flex justify-between items-center py-2 border-b border-gray-50 text-sm">
-              <span className="text-gray-500 font-medium w-28 shrink-0">Payment</span>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-800">{booking.paymentMethod || "—"}</span>
-                <button
-                  onClick={goToPayments}
-                  className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
-                >
-                  View →
-                </button>
-              </div>
-            </div>
-
-            {/* Mode of Driving (Self-drive / With Chauffeur) — when a
-                chauffeur is involved, jump straight to Driver Dispatch to
-                see or assign one, same idea as the payment button above. */}
-            <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
-              <span className="text-gray-500 font-medium w-28 shrink-0">Driving</span>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-800">{booking.modeOfDriving || "—"}</span>
-                {booking.modeOfDriving?.toLowerCase().includes("chauffeur") && (
-                  <button
-                    onClick={() => navigate("/driver-dispatch", {
-                      state: { assignBookingId: booking.bookingID || booking.id, assignCustomerName: booking.customerName },
-                    })}
-                    className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
-                  >
-                    View →
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* System Inventory — before/after-trip part condition, checked
-                inline against THIS booking's own records (not a link that
-                assumes you'll land on the right one — Vehicle Inspections'
-                own deep-link picks a car's nearest/upcoming booking, which
-                for a past booking is very likely a different one). */}
-            <div className="py-2 border-b border-gray-50 last:border-0 text-sm space-y-1.5">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500 font-medium w-28 shrink-0">Inventory</span>
-                {inventoryLoading ? (
-                  <span className="text-xs text-gray-400 italic">Checking…</span>
-                ) : !inventoryCheck?.before && !inventoryCheck?.after ? (
-                  <span className="text-xs text-gray-300">Not recorded</span>
-                ) : null}
-              </div>
-
-              {!inventoryLoading && (inventoryCheck?.before || inventoryCheck?.after) && (
-                <div className="flex flex-col gap-1 pl-0">
-                  {["before", "after"].map((slot) => {
-                    const rec = inventoryCheck?.[slot];
-                    if (!rec) {
-                      return (
-                        <div key={slot} className="flex justify-between items-center text-xs text-gray-300">
-                          <span className="capitalize">{slot}-trip</span>
-                          <span>Not recorded</span>
-                        </div>
-                      );
-                    }
-                    const hasDamage = rec.inventoryOverallStatus === "has damage";
-                    return (
-                      <div key={slot} className="flex justify-between items-center text-xs">
-                        <span className="capitalize text-gray-500">{slot}-trip</span>
-                        <span className={`font-semibold ${hasDamage ? "text-red-600" : "text-green-600"}`}>
-                          {hasDamage ? `Has damage (${rec.damageParts?.length || 0})` : "Good"}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  <button
-                    onClick={goToInventory}
-                    className="self-end text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors mt-1"
-                  >
-                    View full record →
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Notes / additional info — full width beneath the two columns. */}
-        <div className="pt-1 border-t border-gray-100">
-          {row("Notes (User)",    booking.notesUser)}
-          {row("Notes (Admin)",   booking.notesAdmin)}
-        </div>
-
-        {/* Trip History — always shown, not just when history exists, so it's
-            clear whether this booking's GPS trail was ever archived. */}
-        <div className="flex justify-between items-center py-2.5 px-3 rounded-xl bg-gray-50 border border-gray-100">
-          <div>
-            <p className="text-sm font-medium text-gray-700">Trip History</p>
-            <p className="text-xs text-gray-400">
-              {booking.hasHistory ? "GPS trail available for playback" : "No archived GPS trail for this booking"}
-            </p>
-          </div>
-          {booking.hasHistory ? (
-            <button
-              onClick={goToHistory}
-              className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-3 py-1.5 transition-colors shrink-0"
-            >
-              View in Car Tracking →
-            </button>
-          ) : (
-            <span className="text-xs text-gray-300 shrink-0">—</span>
-          )}
-        </div>
-
-        <button onClick={onClose} className="w-full mt-2 py-2 border rounded-xl text-sm">Close</button>
-      </div>
-    </div>
-  );
-}
-
-// ─── MAIN PAGE ────────────────────────────────────────────────────────────────
-
-export default function Bookings() {
-  const { fmt } = useCurrency();
-  const { getToken } = useAuth();
-  const [activeTab, setActiveTab]           = useState("All");
-  const [search, setSearch]                 = useState("");
-  const [allBookings, setAllBookings]       = useState([]);
-  const [loading, setLoading]               = useState(true);
-  const [error, setError]                   = useState(null);
-  const [viewBooking, setViewBooking]       = useState(null);
-  const [editBooking, setEditBooking]       = useState(null);
-  const [deleteBooking, setDeleteBooking]   = useState(null);
-  const [deleting, setDeleting]             = useState(false);
-  const [deleteToast, setDeleteToast]       = useState(null);
-  // Customer name → profile modal, in place, instead of navigating to /users.
-  // Shared by both the table row and ViewModal (ViewModal passes its own
-  // trigger down to this same modal via the userID it's given).
-  const [profileUserID, setProfileUserID]   = useState(null);
-  const [searchParams, setSearchParams]     = useSearchParams();
-  const [sortKey, setSortKey]               = useState(null);  // null = default/unsorted (API order)
-  const [sortDir, setSortDir]               = useState("asc");
-
+  const [records, setRecords]             = useState([]);
+  const [cars, setCars]                   = useState([]);
+  const [config, setConfig]               = useState({ basisOptions: FALLBACK_BASIS, statusOptions: FALLBACK_STATUSES, serviceCatalog: [] });
+  const [loading, setLoading]             = useState(true);
+  const [search, setSearch]               = useState("");
+  const [statusFilter, setStatusFilter]   = useState("All");
+  const [editRecord, setEditRecord]       = useState(null);
+  const [showAdd, setShowAdd]             = useState(false);
+  const [form, setForm]                   = useState(EMPTY_FORM);
+  const [saving, setSaving]               = useState(false);
+  const [toast, setToast]                 = useState(null);
+  const [view, setView]                   = useState("table");
+  const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [damagedParts, setDamagedParts]   = useState([]);
+  const [customName, setCustomName]       = useState("");
+  const [customPrice, setCustomPrice]     = useState("");
+  const [sortKey, setSortKey] = useState(null); // null = default (open first, soonest due on top)
+  const [sortDir, setSortDir] = useState("asc");
   const handleSort = (key) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+  // Predicate + highlight color for each stat card, keyed the same as the
+  // card labels. Only one card can be "active" at a time (clicking a second
+  // one swaps to it, clicking the active one again clears it). Matching
+  // rows get pushed to the top of the default sort and get a tinted
+  // highlight — nothing is filtered out of the table.
+  const STAT_FILTERS = {
+    overdue:   { predicate: isOverdueJob, rowClass: "bg-red-50/60 ring-1 ring-inset ring-red-200" },
+    dueSoon:   { predicate: (r) => r.status === "Scheduled" && isSoon(r.maintenanceDate), rowClass: "bg-yellow-50/60 ring-1 ring-inset ring-yellow-200" },
+    scheduled: { predicate: (r) => r.status === "Scheduled", rowClass: "bg-blue-50/60 ring-1 ring-inset ring-blue-200" },
+    completed: { predicate: (r) => r.status === "Completed", rowClass: "bg-green-50/60 ring-1 ring-inset ring-green-200" },
+  };
+  const [activeStatFilter, setActiveStatFilter] = useState(null); // null | "overdue" | "dueSoon" | "scheduled" | "completed"
+  const toggleStatFilter = (key) => {
+    setActiveStatFilter((v) => {
+      const next = v === key ? null : key;
+      if (next) { setSortKey(null); setSortDir("asc"); }
+      return next;
+    });
   };
 
   const showToast = (msg, type = "success") => {
-    setDeleteToast({ msg, type });
-    setTimeout(() => setDeleteToast(null), 4000);
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
   };
 
-  // `silent` skips the loading spinner — used by the live-refresh listener below
-  // so a change from another admin/customer doesn't flash the whole table blank.
-  const fetchBookings = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-    try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings?status=all`, { headers: { Authorization: `Bearer ${getToken()}` } });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Failed to load bookings");
-      setAllBookings(json.data);
-    } catch (err) { if (!silent) setError(err.message); }
-    finally { if (!silent) setLoading(false); }
-  }, [getToken]);
-
-  useEffect(() => { fetchBookings(); }, [fetchBookings]);
-
-  // ── Live refresh ────────────────────────────────────────────────────────────
-  // The REST endpoint does all the real work (joins car/user/driver info, sorts,
-  // filters), so instead of re-implementing that here off raw Firestore docs,
-  // we just listen for *any* change to the bookings collection and re-run the
-  // existing fetch. Bursts of writes (e.g. a booking + its history doc changing
-  // together) are coalesced with a short debounce so we don't hammer the API.
-  const refetchTimer = useRef(null);
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "bookings"), () => {
-      clearTimeout(refetchTimer.current);
-      refetchTimer.current = setTimeout(() => fetchBookings(true), 400);
+  const authedFetch = useCallback((path, options = {}) => {
+    return fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
     });
-    return () => { unsub(); clearTimeout(refetchTimer.current); };
-  }, [fetchBookings]);
+  }, [token]);
 
-  // Opens a specific status tab when linked in via ?tab=<Upcoming|Ongoing|...>
-  // (used by Dashboard's stat cards). Runs once, on mount — doesn't need to
-  // wait on bookings to load like ?open= below does.
-  useEffect(() => {
-    const tabParam = searchParams.get("tab");
-    if (!tabParam) return;
-    const match = STATUS_TABS.find((t) => t.toLowerCase() === tabParam.toLowerCase());
-    if (match) setActiveTab(match);
-    setSearchParams((prev) => { prev.delete("tab"); return prev; }, { replace: true });
-  }, [searchParams, setSearchParams]);
-
-  // Opens the exact booking a notification click pointed to (?open=<refID>,
-  // set by Header.jsx). Runs once bookings are loaded so the record is
-  // actually there to find; strips the param afterward so refreshing/
-  // navigating away doesn't keep re-opening it.
-  useEffect(() => {
-    const openID = searchParams.get("open");
-    if (!openID || loading || allBookings.length === 0) return;
-    const match = allBookings.find((b) => b.id === openID || b.bookingID === openID);
-    if (match) setViewBooking(match);
-    setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
-  }, [searchParams, allBookings, loading, setSearchParams]);
-
-  const handleDeleteConfirm = async () => {
-    if (!deleteBooking) return;
-    setDeleting(true);
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${deleteBooking.id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${getToken()}` },
+      const [maintRes, carsRes, configRes, beforeSnap, afterSnap, partsSnap] = await Promise.all([
+        authedFetch("/api/maintenance"),
+        authedFetch("/api/fleet/cars"),
+        authedFetch("/api/maintenance/config"),
+        getDocs(collection(db, "inventoryBeforeTrip")),
+        getDocs(collection(db, "inventoryAfterTrip")),
+        getDocs(collection(db, "carParts")),
+      ]);
+
+      const maintJson = await maintRes.json();
+      if (!maintRes.ok) throw new Error(maintJson.message || "Failed to load maintenance records.");
+      setRecords((maintJson.data || []).map(r => ({
+        ...r,
+        carLabel: [r.brandName, r.modelName].filter(Boolean).join(" ") || "—",
+      })));
+
+      const carsJson = await carsRes.json();
+      if (!carsRes.ok) throw new Error(carsJson.message || "Failed to load vehicles.");
+      const carList = (carsJson.data || []).map(c => ({
+        ...c,
+        label: [c.brandName, c.modelName].filter(Boolean).join(" ") || c.id,
+      }));
+      setCars(carList);
+      const carMap = Object.fromEntries(carList.map(c => [c.id, c]));
+
+      const configJson = await configRes.json();
+      if (configRes.ok) setConfig(configJson.data);
+
+      const partsMap = Object.fromEntries(partsSnap.docs.map(d => [d.id, d.data()]));
+      const pickLatestByCarID = (snap) => {
+        const byCarID = {};
+        snap.docs.forEach(d => {
+          const data = { id: d.id, ...d.data() };
+          const cid  = data.carID;
+          if (!cid) return;
+          const existing = byCarID[cid];
+          // .seconds, not ._seconds — see Dashboard.jsx's identical fix
+          // for why: these are live client-SDK Timestamps, which expose
+          // the value as a public `.seconds`, not the underscore-prefixed
+          // form the backend's own JSON responses use.
+          const ts  = data.recordedAt?.seconds ?? 0;
+          const ets = existing?.recordedAt?.seconds ?? -1;
+          if (!existing || ts > ets) byCarID[cid] = data;
+        });
+        return Object.values(byCarID);
+      };
+
+      const latestBefore = pickLatestByCarID(beforeSnap);
+      const latestAfter  = pickLatestByCarID(afterSnap);
+      const carIDsWithRecords = new Set([
+        ...latestBefore.map(r => r.carID),
+        ...latestAfter.map(r => r.carID),
+      ]);
+      const beforeByCarID = Object.fromEntries(latestBefore.map(r => [r.carID, r]));
+      const afterByCarID  = Object.fromEntries(latestAfter.map(r => [r.carID, r]));
+
+      const damaged = [];
+      carIDsWithRecords.forEach(carID => {
+        const afterRec  = afterByCarID[carID];
+        const beforeRec = beforeByCarID[carID];
+        const record    = afterRec || beforeRec;
+        if (!record) return;
+        const carLabel = carMap[carID]?.label || "Unknown Car";
+        const source   = afterRec ? "after_trip" : "before_trip";
+        (record.damageParts || []).forEach(p => {
+          if (!["Damaged", "Stolen", "Missing"].includes(p.status)) return;
+          const partName = p.carPartName || partsMap[p.carPartID]?.carPartName || "Unknown Part";
+          damaged.push({
+            id:          `${carID}_${p.carPartID}`,
+            carPartID:   p.carPartID,
+            carPartName: partName,
+            status:      p.status,
+            carID,
+            carLabel,
+            source,
+            bookingID:   record.bookingID,
+          });
+        });
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Delete failed.");
-      setAllBookings((prev) => prev.filter((b) => b.id !== deleteBooking.id));
-      showToast(`Booking archived and deleted. ${json.data?.reviewsArchivedCount > 0 ? `${json.data.reviewsArchivedCount} review(s) also archived.` : ""}`, "success");
-      setDeleteBooking(null);
-    } catch (err) { showToast(err.message, "error"); }
-    finally { setDeleting(false); }
+
+      setDamagedParts(damaged);
+    } catch (e) { console.error(e); showToast(e.message || "Failed to load data.", "error"); }
+    finally { setLoading(false); }
+  }, [authedFetch]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Arrived via a "View Maintenance" / status-switch link from Fleet.jsx
+  // (?carID=...) — open the add-record form pre-filled to that car instead
+  // of leaving staff to find and select it themselves.
+  //
+  // Also handles ?bookingID=..., set alongside carID by Bookings.jsx's
+  // "+ Post-Rental Maintenance" button (goToMaintenance). When a booking
+  // is present this is a customer-caused repair being filed against a
+  // specific rental, so basis defaults to "Post-Rental" too — staff can
+  // still change it if that's wrong, this just saves the click for the
+  // common case.
+  useEffect(() => {
+    const carID = searchParams.get("carID");
+    const bookingID = searchParams.get("bookingID");
+    if (carID) {
+      setForm((f) => ({ ...f, carID, bookingID: bookingID || "", basis: bookingID ? "Post-Rental" : f.basis }));
+      setShowAdd(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const overdue   = records.filter(r => r.status === "Scheduled" && isPast(r.maintenanceDate)).length;
+  const dueSoon   = records.filter(r => r.status === "Scheduled" && isSoon(r.maintenanceDate)).length;
+  const scheduled = records.filter(r => r.status === "Scheduled").length;
+  const completed = records.filter(r => r.status === "Completed").length;
+
+  const computedTotal = useMemo(() => {
+    const catalogSum = form.services.reduce((s, x) => s + (Number(x.price) || 0), 0);
+    const customSum  = form.customServices.reduce((s, x) => s + (Number(x.price) || 0), 0);
+    return catalogSum + customSum;
+  }, [form.services, form.customServices]);
+
+  const handleSave = async () => {
+    if (!form.carID || !form.basis || !form.maintenanceDate) {
+      showToast("Vehicle, basis, and maintenance date are required.", "error"); return;
+    }
+    setSaving(true);
+    try {
+      const services = [
+        ...form.services.map(s => ({ serviceID: s.serviceID, price: Number(s.price) || 0 })),
+        ...form.customServices
+          .filter(c => c.name.trim())
+          .map(c => ({ serviceID: "other", serviceName: c.name.trim(), price: Number(c.price) || 0 })),
+      ];
+
+      const payload = {
+        carID:               form.carID,
+        bookingID:           form.bookingID || null,
+        basis:                form.basis,
+        services,
+        overrideTotal:        form.useManualTotal && form.overrideTotal !== "" ? Number(form.overrideTotal) : null,
+        description:          form.description,
+        maintenanceDate:      form.maintenanceDate,
+        status:               form.status,
+        partsAddressed:       form.partsAddressed,
+      };
+
+      const res = editRecord
+        ? await authedFetch(`/api/maintenance/${editRecord.id}`, { method: "PUT", body: JSON.stringify(payload) })
+        : await authedFetch("/api/maintenance", { method: "POST", body: JSON.stringify(payload) });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to save maintenance record.");
+
+      showToast(editRecord ? "Record updated." : "Maintenance scheduled.");
+      setEditRecord(null); setShowAdd(false); setForm(EMPTY_FORM); setCustomName(""); setCustomPrice("");
+      fetchAll();
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setSaving(false); }
   };
 
-  const counts = {
-    All:       allBookings.length,
-    "To Pay":  allBookings.filter((b) => b.status?.toLowerCase() === "to pay").length,
-    Upcoming:  allBookings.filter((b) => b.status?.toLowerCase() === "upcoming").length,
-    Ongoing:   allBookings.filter((b) => b.status?.toLowerCase() === "ongoing").length,
-    Cancelled: allBookings.filter((b) => b.status?.toLowerCase() === "cancelled").length,
-    Completed: allBookings.filter((b) => b.status?.toLowerCase() === "completed").length,
+  const openEdit = (r) => {
+    const allServices = r.services || [];
+    setForm({
+      carID:               r.carID || "",
+      bookingID:           r.bookingID || "",
+      basis:                r.basis || "",
+      services:             allServices.filter(s => s.serviceID !== "other"),
+      customServices:       allServices.filter(s => s.serviceID === "other").map(s => ({ name: s.serviceName, price: s.price })),
+      useManualTotal:       r.overrideTotal !== null && r.overrideTotal !== undefined,
+      overrideTotal:        r.overrideTotal ?? "",
+      description:          r.description || "",
+      maintenanceDate:      isoDate(r.maintenanceDate),
+      status:               r.status || "Scheduled",
+      partsAddressed:       r.partsAddressed || [],
+    });
+    setEditRecord(r);
+    setShowAdd(false);
   };
-  const cancellationRequestCount = allBookings.filter((b) => b.status?.toLowerCase() === "cancellation_request").length;
 
-  const tabFiltered  = activeTab === "All"
-    ? allBookings
-    : allBookings.filter((b) => b.status?.toLowerCase() === activeTab.toLowerCase());
+  const openAdd = () => {
+    setForm(EMPTY_FORM);
+    setCustomName(""); setCustomPrice("");
+    setEditRecord(null);
+    setShowAdd(true);
+  };
 
-  const filtered = tabFiltered.filter((b) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (b.bookingID || b.id || "").toLowerCase().includes(q) ||
-      (b.customerName || "").toLowerCase().includes(q) ||
-      (b.vehicleName || "").toLowerCase().includes(q) ||
-      (b.phone || "").toLowerCase().includes(q)
-    );
-  });
+  // Triggered from the "Damaged/Stolen Parts Require Attention" banners
+  // above — instead of resolving the part immediately on the spot, this
+  // opens the normal Schedule Maintenance panel pre-filled to that part's
+  // vehicle, with the part itself already checked under "Fixed Damage
+  // Parts" below. Same rule as checking it manually there: nothing about
+  // the part's actual record changes until this job is saved and later
+  // marked Completed.
+  const openScheduleForPart = (part) => {
+    setForm({
+      ...EMPTY_FORM,
+      carID: part.carID,
+      partsAddressed: [{
+        carID:       part.carID,
+        carPartID:   part.carPartID,
+        carPartName: part.carPartName,
+        tripPhase:   part.source === "after_trip" ? "after" : "before",
+        bookingID:   part.bookingID,
+      }],
+    });
+    setCustomName(""); setCustomPrice("");
+    setEditRecord(null);
+    setShowAdd(true);
+  };
 
-  // Sort (dates/fee only — everything else stays in API/insertion order).
-  // Applied after search+tab filtering, before pagination, so page counts
-  // reflect the sorted set and Page 1 always shows the "top" of the sort.
-  const sorted = [...filtered].sort((a, b) => {
-    if (!sortKey) return 0;
+  // Toggles one damaged/stolen/missing part in/out of this maintenance
+  // job's "will be fixed here" checklist. Purely local state until Save —
+  // nothing about the part's actual record changes yet, and even after
+  // saving, the real resolution only happens once this job's own status
+  // becomes "Completed" (see updateMaintenanceStatus on the backend).
+  const toggleAddressedPart = (part) => {
+    setForm(f => {
+      const already = f.partsAddressed.some(p => p.carPartID === part.carPartID);
+      return {
+        ...f,
+        partsAddressed: already
+          ? f.partsAddressed.filter(p => p.carPartID !== part.carPartID)
+          : [...f.partsAddressed, {
+              carID: part.carID,
+              carPartID: part.carPartID,
+              carPartName: part.carPartName,
+              tripPhase: part.source === "after_trip" ? "after" : "before",
+              bookingID: part.bookingID,
+            }],
+      };
+    });
+  };
+
+  const toggleService = (serviceID, serviceName) => {
+    setForm(f => {
+      const exists = f.services.find(s => s.serviceID === serviceID);
+      return exists
+        ? { ...f, services: f.services.filter(s => s.serviceID !== serviceID) }
+        : { ...f, services: [...f.services, { serviceID, serviceName, price: 0 }] };
+    });
+  };
+
+  const updateServicePrice = (serviceID, price) => {
+    setForm(f => ({ ...f, services: f.services.map(s => s.serviceID === serviceID ? { ...s, price } : s) }));
+  };
+
+  const addCustomService = () => {
+    const name = customName.trim();
+    if (!name) return;
+    setForm(f => ({ ...f, customServices: [...f.customServices, { name, price: Number(customPrice) || 0 }] }));
+    setCustomName(""); setCustomPrice("");
+  };
+
+  const removeCustomService = (idx) => {
+    setForm(f => ({ ...f, customServices: f.customServices.filter((_, i) => i !== idx) }));
+  };
+
+  const ALL_STATUSES = ["All", ...config.statusOptions];
+  // Table order: unfinished work first, soonest due date on top (overdue lands
+  // above everything), so nothing urgent hides on a later page. Finished /
+  // cancelled records follow in the backend's newest-first order (stable sort).
+  // Clicking a header switches to that sort; with no header chosen, fall
+  // back to the original business-rule order (open work first, soonest due
+  // date on top of that).
+  const sortedRecords = sortKey ? [...records].sort((a, b) => {
     let av, bv;
-    if (sortKey === "dates") { av = toMillis(a.startDateTime); bv = toMillis(b.startDateTime); }
-    else if (sortKey === "fee") { av = a.totalFee ?? -Infinity; bv = b.totalFee ?? -Infinity; }
-    else return 0;
+    if (sortKey === "vehicle") {
+      const c = (a.carLabel || "").localeCompare(b.carLabel || "");
+      return sortDir === "asc" ? c : -c;
+    } else if (sortKey === "date") { av = toDate(a.maintenanceDate)?.getTime() || 0; bv = toDate(b.maintenanceDate)?.getTime() || 0; }
+    else if (sortKey === "cost")   { av = a.totalCost || 0; bv = b.totalCost || 0; }
     return sortDir === "asc" ? av - bv : bv - av;
+  }) : [...records].sort((a, b) => {
+    if (activeStatFilter) {
+      const pred = STAT_FILTERS[activeStatFilter].predicate;
+      const aM = pred(a), bM = pred(b);
+      if (aM !== bM) return aM ? -1 : 1;
+    }
+    const aOD = isOverdueJob(a), bOD = isOverdueJob(b);
+    if (aOD !== bOD) return aOD ? -1 : 1;
+    const aOpen = !["Completed", "Cancelled"].includes(a.status);
+    const bOpen = !["Completed", "Cancelled"].includes(b.status);
+    if (aOpen !== bOpen) return aOpen ? -1 : 1;
+    if (!aOpen) return 0;
+    const da = toDate(a.maintenanceDate)?.getTime() || Infinity;
+    const db_ = toDate(b.maintenanceDate)?.getTime() || Infinity;
+    return da === db_ ? 0 : da < db_ ? -1 : 1;
   });
 
-  const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
-  // Jump back to page 1 whenever the visible set changes shape (new search/filter/tab).
-  useEffect(() => { setPage(1); }, [search, activeTab, allBookings]); // eslint-disable-line react-hooks/exhaustive-deps
+  const filtered = sortedRecords.filter(r => {
+    const q = search.toLowerCase();
+    const serviceNames = (r.services || []).map(s => s.serviceName).join(" ").toLowerCase();
+    const matchQ = !q
+      || (r.carLabel || "").toLowerCase().includes(q)
+      || (r.plateNumber || "").toLowerCase().includes(q)
+      || (r.basis || "").toLowerCase().includes(q)
+      || (r.description || "").toLowerCase().includes(q)
+      || serviceNames.includes(q);
+    const matchS = statusFilter === "All" || r.status === statusFilter;
+    return matchQ && matchS;
+  });
 
-  const fmtDuration = (days) => { if (days == null) return "—"; return days <= 1 ? `${days} day` : `${days} days`; };
+  // Table view only — the calendar and stat cards keep reading all records.
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [search, statusFilter, sortKey, sortDir, activeStatFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isOpen = showAdd || !!editRecord;
 
   return (
-    <div className="p-4 space-y-5 font-sans">
+    <div className="w-full px-4 space-y-5">
 
-      {/* TOAST */}
-      {deleteToast && (
-        <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${deleteToast.type === "error" ? "bg-red-500" : "bg-teal-600"}`}>
-          {deleteToast.msg}
-        </div>
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
+          toast.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+        }`}>{toast.msg}</div>
       )}
 
-      {/* STAT TABS */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
-        {STATUS_TABS.map((tab) => {
-          const TabIcon = TAB_ICON[tab];
-          return (
-            <button key={tab} onClick={() => setActiveTab(tab)}
-              className={`p-4 rounded-2xl border text-left transition-all ${activeTab === tab ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}
-            >
-              <div className="flex items-start justify-between">
-                <div className={`text-2xl font-bold ${activeTab === tab ? "text-teal-600" : "text-gray-800"}`}>{loading ? "…" : counts[tab] ?? 0}</div>
-                <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${TAB_ICON_COLOR[tab]}`}>
-                  <TabIcon className="w-4 h-4" />
-                </span>
-              </div>
-              <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                {tab === "All" ? "All Bookings" : tab}
-                {tab === "Cancelled" && cancellationRequestCount > 0 && <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />}
-              </div>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-arl-dark">Maintenance</h1>
+          <p className="text-xs text-gray-400 mt-0.5">{loading ? "Loading…" : `${records.length} records`}</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <input type="text" placeholder="Search car, basis, service…"
+            value={search} onChange={e => setSearch(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light w-48" />
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
+            {ALL_STATUSES.map(s => <option key={s}>{s}</option>)}
+          </select>
+          <button onClick={fetchAll} disabled={loading}
+            className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">↺</button>
+          <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+            <button onClick={() => setView("table")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${view === "table" ? "bg-white text-arl-dark shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+              <IconClipboard className="w-3.5 h-3.5" /> Table
             </button>
-          );
-        })}
+            <button onClick={() => setView("calendar")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${view === "calendar" ? "bg-white text-arl-dark shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+              <IconCalendar className="w-3.5 h-3.5" /> Calendar
+            </button>
+          </div>
+          <button onClick={openAdd}
+            className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 font-semibold">
+            + Schedule
+          </button>
+        </div>
       </div>
 
-      {/* SEARCH */}
-      <div className="flex gap-3 items-center bg-white p-4 rounded-2xl border">
-        <input
-          type="text"
-          placeholder="Search by booking ID, customer, vehicle, phone..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 px-4 py-2 border rounded-xl text-sm outline-none"
-        />
-        <button
-          onClick={fetchBookings}
-          className="px-4 py-2 border rounded-xl text-sm text-teal-600 font-medium hover:bg-teal-50 flex items-center gap-1.5"
-        >
-          <IconRefresh className="w-3.5 h-3.5" />
-          Refresh
-        </button>
+      {/* Stat Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard icon={<IconAlertCircle className="w-5 h-5" />} value={overdue}   label="Overdue"       color="red"
+          onClick={() => toggleStatFilter("overdue")} active={activeStatFilter === "overdue"} />
+        <StatCard icon={<IconWarning     className="w-5 h-5" />} value={dueSoon}   label="Due This Week" color="yellow"
+          onClick={() => toggleStatFilter("dueSoon")} active={activeStatFilter === "dueSoon"} />
+        <StatCard icon={<IconWrench      className="w-5 h-5" />} value={scheduled} label="Scheduled"     color="blue"
+          onClick={() => toggleStatFilter("scheduled")} active={activeStatFilter === "scheduled"} />
+        <StatCard icon={<IconCheck       className="w-5 h-5" />} value={completed} label="Completed"     color="green"
+          onClick={() => toggleStatFilter("completed")} active={activeStatFilter === "completed"} />
       </div>
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex justify-between items-center">
-          <span className="flex items-center gap-2">
-            <IconWarning className="w-4 h-4 shrink-0" />
-            {error}
-          </span>
-          <button onClick={fetchBookings} className="underline font-semibold">Retry</button>
+      {/* Parts Attention Panel */}
+      {damagedParts.length > 0 && (
+        <div className="space-y-3">
+          {(() => {
+            const damagedOnly = damagedParts.filter(p => p.status === "Damaged" || p.status === "Missing");
+            const stolenOnly  = damagedParts.filter(p => p.status === "Stolen");
+            return (
+              <>
+                {damagedOnly.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <IconAlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                      <span className="text-red-500 font-bold text-sm">Damaged Parts Require Attention</span>
+                      <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">{damagedOnly.length}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {damagedOnly.map(p => (
+                        <div key={p.id} className="flex items-center gap-1.5 bg-red-100 text-red-700 px-3 py-1.5 rounded-xl text-xs font-medium">
+                          <span>{p.carPartName} — {p.carLabel}</span>
+                          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${p.status === "Missing" ? "bg-orange-200 text-orange-800" : "bg-red-200 text-red-800"}`}>{p.status}</span>
+                          <span className="text-red-400 text-[10px]">({p.source === "after_trip" ? "after trip" : "before trip"})</span>
+                          <button onClick={() => openScheduleForPart(p)}
+                            className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
+                            🔧 Schedule Fix
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-red-500">Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part checked below.</p>
+                  </div>
+                )}
+                {stolenOnly.length > 0 && (
+                  <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <IconSiren className="w-4 h-4 text-purple-600 shrink-0" />
+                      <span className="text-purple-600 font-bold text-sm">Stolen Parts Require Attention</span>
+                      <span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full font-semibold">{stolenOnly.length}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {stolenOnly.map(p => (
+                        <div key={p.id} className="flex items-center gap-1.5 bg-purple-100 text-purple-700 px-3 py-1.5 rounded-xl text-xs font-medium">
+                          <span>{p.carPartName} — {p.carLabel}</span>
+                          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-200 text-purple-800">Stolen</span>
+                          <span className="text-purple-400 text-[10px]">({p.source === "after_trip" ? "after trip" : "before trip"})</span>
+                          <button onClick={() => openScheduleForPart(p)}
+                            className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
+                            🔧 Schedule Fix
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-purple-500">File a police report if needed. Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part checked below.</p>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
-      {/* TABLE */}
-      <div className="bg-white rounded-2xl border overflow-hidden">
-        <div className="px-5 py-4 border-b flex items-center justify-between">
-          <h3 className="font-semibold text-gray-800">
-            {activeTab === "All" ? "All Bookings" : `${activeTab} Bookings`}
-            <span className="text-gray-400 text-sm font-normal ml-2">{filtered.length} results</span>
-          </h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
-              <tr>
-                <th className="px-4 py-3 text-left">Booking ID</th>
-                <th className="px-4 py-3 text-left">Customer</th>
-                <th className="px-4 py-3 text-left">Vehicle</th>
-                <SortableTh label="Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-3 text-left">Duration</th>
-                <SortableTh label="Total Fee" sortKey="fee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-3 text-left">Payment</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3"></th>
+      {/* CALENDAR VIEW */}
+      {view === "calendar" && (
+        <MaintenanceCalendar
+          records={records}
+          calMonth={calMonth}
+          setCalMonth={setCalMonth}
+          onEditRecord={openEdit}
+        />
+      )}
+
+      {/* TABLE VIEW */}
+      {view === "table" && <div className="flex gap-5 items-start">
+        <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+          <table className="w-full text-sm table-fixed">
+            <colgroup>
+              <col style={{width:"22%"}} /><col style={{width:"20%"}} /><col style={{width:"15%"}} />
+              <col style={{width:"12%"}} /><col style={{width:"15%"}} /><col style={{width:"16%"}} />
+            </colgroup>
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
+                <SortableTh label="Vehicle" sortKey="vehicle" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left font-semibold">Basis</th>
+                <SortableTh label="Date" sortKey="date" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Cost" sortKey="cost" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left font-semibold">Status</th>
+                <th className="px-4 py-3 text-left font-semibold">Action</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i} className="border-t">
-                    {Array.from({ length: 9 }).map((__, j) => (
-                      <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
+                Array.from({length:5}).map((_,i) => (
+                  <tr key={i} className="border-b border-gray-50">
+                    {Array.from({length:6}).map((_,j) => (
+                      <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4"/></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={9} className="text-center text-gray-400 py-12">No bookings found</td></tr>
-              ) : (
-                pageItems.map((b) => {
-                  const needsAction = b.status?.toLowerCase() === "cancellation_request";
-                  return (
-                    <tr key={b.id} className={`border-t hover:bg-gray-50 transition-colors ${needsAction ? "bg-orange-50 border-l-4 border-l-orange-500" : ""}`}>
-                      <td className="px-4 py-3 text-gray-700 text-xs">
-                        {b.bookingID || b.id}
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => setProfileUserID(b.userID)}
-                          disabled={!b.userID}
-                          className="font-medium text-gray-800 hover:text-indigo-600 hover:underline text-left disabled:no-underline disabled:cursor-default disabled:hover:text-gray-800"
-                        >
-                          {b.customerName}
-                        </button>
-                        <div className="text-xs text-gray-400">{b.phone}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="text-gray-700">{b.vehicleName}</div>
-                        <div className="text-xs text-gray-400">{b.serviceTypeName}</div>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(b.startDateTime)} – {fmtDate(b.endDateTime)}</td>
-                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                        {fmtDuration(b.totalDays)}
-                        {b.durationType && <span className="text-xs text-gray-400 ml-1">· {b.durationType}</span>}
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-gray-800">{fmt(b.totalFee)}</td>
-                      <td className="px-4 py-3 text-gray-600">{b.paymentMethod}</td>
-                      <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-2">
-                          <button onClick={() => setViewBooking(b)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
-                          <button
-                            onClick={() => canEdit(b.status) && setEditBooking(b)}
-                            disabled={isLocked(b.status)}
-                            className={`px-3 py-1 border rounded-lg text-xs transition-colors ${isLocked(b.status) ? "border-gray-200 text-gray-300 cursor-not-allowed" : "border-teal-400 text-teal-600 hover:bg-teal-50"}`}
-                          >Edit</button>
-                          <button
-                            onClick={() => setDeleteBooking(b)}
-                            className="px-3 py-1 border border-red-200 text-red-500 rounded-lg text-xs hover:bg-red-50 transition-colors"
-                          >Delete</button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
+                <tr><td colSpan={6} className="text-center py-16 text-gray-400 text-sm">No maintenance records found.</td></tr>
+              ) : paginated.map((r, i) => {
+                const isEditing = editRecord?.id === r.id;
+                const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(r);
+                const rowClass = isEditing
+                  ? "bg-teal-50/50 ring-1 ring-inset ring-teal-200"
+                  : statMatch
+                  ? STAT_FILTERS[activeStatFilter].rowClass
+                  : i % 2 === 1 ? "bg-gray-50/20" : "";
+                return (
+                <tr key={r.id} onClick={() => openEdit(r)}
+                  className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-teal-50/30 transition-colors ${rowClass}`}>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-gray-800 text-xs truncate">{r.carLabel}</div>
+                    <div className="text-xs text-gray-400">{r.plateNumber}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-700 truncate">
+                    {r.basis ? `${BASIS_ICON[r.basis] || ""} ${r.basis}` : "—"}
+                    {r.services?.length > 0 && (
+                      <div className="text-[10px] text-gray-400">{r.services.length} service{r.services.length > 1 ? "s" : ""}</div>
+                    )}
+                  </td>
+                  <td className={`px-4 py-3 text-xs whitespace-nowrap ${isOverdueJob(r) ? "text-red-500 font-semibold" : "text-gray-500"}`}>
+                    <span className="inline-flex items-center gap-1">
+                      {fmtDate(r.maintenanceDate)}
+                      {isOverdueJob(r) && (
+                        <IconAlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                      )}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-700">
+                    {r.totalCost ? peso(r.totalCost) : "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <MainStatusBadge status={r.status || "—"} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <button onClick={e => { e.stopPropagation(); openEdit(r); }}
+                      className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors font-medium">
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+                );
+              })}
             </tbody>
           </table>
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
         </div>
-        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
+
+        {/* Edit / Add Panel */}
+        {isOpen && (
+          <div className="w-96 shrink-0 bg-white rounded-2xl border border-gray-100 shadow-soft p-5 space-y-4 sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-gray-800 text-sm">
+                {editRecord ? "Edit Record" : "Schedule Maintenance"}
+              </h2>
+              <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
+                className="text-gray-400 hover:text-gray-600">
+                <IconX className="w-4 h-4" />
+              </button>
+            </div>
+
+            <Field label="Vehicle *">
+              <select value={form.carID} onChange={e => setForm(f => ({...f, carID: e.target.value}))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
+                <option value="">Select vehicle…</option>
+                {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.plateNumber ? `· ${c.plateNumber}` : ""}</option>)}
+              </select>
+            </Field>
+
+            {form.bookingID && (
+              <div className="rounded-xl bg-teal-50 border border-teal-200 px-3 py-2 text-xs text-teal-700 flex items-center justify-between gap-2">
+                <span>Linked to booking <span className="font-semibold">{form.bookingID}</span></span>
+                <button type="button" onClick={() => setForm(f => ({ ...f, bookingID: "" }))}
+                  className="text-teal-500 hover:text-teal-700 underline shrink-0">
+                  Unlink
+                </button>
+              </div>
+            )}
+
+            <Field label="Maintenance Basis *">
+              <div className="flex flex-wrap gap-1.5">
+                {config.basisOptions.map(b => (
+                  <button key={b} type="button" onClick={() => setForm(f => ({...f, basis: b}))}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
+                      form.basis === b ? "border-teal-500 bg-teal-50 text-teal-700" : "border-gray-100 text-gray-600 hover:border-gray-300"
+                    }`}>
+                    {BASIS_ICON[b] || ""} {b}
+                  </button>
+                ))}
+              </div>
+            </Field>
+
+            <Field label="Services Performed">
+              <div className="max-h-72 overflow-y-auto pr-1 space-y-3 border border-gray-100 rounded-xl p-3">
+                {config.serviceCatalog.map(group => (
+                  <div key={group.group}>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">{group.group}</p>
+                    <div className="space-y-1.5">
+                      {group.services.map(s => {
+                        const selected = form.services.find(x => x.serviceID === s.serviceID);
+                        return (
+                          <div key={s.serviceID} className="flex items-center gap-2">
+                            <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                              <input type="checkbox" checked={!!selected}
+                                onChange={() => toggleService(s.serviceID, s.serviceName)}
+                                className="accent-teal-600 shrink-0" />
+                              <span className="text-xs text-gray-700 truncate">{s.serviceName}</span>
+                            </label>
+                            {selected && !form.useManualTotal && (
+                              <input type="number" placeholder="₱0" value={selected.price || ""}
+                                onChange={e => updateServicePrice(s.serviceID, e.target.value)}
+                                className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Custom / "Other" services */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Other</p>
+                  {form.customServices.map((c, idx) => (
+                    <div key={idx} className="flex items-center gap-2 mb-1.5">
+                      <span className="text-xs text-gray-700 flex-1 truncate">{c.name}</span>
+                      {!form.useManualTotal && <span className="text-xs text-gray-500">{peso(c.price)}</span>}
+                      <button type="button" onClick={() => removeCustomService(idx)} className="text-gray-400 hover:text-red-500">
+                        <IconX className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex gap-1.5">
+                    <input type="text" value={customName} onChange={e => setCustomName(e.target.value)}
+                      placeholder="Custom service…"
+                      className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                    {!form.useManualTotal && (
+                      <input type="number" value={customPrice} onChange={e => setCustomPrice(e.target.value)}
+                        placeholder="₱0"
+                        className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                    )}
+                    <button type="button" onClick={addCustomService}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-teal-400 hover:text-teal-600">
+                      +
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Field>
+
+            <Field label="Total Cost">
+              <label className="flex items-center gap-2 mb-2 cursor-pointer">
+                <input type="checkbox" checked={form.useManualTotal}
+                  onChange={e => setForm(f => ({...f, useManualTotal: e.target.checked}))}
+                  className="accent-teal-600" />
+                <span className="text-xs text-gray-600">Enter total manually instead of itemizing</span>
+              </label>
+
+              {form.useManualTotal ? (
+                <input type="number" value={form.overrideTotal} onChange={e => setForm(f => ({...f, overrideTotal: e.target.value}))}
+                  placeholder="₱0"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
+              ) : (
+                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 border border-gray-100">
+                  <span className="text-xs text-gray-500">Auto-computed from services</span>
+                  <span className="text-sm font-bold text-gray-800">{peso(computedTotal)}</span>
+                </div>
+              )}
+            </Field>
+
+            <Field label="Description">
+              <textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
+                rows={3} placeholder="Details of the maintenance…"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none resize-none" />
+            </Field>
+
+            {/* Damaged/stolen/missing parts this job is meant to fix.
+                Checking a box only records intent — the actual resolution
+                (flipping the part's status back to Good on its trip
+                record) only happens once this record's own status is
+                later set to Completed, not the moment it's checked here.
+                That way a job that ends up Cancelled instead never
+                silently marks a part as fixed that was never worked on. */}
+            {form.carID && (
+              <Field label="Fixed Damage Parts">
+                {damagedParts.filter(p => p.carID === form.carID).length === 0 ? (
+                  <p className="text-xs text-gray-400 px-1">No damaged/stolen/missing parts on record for this vehicle.</p>
+                ) : (
+                  <div className="space-y-1.5 border border-gray-200 rounded-xl p-2 max-h-36 overflow-y-auto">
+                    {damagedParts.filter(p => p.carID === form.carID).map(p => (
+                      <label key={p.id} className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-gray-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="accent-teal-600"
+                          checked={form.partsAddressed.some(sel => sel.carPartID === p.carPartID)}
+                          onChange={() => toggleAddressedPart(p)}
+                        />
+                        <span className="text-sm text-gray-700">{p.carPartName}</span>
+                        <span className="text-xs text-gray-400">({p.status})</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </Field>
+            )}
+
+            <Field label="Maintenance Date *">
+              <label className="flex items-center gap-2 mb-1.5 cursor-pointer">
+                <input type="checkbox" checked={form.useToday}
+                  onChange={e => setForm(f => ({
+                    ...f,
+                    useToday: e.target.checked,
+                    maintenanceDate: e.target.checked ? isoDate(new Date()) : f.maintenanceDate,
+                    status: e.target.checked ? "Completed" : f.status,
+                  }))}
+                  className="accent-teal-600" />
+                <span className="text-xs text-gray-600">Today</span>
+              </label>
+              <input type="date" value={form.maintenanceDate} disabled={form.useToday}
+                onChange={e => setForm(f => ({...f, maintenanceDate: e.target.value}))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none disabled:bg-gray-50 disabled:text-gray-400" />
+            </Field>
+            <Field label="Status">
+              <div className="grid grid-cols-2 gap-1.5">
+                {config.statusOptions.map(s => (
+                  <button key={s} onClick={() => setForm(f => ({...f, status: s}))}
+                    className={`px-2 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
+                      form.status === s
+                        ? "border-teal-500 bg-teal-50 text-teal-700"
+                        : "border-gray-100 text-gray-600 hover:border-gray-300"
+                    }`}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
+                className="flex-1 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                className="flex-1 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
+                {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>}
+    </div>
+  );
+}
+
+// ─── STAT CARD ────────────────────────────────────────────────────────────────
+
+function StatCard({ icon, value, label, color, onClick, active }) {
+  const colors = { red: "text-red-500", yellow: "text-yellow-600", blue: "text-blue-600", green: "text-green-600" };
+  const bgColors = { red: "bg-red-50 text-red-500", yellow: "bg-yellow-50 text-yellow-600", blue: "bg-blue-50 text-blue-600", green: "bg-green-50 text-green-600" };
+  const activeRing = {
+    red: "border-red-300 ring-2 ring-red-100",
+    yellow: "border-yellow-300 ring-2 ring-yellow-100",
+    blue: "border-blue-300 ring-2 ring-blue-100",
+    green: "border-green-300 ring-2 ring-green-100",
+  };
+  const clickable = typeof onClick === "function";
+  const Tag = clickable ? "button" : "div";
+  return (
+    <Tag
+      type={clickable ? "button" : undefined}
+      onClick={onClick}
+      aria-pressed={clickable ? !!active : undefined}
+      className={`w-full text-left bg-white rounded-2xl border shadow-soft p-4 flex items-center gap-3 transition-all ${
+        active ? activeRing[color] || "border-gray-300 ring-2 ring-gray-100" : "border-gray-100"
+      } ${clickable ? "cursor-pointer hover:border-gray-200 hover:shadow-md" : ""}`}
+    >
+      <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>
+        {icon}
+      </div>
+      <div>
+        <div className={`text-2xl font-bold ${colors[color] || "text-gray-800"}`}>{value}</div>
+        <div className="text-xs text-gray-500">{label}</div>
+      </div>
+    </Tag>
+  );
+}
+
+// ─── FIELD ────────────────────────────────────────────────────────────────────
+
+function Field({ label, children }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+// ─── MAINTENANCE CALENDAR ────────────────────────────────────────────────────
+
+function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
+  const { y, m } = calMonth;
+  const monthName = new Date(y, m, 1).toLocaleString("en-PH", { month: "long", year: "numeric" });
+
+  const firstDay    = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const today       = new Date();
+
+  const dayMap = {};
+  records.forEach(r => {
+    const d = toDate(r.maintenanceDate);
+    if (!d || isNaN(d)) return;
+    if (d.getFullYear() === y && d.getMonth() === m) {
+      const k = d.getDate();
+      if (!dayMap[k]) dayMap[k] = [];
+      dayMap[k].push(r);
+    }
+  });
+
+  const DOT = {
+    Completed:    "bg-green-500",
+    Scheduled:    "bg-blue-500",
+    Cancelled:    "bg-gray-400",
+    Overdue:      "bg-red-500",
+  };
+
+  const prevMonth = () => { if (m === 0) setCalMonth({ y: y - 1, m: 11 }); else setCalMonth({ y, m: m - 1 }); };
+  const nextMonth = () => { if (m === 11) setCalMonth({ y: y + 1, m: 0 }); else setCalMonth({ y, m: m + 1 }); };
+
+  const cells = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const [selected, setSelected] = useState(null);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={prevMonth}
+            className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50">‹</button>
+          <h2 className="font-bold text-gray-800 text-base">{monthName}</h2>
+          <button onClick={nextMonth}
+            className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50">›</button>
+        </div>
+        <div className="grid grid-cols-7 mb-1">
+          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
+            <div key={d} className="text-center text-xs font-semibold text-gray-400 py-1">{d}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((day, i) => {
+            if (!day) return <div key={i} />;
+            const isToday  = today.getDate() === day && today.getMonth() === m && today.getFullYear() === y;
+            const dayRecs  = dayMap[day] || [];
+            const hasRecs  = dayRecs.length > 0;
+            return (
+              <button key={i}
+                onClick={() => setSelected(hasRecs ? { day, recs: dayRecs } : null)}
+                className={`relative min-h-[60px] p-1.5 rounded-xl text-left transition-all border ${
+                  isToday ? "border-teal-500 bg-teal-50"
+                  : hasRecs ? "border-gray-200 hover:border-teal-300 hover:bg-gray-50"
+                  : "border-transparent hover:bg-gray-50"
+                }`}>
+                <span className={`text-xs font-semibold ${isToday ? "text-teal-600" : "text-gray-700"}`}>{day}</span>
+                <div className="flex flex-wrap gap-0.5 mt-1">
+                  {dayRecs.slice(0, 3).map((r, ri) => (
+                    <span key={ri} className={`w-2 h-2 rounded-full ${DOT[r.status] || "bg-gray-300"}`} title={`${r.basis} — ${r.status}`} />
+                  ))}
+                  {dayRecs.length > 3 && (
+                    <span className="text-xs text-gray-400 leading-none">+{dayRecs.length - 3}</span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap gap-4 mt-4 pt-3 border-t border-gray-100">
+          {Object.entries(DOT).map(([s, cls]) => (
+            <span key={s} className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className={`w-2.5 h-2.5 rounded-full ${cls}`}/>{s}
+            </span>
+          ))}
+        </div>
       </div>
 
-      {viewBooking   && <ViewModal booking={viewBooking} onClose={() => setViewBooking(null)} onViewCustomer={setProfileUserID} />}
-      {editBooking   && <EditModal booking={editBooking} onClose={() => setEditBooking(null)} onSave={() => { setEditBooking(null); fetchBookings(); }} />}
-      {profileUserID && <CustomerProfileModal userID={profileUserID} onClose={() => setProfileUserID(null)} />}
-      {deleteBooking && (
-        <DeleteModal
-          booking={deleteBooking}
-          onClose={() => !deleting && setDeleteBooking(null)}
-          onConfirm={handleDeleteConfirm}
-          deleting={deleting}
-        />
+      {selected && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-gray-800 text-sm">
+              {new Date(y, m, selected.day).toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+            </h3>
+            <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
+              <IconX className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="space-y-2">
+            {selected.recs.map((r, i) => (
+              <div key={i}
+                className="flex items-center justify-between p-3 rounded-xl border cursor-pointer hover:border-teal-300 transition-colors border-gray-100 bg-gray-50"
+                onClick={() => { onEditRecord(r); setSelected(null); }}>
+                <div className="flex items-center gap-3">
+                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${DOT[r.status] || "bg-gray-300"}`}/>
+                  <div>
+                    <p className="text-xs font-semibold text-gray-800">{r.carLabel}</p>
+                    <p className="text-xs text-gray-500">{r.basis}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <MainStatusBadge status={r.status} />
+                  <span className="text-xs text-teal-500 font-medium">Edit →</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
