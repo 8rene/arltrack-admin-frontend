@@ -882,7 +882,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
                       className={`border rounded-xl p-3 flex items-center justify-between gap-3 ${b.refundPreview?.alreadyRefunded ? "bg-amber-50 border-amber-200" : ""}`}>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
-                        <p className="text-xs text-gray-500">{b.customerName || "—"} · {dateRange(b)}</p>
+                        <p className="text-xs text-gray-500">{b.paymentDetails?.customerName || "—"} · {dateRange(b)}</p>
                         {b.refundPreview?.alreadyRefunded ? (
                           <p className="text-xs text-amber-700 mt-1">Payment already refunded earlier — this will just cancel the booking to match.</p>
                         ) : (
@@ -966,7 +966,6 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
         <BookingConfirmModal
           booking={activeBooking}
           fmt={fmt}
-          dateRange={dateRange}
           onConfirm={() => { toggleStaged(activeBooking.bookingID); setActiveBookingID(null); }}
           onUnconfirm={() => { toggleStaged(activeBooking.bookingID); setActiveBookingID(null); }}
           onClose={() => setActiveBookingID(null)}
@@ -982,37 +981,96 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
 // own real Confirm button. Nothing gets staged just from clicking the row
 // button anymore; this is the actual "are you sure about THIS one"
 // step — the row button only opens it.
-function BookingConfirmModal({ booking, fmt, dateRange, onConfirm, onUnconfirm, onClose }) {
+// Full date + time, not just the date — booking.startDateTime/endDateTime
+// come back as ISO strings from paymentDetails-adjacent lookups or Firestore
+// Timestamps from the raw booking doc, so handle both.
+const fmtDateTime = (v) => {
+  const d = v?.toDate ? v.toDate() : v ? new Date(v) : null;
+  if (!d || isNaN(d)) return "—";
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+};
+
+function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) {
   const already = booking.refundPreview?.alreadyRefunded;
   const hasManual = !already && (booking.refundPreview?.manualAmount || 0) > 0;
+  const p = booking.paymentDetails; // full detail from getPaymentDetailsByBookingID — may be null if lookup failed
+
+  const stageColor = {
+    Completed: "text-emerald-700 bg-emerald-50 border-emerald-200",
+    Partial: "text-amber-700 bg-amber-50 border-amber-200",
+    Pending: "text-gray-600 bg-gray-100 border-gray-200",
+  }[p?.paymentStage] || "text-gray-600 bg-gray-100 border-gray-200";
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4 max-h-[85vh] overflow-y-auto">
         <h4 className="font-bold text-gray-800 text-lg">
           {booking.staged ? "Already confirmed" : "Confirm this booking"}
         </h4>
 
+        {/* Booking details */}
         <div className="text-sm space-y-1.5">
           <p><span className="text-gray-500">Booking:</span> <span className="font-medium text-gray-800">{booking.bookingID}</span></p>
-          <p><span className="text-gray-500">Booked by:</span> <span className="font-medium text-gray-800">{booking.customerName || "—"}</span></p>
-          <p><span className="text-gray-500">Dates:</span> {dateRange(booking)}</p>
+          <p><span className="text-gray-500">Status:</span> <span className="font-medium text-gray-800 capitalize">{booking.status || "upcoming"}</span></p>
+          <p><span className="text-gray-500">Booked by:</span> <span className="font-medium text-gray-800">{p?.customerName || "—"}</span></p>
+          <p><span className="text-gray-500">Start:</span> {fmtDateTime(booking.startDateTime)}</p>
+          <p><span className="text-gray-500">End:</span> {fmtDateTime(booking.endDateTime)}</p>
+        </div>
 
-          {already ? (
-            <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
-              Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued.
-            </p>
-          ) : (
-            <div className="bg-gray-50 border rounded-lg px-3 py-2 mt-2 space-y-0.5">
-              <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(booking.refundPreview?.total || 0)}</span></p>
-              {hasManual && (
-                <p className="text-xs text-gray-500">
-                  {fmt(booking.refundPreview.onlineAmount || 0)} via PayMongo + {fmt(booking.refundPreview.manualAmount)} handed back in person
+        {/* Payment details + timeline */}
+        {p && (
+          <div className="border-t pt-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-500">Payment</span>
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${stageColor}`}>{p.paymentStage}</span>
+            </div>
+
+            <div className="text-sm space-y-1">
+              <p><span className="text-gray-500">Total fee:</span> {fmt(p.totalFee)}</p>
+              <p><span className="text-gray-500">Paid so far:</span> {fmt(p.amountPaid)}</p>
+              {p.balance > 0 && <p><span className="text-gray-500">Still owed:</span> {fmt(p.balance)}</p>}
+              {p.discountAmount > 0 && (
+                <p className="text-teal-700">
+                  Discount: {fmt(p.discountAmount)}{p.discountReason ? ` — ${p.discountReason}` : ""}
                 </p>
               )}
             </div>
-          )}
-        </div>
+
+            {/* Timeline — when the deposit landed, when the balance (if any)
+                got settled, and how, so staff aren't refunding blind to the
+                payment's actual history. */}
+            <div className="text-xs text-gray-500 space-y-1 bg-gray-50 border rounded-lg px-3 py-2">
+              {p.paidAt && <p>Deposit paid {fmtDateTime(p.paidAt)}</p>}
+              {p.payType !== "Full" && (
+                p.balanceStatus === "paid" && p.balancePaidAt ? (
+                  <p>Balance settled online {fmtDateTime(p.balancePaidAt)}</p>
+                ) : p.balanceCollected && p.balanceCollectedAt ? (
+                  <p>Balance collected in person ({p.balanceMethod || "—"}) {fmtDateTime(p.balanceCollectedAt)}</p>
+                ) : p.balance > 0 ? (
+                  <p>Balance not yet settled</p>
+                ) : null
+              )}
+              {p.paymentStage === "Completed" && <p className="text-emerald-700 font-medium">Fully settled</p>}
+              {!p.paidAt && !p.balancePaidAt && !p.balanceCollectedAt && <p>No payment activity recorded yet.</p>}
+            </div>
+          </div>
+        )}
+
+        {/* What confirming this row actually does */}
+        {already ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued.
+          </p>
+        ) : (
+          <div className="text-sm bg-gray-50 border rounded-lg px-3 py-2 space-y-0.5">
+            <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(booking.refundPreview?.total || 0)}</span></p>
+            {hasManual && (
+              <p className="text-xs text-gray-500">
+                {fmt(booking.refundPreview.onlineAmount || 0)} via PayMongo + {fmt(booking.refundPreview.manualAmount)} handed back in person
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-3 pt-2">
           <button onClick={onClose}

@@ -243,3 +243,8 @@ and also remove the supervisor capability to change user
 and the analytics remove it 
 
 117 11:50 pm pending the refund fixes
+117 fleet working but need to have more details 10:30
+
+main pending  removal of supervisor access
+
+001 pending maintenance, 
