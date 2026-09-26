@@ -15,7 +15,6 @@ import DeviceTrack from "./pages/DeviceTrack";
 import DriverDispatch from "./pages/DriverDispatch";
 import Maintenance from "./pages/Maintenance";
 import Inventory from "./pages/Inventory";
-import Analytics from "./pages/Analytics";
 import Payments from "./pages/Payments";
 import RefundRequests from "./pages/RefundRequests";
 import Reports from "./pages/Reports";
@@ -160,11 +159,6 @@ function AppRoutes() {
             <Route path="/vehicle-documentation" element={
                 <ProtectedRoute>
                     <DashboardLayout><VehicleInspection /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/analytics" element={
-                <ProtectedRoute>
-                    <DashboardLayout><Analytics /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/payments" element={

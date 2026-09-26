@@ -25,12 +25,15 @@ export const PAGE_ACCESS = {
   "/bookings": [OWNER, ADMIN, SUPERVISOR],
   "/fleet": [OWNER, ADMIN, SUPERVISOR],
 
-  // "/users" (formerly Customers) manages Customers/Drivers/Supervisors/
-  // Admins under one page with per-role sub-tabs. This entry must stay the
-  // UNION of every tab's visibleTo in pages/Users.jsx's buildRoleTabs() —
-  // ProtectedRoute only gates by pathname, it can't see individual tabs.
-  // Currently: Customer tab=[Owner,Admin,Supervisor], Driver tab=[Owner,Admin,Supervisor],
-  // Supervisor tab=[Owner,Admin], Admin tab=[Owner].
+  // "/users" manages Customers/Drivers/Supervisors/Admins under one page
+  // with per-role tabs (pages/Users.jsx's TABS). This entry must stay the
+  // UNION of every tab's viewableBy there — ProtectedRoute only gates by
+  // pathname, it can't see individual tabs.
+  // Currently: Customer=[Owner,Admin,Supervisor], Driver=[Owner,Admin,Supervisor],
+  // Supervisor=[Owner,Admin], Admin=[Owner]. Role EDITING (not just viewing)
+  // is narrower still — Owner/Admin only, enforced by the backend
+  // (routes/user/user.routes.js's roleAllowed), mirrored in Users.jsx's
+  // own CAN_EDIT_ROLES so Supervisor never even sees the control.
   "/users": [OWNER, ADMIN, SUPERVISOR],
   "/car-tracking": [OWNER, ADMIN, SUPERVISOR],
   "/gps-setup": [ADMIN, SUPERVISOR],
@@ -44,10 +47,9 @@ export const PAGE_ACCESS = {
   // it. Backend equivalent: routes/vehicleDocumentation (Driver removed).
   "/inventory": [OWNER, ADMIN, SUPERVISOR],
   "/vehicle-documentation": [OWNER, ADMIN, SUPERVISOR],
-  "/analytics": [OWNER, ADMIN, SUPERVISOR],
   "/payments": [OWNER, ADMIN, SUPERVISOR],
   "/refund-requests": [OWNER, ADMIN, SUPERVISOR],
-  "/reports": [OWNER, ADMIN, SUPERVISOR],
+  "/reports": [OWNER],
   "/audit-log": [ADMIN],
   "/session-logs": [ADMIN],
   "/transaction-logs": [ADMIN],
