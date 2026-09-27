@@ -128,10 +128,6 @@ export default function TripSummaryPanel({ bookingID, carLabel, tripLabel, token
                   <span className="text-gray-700 font-mono">{fmtMoney(booking.rentalFee)}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-500">Deposit</span>
-                  <span className="text-gray-700 font-mono">{fmtMoney(booking.depositFee)}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
                   <span className="text-gray-500">Service fee</span>
                   <span className="text-gray-700 font-mono">{fmtMoney(booking.serviceFee)}</span>
                 </div>

@@ -112,6 +112,9 @@ const nav = [
     // level and staff handling a refund usually care about its payment
     // (and vice versa), so keeping them together in their own group made
     // more sense than leaving them mixed in with day-to-day fleet ops.
+    // Penalties moved here too, for the same reason — it's a deposit/
+    // payment deduction, not fleet ops, and shares the same permission
+    // level (Owner/Admin/Supervisor) as the other two.
     group: "Finance",
     items: [
       {
@@ -120,6 +123,16 @@ const nav = [
         icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+          </svg>
+        ),
+      },
+      {
+        label: "Penalties",
+        path: "/penalties",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            <path strokeLinecap="round" d="M12 9v4M12 17h.01" />
           </svg>
         ),
       },

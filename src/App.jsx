@@ -14,6 +14,7 @@ import CarTracking from "./pages/CarTracking/CarTracking";
 import DeviceTrack from "./pages/DeviceTrack";
 import DriverDispatch from "./pages/DriverDispatch";
 import Maintenance from "./pages/Maintenance";
+import Penalties from "./pages/Penalties";
 import Inventory from "./pages/Inventory";
 import Payments from "./pages/Payments";
 import RefundRequests from "./pages/RefundRequests";
@@ -144,6 +145,11 @@ function AppRoutes() {
             <Route path="/maintenance" element={
                 <ProtectedRoute>
                     <DashboardLayout><Maintenance /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/penalties" element={
+                <ProtectedRoute>
+                    <DashboardLayout><Penalties /></DashboardLayout>
                 </ProtectedRoute>
             } />
             {/* Inventory = the parts catalog (name/type/serial), edited

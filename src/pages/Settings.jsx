@@ -21,13 +21,21 @@ const IconMap = ({ className = "w-4 h-4" }) => (
 const FLAT_FEE_FIELDS = [
   { key: "serviceFee", label: "Service Fee", hint: "Flat platform/service fee, added to every booking." },
   { key: "gatewayFee", label: "Gateway Fee", hint: "Flat payment gateway fee, added to every booking." },
-  { key: "depositFee", label: "Deposit Fee", hint: "Reservation deposit. Tracked separately from the total, used for the balance-on-pickup math." },
 ];
 
 const AREA_FEE_FIELDS = [
   { key: "extraFeeOutsideArea", label: "Extra Fee — Outside Area", hint: "Charged when the drop-off destination is outside the base service area." },
   { key: "driversFeeBaseArea", label: "Driver's Fee — Base Area", hint: "Chauffeur fee when destination is inside the base area." },
   { key: "driversFeeOutsideArea", label: "Driver's Fee — Outside Area", hint: "Chauffeur fee when destination is outside the base area." },
+];
+
+// The real, refundable security deposit + late-return penalty settings.
+// These already existed in the backend model with no admin UI at all —
+// changing them required editing Firestore directly. This is that UI.
+const DEPOSIT_FIELDS = [
+  { key: "securityDepositAmount", label: "Security Deposit Amount", hint: "Refundable deposit collected at pickup. Snapshotted onto each booking at the moment it's actually collected, so changing this never affects a deposit already taken." },
+  { key: "lateFeeRatePerHour", label: "Late Fee Rate (per hour)", hint: "Charged per billable hour late at return, after the grace period below." },
+  { key: "lateFeeGraceMinutes", label: "Late Fee Grace Period (minutes)", hint: "Minutes late that are forgiven before the late fee starts accruing.", unit: "min" },
 ];
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
@@ -177,7 +185,7 @@ export default function Settings() {
   const arraysEqual = (a = [], b = []) => a.length === b.length && a.every((v, i) => v === b[i]);
 
   const isDirty = !!(form && saved) && (
-    FLAT_FEE_FIELDS.concat(AREA_FEE_FIELDS).some(({ key }) => String(form[key]) !== String(saved[key])) ||
+    FLAT_FEE_FIELDS.concat(AREA_FEE_FIELDS, DEPOSIT_FIELDS).some(({ key }) => String(form[key]) !== String(saved[key])) ||
     !arraysEqual(form.baseAreaKeywords, saved.baseAreaKeywords)
   );
 
@@ -189,10 +197,12 @@ export default function Settings() {
       const payload = {
         serviceFee: Number(form.serviceFee),
         gatewayFee: Number(form.gatewayFee),
-        depositFee: Number(form.depositFee),
         extraFeeOutsideArea: Number(form.extraFeeOutsideArea),
         driversFeeBaseArea: Number(form.driversFeeBaseArea),
         driversFeeOutsideArea: Number(form.driversFeeOutsideArea),
+        securityDepositAmount: Number(form.securityDepositAmount),
+        lateFeeRatePerHour: Number(form.lateFeeRatePerHour),
+        lateFeeGraceMinutes: Number(form.lateFeeGraceMinutes),
         baseAreaKeywords: form.baseAreaKeywords || [],
       };
 
@@ -425,6 +435,37 @@ export default function Settings() {
                 still overlap (e.g. "manila" also matches "New Manila," a Quezon City district). Picking from the list
                 only prevents typos, it doesn't remove that overlap.
               </p>
+            </div>
+          </div>
+
+          {/* Security Deposit & Late Fees */}
+          <div className={`${card} space-y-4`}>
+            <div>
+              <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
+                <IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Security Deposit & Late Fees
+              </h2>
+              <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
+                The real, refundable deposit collected at pickup, and the late-return penalty rate. Changing these
+                only affects bookings from this point forward — anything already collected keeps its original amount.
+              </p>
+            </div>
+            <div className="grid sm:grid-cols-3 gap-4">
+              {DEPOSIT_FIELDS.map(({ key, label, hint, unit = "₱" }) => (
+                <div key={key} className="space-y-1">
+                  <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>{label}</label>
+                  <div className="relative">
+                    <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
+                    <input
+                      type="number" min="0" step="1"
+                      value={form[key]}
+                      onChange={(e) => handleNumberChange(key, e.target.value)}
+                      disabled={!editMode}
+                      className={`${inputCls} pl-6`}
+                    />
+                  </div>
+                  <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>{hint}</p>
+                </div>
+              ))}
             </div>
           </div>
 

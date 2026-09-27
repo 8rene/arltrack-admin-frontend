@@ -631,7 +631,6 @@ export default function Payments() {
 
                   <Section title="Fee Breakdown">
                     <Row label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
-                    <Row label="Deposit Fee" value={peso(selected.depositFee, fmtCurrency)} />
                     <Row label="Extra Fee" value={peso(selected.extraFee, fmtCurrency)} />
                     <Row label="Service Fee" value={peso(selected.serviceFee, fmtCurrency)} />
                     <div className="border-t pt-2 mt-1">
