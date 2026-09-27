@@ -4,6 +4,32 @@ import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../fireabase";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
+import TripMapModal from "../components/TripMapModal";
+
+// Same shape MyTrips.jsx's tripStops() builds for TripMapModal — pickup,
+// dropoff, and any extra stops the customer selected at booking time
+// (booking.geofenceZones, now resolved by getAllBookings alongside
+// pickupLocation/dropoffLocation — see booking.service.js's
+// resolveHistoryInfo). Kept as its own small copy here rather than a
+// shared import: duplicating small resolvers/helpers per-module is the
+// existing convention in this codebase (see driverDispatch.service.js).
+const SAME_SPOT_DEG = 0.0005;
+const isSameSpot = (a, b) =>
+  !!a && !!b && Math.abs(a.lat - b.lat) < SAME_SPOT_DEG && Math.abs(a.lng - b.lng) < SAME_SPOT_DEG;
+
+function tripStops(booking) {
+  const stops = [];
+  if (booking.pickupLocation) stops.push({ key: "pickup", type: "pickup", ...booking.pickupLocation });
+  if (booking.dropoffLocation) stops.push({ key: "dropoff", type: "dropoff", ...booking.dropoffLocation });
+  (booking.geofenceZones || []).forEach((zone, i) => {
+    if (typeof zone.lat !== "number" || typeof zone.lng !== "number") return;
+    const label = (zone.label || "").toLowerCase();
+    if (label.includes("pickup") || label.includes("drop")) return;
+    if (isSameSpot(zone, booking.pickupLocation) || isSameSpot(zone, booking.dropoffLocation)) return;
+    stops.push({ key: `stop-${i}`, type: "stop", address: zone.label || `Stop ${i + 1}`, lat: zone.lat, lng: zone.lng });
+  });
+  return stops;
+}
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
@@ -604,6 +630,37 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
       .catch(() => setLinkedMaintenance([]));
   }, [booking, getToken]);
 
+  // Every stop for this booking's trip (pickup, dropoff, any extra stops
+  // selected at booking time) — same shape MyTrips.jsx's map already uses.
+  // Only ever non-empty once getAllBookings has resolved a session for
+  // this booking (see booking.service.js's resolveHistoryInfo).
+  const [mapOpen, setMapOpen] = useState(false);
+  const locationStops = tripStops(booking);
+
+  // Existing penalties already tied to this booking — same "always shown,
+  // even when empty" treatment as Linked Maintenance below, so staff can
+  // see at a glance whether anything's been noted against this booking
+  // instead of guessing or re-checking on the Penalties page.
+  const [linkedPenalties, setLinkedPenalties] = useState(null); // null = loading
+  useEffect(() => {
+    const bID = booking.bookingID || booking.id;
+    if (!bID) { setLinkedPenalties([]); return; }
+    fetch(`${process.env.REACT_APP_API_URL}/api/penalties/booking/${encodeURIComponent(bID)}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((r) => r.json())
+      .then((json) => setLinkedPenalties(json.data || []))
+      .catch(() => setLinkedPenalties([]));
+  }, [booking, getToken]);
+
+  // Penalties.jsx is where penalties actually get drafted (see its own
+  // CreatePenaltyModal) — this hands it the bookingID via query param so
+  // the draft it opens is pre-filled and locked to THIS booking, instead
+  // of staff having to copy/type the ID over there themselves.
+  const goToNotePenalty = () => {
+    navigate(`/penalties?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -642,7 +699,25 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
             {row("Start Date",      fmtDate(booking.startDateTime))}
             {row("End Date",        fmtDate(booking.endDateTime))}
             {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
-            {row("Location",        booking.location)}
+            {/* Location — the address string, plus a map (same component
+                MyTrips.jsx uses) plotting pickup, dropoff, and any extra
+                stops, instead of just printing the raw address text. */}
+            <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
+              <span className="text-gray-500 font-medium w-36 shrink-0">Location</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-gray-800 text-right truncate">{booking.location || "—"}</span>
+                {locationStops.length > 0 ? (
+                  <button
+                    onClick={() => setMapOpen(true)}
+                    className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
+                  >
+                    View Map →
+                  </button>
+                ) : (
+                  <span className="text-xs text-gray-300 shrink-0">No map data</span>
+                )}
+              </div>
+            </div>
           </div>
 
           <div>
@@ -691,20 +766,52 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
               </div>
             </div>
 
+            {/* Driver — the actual chauffeur assigned via Driver Dispatch
+                (booking.driverID, resolved to a name/phone by
+                getAllBookings), or an explicit "No driver assigned" so an
+                unassigned chauffeur booking never just looks like a
+                blank/missing field. */}
+            <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
+              <span className="text-gray-500 font-medium w-28 shrink-0">Driver</span>
+              {booking.driverID ? (
+                <span className="text-gray-800 text-right">
+                  {booking.driverName || "—"}
+                  {booking.driverPhone && booking.driverPhone !== "—" ? ` · ${booking.driverPhone}` : ""}
+                </span>
+              ) : (
+                <span className="text-gray-400 italic text-right">No driver assigned</span>
+              )}
+            </div>
+
             {/* System Inventory — before/after-trip part condition, checked
                 inline against THIS booking's own records (not a link that
                 assumes you'll land on the right one — Vehicle Inspections'
                 own deep-link picks a car's nearest/upcoming booking, which
-                for a past booking is very likely a different one). */}
+                for a past booking is very likely a different one).
+                The jump-to-inspection action lives here now instead of as
+                its own top "Inspect Vehicle" button — same goToInventory
+                target either way, just worded as "Inspect Vehicle" when
+                nothing's recorded yet vs "View full record" once it is, so
+                there's one action for this, not two doing the same thing. */}
             <div className="py-2 border-b border-gray-50 last:border-0 text-sm space-y-1.5">
               <div className="flex justify-between items-center">
                 <span className="text-gray-500 font-medium w-28 shrink-0">Inventory</span>
-                {inventoryLoading ? (
+                {inventoryLoading && (
                   <span className="text-xs text-gray-400 italic">Checking…</span>
-                ) : !inventoryCheck?.before && !inventoryCheck?.after ? (
-                  <span className="text-xs text-gray-300">Not recorded</span>
-                ) : null}
+                )}
               </div>
+
+              {!inventoryLoading && !inventoryCheck?.before && !inventoryCheck?.after && (
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-gray-300">Not recorded</span>
+                  <button
+                    onClick={goToInventory}
+                    className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg px-2.5 py-1 transition-colors"
+                  >
+                    📸 Inspect Vehicle →
+                  </button>
+                </div>
+              )}
 
               {!inventoryLoading && (inventoryCheck?.before || inventoryCheck?.after) && (
                 <div className="flex flex-col gap-1 pl-0">
@@ -795,8 +902,49 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
           </button>
         </div>
 
+        {/* Penalties already noted against this booking — same "always
+            shown" treatment as Trip History / Linked Maintenance above.
+            "Note a Penalty" hands off to Penalties.jsx (see goToNotePenalty)
+            with the bookingID pre-filled and locked, so the draft it opens
+            is guaranteed to link back to this exact booking. */}
+        <div className="flex justify-between items-center py-2.5 px-3 rounded-xl bg-gray-50 border border-gray-100">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-700">Penalties</p>
+            {linkedPenalties === null ? (
+              <p className="text-xs text-gray-400">Loading…</p>
+            ) : linkedPenalties.length === 0 ? (
+              <p className="text-xs text-gray-400">No penalty noted against this booking yet</p>
+            ) : (
+              <ul className="mt-1 space-y-0.5">
+                {linkedPenalties.map((p) => (
+                  <li key={p.penaltyID} className="text-xs text-gray-600">
+                    {fmt(p.amount)} — <span className={
+                      p.status === "Confirmed" ? "text-green-600"
+                      : p.status === "Draft" ? "text-amber-600"
+                      : "text-gray-400"
+                    }>{p.status}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button
+            onClick={goToNotePenalty}
+            className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-3 py-1.5 transition-colors shrink-0"
+          >
+            {linkedPenalties?.length ? "View / note another →" : "+ Note a Penalty"}
+          </button>
+        </div>
+
         <button onClick={onClose} className="w-full mt-2 py-2 border rounded-xl text-sm">Close</button>
       </div>
+
+      <TripMapModal
+        open={mapOpen}
+        onClose={() => setMapOpen(false)}
+        title={`${booking.customerName || "Booking"} — ${booking.vehicleName || ""}`}
+        stops={locationStops}
+      />
     </div>
   );
 }

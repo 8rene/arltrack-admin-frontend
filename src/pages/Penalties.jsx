@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 const API_URL = process.env.REACT_APP_API_URL;
 const PAGE_SIZE = 15;
@@ -120,16 +120,19 @@ const STAT_FILTERS = {
   voidedWaived:  { predicate: (p) => p.status === "Voided" || p.status === "Waived" },
 };
 
-const STATUS_BADGE = {
-  Draft:     "bg-gray-100 text-gray-600 border border-gray-200",
-  Confirmed: "bg-blue-50 text-blue-700 border border-blue-200",
-  Voided:    "bg-gray-100 text-gray-400 border border-gray-200 line-through",
-  Waived:    "bg-purple-50 text-purple-600 border border-purple-200",
+// Badge for the computed `settlementStatus` field (Unpaid / Partially Paid
+// / Paid) — this is what every row displays now. The raw lifecycle status
+// (Draft/Confirmed/Voided/Waived) still drives which action buttons show
+// (see the Actions column below), it's just not shown as its own badge.
+const SETTLEMENT_BADGE = {
+  Unpaid:         "bg-red-50 text-red-600 border border-red-200",
+  "Partially Paid": "bg-amber-50 text-amber-700 border border-amber-200",
+  Paid:           "bg-green-50 text-green-700 border border-green-200",
 };
 
-function StatusBadge({ status }) {
+function SettlementBadge({ status }) {
   return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_BADGE[status] || "bg-gray-100 text-gray-600"}`}>
+    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${SETTLEMENT_BADGE[status] || "bg-gray-100 text-gray-600"}`}>
       {status || "—"}
     </span>
   );
@@ -171,8 +174,13 @@ function StatCard({ icon, value, label, color, onClick, active }) {
 // charge" is a free-typed lineItems list with no such fields — nothing
 // stops staff from also adding extra custom lines alongside a late-fee
 // suggestion in the same draft, the total is just the sum either way.
-function CreatePenaltyModal({ token, onClose, onCreated }) {
-  const [bookingID, setBookingID] = useState("");
+function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }) {
+  const [bookingID, setBookingID] = useState(initialBookingID);
+  // Opened via Bookings.jsx's "Note a Penalty" button (see goToNotePenalty
+  // there) — the bookingID arrives pre-filled via ?bookingID= and is kept
+  // locked so the draft this creates is guaranteed to link back to the
+  // exact booking staff came from, not whatever they might retype here.
+  const linkedFromBooking = !!initialBookingID;
   const [lineItems, setLineItems] = useState([{ description: "", amount: "" }]);
   const [lateInfo, setLateInfo] = useState(null); // { lateMinutes, graceMinutes, ratePerHour } once a late-fee line is added
   const [overrideAmount, setOverrideAmount] = useState("");
@@ -267,13 +275,18 @@ function CreatePenaltyModal({ token, onClose, onCreated }) {
           <label className="text-xs font-semibold text-gray-500">Booking ID</label>
           <div className="flex gap-2 mt-1">
             <input type="text" value={bookingID} onChange={(e) => setBookingID(e.target.value)}
-              placeholder="e.g. BK123"
-              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+              placeholder="e.g. BK123" readOnly={linkedFromBooking}
+              className={`flex-1 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light ${
+                linkedFromBooking ? "bg-gray-50 border-gray-200 text-gray-500" : "border-gray-200"
+              }`} />
             <button onClick={suggestLateFee} disabled={loadingPreview}
               className="px-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 whitespace-nowrap">
               {loadingPreview ? "Checking…" : "Suggest late fee"}
             </button>
           </div>
+          {linkedFromBooking && (
+            <p className="text-xs text-teal-600 mt-1">Linked from Booking Details — this draft will be tied to booking {bookingID}.</p>
+          )}
           {lateInfo && (
             <p className="text-xs text-gray-400 mt-1">
               {lateInfo.lateMinutes > 0
@@ -373,6 +386,70 @@ function ReasonModal({ action, onClose, onSubmit, submitting }) {
   );
 }
 
+// ─── MARK PAID MODAL ─────────────────────────────────────────────────────
+//
+// Records a payment against a Confirmed penalty's remaining balance — for
+// money collected outside the automatic deposit deduction at Return (e.g.
+// staff took cash in store, or the customer paid online for an "owed by
+// customer" negative-deposit balance). Wired to recordShortfallPayment(),
+// which applies the amount across the customer's unpaid Confirmed
+// penalties oldest-first — not just this one row — so a partial amount
+// can end up settling an older penalty before this one if there's more
+// than one outstanding.
+const SHORTFALL_METHODS = ["InStore", "GCash", "Maya", "BankTransfer", "PayMongo"];
+
+function MarkPaidModal({ penalty, onClose, onSubmit, submitting }) {
+  const owed = (penalty.amount || 0) - (penalty.paidAmount || 0);
+  const [amount, setAmount] = useState(String(owed));
+  const [method, setMethod] = useState(SHORTFALL_METHODS[0]);
+  const [referenceNumber, setReferenceNumber] = useState("");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-arl-dark">Mark Paid</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
+        </div>
+        <p className="text-xs text-gray-400">
+          {penalty.customerName || "This customer"} still owes {peso(owed)} on this penalty.
+          If they have other unpaid penalties too, payment applies to the oldest one first.
+        </p>
+        <div>
+          <label className="text-xs font-semibold text-gray-500">Amount received</label>
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+            className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-gray-500">Method</label>
+          <select value={method} onChange={(e) => setMethod(e.target.value)}
+            className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light">
+            {SHORTFALL_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-gray-500">Reference number (optional)</label>
+          <input type="text" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)}
+            className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
+            Cancel
+          </button>
+          <button
+            onClick={() => onSubmit({ amount: Number(amount), method, referenceNumber: referenceNumber.trim() })}
+            disabled={submitting || !(Number(amount) > 0)}
+            className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+          >
+            {submitting ? "Recording…" : "Record Payment"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 //
 // Lists every penalty in the system, and is also where staff draft new
@@ -384,6 +461,7 @@ function ReasonModal({ action, onClose, onSubmit, submitting }) {
 export default function Penalties() {
   const token = localStorage.getItem("token");
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -391,8 +469,23 @@ export default function Penalties() {
   const [toast, setToast]     = useState(null);
   const [activeStatFilter, setActiveStatFilter] = useState(null); // null | "draft" | "unpaid" | "settled" | "voidedWaived"
   const [showCreate, setShowCreate] = useState(false);
+  const [prefillBookingID, setPrefillBookingID] = useState(""); // set via ?bookingID= (Bookings.jsx's "Note a Penalty" button)
   const [busyId, setBusyId] = useState(null); // penaltyID currently being confirmed/voided/waived
   const [reasonModal, setReasonModal] = useState(null); // { penaltyID, action: "Voided" | "Waived" }
+  const [markPaidModal, setMarkPaidModal] = useState(null); // the penalty record being paid off
+
+  // Deep-link from Bookings.jsx's "Note a Penalty" button: opens the
+  // create-draft modal straight away with the bookingID already filled in
+  // and locked (see CreatePenaltyModal's linkedFromBooking), same pattern
+  // as Bookings.jsx's own ?open= handling for notification deep-links —
+  // runs once, strips the param afterward so refreshing doesn't re-open it.
+  useEffect(() => {
+    const bID = searchParams.get("bookingID");
+    if (!bID) return;
+    setPrefillBookingID(bID);
+    setShowCreate(true);
+    setSearchParams((prev) => { prev.delete("bookingID"); return prev; }, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const toggleStatFilter = (key) => setActiveStatFilter((v) => (v === key ? null : key));
 
@@ -435,6 +528,27 @@ export default function Penalties() {
       fetchAll();
     } catch (e) {
       showToast(e.message || `Failed to ${action.toLowerCase()} penalty.`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const submitMarkPaid = async ({ amount, method, referenceNumber }) => {
+    const penaltyID = markPaidModal.id;
+    setBusyId(penaltyID);
+    try {
+      const res = await fetch(`${API_URL}/api/penalties/shortfall-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userID: markPaidModal.userID, amount, method, referenceNumber }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to record payment.");
+      showToast("Payment recorded.", "success");
+      setMarkPaidModal(null);
+      fetchAll();
+    } catch (e) {
+      showToast(e.message || "Failed to record payment.");
     } finally {
       setBusyId(null);
     }
@@ -507,8 +621,9 @@ export default function Penalties() {
       {showCreate && (
         <CreatePenaltyModal
           token={token}
-          onClose={() => setShowCreate(false)}
-          onCreated={() => { setShowCreate(false); showToast("Draft penalty created.", "success"); fetchAll(); }}
+          initialBookingID={prefillBookingID}
+          onClose={() => { setShowCreate(false); setPrefillBookingID(""); }}
+          onCreated={() => { setShowCreate(false); setPrefillBookingID(""); showToast("Draft penalty created.", "success"); fetchAll(); }}
         />
       )}
 
@@ -518,6 +633,15 @@ export default function Penalties() {
           submitting={busyId === reasonModal.penaltyID}
           onClose={() => setReasonModal(null)}
           onSubmit={submitVoidOrWaive}
+        />
+      )}
+
+      {markPaidModal && (
+        <MarkPaidModal
+          penalty={markPaidModal}
+          submitting={busyId === markPaidModal.id}
+          onClose={() => setMarkPaidModal(null)}
+          onSubmit={submitMarkPaid}
         />
       )}
 
@@ -604,7 +728,7 @@ export default function Penalties() {
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700">{peso(p.amount)}</td>
                   <td className="px-4 py-3 text-xs text-gray-700">{peso(p.paidAmount)}</td>
-                  <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
+                  <td className="px-4 py-3"><SettlementBadge status={p.settlementStatus} /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {p.status === "Draft" && (
@@ -620,10 +744,18 @@ export default function Penalties() {
                         </>
                       )}
                       {p.status === "Confirmed" && (
-                        <button onClick={() => setReasonModal({ penaltyID: p.id, action: "Waived" })} disabled={busyId === p.id}
-                          className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-purple-300 hover:text-purple-600 disabled:opacity-40 font-medium">
-                          {busyId === p.id ? "…" : "Waive"}
-                        </button>
+                        <>
+                          {p.settlementStatus !== "Paid" && (
+                            <button onClick={() => setMarkPaidModal(p)} disabled={busyId === p.id}
+                              className="text-xs px-2.5 py-1 rounded-lg bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-40 font-medium">
+                              Mark Paid
+                            </button>
+                          )}
+                          <button onClick={() => setReasonModal({ penaltyID: p.id, action: "Waived" })} disabled={busyId === p.id}
+                            className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-purple-300 hover:text-purple-600 disabled:opacity-40 font-medium">
+                            {busyId === p.id ? "…" : "Waive"}
+                          </button>
+                        </>
                       )}
                       {p.bookingID && (
                         <button onClick={() => viewBooking(p.bookingID)}

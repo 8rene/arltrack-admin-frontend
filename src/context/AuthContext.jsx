@@ -186,7 +186,30 @@ export function AuthProvider({ children }) {
             if (unsubDoc) { unsubDoc(); unsubDoc = null; }
             logout("revoked");
             alert("Your role has changed. Please log in again.");
+            return;
           }
+
+          // Live-sync username/phone into the session — not just for a
+          // direct self-edit anymore (EditProfileModal already patches
+          // those immediately via updateUser). This covers the cases that
+          // don't: a Supervisor's edit request approved later by an Admin,
+          // or an Admin editing someone ELSE's account from Users.jsx —
+          // both change this same "user" doc from a different browser tab
+          // entirely, so without this listener picking it up, Header.jsx
+          // (and anything else reading user.*) stayed stale until the
+          // next login. Functional update so this always compares against
+          // the latest state, not whatever `user` was when this effect's
+          // closure was created.
+          setUser((prev) => {
+            if (!prev) return prev;
+            const patch = {};
+            if (data.username !== undefined && data.username !== prev.username) patch.username = data.username;
+            if (data.phone    !== undefined && data.phone    !== prev.phone)    patch.phone    = data.phone;
+            if (!Object.keys(patch).length) return prev;
+            const next = { ...prev, ...patch };
+            try { localStorage.setItem("user", JSON.stringify(next)); } catch {}
+            return next;
+          });
         },
         () => {
           if (handled) return;

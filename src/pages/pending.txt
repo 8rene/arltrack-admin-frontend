@@ -327,8 +327,6 @@ er.js:21:20) {
 
 customer stop showing the next month on the end 
 
-inventory
-car trackign or booking dont allow connecting to the vehicle inspection of such,
 
 and vehicle inspection dont allow to ese other upcoming bookings, not like it matter but what if theres problem right it hsould be
 currently its only allowed when driver notifies
@@ -367,3 +365,4 @@ return button should have a check of unassign device first
 pickup river should include is deposit fee with you 
 is discount confirmed and was given already?
 
+customer still dont see its own penalties

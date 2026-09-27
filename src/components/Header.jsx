@@ -56,6 +56,10 @@ const ROUTE_BY_COLLECTION = {
   cars: "/car-tracking",
   refundRequests: "/refund-requests",
   carMaintenance: "/maintenance",
+  // Profile edit / ID resubmit approve-reject notifications (sent to the
+  // requester themself, not staff) — nothing to deep-link into beyond
+  // their own Account page.
+  account: "/account",
 };
 
 const META_BY_TYPE = {
@@ -76,6 +80,12 @@ const META_BY_TYPE = {
   // return until the vehicle inspection is completed.
   inspection_pickup_needed: { bg: "bg-orange-100", emoji: "📋", title: "Pickup Inspection Needed" },
   inspection_return_needed: { bg: "bg-orange-100", emoji: "📋", title: "Return Inspection Needed" },
+  // Sent to the requester themself once an Owner/Admin reviews their
+  // profile-edit or ID/license resubmission request.
+  profile_edit_approved: { bg: "bg-green-100", emoji: "✅", title: "Profile Update" },
+  profile_edit_rejected: { bg: "bg-red-100",   emoji: "❌", title: "Profile Update" },
+  id_resubmit_approved:  { bg: "bg-green-100", emoji: "✅", title: "Document/License Update" },
+  id_resubmit_rejected:  { bg: "bg-red-100",   emoji: "❌", title: "Document/License Update" },
 };
 
 /* ── Notification Row ── */

@@ -165,6 +165,21 @@ export default function VehicleDocs() {
   const [bookingUser, setBookingUser]       = useState(null);
   const [bookingLoading, setBookingLoading] = useState(false);
 
+  // Every upcoming/ongoing booking for the selected car (not just the
+  // nearest one) — lets staff browse and inspect each one via Next/
+  // Previous instead of only ever seeing whichever booking sorted first.
+  // activeBooking is always upcomingBookings[activeBookingIndex] once a
+  // car with open bookings is selected; sorted soonest-first, same order
+  // selectCar always used for picking the default "target" booking.
+  const [upcomingBookings, setUpcomingBookings]     = useState([]);
+  const [activeBookingIndex, setActiveBookingIndex] = useState(0);
+  // True only while goToUpcomingIndex is fetching the next booking's data —
+  // deliberately separate from bookingLoading (which still gates the full
+  // panel skeleton on the *first* load of a car). Scoped this narrowly so
+  // stepping Next/Previous only refreshes the booking info card itself —
+  // Before/After Trip, Past Trips etc. stay mounted and don't re-skeleton.
+  const [switchingBooking, setSwitchingBooking]     = useState(false);
+
   // Active tab: "before" | "after"  — same as Inventory's activeTab
   const [tripType, setTripType] = useState("before");
   // Before/After photo card can be folded away when someone only wants the Past Trips
@@ -201,7 +216,7 @@ export default function VehicleDocs() {
   // and scrolled into view.
   const [historyFocusID, setHistoryFocusID]     = useState(null);
   const [viewingPhoto, setViewingPhoto]         = useState(null);
-  const [docsLoading, setDocsLoading] = useState(false);
+  const [, setDocsLoading] = useState(false);
 
   // Pending file uploads { fieldKey: { file, preview } }
   const [uploads, setUploads]     = useState({});
@@ -500,6 +515,9 @@ export default function VehicleDocs() {
     setExpandedHistoryID(null);
     setHistoryRecords({});
     setHistoryFocusID(null);
+    setUpcomingBookings([]);
+    setActiveBookingIndex(0);
+    setDocsCollapsed(false);
 
     // Load parts
     setPartsLoading(true);
@@ -547,24 +565,33 @@ export default function VehicleDocs() {
         // driver's/customer's trip history for the same car.
         .filter(b => !isDriver || b.driverID === user?.uid);
 
-      if (!target) {
-        // Trust status, not scheduled dates, to decide what's "active."
-        // "upcoming"/"ongoing" both mean the trip genuinely hasn't wrapped
-        // up yet — a late pickup or delayed return whose original
-        // startDateTime/endDateTime has already passed is still very much
-        // active until it's actually marked completed/cancelled. Sort by
-        // startDateTime only to pick among multiple open bookings, never
-        // to exclude one.
-        const candidates = all
-          .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
-          .sort((a, b) => toSec(a.startDateTime) - toSec(b.startDateTime));
+      // Every upcoming/ongoing booking for this car (not just whichever one
+      // sorts first) — feeds both the default "target" pick below and the
+      // Next/Previous browsing UI. Trust status, not scheduled dates, to
+      // decide what's "active": a late pickup or delayed return whose
+      // original startDateTime/endDateTime has already passed is still
+      // very much active until it's actually marked completed/cancelled.
+      // Sort by startDateTime only to order multiple open bookings, never
+      // to exclude one.
+      const candidates = all
+        .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
+        .sort((a, b) => toSec(a.startDateTime) - toSec(b.startDateTime));
 
+      if (!target) {
         target = candidates[0] || null;
       }
+      setUpcomingBookings(candidates);
 
       // Past trips for this car — every booking that's actually run its
       // course, excluding whichever one we just picked as active.
       const targetID = target ? (target.bookingID || target.id) : null;
+      // Where `target` landed within `candidates` — drives the "X of Y"
+      // indicator and which Next/Previous step it starts from. A target
+      // that isn't itself upcoming/ongoing (a completed booking opened via
+      // "View full record →") has no position in this list; default to 0
+      // rather than -1 so the arrows still land somewhere sensible.
+      const targetIdx = targetID ? candidates.findIndex(b => (b.bookingID || b.id) === targetID) : -1;
+      setActiveBookingIndex(targetIdx >= 0 ? targetIdx : 0);
       const past = all
         .filter(b => {
           const status = b.status?.toLowerCase();
@@ -1000,6 +1027,61 @@ export default function VehicleDocs() {
   const hasUnsavedStatusEdits   = Object.keys(currentStatusEdits).length > 0;
   const hasUnsavedChanges       = hasUnsavedUploads || hasUnsavedStatusEdits;
   const pendingChangeCount      = Object.keys(uploads).length + Object.keys(currentStatusEdits).length;
+
+  // ── Next/Previous through this car's other upcoming/ongoing bookings —
+  // same booking-switch work selectCar does for its initial pick (resolve
+  // customer, load photo docs + parts status), just re-run for whichever
+  // entry in upcomingBookings was stepped to. Warns before discarding
+  // unsaved photo/status edits, since unlike switching cars (which has
+  // always silently reset these) this is a one-click accident away.
+  const goToUpcomingIndex = async (idx) => {
+    const nextBooking = upcomingBookings[idx];
+    if (!nextBooking || idx === activeBookingIndex) return;
+
+    if (hasUnsavedChanges && !window.confirm(
+      "You have unsaved changes on this booking. Switch to the other booking anyway? Unsaved changes will be lost."
+    )) {
+      return;
+    }
+
+    setActiveBookingIndex(idx);
+    setActiveBooking(nextBooking);
+    setBookingUser(null);
+    setBeforeDoc(null);
+    setAfterDoc(null);
+    setBeforeInv(null);
+    setAfterInv(null);
+    setBeforeStatusEdits({});
+    setAfterStatusEdits({});
+    setUploads({});
+    setTripType("before");
+    // Default back to visible on every booking switch — otherwise a Hide
+    // toggled on a previous booking would stay collapsed here too, even
+    // though nothing about that choice was really "for" this booking.
+    setDocsCollapsed(false);
+
+    setSwitchingBooking(true);
+    try {
+      const userID = nextBooking.userID;
+      if (userID) {
+        const [detailDoc, userDoc] = await Promise.all([
+          getDoc(doc(db, "userDetails", userID)),
+          getDoc(doc(db, "user", userID)),
+        ]);
+        const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
+        const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+        const { email = "", phone = "" } = userDoc.exists() ? userDoc.data() : {};
+        setBookingUser({ fullName: fullName || email || "—", email, phone });
+      }
+      const nextBID = nextBooking.bookingID || nextBooking.id;
+      await Promise.all([loadPhotoDocs(nextBID), loadInventoryStatus(nextBID)]);
+    } catch (e) {
+      console.error("booking switch error:", e);
+    } finally {
+      setSwitchingBooking(false);
+    }
+  };
+
   // Pickup/Return focus mode exists to get these photos taken, so it always shows them.
   const docsHidden              = docsCollapsed && !inPickupMode && !inReturnMode;
   // Whether a saved parts-condition record exists for the tab being viewed
@@ -1189,8 +1271,14 @@ export default function VehicleDocs() {
               </div>
             </div>
 
-            {/* Booking + Docs Section — same structure as Inventory */}
-            {bookingLoading || docsLoading ? (
+            {/* Booking + Docs Section — same structure as Inventory.
+                Gated on bookingLoading only (the first load of a car) —
+                NOT docsLoading/switchingBooking, so stepping Next/Previous
+                between this car's own upcoming bookings never collapses
+                Before/After Trip or Past Trips into this skeleton; only
+                the booking info card below shows its own lighter loading
+                treatment for that. */}
+            {bookingLoading ? (
               <div className="bg-white rounded-2xl border border-gray-100 p-5 animate-pulse h-48" />
             ) : !activeBooking ? (
               <div className="bg-white rounded-2xl border border-gray-100 shadow-soft px-5 py-3 flex items-center gap-3">
@@ -1212,18 +1300,51 @@ export default function VehicleDocs() {
                         {activeBooking.status?.toLowerCase() === "ongoing" ? "Active Booking" : "Upcoming Booking"}
                       </h3>
                     </div>
-                    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("green") ? "bg-green-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("yellow") ? "bg-yellow-400" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("blue") ? "bg-blue-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("red") ? "bg-red-500" : "bg-gray-400"}`} />
-                      {activeBooking.status?.replace("_", " ") || "—"}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {/* Next/Previous — only shown once this car actually has more
+                          than one open booking to browse between. */}
+                      {upcomingBookings.length > 1 && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => goToUpcomingIndex(activeBookingIndex - 1)}
+                            disabled={activeBookingIndex <= 0 || switchingBooking || inPickupMode || inReturnMode}
+                            title={inPickupMode || inReturnMode ? "Finish or cancel this pickup/return first" : "Previous upcoming booking"}
+                            className="w-6 h-6 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            ‹
+                          </button>
+                          <span className="text-[11px] font-semibold text-gray-400 tabular-nums whitespace-nowrap">
+                            {switchingBooking ? "…" : `${activeBookingIndex + 1} of ${upcomingBookings.length}`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => goToUpcomingIndex(activeBookingIndex + 1)}
+                            disabled={activeBookingIndex >= upcomingBookings.length - 1 || switchingBooking || inPickupMode || inReturnMode}
+                            title={inPickupMode || inReturnMode ? "Finish or cancel this pickup/return first" : "Next upcoming booking"}
+                            className="w-6 h-6 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("green") ? "bg-green-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("yellow") ? "bg-yellow-400" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("blue") ? "bg-blue-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("red") ? "bg-red-500" : "bg-gray-400"}`} />
+                        {activeBooking.status?.replace("_", " ") || "—"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs text-gray-600">
+                  {/* Only this fields grid dims/pulses while switchingBooking —
+                      everything else on the page (Before/After Trip, Past
+                      Trips) stays exactly as it was until the new booking's
+                      own data actually lands. */}
+                  <div className={`grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs text-gray-600 transition-opacity ${switchingBooking ? "opacity-40 animate-pulse" : ""}`}>
                     <div className="flex justify-between col-span-2 sm:col-span-1">
                       <span className="text-gray-400 font-medium">Booking ID</span>
                       <span className="font-mono text-teal-700 font-semibold truncate max-w-[55%] text-right">{bID}</span>
                     </div>
                     <div className="flex justify-between col-span-2 sm:col-span-1">
                       <span className="text-gray-400 font-medium">Customer</span>
-                      <span className="text-gray-700 truncate max-w-[55%] text-right">{bookingUser?.fullName || "—"}</span>
+                      <span className="text-gray-700 truncate max-w-[55%] text-right">{switchingBooking ? "—" : (bookingUser?.fullName || "—")}</span>
                     </div>
                     <div className="flex justify-between col-span-2 sm:col-span-1">
                       <span className="text-gray-400 font-medium">Start Date</span>
