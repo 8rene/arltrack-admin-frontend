@@ -458,7 +458,7 @@ function ActiveTripsTab() {
       ) : (
         trips.map((trip) => {
           const isOngoing   = trip.status === "ongoing";
-          const droppedOff  = fmtTime(trip.customerDroppedOffAt);
+          const droppedOff  = fmtTime(trip.droppedOffTime);
           return (
             <div key={trip.id} className="bg-white rounded-2xl shadow-soft p-4 space-y-3">
               <div className="flex items-start justify-between gap-2">
@@ -679,12 +679,10 @@ function HistoryTab() {
               </button>
             </div>
 
-            {trip.status === "completed" && (trip.pickupTime || trip.customerDroppedOffAt || trip.returnTime) && (
+            {trip.status === "completed" && (trip.pickupTime || trip.droppedOffTime || trip.returnTime) && (
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400 bg-gray-50 rounded-lg px-2.5 py-1.5">
                 <span>Picked up: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.pickupTime)}</span></span>
-                {trip.modeOfDriving === "With Chauffeur" && (
-                  <span>Dropped off: <span className="font-semibold text-gray-600">{trip.customerDroppedOffAt ? fmtDateTimeLong(trip.customerDroppedOffAt) : "Not recorded"}</span></span>
-                )}
+                <span>Dropped off: <span className="font-semibold text-gray-600">{trip.droppedOffTime ? fmtDateTimeLong(trip.droppedOffTime) : "Not recorded"}</span></span>
                 <span>Returned: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.returnTime)}</span></span>
               </div>
             )}

@@ -872,9 +872,11 @@ export default function CarTracking() {
     runBookingAction(b.id, "completed", "Car marked returned — trip history saved.");
   };
 
-  // Chauffeur-only, separate from Return/runBookingAction above — this
+  // Every booking type, separate from Return/runBookingAction above — this
   // hits its own endpoint (PATCH /:id/dropoff) since it doesn't change
-  // booking.status at all, just stamps a timestamp on the session.
+  // booking.status at all, just stamps droppedOffTime on the session.
+  // Supervisor/staff is the only surface for a no-driver (self-drive)
+  // booking; also usable as a fallback for driver bookings.
   const handleDropoff = async (b) => {
     setActionBusyId(b.id);
     setNotice(null);
@@ -1397,27 +1399,28 @@ export default function CarTracking() {
                     </p>
                   )}
 
-                  {/* Chauffeur-only: drop-off is tracked separately from Return —
-                      the driver may still be en route home with the car. */}
-                  {ongoing.modeOfDriving === "With Chauffeur" && (
-                    <div className="mt-2 flex items-center justify-between gap-2 bg-white/60 border border-indigo-100 rounded-lg px-2.5 py-1.5">
-                      <span className="text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
-                        <Icons.MapPin className="w-3 h-3" />
-                        {ongoing.customerDroppedOffAt
-                          ? `Dropped off ${fmtDateTime(ongoing.customerDroppedOffAt)}`
-                          : "Not dropped off yet"}
-                      </span>
-                      {!ongoing.customerDroppedOffAt && (
-                        <button
-                          onClick={() => handleDropoff(ongoing)}
-                          disabled={actionBusyId === ongoing.id}
-                          className="shrink-0 px-2 py-1 border border-indigo-300 text-indigo-700 rounded-lg text-[11px] font-semibold hover:bg-indigo-50 active:scale-95 transition-all disabled:opacity-50"
-                        >
-                          {actionBusyId === ongoing.id ? "…" : "Mark Dropped Off"}
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  {/* Every booking, self-drive and chauffeur alike: the car
+                      itself has to be marked physically back before Return
+                      can be attempted — driver marks it from MyTrips on
+                      their own booking, supervisor/staff marks it here
+                      (the only surface that exists for a no-driver booking). */}
+                  <div className="mt-2 flex items-center justify-between gap-2 bg-white/60 border border-indigo-100 rounded-lg px-2.5 py-1.5">
+                    <span className="text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
+                      <Icons.MapPin className="w-3 h-3" />
+                      {ongoing.droppedOffTime
+                        ? `Dropped off ${fmtDateTime(ongoing.droppedOffTime)}`
+                        : "Not dropped off yet"}
+                    </span>
+                    {!ongoing.droppedOffTime && (
+                      <button
+                        onClick={() => handleDropoff(ongoing)}
+                        disabled={actionBusyId === ongoing.id}
+                        className="shrink-0 px-2 py-1 border border-indigo-300 text-indigo-700 rounded-lg text-[11px] font-semibold hover:bg-indigo-50 active:scale-95 transition-all disabled:opacity-50"
+                      >
+                        {actionBusyId === ongoing.id ? "…" : "Mark Dropped Off"}
+                      </button>
+                    )}
+                  </div>
 
                   <div className="flex items-center gap-2 mt-3">
                     <button

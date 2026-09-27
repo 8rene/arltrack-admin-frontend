@@ -342,7 +342,7 @@ can we use that as the return condition of penalty
 does not auto audit log
 
 booking dont allow to create a penalty button
-penaly.jsx new penalty but it should show dropdown the recent bookings 
+X penaly.jsx new penalty but it should show dropdown the recent bookings 
 instead of modal show the same like maintenance design 
 
 what is penalty status?
@@ -359,10 +359,11 @@ scheduled maintenance should not fix the alert in dashboard
 
 
 Pending payments return deposit
-security deposit should have a date after the returned date ready to be received
+security dep            osit should have a date after the returned date ready to be received
 and it should show the penalty list
 
 return button should have a check of unassign device first
 
 pickup river should include is deposit fee with you 
 is discount confirmed and was given already?
+
