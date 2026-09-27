@@ -82,6 +82,12 @@ const IconClose = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
+const IconKey = ({ className = "w-4 h-4" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+  </svg>
+);
+
 /* ── Detail row ── */
 function DetailRow({ icon, label, value }) {
   return (
@@ -336,6 +342,244 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
   );
 }
 
+// Same strength rule the backend enforces (changePassword.controller.js) —
+// checked here too just for immediate feedback; the backend is still the
+// real gate.
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()\-_=+[\]{};':"\\|,.<>/?]).{8,16}$/;
+
+/* ── Change Password Modal ──
+   Two steps: (1) pick a new password, send a code to the caller's own
+   email (POST /api/auth/send-otp, same endpoint the role-change flow
+   uses, just with purpose "change-password" so the email copy matches);
+   (2) enter that code to actually apply it (PATCH /api/auth/change-password).
+   On success the account's Firebase session is signed out and the user is
+   sent back to the login screen — the backend password change revokes the
+   old Firebase refresh token shortly after anyway, so this just makes that
+   explicit and immediate instead of confusing later. */
+function ChangePasswordModal({ onClose, onChanged }) {
+  // "request" (send the code) -> "otp" (enter + verify it, non-consuming) ->
+  // "password" (verified — now type the new password, this is what actually
+  // consumes the code) -> "success"
+  const [step, setStep] = useState("request");
+  const [otp, setOtp]                         = useState("");
+  const [newPassword, setNewPassword]         = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [sending, setSending]   = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState(null);
+  const [info, setInfo]         = useState(null); // e.g. "Code sent to your email."
+
+  const authedFetch = async (method, path, body) => {
+    const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.message || "Request failed.");
+    return json;
+  };
+
+  const handleSendCode = async () => {
+    setError(null);
+    setSending(true);
+    try {
+      const result = await authedFetch("POST", "/api/auth/send-otp", { purpose: "change-password" });
+      if (result.emailSent === false) {
+        setError(result.message || "Could not send the email right now. Please try again in a moment.");
+        return;
+      }
+      setInfo("Verification code sent to your email.");
+      setStep("otp");
+    } catch (e) {
+      setError(e.message || "Could not send the verification code. Please try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // "Is this code actually right?" — the same non-consuming check the
+  // fleet refund OTP screen already uses (POST /api/auth/check-otp), so a
+  // mistyped code gets caught right away instead of only at the very end.
+  // The code itself only actually gets burned in handleChangePassword below.
+  const handleVerifyCode = async () => {
+    setError(null);
+    if (!otp) {
+      setError("Please enter the verification code.");
+      return;
+    }
+    setVerifying(true);
+    try {
+      await authedFetch("POST", "/api/auth/check-otp", { otp });
+      setInfo(null);
+      setStep("password");
+    } catch (e) {
+      setError(e.message || "Invalid or expired code.");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    setError(null);
+    if (!newPassword || !confirmPassword) {
+      setError("Please fill in both password fields.");
+      return;
+    }
+    if (!PASSWORD_REGEX.test(newPassword)) {
+      setError("Password must be 8–16 characters with at least 1 uppercase, 1 lowercase, 1 number, and 1 special character.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // Real, single-use check happens here — the same code already
+      // confirmed via check-otp above is now actually consumed.
+      await authedFetch("PATCH", "/api/auth/change-password", { otp, newPassword });
+      // Brief confirmation inside the modal, then hand off to the parent
+      // to sign out and send the user back to the login screen with the
+      // new password — see handlePasswordChanged in Account().
+      setStep("success");
+      setTimeout(() => onChanged(), 1800);
+    } catch (e) {
+      setError(e.message || "Could not change your password. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center p-5 border-b">
+          <h2 className="font-bold text-lg text-gray-800">Change Password</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><IconClose /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+          )}
+          {info && !error && (
+            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{info}</div>
+          )}
+
+          {step === "success" ? (
+            <div className="flex flex-col items-center text-center py-4 gap-2">
+              <div className="w-12 h-12 rounded-full bg-green-50 flex items-center justify-center text-green-600">
+                <IconShield className="w-6 h-6" />
+              </div>
+              <p className="text-sm font-medium text-gray-800">Password changed successfully.</p>
+              <p className="text-xs text-gray-500">Signing you out so you can log back in with your new password...</p>
+            </div>
+          ) : step === "request" ? (
+            <p className="text-xs text-gray-500">
+              To change your password, we'll first send a verification code to your email ({" "}
+              <span className="font-medium text-gray-700">your account email</span>) to confirm it's really you.
+            </p>
+          ) : step === "otp" ? (
+            <>
+              <p className="text-xs text-gray-500">
+                Enter the 6-digit code we sent to your email. It expires in 5 minutes.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Verification Code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                  className="w-full border rounded-xl px-3 py-2 text-sm tracking-widest outline-none focus:ring-2 focus:ring-teal-400"
+                  placeholder="000000"
+                  autoFocus
+                />
+              </div>
+              <button
+                onClick={handleSendCode}
+                disabled={sending}
+                className="text-xs font-medium text-teal-600 hover:text-teal-700 disabled:opacity-60"
+              >
+                {sending ? "Resending..." : "Resend code"}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-gray-500">
+                Code verified. Now choose your new password.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400"
+                  placeholder="8–16 characters"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Confirm New Password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400"
+                />
+              </div>
+              <p className="text-[11px] text-gray-400">
+                Must be 8–16 characters with at least 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character.
+              </p>
+            </>
+          )}
+        </div>
+
+        {step !== "success" && (
+          <div className="flex justify-end gap-3 p-5 border-t">
+            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+              Cancel
+            </button>
+            {step === "request" ? (
+              <button
+                onClick={handleSendCode}
+                disabled={sending}
+                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+              >
+                {sending ? "Sending..." : "Send Code"}
+              </button>
+            ) : step === "otp" ? (
+              <button
+                onClick={handleVerifyCode}
+                disabled={verifying}
+                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+              >
+                {verifying ? "Verifying..." : "Verify Code"}
+              </button>
+            ) : (
+              <button
+                onClick={handleChangePassword}
+                disabled={saving}
+                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+              >
+                {saving ? "Changing..." : "Change Password"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Resubmit ID Modal — upload a new license or document photo ──
    documentKind: "license" | "document". For Driver/Supervisor
    (canEditDirectly=false) this submits to idResubmitRequests for admin
@@ -443,7 +687,7 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
           <label className="block border-2 border-dashed rounded-xl p-4 text-center cursor-pointer hover:bg-gray-50">
             <input type="file" accept="image/*" onChange={handleFile} className="hidden" />
             {preview ? (
-              <img src={preview} alt="New photo preview" className="w-full h-32 object-cover rounded-lg mx-auto" />
+              <img src={preview} alt="Selected upload" className="w-full h-32 object-cover rounded-lg mx-auto" />
             ) : (
               <div className="flex flex-col items-center gap-2 text-gray-400 py-4">
                 <IconUpload className="w-6 h-6" />
@@ -518,6 +762,7 @@ export default function Account() {
   const [loading, setLoading] = useState(true);
   const [showEdit, setShowEdit] = useState(false);
   const [showResubmit, setShowResubmit] = useState(null); // null | "license" | "document"
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [notice, setNotice] = useState(null);
   const [profileTab, setProfileTab] = useState("details"); // "details" | "document"
 
@@ -657,6 +902,17 @@ export default function Account() {
   const handleSignOut = async () => {
     await logout();
     navigate("/");
+  };
+
+  // After a successful password change, sign out immediately rather than
+  // leaving the old session sitting around — the backend change already
+  // revokes this account's Firebase refresh tokens shortly after anyway,
+  // this just makes that explicit and sends them to log back in right away
+  // with the new password instead of hitting a confusing stale session.
+  const handlePasswordChanged = async () => {
+    setShowChangePassword(false);
+    await logout();
+    navigate("/login");
   };
 
   const fullName = profile
@@ -846,7 +1102,14 @@ export default function Account() {
       </div>
 
       {/* ACTIONS */}
-      <div className="bg-white rounded-2xl border shadow-card px-6 py-4">
+      <div className="bg-white rounded-2xl border shadow-card px-6 py-4 space-y-3">
+        <button
+          onClick={() => setShowChangePassword(true)}
+          className="flex items-center gap-2 text-arl-dark text-sm font-semibold hover:text-arl-primary transition-colors"
+        >
+          <IconKey className="w-4 h-4" />
+          Change Password
+        </button>
         <button
           onClick={handleSignOut}
           className="flex items-center gap-2 text-red-500 text-sm font-semibold hover:text-red-600 transition-colors"
@@ -885,6 +1148,13 @@ export default function Account() {
             fetchProfile();
             setTimeout(() => setNotice(null), 5000);
           }}
+        />
+      )}
+
+      {showChangePassword && (
+        <ChangePasswordModal
+          onClose={() => setShowChangePassword(false)}
+          onChanged={handlePasswordChanged}
         />
       )}
 

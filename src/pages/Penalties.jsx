@@ -101,11 +101,6 @@ const toDate = (val) => {
   if (val?._seconds) return new Date(val._seconds * 1000);
   return new Date(val);
 };
-const fmtDate = (val) => {
-  const d = toDate(val);
-  if (!d || isNaN(d)) return "—";
-  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-};
 const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
 
 // One predicate per stat card, shared by the card's count AND the row

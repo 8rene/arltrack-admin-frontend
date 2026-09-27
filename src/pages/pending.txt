@@ -248,3 +248,121 @@ and the analytics remove it
 main pending  removal of supervisor access
 
 001 pending maintenance, 
+
+
+passowrd change show
+booking should show if there is driver and the status of payment so it wil be easy show
+booking dont show the map or the locations horguh map
+driver dont dshow the other locaiton aside from the pickup and dropoff
+
+customer dont show the map as well viewable
+
+shouldnt customer know the name of driver
+and be notified
+
+[NOTIF] Created driver_assigned for bookings/8c9Zpwr5N3XRdfNlGy4x (userID:
+ oGv12aaM9Qbk7ezI0JOegfZLrPq1)
+[NOTIF] Resolved inspection_pickup_needed where bookingKey = 1l4AKy5WGXH8x
+FRIS5S0
+[AuditLog] Pickup log failed: description is required.
+[ARCHIVE] Notification archived for booking: 1l4AKy5WGXH8xFRIS5S0
+
+remove logs
+ audit error
+
+
+car tracking history should show no data in ahead,
+make it column as well and the name of the booker for tat history
+car tracking live change setting pickup and dropoff should be both
+car tracking does not auto refresh, even when clicked on notification
+
+driver should have a payments button still  in 
+discount cant be given if it was in there, no identifier if discount wsa given or not
+
+cartracking and mytrips
+also notificaiotn click should direct to myutrips instead of dashboard
+
+what happens in vehicle inspection parts when clicked confirm as all good?
+
+history dont save again.... it doesnt save the history archives if the time didnot last a day. so it should be modified again to save when clicked return
+
+MFT247gPfcA6DP8PG90LLIt2)
+[NOTIF] Created refund_due for bookings/8c9Zpwr5N3XRdfNlGy4x (userID: tcwY
+igly8GTqlK5ulRujT1hFEmm2)
+[NOTIF] Created refund_due for bookings/8c9Zpwr5N3XRdfNlGy4x (userID: dFgf
+XlqIt9WvUjYN59oeAslZko63)
+[NOTIF] Created refund_due for bookings/8c9Zpwr5N3XRdfNlGy4x (userID: qmoA
+aQD7vlgVm3YFJnVEdggq9s52)
+[NOTIF] Created refund_due for bookings/8c9Zpwr5N3XRdfNlGy4x (userID: XTAQ
+dSLdKPXma7xzSw9PeNxwikR2)
+[NOTIF] Created discount_applied for bookings/8c9Zpwr5N3XRdfNlGy4x (userID
+: sPae85vSiEWb7h02v09mBDHCUXi1)
+[NOTIF] Created discount_applied for bookings/8c9Zpwr5N3XRdfNlGy4x (userID
+: oGv12aaM9Qbk7ezI0JOegfZLrPq1)
+[AuditLog] Return log failed: description is required.
+
+
+
+id resubmit should be viewable so it doesnt stackup
+username dont refresh in header whne refreshed, 
+also edit request confirmation or reject dont show notifiation
+customer currently dont have a show of the request
+
+stop the error if its not really error and just warning
+[DRIVER DISPATCH] assign error: Error: This driver's license expired on Se
+p 20, 2026.
+    at assignDriver (file:///C:/Users/duummb/Downloads/newchaps/forhosting
+/arltrack-admin-backend/services/driverDispatch/driverDispatch.service.js:
+291:17)
+    at process.processTicksAndRejections (node:internal/process/task_queue
+s:105:5)
+    at async assign (file:///C:/Users/duummb/Downloads/newchaps/forhosting
+/arltrack-admin-backend/controllers/driverDispatch/driverDispatch.controll
+er.js:21:20) {
+  conflict: true,
+  conflictBooking: null,
+  licenseExpired: true
+}
+
+
+customer stop showing the next month on the end 
+
+inventory
+car trackign or booking dont allow connecting to the vehicle inspection of such,
+
+and vehicle inspection dont allow to ese other upcoming bookings, not like it matter but what if theres problem right it hsould be
+currently its only allowed when driver notifies
+have an arrow next int he upcoming bokoing so we can move 
+
+vehicle inspection save all should also auto confirmt he good condition
+
+whats the dropoff in driver?
+supervisor also will have a drop off mark, which removes it to car tracking 
+can we use that as the return condition of penalty
+does not auto audit log
+
+booking dont allow to create a penalty button
+penaly.jsx new penalty but it should show dropdown the recent bookings 
+instead of modal show the same like maintenance design 
+
+what is penalty status?
+
+return will asked, is deposit fee confirmed?
+will there be no more penalty to send notice?, so return and stolen is now in bookings jsx
+
+no notification to owner or supervisor or admin about the notice of damaged, maybe have a check button to notify owner in the penalty list
+
+remove the scroll up or down in the pricing
+maintenance connection in the booking
+so alerts of dashboard shuold connect to the bookings.
+scheduled maintenance should not fix the alert in dashboard
+
+
+Pending payments return deposit
+security deposit should have a date after the returned date ready to be received
+and it should show the penalty list
+
+return button should have a check of unassign device first
+
+pickup river should include is deposit fee with you 
+is discount confirmed and was given already?
