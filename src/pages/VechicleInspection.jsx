@@ -901,7 +901,11 @@ export default function VehicleDocs() {
     // Save All now covers BOTH pending photos and pending Good/Damaged
     // toggles — a driver who only flagged a part as Damaged (no new
     // photo) still needs this button to actually persist it.
-    if (!pending.length && !pendingStatusKeys.length) {
+    // Save All also records the parts condition (same as the "Confirm parts
+    // condition" button) when none is saved yet for this trip phase — so it
+    // still has work to do even with no photos or toggles staged.
+    const needsPartsRecord = !hasPartsRecord;
+    if (!pending.length && !pendingStatusKeys.length && !needsPartsRecord) {
       showToast("Nothing to save.", "error");
       return;
     }
@@ -967,12 +971,15 @@ export default function VehicleDocs() {
         setUploads({});
       }
 
-      // Commit any staged Good/Damaged edits together with this save.
-      if (pendingStatusKeys.length) {
-        await commitStatusEdits(bID, currentStatusEdits);
+      // Commit any staged Good/Damaged edits together with this save, and
+      // create the parts-condition record if there isn't one yet (force) —
+      // anything not flagged Damaged is recorded as Good, exactly like the
+      // "Confirm parts condition" button.
+      if (pendingStatusKeys.length || needsPartsRecord) {
+        await commitStatusEdits(bID, currentStatusEdits, { force: true });
       }
 
-      showToast("All changes saved!");
+      showToast(needsPartsRecord ? "All changes saved — parts condition recorded!" : "All changes saved!");
     } catch (e) {
       console.error(e);
       showToast("Save failed: " + e.message, "error");
@@ -1562,7 +1569,8 @@ export default function VehicleDocs() {
                           <div className="flex items-center justify-between gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
                             <p className="text-xs text-blue-800">
                               <span className="font-semibold">Parts condition not recorded yet.</span>{" "}
-                              Review the parts below — anything not flagged Damaged is recorded as Good — then confirm.
+                              Review the parts below — anything not flagged Damaged is recorded as Good — then confirm
+                              {hasUnsavedUploads ? " (or press Save All, which records it with your photos)." : "."}
                             </p>
                             <button onClick={confirmParts} disabled={confirmingParts || saving}
                               className="shrink-0 text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">

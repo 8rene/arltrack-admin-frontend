@@ -156,8 +156,15 @@ function InspectionPanel({ inspection, phase, remaining, sending, onRemind }) {
             Waiting for a supervisor to complete the {phase === "before" ? "pickup" : "return"} inspection
           </p>
           <div className="text-[11px] space-y-0.5">
-            <Row done={inspection.photos} label="Front, side & back photos" />
-            <Row done={inspection.parts} label="Parts condition" />
+            <Row
+              done={inspection.photos}
+              label={`Front, side & back photos${
+                !inspection.photos && inspection.photoSlots && Object.values(inspection.photoSlots).some(Boolean)
+                  ? ` (missing: ${["front", "side", "back"].filter((s) => !inspection.photoSlots[s]).join(", ")})`
+                  : ""
+              }`}
+            />
+            <Row done={inspection.parts} label={`Parts condition${inspection.parts ? "" : " (supervisor must confirm it)"}`} />
           </div>
         </div>
         <button
@@ -281,7 +288,10 @@ function ActiveTripsTab() {
   useEffect(() => {
     const openID = searchParams.get("open");
     if (!openID || loading) return;
-    const el = document.getElementById(`trip-${openID}`);
+    // The notification's refID can be the booking doc id OR the business
+    // bookingID (payment/refund/penalty ones use the latter) — match both.
+    const match = trips.find((t) => t.id === openID || t.bookingID === openID);
+    const el = match ? document.getElementById(`trip-${match.id}`) : null;
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("ring-2", "ring-arl-primary");
@@ -391,14 +401,6 @@ function ActiveTripsTab() {
     if (!res.ok) throw new Error(json.message || "Couldn't load the checklist.");
     return json.data;
   }, [returnTrip, authedFetch]);
-
-  const recordDeviceCheck = async (note) => {
-    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/device-check`, {
-      method: "PATCH", body: JSON.stringify({ note }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.message || "Couldn't record the device check.");
-  };
 
   const settleDepositNow = async ({ method, referenceNumber }) => {
     const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/settle-deposit`, {
@@ -669,7 +671,6 @@ function ActiveTripsTab() {
         title={returnTrip ? `${returnTrip.customerName} — ${returnTrip.vehicleName}` : ""}
         driverName="You"
         loadChecklist={loadReturnChecklist}
-        onDeviceCheck={recordDeviceCheck}
         onSettleDeposit={settleDepositNow}
         onConfirmReturn={confirmReturn}
         onMarkDroppedOff={dropoffFromChecklist}
@@ -694,6 +695,7 @@ function ActiveTripsTab() {
         collecting={collectingBalance}
         collectError={collectBalanceError}
         onMarkRefundIssued={handleMarkRefundIssued}
+        onReturnDeposit={paymentTrip?.status === "ongoing" ? () => { const t = paymentTrip; setPaymentTrip(null); setReturnTrip(t); } : undefined}
         markingRefund={markingRefund}
         refundError={refundError}
         pendingApprovalNote="The initial payment hasn't been approved yet — ask an admin or supervisor to approve it before collecting the rest."

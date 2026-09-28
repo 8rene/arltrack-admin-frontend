@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
-const REFUND_METHODS = ["InStore", "GCash", "Maya", "BankTransfer"];
+const REFUND_METHODS = ["Cash", "GCash", "Maya", "BankTransfer"];
 
 /**
  * Return checklist — the Return button always opens this instead of being
  * disabled or silently redirecting. It shows every requirement and its state
- * (dropped off, after-trip inspection, penalties covered, GPS device check),
+ * (dropped off, after-trip inspection, penalties covered, GPS device unassigned),
  * the deposit / penalty / amount-to-return summary, and the driver on the
  * trip. "Confirm Return" stays disabled until every requirement is met —
  * there is no override; the server enforces the same rules.
@@ -14,7 +15,6 @@ const REFUND_METHODS = ["InStore", "GCash", "Maya", "BankTransfer"];
  * Shared by Car Tracking (supervisor) and My Trips (driver); the caller
  * supplies the data/actions so each uses its own endpoints:
  *   loadChecklist()        -> checklist data (see getReturnChecklist)
- *   onDeviceCheck(note)    -> records the GPS device check (throw on error)
  *   onSettleDeposit({method, referenceNumber}) -> settles the deposit (throw on error)
  *   onConfirmReturn()      -> completes the return (throw on error)
  *   onNotePenalty()        -> optional, opens the caller's penalty flow
@@ -22,14 +22,12 @@ const REFUND_METHODS = ["InStore", "GCash", "Maya", "BankTransfer"];
  */
 export default function ReturnChecklistModal({
   open, onClose, title, driverName,
-  loadChecklist, onDeviceCheck, onSettleDeposit, onConfirmReturn, onNotePenalty, onMarkDroppedOff,
+  loadChecklist, onSettleDeposit, onConfirmReturn, onNotePenalty, onMarkDroppedOff,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [deviceOk, setDeviceOk] = useState(false);
-  const [deviceNote, setDeviceNote] = useState("");
   const [refundMethod, setRefundMethod] = useState(REFUND_METHODS[0]);
   const [refundRef, setRefundRef] = useState("");
 
@@ -42,7 +40,7 @@ export default function ReturnChecklistModal({
   }, [loadChecklist]);
 
   useEffect(() => {
-    if (open) { setDeviceOk(false); setDeviceNote(""); refresh(); }
+    if (open) refresh();
     else setData(null);
   }, [open, refresh]);
 
@@ -57,12 +55,13 @@ export default function ReturnChecklistModal({
   };
 
   const item = (key) => data?.items?.find((i) => i.key === key);
-  const deviceItem = item("deviceCheck");
   const refundDue = (data?.amountToReturn ?? 0) > 0;
   const owes = (data?.amountToReturn ?? 0) < 0;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+  // Portaled to <body> so no parent stacking context (animated wrappers, the
+  // Leaflet map cards with z-[1000] overlays, etc.) can ever cover the modal.
+  return createPortal(
+    <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-4">
         <div className="flex items-start justify-between gap-3">
@@ -148,22 +147,6 @@ export default function ReturnChecklistModal({
               </div>
             )}
 
-            {deviceItem && !deviceItem.complete && (
-              <div className="border border-gray-200 rounded-xl p-3 space-y-2">
-                <label className="flex items-start gap-2 text-sm text-arl-dark">
-                  <input type="checkbox" checked={deviceOk} onChange={(e) => setDeviceOk(e.target.checked)} className="mt-1" />
-                  I checked the GPS device on this car.
-                </label>
-                <input value={deviceNote} onChange={(e) => setDeviceNote(e.target.value)} placeholder="Note (optional) — e.g. present, working"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
-                <button disabled={!deviceOk || busy}
-                  onClick={() => run(async () => { await onDeviceCheck(deviceNote.trim()); await refresh(); })}
-                  className="w-full py-2 rounded-xl text-sm font-semibold bg-arl-dark text-white disabled:opacity-40">
-                  Record device check
-                </button>
-              </div>
-            )}
-
             <div className="flex gap-2 pt-1">
               <button onClick={onClose} className="flex-1 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Close</button>
               <button disabled={!data.canReturn || busy}
@@ -175,6 +158,7 @@ export default function ReturnChecklistModal({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

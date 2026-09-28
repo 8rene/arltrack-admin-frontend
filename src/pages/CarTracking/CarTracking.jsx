@@ -879,15 +879,6 @@ export default function CarTracking() {
     return json.data;
   }, [returnModalBooking, token]);
 
-  const recordDeviceCheck = async (note) => {
-    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/device-check`, {
-      method: "PATCH", headers: authHeaders, body: JSON.stringify({ note }),
-    });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.message || "Couldn't record the device check.");
-    await fetchBookings();
-  };
-
   const settleDepositNow = async ({ method, referenceNumber }) => {
     const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/settle-deposit`, {
       method: "PATCH", headers: authHeaders, body: JSON.stringify({ method, referenceNumber }),
@@ -1337,7 +1328,7 @@ export default function CarTracking() {
 
       {/* ── Map + selected-car action panel ─────────────────────────────── */}
       <div className="flex-1 min-w-0 flex flex-col gap-3">
-        <div className="flex-1 min-h-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden relative">
+        <div className="flex-1 min-h-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden relative isolate">
           <div ref={mapRef} className="w-full h-full" style={{ minHeight: "400px" }} />
 
           <GeofenceBanner banners={mapBanners} />
@@ -1481,6 +1472,13 @@ export default function CarTracking() {
                       className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-teal-300 text-teal-700 rounded-xl text-xs font-semibold hover:bg-teal-50 active:scale-95 transition-all"
                     >
                       Payments
+                    </button>
+                    <button
+                      onClick={() => navigate(`/bookings?open=${encodeURIComponent(ongoing.bookingID || ongoing.id)}`)}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-300 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                    >
+                      <Icons.Eye className="w-3.5 h-3.5" />
+                      View
                     </button>
                     <button
                       onClick={() => handleStolen(ongoing)}
@@ -1698,7 +1696,6 @@ export default function CarTracking() {
       title={returnModalBooking ? `${returnModalBooking.customerName} — ${returnModalBooking.vehicleName}` : ""}
       driverName={returnModalBooking?.driverName}
       loadChecklist={loadReturnChecklist}
-      onDeviceCheck={recordDeviceCheck}
       onSettleDeposit={settleDepositNow}
       onConfirmReturn={confirmReturn}
       onMarkDroppedOff={dropoffFromChecklist}

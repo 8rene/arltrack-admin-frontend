@@ -67,7 +67,7 @@ export default function PaymentStatusModal({
   onConfirmPayment, confirming, confirmError,
   onCollectBalance, collecting, collectError,
   onApplyDiscount, applyingDiscount, discountError,
-  onMarkRefundIssued, markingRefund, refundError,
+  onMarkRefundIssued, markingRefund, refundError, onReturnDeposit,
   onGoToPayments, pendingApprovalNote,
 }) {
   const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0, refundDue: 0, depositAmount: 0, depositStatus: "—", confirmedPenaltyTotal: 0, amountToReturn: 0 };
@@ -209,6 +209,19 @@ export default function PaymentStatusModal({
                 <p className="text-[11px] text-gray-400">
                   Already accounts for confirmed penalties on this booking — this is the actual amount to hand back{p.amountToReturn < 0 ? " (or still collect)" : ""}, not the full deposit.
                 </p>
+              )}
+              {/* Driver shortcut: opens the Drop-off & return checklist, where the
+                  deposit is actually settled (deduct penalties + confirm handback). */}
+              {onReturnDeposit && p.depositStatus === "Held" && !p.depositSettled && (
+                <button
+                  onClick={onReturnDeposit}
+                  className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 active:scale-[0.99] transition-all"
+                >
+                  {p.amountToReturn > 0 ? `Return ${peso(p.amountToReturn)} deposit` : "Settle deposit"}
+                </button>
+              )}
+              {p.depositSettled && (
+                <p className="text-xs font-medium text-green-600">✓ Deposit settled</p>
               )}
             </div>
           )}

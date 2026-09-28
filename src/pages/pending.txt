@@ -366,3 +366,6 @@ pickup river should include is deposit fee with you
 is discount confirmed and was given already?
 
 customer still dont see its own penalties
+
+
+pending payment should makr it yellow or red

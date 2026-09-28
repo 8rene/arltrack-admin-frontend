@@ -234,12 +234,19 @@ export default function Header({ title = "Dashboard" }) {
   // adding a second, redundant way to do the same thing.
   const handleOpen = (n) => {
     setNotifOpen(false);
-    // Drivers: anything about a booking (assigned, unassigned, payment,
-    // discount…) opens My Trips on that trip instead of the Dashboard —
-    // drivers can't open /bookings, so that used to fall through to it.
-    // An unassigned trip is no longer in their list, so just open the page.
-    if (user?.role === "Driver" && n.refCollection === "bookings") {
-      navigate(n.refID && n.type !== "driver_unassigned" ? `/my-trips?open=${n.refID}` : "/my-trips");
+    // Drivers can't open /bookings, /users, /refund-requests etc., so those
+    // links bounced them to the Dashboard. Send them where they can act:
+    // license alerts → their Account, everything else → My Trips (on the
+    // exact trip when the notification points at a booking). An unassigned
+    // trip is no longer in their list, so just open the page.
+    if (user?.role === "Driver") {
+      if (n.type === "license_expired" || n.type === "license_expiring" || n.refCollection === "account" || n.refCollection === "user") {
+        navigate("/account");
+      } else if (n.refCollection === "bookings" && n.refID && n.type !== "driver_unassigned") {
+        navigate(`/my-trips?open=${n.refID}`);
+      } else {
+        navigate("/my-trips");
+      }
       return;
     }
     // Driver waiting on the inspection → straight to that booking's
