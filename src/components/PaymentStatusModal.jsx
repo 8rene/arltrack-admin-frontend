@@ -46,7 +46,7 @@ const IconTag = ({ className = "w-3.5 h-3.5" }) => (
  * @param {boolean} open
  * @param {() => void} onClose
  * @param {string} customerName
- * @param {{ totalFee: number, amountPaid: number, balance: number, payType: string, paymentStatus: string, discountAmount?: number }} payment
+ * @param {{ totalFee: number, amountPaid: number, balance: number, payType: string, paymentStatus: string, discountAmount?: number, depositAmount?: number, depositStatus?: string, confirmedPenaltyTotal?: number, amountToReturn?: number }} payment
  * @param {(paymentMethod: string) => void} [onConfirmPayment] - confirm a cash initial payment as received, right here. Called with the picked Cash/GCash/Bank Transfer value. Omit to hide the button (e.g. read-only views).
  * @param {boolean} [confirming] - shows a busy state on the confirm button while the request is in flight
  * @param {string} [confirmError] - shown under the confirm button if the last attempt failed
@@ -70,7 +70,7 @@ export default function PaymentStatusModal({
   onMarkRefundIssued, markingRefund, refundError,
   onGoToPayments, pendingApprovalNote,
 }) {
-  const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0, refundDue: 0 };
+  const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0, refundDue: 0, depositAmount: 0, depositStatus: "—", confirmedPenaltyTotal: 0, amountToReturn: 0 };
 
   // Pre-fill with whatever discount is already on the booking — the field
   // sets the total discount, not an incremental add-on-top, so editing it
@@ -175,6 +175,42 @@ export default function PaymentStatusModal({
             <p className="text-xs text-gray-400">
               Collect the remaining {peso(p.balance)} before or upon completion of the trip, per your team's policy.
             </p>
+          )}
+
+          {/* Security deposit vs. confirmed penalties — the same math
+              settleBooking() runs automatically at Return, shown here as a
+              live preview beforehand. Lets whoever is about to hand back
+              (or collect) the deposit see the rightful amount up front,
+              instead of only finding out once Return actually settles it.
+              Hidden entirely if no deposit has been recorded on this
+              booking yet. */}
+          {p.depositStatus && p.depositStatus !== "—" && (
+            <div className="space-y-2.5 bg-blue-50/60 border border-blue-100 rounded-xl p-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-500">Security Deposit <span className="text-[11px] text-gray-400">({p.depositStatus})</span></span>
+                <span className="font-semibold text-arl-dark">{peso(p.depositAmount)}</span>
+              </div>
+              {p.confirmedPenaltyTotal > 0 && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Confirmed Penalties (unpaid)</span>
+                  <span className="font-semibold text-red-500">−{peso(p.confirmedPenaltyTotal)}</span>
+                </div>
+              )}
+              <div className="h-px bg-blue-200" />
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-arl-dark">
+                  {p.amountToReturn < 0 ? "Owed by Customer" : "Return to Customer"}
+                </span>
+                <span className={`font-bold ${p.amountToReturn < 0 ? "text-red-600" : "text-blue-700"}`}>
+                  {peso(Math.abs(p.amountToReturn))}
+                </span>
+              </div>
+              {p.confirmedPenaltyTotal > 0 && (
+                <p className="text-[11px] text-gray-400">
+                  Already accounts for confirmed penalties on this booking — this is the actual amount to hand back{p.amountToReturn < 0 ? " (or still collect)" : ""}, not the full deposit.
+                </p>
+              )}
+            </div>
           )}
 
           {/* A discount was applied after this booking was already paid past

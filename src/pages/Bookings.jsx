@@ -905,8 +905,10 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
         {/* Penalties already noted against this booking — same "always
             shown" treatment as Trip History / Linked Maintenance above.
             "Note a Penalty" hands off to Penalties.jsx (see goToNotePenalty)
-            with the bookingID pre-filled and locked, so the draft it opens
-            is guaranteed to link back to this exact booking. */}
+            with the bookingID pre-filled and locked, so the penalty it
+            creates is guaranteed to link back to this exact booking. A
+            penalty is confirmed and the customer notified the instant
+            it's created there — no Draft step in between anymore. */}
         <div className="flex justify-between items-center py-2.5 px-3 rounded-xl bg-gray-50 border border-gray-100">
           <div className="min-w-0">
             <p className="text-sm font-medium text-gray-700">Penalties</p>
@@ -920,7 +922,6 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
                   <li key={p.penaltyID} className="text-xs text-gray-600">
                     {fmt(p.amount)} — <span className={
                       p.status === "Confirmed" ? "text-green-600"
-                      : p.status === "Draft" ? "text-amber-600"
                       : "text-gray-400"
                     }>{p.status}</span>
                   </li>

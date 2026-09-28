@@ -11,6 +11,7 @@ import SimulatePanel from "./SimulatePanel";
 import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
 import PaymentStatusModal from "../../components/PaymentStatusModal";
+import ReturnChecklistModal from "../../components/ReturnChecklistModal";
 import GeofenceBanner from "../../components/GeofenceBanner";
 import PlaceLabel from "../../components/PlaceLabel";
 import { isGeofenceBreachedNow, isCodingRestrictedNow, activeCodingAlertNow } from "../../utils/geofenceAlerts";
@@ -277,6 +278,7 @@ export default function CarTracking() {
   const [notice,       setNotice]       = useState(null);
   const [actionBusyId, setActionBusyId] = useState(null); // booking doc id currently being acted on
   const [paymentModalBooking, setPaymentModalBooking] = useState(null);
+  const [returnModalBooking, setReturnModalBooking] = useState(null); // Return checklist panel
   const [collectingBalance,   setCollectingBalance]   = useState(false);
   const [collectBalanceError, setCollectBalanceError] = useState(null);
   const [confirmingPayment,   setConfirmingPayment]   = useState(false);
@@ -862,14 +864,57 @@ export default function CarTracking() {
     runBookingAction(b.id, "ongoing", "Pickup complete — GPS tracking is now active.");
   };
 
-  // Return has no payment/chauffeur gate — only the photo requirement,
-  // same smart-trigger shape as Pickup.
-  const handleReturn = (b) => {
-    if (!b.afterDocsComplete) {
-      navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=return`);
-      return;
-    }
-    runBookingAction(b.id, "completed", "Car marked returned — trip history saved.");
+  // Return is always clickable: it opens the checklist, which shows what is
+  // still missing (drop-off, inspection, penalties, GPS device check) and
+  // only enables "Confirm Return" once everything is done. No override —
+  // the server enforces the same rules on the PATCH itself.
+  const handleReturn = (b) => setReturnModalBooking(b);
+
+  const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const loadReturnChecklist = useCallback(async () => {
+    if (!returnModalBooking) return null;
+    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/return-checklist`, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't load the checklist.");
+    return json.data;
+  }, [returnModalBooking, token]);
+
+  const recordDeviceCheck = async (note) => {
+    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/device-check`, {
+      method: "PATCH", headers: authHeaders, body: JSON.stringify({ note }),
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't record the device check.");
+    await fetchBookings();
+  };
+
+  const settleDepositNow = async ({ method, referenceNumber }) => {
+    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/settle-deposit`, {
+      method: "PATCH", headers: authHeaders, body: JSON.stringify({ method, referenceNumber }),
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't settle the deposit.");
+    await fetchBookings();
+  };
+
+  const confirmReturn = async () => {
+    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}`, {
+      method: "PATCH", headers: authHeaders, body: JSON.stringify({ status: "completed" }),
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Return failed.");
+    setNotice({ type: "ok", msg: "Car marked returned — trip history saved." });
+    await fetchBookings();
+    if (selected) fetchCarSession(selected);
+  };
+
+  const dropoffFromChecklist = async () => {
+    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/dropoff`, {
+      method: "PATCH", headers: { Authorization: `Bearer ${token}` },
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't mark dropped off.");
+    await fetchBookings();
   };
 
   // Every booking type, separate from Return/runBookingAction above — this
@@ -1432,6 +1477,12 @@ export default function CarTracking() {
                       {actionBusyId === ongoing.id ? "…" : "Return"}
                     </button>
                     <button
+                      onClick={() => setPaymentModalBooking(ongoing)}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-teal-300 text-teal-700 rounded-xl text-xs font-semibold hover:bg-teal-50 active:scale-95 transition-all"
+                    >
+                      Payments
+                    </button>
+                    <button
                       onClick={() => handleStolen(ongoing)}
                       disabled={actionBusyId === ongoing.id}
                       className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-xl text-xs font-semibold hover:bg-red-700 active:scale-95 transition-all disabled:opacity-50"
@@ -1641,6 +1692,19 @@ export default function CarTracking() {
       )}
     </div>
 
+    <ReturnChecklistModal
+      open={!!returnModalBooking}
+      onClose={() => setReturnModalBooking(null)}
+      title={returnModalBooking ? `${returnModalBooking.customerName} — ${returnModalBooking.vehicleName}` : ""}
+      driverName={returnModalBooking?.driverName}
+      loadChecklist={loadReturnChecklist}
+      onDeviceCheck={recordDeviceCheck}
+      onSettleDeposit={settleDepositNow}
+      onConfirmReturn={confirmReturn}
+      onMarkDroppedOff={dropoffFromChecklist}
+      onNotePenalty={() => navigate(`/penalties?bookingID=${encodeURIComponent(returnModalBooking.bookingID || returnModalBooking.id)}`)}
+    />
+
     <PaymentStatusModal
       open={!!paymentModalBooking}
       onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); setConfirmPaymentError(null); setDiscountError(null); setRefundError(null); }}
@@ -1654,6 +1718,10 @@ export default function CarTracking() {
         discountAmount: paymentModalBooking.discountAmount,
         refundDue:      paymentModalBooking.refundDue,
         refundIssued:   paymentModalBooking.refundIssued,
+        depositAmount:         paymentModalBooking.depositAmount,
+        depositStatus:         paymentModalBooking.depositStatus,
+        confirmedPenaltyTotal: paymentModalBooking.confirmedPenaltyTotal,
+        amountToReturn:        paymentModalBooking.amountToReturn,
       } : null}
       onConfirmPayment={handleConfirmPayment}
       confirming={confirmingPayment}

@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import TripMapModal from "../components/TripMapModal";
 import PaymentStatusModal from "../components/PaymentStatusModal";
+import ReturnChecklistModal from "../components/ReturnChecklistModal";
+import DriverPenaltyModal from "../components/DriverPenaltyModal";
 import TripDetailModal from "../components/TripDetailModal";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -180,6 +182,8 @@ function ActiveTripsTab() {
   const [busyID, setBusyID]   = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
   const [paymentTrip, setPaymentTrip] = useState(null);
+  const [returnTrip, setReturnTrip] = useState(null);   // Return checklist panel
+  const [penaltyTrip, setPenaltyTrip] = useState(null);  // driver "Note a penalty" form
   const [collectingBalance, setCollectingBalance] = useState(false);
   const [collectBalanceError, setCollectBalanceError] = useState(null);
   const [confirmingPayment, setConfirmingPayment] = useState(false);
@@ -357,12 +361,67 @@ function ActiveTripsTab() {
     }
   };
 
-  const handleReturn = (trip) => {
-    if (!trip.afterDocsComplete) {
-      showToast("The vehicle inspection isn't complete yet — a supervisor needs to finish it first.", "error");
-      return;
-    }
-    completeTripAction(trip, "return", "Car marked returned — trip history saved.");
+  // Return is always clickable — it opens the checklist showing what is still
+  // missing (drop-off, inspection, penalties, GPS device check) and only
+  // enables "Confirm Return" once everything is done. No override.
+  const handleReturn = (trip) => setReturnTrip(trip);
+
+  const loadReturnChecklist = useCallback(async () => {
+    if (!returnTrip) return null;
+    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/return-checklist`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || "Couldn't load the checklist.");
+    return json.data;
+  }, [returnTrip, authedFetch]);
+
+  const recordDeviceCheck = async (note) => {
+    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/device-check`, {
+      method: "PATCH", body: JSON.stringify({ note }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || "Couldn't record the device check.");
+  };
+
+  const settleDepositNow = async ({ method, referenceNumber }) => {
+    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/settle-deposit`, {
+      method: "PATCH", body: JSON.stringify({ method, referenceNumber }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || "Couldn't settle the deposit.");
+    showToast("Deposit settled.");
+    fetchTrips();
+  };
+
+  const confirmReturn = async () => {
+    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/return`, { method: "PATCH" });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || "Return failed.");
+    showToast("Car marked returned — trip history saved.");
+    fetchTrips();
+  };
+
+  const dropoffFromChecklist = async () => {
+    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/dropoff`, { method: "PATCH" });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || "Couldn't mark dropped off.");
+    fetchTrips();
+  };
+
+  const loadLateFee = useCallback(async () => {
+    if (!penaltyTrip) return null;
+    const res  = await authedFetch(`/api/penalties/late-fee-preview/${encodeURIComponent(penaltyTrip.bookingID)}`);
+    const json = await res.json();
+    return res.ok ? json.data : null;
+  }, [penaltyTrip, authedFetch]);
+
+  const submitPenalty = async (body) => {
+    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${penaltyTrip.id}/penalty`, {
+      method: "POST", body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || "Couldn't charge the penalty.");
+    showToast("Penalty charged — the customer was notified and it's deducted from the deposit.");
+    fetchTrips();
   };
 
   // Driver confirming a cash/in-person initial payment — right here in My
@@ -516,7 +575,7 @@ function ActiveTripsTab() {
                   />
                 );
               })()}
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {!isOngoing ? (
                   <>
                     <button
@@ -560,9 +619,17 @@ function ActiveTripsTab() {
                         <IconPin className="w-3.5 h-3.5" /> Mark Dropped Off
                       </button>
                     )}
-                    <button onClick={() => handleReturn(trip)} disabled={busyID === trip.id || !trip.afterDocsComplete}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 disabled:hover:bg-gray-300">
-                      {trip.afterDocsComplete && <IconFlag className="w-3.5 h-3.5" />} {busyID === trip.id ? "…" : trip.afterDocsComplete ? "Return" : "Not Available Yet"}
+                    <button onClick={() => setPaymentTrip(trip)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold border border-amber-300 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all">
+                      <IconPeso className="w-3.5 h-3.5" /> Payments
+                    </button>
+                    <button onClick={() => setPenaltyTrip(trip)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50 active:scale-[0.99] transition-all">
+                      Penalty
+                    </button>
+                    <button onClick={() => handleReturn(trip)} disabled={busyID === trip.id}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50">
+                      <IconFlag className="w-3.5 h-3.5" /> Return
                     </button>
                   </>
                 )}
@@ -577,6 +644,25 @@ function ActiveTripsTab() {
         onClose={() => setMapTrip(null)}
         title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
         stops={mapTrip ? tripStops(mapTrip) : []}
+      />
+      <ReturnChecklistModal
+        open={!!returnTrip}
+        onClose={() => setReturnTrip(null)}
+        title={returnTrip ? `${returnTrip.customerName} — ${returnTrip.vehicleName}` : ""}
+        driverName="You"
+        loadChecklist={loadReturnChecklist}
+        onDeviceCheck={recordDeviceCheck}
+        onSettleDeposit={settleDepositNow}
+        onConfirmReturn={confirmReturn}
+        onMarkDroppedOff={dropoffFromChecklist}
+        onNotePenalty={() => { const t = returnTrip; setReturnTrip(null); setPenaltyTrip(t); }}
+      />
+      <DriverPenaltyModal
+        open={!!penaltyTrip}
+        onClose={() => setPenaltyTrip(null)}
+        title={penaltyTrip ? `${penaltyTrip.customerName} — ${penaltyTrip.vehicleName}` : ""}
+        loadLateFee={loadLateFee}
+        onSubmit={submitPenalty}
       />
       <PaymentStatusModal
         open={!!paymentTrip}
