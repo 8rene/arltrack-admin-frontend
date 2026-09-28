@@ -234,6 +234,14 @@ export default function Header({ title = "Dashboard" }) {
   // adding a second, redundant way to do the same thing.
   const handleOpen = (n) => {
     setNotifOpen(false);
+    // Drivers: anything about a booking (assigned, unassigned, payment,
+    // discount…) opens My Trips on that trip instead of the Dashboard —
+    // drivers can't open /bookings, so that used to fall through to it.
+    // An unassigned trip is no longer in their list, so just open the page.
+    if (user?.role === "Driver" && n.refCollection === "bookings") {
+      navigate(n.refID && n.type !== "driver_unassigned" ? `/my-trips?open=${n.refID}` : "/my-trips");
+      return;
+    }
     // Driver waiting on the inspection → straight to that booking's
     // Vehicle Inspections page, in the same pickup/return "focus" mode
     // Car Tracking uses. refID is the booking doc ID; carID/phase were

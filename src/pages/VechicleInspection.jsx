@@ -307,15 +307,22 @@ export default function VehicleDocs() {
         getDocs(query(collection(db, PHASE.before.collection), where("bookingID", "==", bookingID))),
         getDocs(query(collection(db, PHASE.after.collection),  where("bookingID", "==", bookingID))),
       ]);
-      // Pick most recent if multiple
-      const pickLatest = (snap) => {
+      // Merge every doc for the booking (oldest → newest, non-empty wins) —
+      // older saves split the 3 photos across separate docs, and the backend
+      // completeness check merges them the same way.
+      const mergeDocs = (snap) => {
         if (snap.empty) return null;
         const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        docs.sort((a, b) => toSec(b.updatedAt || b.createdAt) - toSec(a.updatedAt || a.createdAt));
-        return docs[0];
+        docs.sort((a, b) => toSec(a.updatedAt || a.createdAt) - toSec(b.updatedAt || b.createdAt));
+        const merged = {};
+        docs.forEach(d => Object.entries(d).forEach(([k, v]) => {
+          if (v !== "" && v !== null && v !== undefined) merged[k] = v;
+        }));
+        merged.id = docs[docs.length - 1].id;
+        return merged;
       };
-      setBeforeDoc(pickLatest(beforeSnap));
-      setAfterDoc(pickLatest(afterSnap));
+      setBeforeDoc(mergeDocs(beforeSnap));
+      setAfterDoc(mergeDocs(afterSnap));
     } catch (e) {
       console.error("photo docs fetch error:", e);
     } finally {

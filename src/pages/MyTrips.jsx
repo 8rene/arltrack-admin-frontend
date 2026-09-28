@@ -175,6 +175,7 @@ function InspectionPanel({ inspection, phase, remaining, sending, onRemind }) {
 // ─── ACTIVE TRIPS TAB (upcoming + ongoing, with pickup/dropoff/return actions) ──
 function ActiveTripsTab() {
   const token = localStorage.getItem("token");
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [trips, setTrips]     = useState([]);
   const [loading, setLoading] = useState(true);
@@ -258,9 +259,12 @@ function ActiveTripsTab() {
   //    rather than waiting for the next poll tick — this is what actually
   //    catches most "just got back to it" cases.
   useEffect(() => {
+    // Poll every 15s while any trip is still waiting on staff's inspection
+    // (so it flips to "ready" soon after the supervisor saves), else 60s.
+    const waiting = trips.some((t) => !(t.status === "ongoing" ? t.afterDocsComplete : t.beforeDocsComplete));
     const id = setInterval(() => {
       if (document.visibilityState === "visible") fetchTrips({ silent: true });
-    }, 60000);
+    }, waiting ? 15000 : 60000);
     const onForeground = () => fetchTrips({ silent: true });
     const onVisibilityChange = () => { if (document.visibilityState === "visible") onForeground(); };
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -270,7 +274,21 @@ function ActiveTripsTab() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onForeground);
     };
-  }, [fetchTrips]);
+  }, [fetchTrips, trips]);
+
+  // Notification deep link (?open=<booking doc id>): once trips have loaded,
+  // scroll to that trip's card and flash it, then drop the param.
+  useEffect(() => {
+    const openID = searchParams.get("open");
+    if (!openID || loading) return;
+    const el = document.getElementById(`trip-${openID}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-arl-primary");
+      setTimeout(() => el.classList.remove("ring-2", "ring-arl-primary"), 3000);
+    }
+    setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
+  }, [searchParams, setSearchParams, loading, trips]);
 
   // 1-second tick, only while at least one Remind Staff cooldown is running.
   useEffect(() => {
@@ -519,7 +537,7 @@ function ActiveTripsTab() {
           const isOngoing   = trip.status === "ongoing";
           const droppedOff  = fmtTime(trip.droppedOffTime);
           return (
-            <div key={trip.id} className="bg-white rounded-2xl shadow-soft p-4 space-y-3">
+            <div key={trip.id} id={`trip-${trip.id}`} className="bg-white rounded-2xl shadow-soft p-4 space-y-3 transition-shadow">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="flex items-center gap-2">
