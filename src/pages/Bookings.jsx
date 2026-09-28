@@ -722,9 +722,22 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
 
           <div>
             {row("Rental Fee",  fmt(booking.rentalFee))}
-            {row("Deposit Fee", fmt(booking.depositFee))}
             {row("Service Fee", fmt(booking.serviceFee))}
+            {Number(booking.gatewayFee) > 0 && row("Gateway Fee", fmt(booking.gatewayFee))}
             {row("Extra Fee",   fmt(booking.extraFee))}
+            {Number(booking.driversFee) > 0 && row("Driver's Fee", fmt(booking.driversFee))}
+            {/* Refundable security deposit — charged inside the booking total
+                and marked Held (payments.deposit) once the first payment
+                settles; Penalties settles against it at Return. */}
+            {row("Security Deposit", booking.paymentStatus === "Refunded" && booking.securityDeposit > 0
+              ? `${fmt(booking.securityDeposit)} · Refunded`
+              : booking.deposit
+                ? (booking.deposit.status === "Waived"
+                    ? "Waived"
+                    : `${fmt(booking.deposit.amount)} · ${booking.deposit.status || "Held"}`)
+                : Number(booking.securityDeposit) > 0
+                  ? `${fmt(booking.securityDeposit)} · Awaiting payment`
+                  : "Not collected")}
             {row("Total Fee",   fmt(booking.totalFee))}
 
             {/* Payment Method — paired with a jump straight to the matching

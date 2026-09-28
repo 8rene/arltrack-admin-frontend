@@ -1722,6 +1722,8 @@ export default function CarTracking() {
         depositStatus:         paymentModalBooking.depositStatus,
         confirmedPenaltyTotal: paymentModalBooking.confirmedPenaltyTotal,
         amountToReturn:        paymentModalBooking.amountToReturn,
+        depositSettled:        paymentModalBooking.depositSettled,
+        depositDeducted:       paymentModalBooking.depositDeducted,
       } : null}
       onConfirmPayment={handleConfirmPayment}
       confirming={confirmingPayment}

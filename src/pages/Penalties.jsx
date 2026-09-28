@@ -444,8 +444,14 @@ function ReasonModal({ action, onClose, onSubmit, submitting }) {
 // than one outstanding.
 const SHORTFALL_METHODS = ["InStore", "GCash", "Maya", "BankTransfer", "PayMongo"];
 
-function MarkPaidModal({ penalty, onClose, onSubmit, submitting }) {
-  const owed = (penalty.amount || 0) - (penalty.paidAmount || 0);
+function MarkPaidModal({ penalty, maxAmount = 0, onClose, onSubmit, submitting }) {
+  const owed = Math.max(0, (penalty.amount || 0) - (penalty.paidAmount || 0));
+  // The most that can be recorded: everything this customer still owes in
+  // penalties (this one is paid first, the rest spills onto their others).
+  // Typing is clamped to it and the button is disabled above it; the server
+  // rejects anything higher too (recordShortfallPayment), so nothing typed
+  // here can ever exceed what is actually needed.
+  const limit = Math.max(owed, maxAmount || 0);
   // Deliberately NOT pre-filled with the full owed amount. This form
   // records what staff actually took from the customer — if it defaulted
   // to the full balance, clicking Record Payment without looking would
@@ -469,6 +475,7 @@ function MarkPaidModal({ penalty, onClose, onSubmit, submitting }) {
         <p className="text-xs text-gray-400">
           {penalty.customerName || "This customer"} still owes {peso(owed)} on this penalty.
           This penalty is paid first; anything extra goes to their other unpaid penalties, oldest first.
+          {limit > owed && ` They owe ${peso(limit)} across all their penalties.`} You can't record more than what's owed.
         </p>
         <div>
           <div className="flex items-center justify-between">
@@ -478,9 +485,17 @@ function MarkPaidModal({ penalty, onClose, onSubmit, submitting }) {
               Full amount ({peso(owed)})
             </button>
           </div>
-          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+          <input type="number" min={1} max={limit} step={1} value={amount}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "") { setAmount(""); return; }
+              const n = Number(v);
+              if (Number.isNaN(n) || n < 0) return;          // no negatives
+              setAmount(n > limit ? String(limit) : v);      // can't type past what's owed
+            }}
             placeholder={String(owed)}
             className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+          <p className="text-[11px] text-gray-400 mt-1">Maximum {peso(limit)}.</p>
         </div>
         <div>
           <label className="text-xs font-semibold text-gray-500">Method</label>
@@ -500,7 +515,7 @@ function MarkPaidModal({ penalty, onClose, onSubmit, submitting }) {
           </button>
           <button
             onClick={() => onSubmit({ amount: Number(amount), method, referenceNumber: referenceNumber.trim() })}
-            disabled={submitting || !(Number(amount) > 0)}
+            disabled={submitting || !(Number(amount) > 0) || Number(amount) > limit}
             className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
           >
             {submitting ? "Recording…" : "Record Payment"}
@@ -790,6 +805,9 @@ export default function Penalties() {
       {markPaidModal && (
         <MarkPaidModal
           penalty={markPaidModal}
+          maxAmount={records
+            .filter((r) => r.userID === markPaidModal.userID && r.status === "Confirmed")
+            .reduce((sum, r) => sum + Math.max(0, (r.amount || 0) - (r.paidAmount || 0)), 0)}
           submitting={busyId === markPaidModal.id}
           onClose={() => setMarkPaidModal(null)}
           onSubmit={submitMarkPaid}
