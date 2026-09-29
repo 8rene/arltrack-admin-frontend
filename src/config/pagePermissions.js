@@ -61,6 +61,7 @@ export const PAGE_ACCESS = {
   "/archives/payments": [OWNER, ADMIN],
   "/archives/bookings": [OWNER, ADMIN],
   "/archives/transaction-log": [OWNER, ADMIN],
+  "/archives/penalties": [OWNER, ADMIN],
   "/archives/refund-requests": [OWNER, ADMIN],
   "/archives/audit-log": [OWNER, ADMIN],
   "/archives/reviews": [OWNER, ADMIN],

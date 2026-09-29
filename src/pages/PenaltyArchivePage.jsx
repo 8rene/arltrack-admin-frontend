@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
+import { useCurrency } from "../context/CurrencyContext";
+import ArchiveDetailModal from "../components/shared/ArchiveDetailModal";
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -20,10 +22,25 @@ function inRange(iso, from, to) {
   return true;
 }
 
+const statusColor = {
+  Confirmed: "bg-yellow-50 border border-yellow-200",
+  Voided:    "bg-red-50 border border-red-200",
+  Waived:    "bg-blue-50 border border-blue-200",
+};
+const statusDotColor = {
+  Confirmed: "bg-yellow-400",
+  Voided:    "bg-red-500",
+  Waived:    "bg-blue-500",
+};
+
+const itemsText = (r) =>
+  (r.lineItems || []).map((i) => i.description).filter(Boolean).join(", ");
+
 const PAGE_SIZE = 15;
 
-export default function UserArchivePage() {
+export default function PenaltyArchivePage() {
   const { effectiveRole } = useAuth();
+  const { fmt } = useCurrency();
   const [records, setRecords]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
@@ -33,20 +50,21 @@ export default function UserArchivePage() {
   const [page, setPage]           = useState(1);
   const [toast, setToast]         = useState(null);
   const [confirmId, setConfirmId] = useState(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState(null);
   const [actionId, setActionId]   = useState(null);
-  const [mergeInfo, setMergeInfo]   = useState(null); // { record, candidate }
+  const [viewRecord, setViewRecord] = useState(null);
 
   const token = localStorage.getItem("token");
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 5000);
+    setTimeout(() => setToast(null), 3500);
   };
 
   const fetchRecords = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/users`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/penalties`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -58,65 +76,33 @@ export default function UserArchivePage() {
 
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
-  const handleRestore = async (userArchivesId) => {
-    setActionId(userArchivesId);
+  const handleRestore = async (penaltyArchivesId) => {
+    setRestoreConfirmId(null);
+    setActionId(penaltyArchivesId);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/users/${userArchivesId}/restore`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/penalties/${penaltyArchivesId}/restore`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Restore failed.");
-      setRecords((prev) => prev.filter((r) => r.userArchivesId !== userArchivesId));
-      showToast(data.message || "User restored to active table.", "success");
+      setRecords((prev) => prev.filter((r) => r.penaltyArchivesId !== penaltyArchivesId));
+      showToast(data.message || "Penalty restored to active table.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
   };
 
-  // Look up a live account with the same email, then ask for confirmation.
-  const openMerge = async (record) => {
-    setActionId(record.userArchivesId);
-    try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/users/${record.userArchivesId}/merge-candidate`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Lookup failed.");
-      if (!data.data) throw new Error("No live account with this email — use Restore instead.");
-      setMergeInfo({ record, candidate: data.data });
-    } catch (err) { showToast(err.message, "error"); }
-    finally { setActionId(null); }
-  };
-
-  const handleMerge = async () => {
-    const { record, candidate } = mergeInfo;
-    setMergeInfo(null);
-    setActionId(record.userArchivesId);
-    try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/users/${record.userArchivesId}/merge`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ targetUserID: candidate.userID }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Merge failed.");
-      setRecords((prev) => prev.filter((r) => r.userArchivesId !== record.userArchivesId));
-      showToast(data.message || "Merged.", "success");
-    } catch (err) { showToast(err.message, "error"); }
-    finally { setActionId(null); }
-  };
-
-  const handleDelete = async (userArchivesId) => {
+  const handleDelete = async (penaltyArchivesId) => {
     setConfirmId(null);
-    setActionId(userArchivesId);
+    setActionId(penaltyArchivesId);
     try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/users/${userArchivesId}`, {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/penalties/${penaltyArchivesId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Delete failed.");
-      setRecords((prev) => prev.filter((r) => r.userArchivesId !== userArchivesId));
+      setRecords((prev) => prev.filter((r) => r.penaltyArchivesId !== penaltyArchivesId));
       showToast("Permanently deleted.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
@@ -125,10 +111,12 @@ export default function UserArchivePage() {
   const filtered = records.filter((r) => {
     const q = search.toLowerCase();
     const matchSearch =
-      (r.userArchivesId || "").toLowerCase().includes(q) ||
-      (r.username        || "").toLowerCase().includes(q) ||
-      (r.email            || "").toLowerCase().includes(q) ||
-      (r.originalId       || "").toLowerCase().includes(q);
+      (r.penaltyArchivesId || "").toLowerCase().includes(q) ||
+      (r.penaltyID          || "").toLowerCase().includes(q) ||
+      (r.bookingID          || "").toLowerCase().includes(q) ||
+      (r.customerName        || "").toLowerCase().includes(q) ||
+      itemsText(r).toLowerCase().includes(q) ||
+      (r.status                || "").toLowerCase().includes(q);
     return matchSearch && inRange(r.archivedAt, dateFrom, dateTo);
   });
 
@@ -137,11 +125,19 @@ export default function UserArchivePage() {
 
   useEffect(() => setPage(1), [search, dateFrom, dateTo]);
 
+  const restoreConfirmRecord = records.find((r) => r.penaltyArchivesId === restoreConfirmId);
+
+  const peso = (n) => {
+    if (n == null) return "—";
+    if (fmt) return fmt(n);
+    return `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
+  };
+
   return (
     <div className="w-full px-6 py-6">
 
       {toast && (
-        <div className={`fixed top-5 right-5 z-50 max-w-sm px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${
+        <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${
           toast.type === "error" ? "bg-red-500" : "bg-teal-600"
         }`}>
           {toast.msg}
@@ -152,7 +148,7 @@ export default function UserArchivePage() {
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
             <h3 className="font-semibold text-gray-800 mb-2">Permanently Delete?</h3>
-            <p className="text-sm text-gray-500 mb-5">This will erase this deleted user's archived record for good. This action cannot be undone.</p>
+            <p className="text-sm text-gray-500 mb-5">This action cannot be undone.</p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
               <button onClick={() => handleDelete(confirmId)} className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm hover:bg-red-600">Delete</button>
@@ -161,47 +157,50 @@ export default function UserArchivePage() {
         </div>
       )}
 
-      {mergeInfo && (
+      {restoreConfirmId && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-[26rem] max-w-[92vw]">
-            <h3 className="font-semibold text-gray-800 mb-2">Merge into current account?</h3>
-            <p className="text-sm text-gray-500 mb-3">
-              This customer signed up again with the same email. Their old bookings, payments, penalties, refunds, reviews and logs will be moved onto the current account. The current account keeps its own profile details.
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
+            <h3 className="font-semibold text-gray-800 mb-2">Restore this penalty?</h3>
+            {restoreConfirmRecord && (
+              <p className="text-xs text-gray-500 mb-2">{restoreConfirmRecord.customerName || restoreConfirmRecord.userID || "—"} — {peso(restoreConfirmRecord.amount)} ({restoreConfirmRecord.status})</p>
+            )}
+            <p className="text-sm text-gray-500 mb-5">
+              It will move back to the live Penalties list. If its booking or payment were archived alongside it, those are restored too.
             </p>
-            <div className="text-xs bg-gray-50 border border-gray-200 rounded-xl p-3 mb-3 space-y-1">
-              <div><span className="text-gray-400">Old (archived):</span> <span className="font-mono">{mergeInfo.record.originalId}</span></div>
-              <div><span className="text-gray-400">Current (kept):</span> <span className="font-mono">{mergeInfo.candidate.userID}</span></div>
-              <div><span className="text-gray-400">Email:</span> {mergeInfo.candidate.email}</div>
-            </div>
-            <p className="text-xs text-amber-600 mb-5">This cannot be undone. The archived record is removed after merging.</p>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setMergeInfo(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
-              <button onClick={handleMerge} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Merge</button>
+              <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
             </div>
           </div>
         </div>
       )}
 
+      {viewRecord && (
+        <ArchiveDetailModal
+          title={`Penalty Archive — ${viewRecord.penaltyID || viewRecord.penaltyArchivesId}`}
+          record={viewRecord}
+          onClose={() => setViewRecord(null)}
+          labelOverrides={{ penaltyArchivesId: "Archive ID", penaltyID: "Penalty ID", userID: "User ID", customerName: "Customer" }}
+        />
+      )}
+
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">DELETED USERS ARCHIVE</h1>
+        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">PENALTY ARCHIVE</h1>
         <p className="text-sm text-gray-400 mt-1">
           {loading ? "Loading…" : `${filtered.length} archived record${filtered.length !== 1 ? "s" : ""}`}
         </p>
-      </div>
-
-      <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs">
-        Restoring brings back the Firestore profile, address, and documents — but their login (Firebase Auth) was
-        permanently removed on delete and can't be auto-restored. The customer will need to sign up again, or an
-        admin recreates their login separately.
+        <p className="text-xs text-gray-400 mt-1">
+          Penalties only end up here when their booking is deleted — there's no manual delete for a single penalty.
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-3 mb-5">
         <input
           type="text"
-          placeholder="Search by ID, username, email…"
+          placeholder="Search by ID, booking, customer, charge, status…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 w-64"
+          className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 w-72"
         />
         <div className="flex items-center gap-2">
           <label className="text-xs text-gray-400 whitespace-nowrap">Archived from</label>
@@ -220,10 +219,12 @@ export default function UserArchivePage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Original UID</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Username</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Email</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Last Status</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Penalty ID</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Booking</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Charges</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Archived At</th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
             </tr>
@@ -232,35 +233,40 @@ export default function UserArchivePage() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 6 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={6} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No deleted users found."}</td></tr>
+              <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived penalties found."}</td></tr>
             ) : (
               paginated.map((r, i) => (
-                <tr key={r.userArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.originalId || "—"}</td>
-                  <td className="px-4 py-3 text-xs text-gray-700">{r.username || r.email || "—"}</td>
-                  <td className="px-4 py-3 text-xs text-gray-600">{r.email || "—"}</td>
+                <tr key={r.penaltyArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[140px]">{r.penaltyID || "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[120px]">{r.bookingID || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 truncate max-w-[140px]" title={r.userID || ""}>{r.customerName || r.userID || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 truncate max-w-[160px]" title={itemsText(r)}>{itemsText(r) || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700 font-medium">{peso(r.amount)}</td>
                   <td className="px-4 py-3 text-xs">
-                    <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs font-medium">{r.status || "—"}</span>
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium text-black ${statusColor[r.status] || "bg-gray-50 border border-gray-200"}`}>
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${statusDotColor[r.status] || "bg-gray-400"}`} />
+                      {r.status || "—"}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap">
                     <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-xs font-medium">{formatDate(r.archivedAt)}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">
-                      <button onClick={() => handleRestore(r.userArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
-                        {actionId === r.userArchivesId ? "…" : "Restore"}
+                      <button onClick={() => setViewRecord(r)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap">
+                        View
                       </button>
-                      <button onClick={() => openMerge(r)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-white text-teal-700 border border-teal-200 hover:bg-teal-50 disabled:opacity-40 whitespace-nowrap">
-                        Merge
+                      <button onClick={() => setRestoreConfirmId(r.penaltyArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
+                        {actionId === r.penaltyArchivesId ? "…" : "Restore"}
                       </button>
                       {effectiveRole === ROLES.OWNER && (
-                      <button onClick={() => setConfirmId(r.userArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
+                      <button onClick={() => setConfirmId(r.penaltyArchivesId)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
                         Delete
                       </button>
                     )}

@@ -30,6 +30,7 @@ import UserArchivePage from "./pages/UserArchivePage";
 import BookingArchivePage from "./pages/BookingArchivePage";
 import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
 import RefundArchivePage from "./pages/RefundArchivePage";
+import PenaltyArchivePage from "./pages/PenaltyArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
 import ReviewsArchivePage from "./pages/ReviewsArchivePage";
 import Reviews from "./pages/Reviews";
@@ -222,6 +223,11 @@ function AppRoutes() {
             <Route path="/archives/transaction-log" element={
                 <ProtectedRoute>
                     <DashboardLayout><TransactionLogArchivePage /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/archives/penalties" element={
+                <ProtectedRoute>
+                    <DashboardLayout><PenaltyArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/archives/refund-requests" element={
