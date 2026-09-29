@@ -27,7 +27,10 @@ const apiFetch = async (path, options = {}) => {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
-    throw new Error(json?.message || `Request failed (${res.status})`);
+    const err = new Error(json?.message || `Request failed (${res.status})`);
+    err.code = json?.code;      // e.g. "OTP_INVALID" — see changeCarStatus on the backend
+    err.status = res.status;
+    throw err;
   }
   return json?.data;
 };
@@ -49,7 +52,11 @@ const apiFetchFull = async (path, options = {}) => {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
-    throw new Error(json?.message || `Request failed (${res.status})`);
+    const err = new Error(json?.message || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.cooldown = !!json?.cooldown;
+    err.retryAfterSeconds = json?.retryAfterSeconds;
+    throw err;
   }
   return json || {};
 };
@@ -171,10 +178,49 @@ function sortPricing(pricing) {
   });
 }
 
+// Accepts a Firestore Timestamp, an ISO string, a Date, or the raw
+// { _seconds } / { seconds } shape a Timestamp turns into after JSON.
+function toDateSafe(v) {
+  if (!v) return null;
+  let d;
+  if (typeof v.toDate === "function") d = v.toDate();
+  else if (v instanceof Date) d = v;
+  else if (typeof v === "object" && (v._seconds ?? v.seconds) != null) d = new Date((v._seconds ?? v.seconds) * 1000);
+  else d = new Date(v);
+  return isNaN(d) ? null : d;
+}
+
 function fmtDate(val) {
-  if (!val) return "—";
-  const d = val?.toDate ? val.toDate() : new Date(val);
+  const d = toDateSafe(val);
+  if (!d) return "—";
   return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// "Sep 30, 2026, 9:00 AM" — date AND time
+function fmtDateTime(val) {
+  const d = toDateSafe(val);
+  if (!d) return "—";
+  return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// Same reference logic as Payments.jsx (refOf / channelOf): the PayMongo
+// payment id is the real reference — referenceNumber is only a last fallback
+// and is usually empty for online payments.
+const CHANNEL_LABEL = { gcash: "GCash", paymaya: "Maya", qrph: "QRPH" };
+const paymentChannel = (p) =>
+  CHANNEL_LABEL[String(p?.paymongoChannel || "").toLowerCase()] || p?.paymongoChannel || (p?.paymentMethod !== "—" ? p?.paymentMethod : null) || null;
+const paymentRef = (p) => {
+  const r = p?.depositPaymongoPaymentID || p?.paymongoPaymentID || p?.referenceNumber;
+  return r && r !== "—" && r !== "N/A" ? r : null;
+};
+
+// Rental length from start/end, e.g. "2 days 3 hrs"
+function fmtDuration(start, end) {
+  const s = toDateSafe(start), e = toDateSafe(end);
+  if (!s || !e || e < s) return null;
+  const totalHrs = Math.round((e - s) / 36e5);
+  const days = Math.floor(totalHrs / 24), hrs = totalHrs % 24;
+  return [days ? `${days} day${days > 1 ? "s" : ""}` : "", hrs ? `${hrs} hr${hrs > 1 ? "s" : ""}` : ""].filter(Boolean).join(" ") || "Under 1 hr";
 }
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
@@ -368,8 +414,8 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
           .map(d => ({ id: d.id, ...d.data() }))
           .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
           .sort((a, b) => {
-            const aD = a.startDateTime?.toDate ? a.startDateTime.toDate() : new Date(a.startDateTime);
-            const bD = b.startDateTime?.toDate ? b.startDateTime.toDate() : new Date(b.startDateTime);
+            const aD = toDateSafe(a.startDateTime) || new Date(0);
+            const bD = toDateSafe(b.startDateTime) || new Date(0);
             return aD - bD;
           });
         setNearestBooking(future[0] || null);
@@ -603,6 +649,13 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [lastResults, setLastResults] = useState(null); // refundResults from a stopped attempt, for context on retry
+  // bookingIDs staff already confirmed on the last screen. Kept HERE (not
+  // inside the modal) so that if the verification code turns out to be
+  // expired at the final click, staff get a fresh code and come back to the
+  // same confirmed rows instead of re-confirming every booking from scratch.
+  const [stagedIDs, setStagedIDs] = useState([]);
+  const [otpNotice, setOtpNotice] = useState(null); // why we're back on the code screen
+  const [reloadKey, setReloadKey] = useState(0); // remounts the confirm list after a partial batch
 
   const submitBatch = async () => {
     setSubmitting(true);
@@ -618,21 +671,42 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
       }
       // Stopped partway — anything in data.refundResults before the
       // "failed" entry already happened for real and can't be undone. The
-      // OTP that was just checked is now spent; back to that step for a
-      // fresh one, carrying the results forward so the next "confirm"
-      // screen (and this message) has context instead of starting blind.
+      // code is NOT spent (the server only burns it after full success), so
+      // stay on this screen, show what happened, and reload the list (via
+      // the key bump) so already-resolved bookings drop out of "upcoming".
       setLastResults(data.refundResults || []);
-      setOtp("");
-      setStep("otp");
+      setStagedIDs([]);
+      setSubmitError(data.message || "The batch stopped partway. Review the remaining bookings and try again.");
+      setReloadKey((k) => k + 1);
     } catch (e) {
-      setSubmitError(e.message);
+      if (e.code === "OTP_INVALID") {
+        // The code expired (it only lives 5 minutes, and it was sent before
+        // staff went through every booking), was used up, or got locked
+        // out. The server rejects this BEFORE any refund runs, so nothing
+        // has happened — go back for a fresh code and keep the confirmed
+        // rows, instead of stranding staff on an error they can't act on.
+        setOtp("");
+        setOtpNotice(e.message);
+        setStep("otp");
+      } else {
+        setSubmitError(e.message);
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
+  // The three modals below are `fixed` overlays but still live INSIDE
+  // whatever rendered this flow in the React tree — and React clicks bubble
+  // through that tree, not through the screen layout. EditCarModal's dark
+  // backdrop closes itself on click, so without this every click in the flow
+  // ("Continue", each Refund button, "Confirm & Change Status") bubbled up to
+  // it, closed the Edit modal and tore the whole flow down mid-step. That's
+  // why changing status from Details never got past its first click.
+  const isolate = (node) => <div onClick={(e) => e.stopPropagation()}>{node}</div>;
+
   if (step === "reason") {
-    return (
+    return isolate(
       <StatusReasonModal
         carLabel={carLabel}
         status={targetStatus}
@@ -644,25 +718,29 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
   }
 
   if (step === "otp") {
-    return (
+    return isolate(
       <OtpConfirmModal
         carLabel={carLabel}
         targetStatus={targetStatus}
         priorResults={lastResults}
-        onNext={(code) => { setOtp(code); setStep("confirm"); }}
+        notice={otpNotice}
+        onNext={(code) => { setOtp(code); setOtpNotice(null); setStep("confirm"); }}
         onCancel={onCancel}
       />
     );
   }
 
-  return (
+  return isolate(
     <AreYouSureRefundModal
+      key={reloadKey}
       car={car}
       carLabel={carLabel}
       targetStatus={targetStatus}
       reason={reason}
       submitting={submitting}
       submitError={submitError}
+      initialStaged={stagedIDs}
+      onStagedChange={setStagedIDs}
       onSubmit={submitBatch}
       onCancel={onCancel}
     />
@@ -675,7 +753,7 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
 // member making the change, not the customer: a code sent to the logged-in
 // admin/supervisor/owner's own email via POST /api/auth/send-otp, same
 // "prove it's really you" mechanic already used for role changes.
-function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCancel }) {
+function OtpConfirmModal({ carLabel, targetStatus, priorResults, notice, onNext, onCancel }) {
   const { user } = useAuth();
   const [otp, setOtp] = useState("");
   const [sendState, setSendState] = useState("sending"); // "sending" | "sent" | "error"
@@ -691,6 +769,13 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCance
   // so this makes sure the real network call only ever fires once per mount.
   const sentOnceRef = useRef(false);
 
+  const [resendIn, setResendIn] = useState(0);
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
+
   const sendCode = useCallback(async () => {
     setSendState("sending");
     setSendMessage(null);
@@ -701,10 +786,19 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCance
         setSendMessage(json.message || "Couldn't send the code — check the email configuration.");
       } else {
         setSendState("sent");
+        setResendIn(60);
       }
     } catch (e) {
-      setSendState("error");
-      setSendMessage(e.message);
+      if (e.status === 429 && e.cooldown) {
+        // A code went out less than a minute ago and is still valid — not an
+        // error, just don't send another one yet.
+        setSendState("sent");
+        setSendMessage("A code was already sent a moment ago — check your email and use that one (it's still valid).");
+        setResendIn(e.retryAfterSeconds || 60);
+      } else {
+        setSendState("error");
+        setSendMessage(e.message);
+      }
     }
   }, []);
 
@@ -750,16 +844,27 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCance
           </p>
         </div>
 
+        {notice && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
+            {notice} A fresh code is on its way to your email — the bookings you confirmed are still marked, nothing was refunded.
+          </div>
+        )}
+
         {priorResults && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-            {resolvedCount} booking(s) were already resolved before the last attempt stopped
-            {failedResult ? ` at ${failedResult.bookingID} (${failedResult.error})` : ""}. That code's already used —
+            {resolvedCount} booking(s) were already resolved before the last attempt stopped. That code's already used —
             this one will pick up where it left off; anything already resolved won't be touched again.
+            {failedResult && (
+              <p className="mt-1.5 font-semibold text-red-700">
+                Stopped at {failedResult.bookingID}: {failedResult.error}
+              </p>
+            )}
           </div>
         )}
 
         {sendState === "sending" && <p className="text-xs text-gray-400">Sending code…</p>}
         {sendState === "error" && <p className="text-xs text-red-600">{sendMessage}</p>}
+        {sendState === "sent" && sendMessage && <p className="text-xs text-amber-700">{sendMessage}</p>}
 
         <div>
           <label className="text-xs font-medium text-gray-500">6-digit code</label>
@@ -771,9 +876,9 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCance
 
         {checkError && <p className="text-xs text-red-600">{checkError}</p>}
 
-        <button onClick={sendCode} disabled={sendState === "sending"}
-          className="text-xs text-teal-600 hover:underline disabled:opacity-50">
-          Resend code
+        <button onClick={sendCode} disabled={sendState === "sending" || resendIn > 0}
+          className="text-xs text-teal-600 hover:underline disabled:opacity-50 disabled:no-underline">
+          {resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}
         </button>
 
         <div className="flex gap-3">
@@ -802,7 +907,7 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, onNext, onCance
 // server: it fires the whole batch (refunds + cancels + the status write)
 // in one call, all or nothing up to the first real failure — see
 // StatusChangeFlow.submitBatch and changeCarStatus() on the backend.
-function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting, submitError, onSubmit, onCancel }) {
+function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting, submitError, initialStaged = [], onStagedChange, onSubmit, onCancel }) {
   const { fmt } = useCurrency();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
@@ -814,6 +919,9 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
   // (booking details + who booked + the payment breakdown) and staging only
   // happens from a real Confirm click inside that modal.
   const [activeBookingID, setActiveBookingID] = useState(null);
+  // Rows staff had already confirmed before a verification-code retry sent
+  // them away and back (see StatusChangeFlow). Read once at mount.
+  const initialStagedRef = useRef(initialStaged);
 
   useEffect(() => {
     let cancelled = false;
@@ -821,7 +929,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
     apiFetch(`/api/fleet/cars/${car.id}/status-change-preview`)
       .then((data) => {
         if (cancelled) return;
-        setUpcoming((data?.upcoming || []).map((b) => ({ ...b, staged: false })));
+        setUpcoming((data?.upcoming || []).map((b) => ({ ...b, staged: initialStagedRef.current.includes(b.bookingID) })));
         setOngoing(data?.ongoing || []);
         setResolved(data?.resolved || []);
       })
@@ -831,16 +939,12 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
   }, [car.id]);
 
   const toggleStaged = (bookingID) => {
-    setUpcoming((list) => list.map((b) => b.bookingID === bookingID ? { ...b, staged: !b.staged } : b));
+    const next = upcoming.map((b) => b.bookingID === bookingID ? { ...b, staged: !b.staged } : b);
+    setUpcoming(next);
+    onStagedChange?.(next.filter((b) => b.staged).map((b) => b.bookingID)); // remembered by StatusChangeFlow
   };
 
-  const dateRange = (b) => {
-    const fmtDate = (v) => {
-      const d = v?.toDate ? v.toDate() : (v ? new Date(v) : null);
-      return d && !isNaN(d) ? d.toLocaleDateString() : "—";
-    };
-    return `${fmtDate(b.startDateTime)} – ${fmtDate(b.endDateTime)}`;
-  };
+  const dateRange = (b) => `${fmtDateTime(b.startDateTime)} – ${fmtDateTime(b.endDateTime)}`;
 
   const resolvedLabel = (r) => {
     if (r.outcome === "refunded") return `Refunded ${fmt(r.amount || 0)}`;
@@ -948,7 +1052,28 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
           </div>
         )}
 
-        {submitError && <p className="text-xs text-red-600">{submitError}</p>}
+        {!loading && !loadError && upcoming.length > 0 && (() => {
+          const toRefund = upcoming.filter((b) => !b.refundPreview?.alreadyRefunded);
+          const total = toRefund.reduce((sum, b) => sum + (b.refundPreview?.total || 0), 0);
+          const manual = toRefund.reduce((sum, b) => sum + (b.refundPreview?.manualAmount || 0), 0);
+          return (
+            <div className="border-t pt-3 space-y-1">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-gray-700">Total refund ({toRefund.length} booking{toRefund.length === 1 ? "" : "s"})</span>
+                <span className="font-bold text-gray-900">{fmt(total)}</span>
+              </div>
+              {manual > 0 && (
+                <p className="text-xs text-gray-500 text-right">
+                  {fmt(total - manual)} online via PayMongo · {fmt(manual)} handed back in person
+                </p>
+              )}
+            </div>
+          );
+        })()}
+
+        {submitError && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 break-words">{submitError}</div>
+        )}
 
         <div className="flex gap-3 pt-2">
           <button onClick={onCancel} disabled={submitting}
@@ -981,15 +1106,6 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
 // own real Confirm button. Nothing gets staged just from clicking the row
 // button anymore; this is the actual "are you sure about THIS one"
 // step — the row button only opens it.
-// Full date + time, not just the date — booking.startDateTime/endDateTime
-// come back as ISO strings from paymentDetails-adjacent lookups or Firestore
-// Timestamps from the raw booking doc, so handle both.
-const fmtDateTime = (v) => {
-  const d = v?.toDate ? v.toDate() : v ? new Date(v) : null;
-  if (!d || isNaN(d)) return "—";
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-};
-
 function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) {
   const already = booking.refundPreview?.alreadyRefunded;
   const hasManual = !already && (booking.refundPreview?.manualAmount || 0) > 0;
@@ -1010,11 +1126,28 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
 
         {/* Booking details */}
         <div className="text-sm space-y-1.5">
-          <p><span className="text-gray-500">Booking:</span> <span className="font-medium text-gray-800">{booking.bookingID}</span></p>
+          <p><span className="text-gray-500">Booking:</span> <span className="font-medium text-gray-800 break-all">{booking.bookingID}</span></p>
           <p><span className="text-gray-500">Status:</span> <span className="font-medium text-gray-800 capitalize">{booking.status || "upcoming"}</span></p>
           <p><span className="text-gray-500">Booked by:</span> <span className="font-medium text-gray-800">{p?.customerName || "—"}</span></p>
-          <p><span className="text-gray-500">Start:</span> {fmtDateTime(booking.startDateTime)}</p>
-          <p><span className="text-gray-500">End:</span> {fmtDateTime(booking.endDateTime)}</p>
+          {(booking.vehicleLabel || p?.vehicleName) && (
+            <p><span className="text-gray-500">Vehicle:</span> <span className="font-medium text-gray-800">
+              {booking.vehicleLabel || p.vehicleName}{booking.plateNumber ? ` · ${booking.plateNumber}` : ""}
+            </span></p>
+          )}
+          {booking.modeOfDriving && <p><span className="text-gray-500">Driving:</span> <span className="font-medium text-gray-800">{booking.modeOfDriving}</span></p>}
+          {booking.location && <p><span className="text-gray-500">Location:</span> <span className="font-medium text-gray-800">{booking.location}</span></p>}
+        </div>
+
+        {/* Schedule — full date + time */}
+        <div className="text-sm space-y-1.5 bg-gray-50 border rounded-lg px-3 py-2">
+          <p><span className="text-gray-500">Start:</span> <span className="font-medium text-gray-800">{fmtDateTime(booking.startDateTime)}</span></p>
+          <p><span className="text-gray-500">End:</span> <span className="font-medium text-gray-800">{fmtDateTime(booking.endDateTime)}</span></p>
+          {(fmtDuration(booking.startDateTime, booking.endDateTime) || booking.totalDays > 0) && (
+            <p><span className="text-gray-500">Duration:</span> <span className="font-medium text-gray-800">
+              {fmtDuration(booking.startDateTime, booking.endDateTime) || `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}`}
+            </span></p>
+          )}
+          {booking.createdAt && <p className="text-xs text-gray-500">Booked on {fmtDateTime(booking.createdAt)}</p>}
         </div>
 
         {/* Payment details + timeline */}
@@ -1026,9 +1159,19 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
             </div>
 
             <div className="text-sm space-y-1">
+              {(p.rentalFee > 0 || p.serviceFee > 0 || p.extraFee > 0) && (
+                <p className="text-xs text-gray-500">
+                  Rental {fmt(p.rentalFee)}{p.serviceFee > 0 ? ` + Service ${fmt(p.serviceFee)}` : ""}{p.extraFee > 0 ? ` + Extra ${fmt(p.extraFee)}` : ""}
+                </p>
+              )}
               <p><span className="text-gray-500">Total fee:</span> {fmt(p.totalFee)}</p>
               <p><span className="text-gray-500">Paid so far:</span> {fmt(p.amountPaid)}</p>
               {p.balance > 0 && <p><span className="text-gray-500">Still owed:</span> {fmt(p.balance)}</p>}
+              <p><span className="text-gray-500">Payment ID:</span> <span className="font-mono text-xs break-all">{p.paymentID || "—"}</span></p>
+              <p><span className="text-gray-500">Payment type:</span> {p.methodOfPayment && p.methodOfPayment !== "—" ? p.methodOfPayment : "—"}</p>
+              <p><span className="text-gray-500">Channel:</span> {paymentChannel(p) || "—"}</p>
+              <p><span className="text-gray-500">PayMongo ref:</span> <span className="font-mono text-xs break-all">{paymentRef(p) || (p.confirmedBy ? `Cash — confirmed by ${p.confirmedBy}` : "— (no online reference on file)")}</span></p>
+              {p.balancePaymongoPaymentID && <p><span className="text-gray-500">Balance ref:</span> <span className="font-mono text-xs break-all">{p.balancePaymongoPaymentID}</span></p>}
               {p.discountAmount > 0 && (
                 <p className="text-teal-700">
                   Discount: {fmt(p.discountAmount)}{p.discountReason ? ` — ${p.discountReason}` : ""}
@@ -1132,8 +1275,8 @@ function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
         const future = bSnap.docs.map(d => ({ id: d.id, ...d.data() }))
           .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
           .sort((a, b) => {
-            const aD = a.startDateTime?.toDate ? a.startDateTime.toDate() : new Date(a.startDateTime);
-            const bD = b.startDateTime?.toDate ? b.startDateTime.toDate() : new Date(b.startDateTime);
+            const aD = toDateSafe(a.startDateTime) || new Date(0);
+            const bD = toDateSafe(b.startDateTime) || new Date(0);
             return aD - bD;
           });
 
