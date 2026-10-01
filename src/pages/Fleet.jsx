@@ -950,6 +950,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
     if (r.outcome === "refunded") return `Refunded ${fmt(r.amount || 0)}`;
     if (r.outcome === "already_refunded") return "Cancelled — already refunded earlier";
     if (r.outcome === "nothing_owed") return "Cancelled — nothing had been paid";
+    if (r.outcome === "no_payment") return "Cancelled — no payment record found";
     return "Resolved";
   };
 
@@ -983,14 +984,21 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
                 <div className="space-y-2">
                   {upcoming.map((b) => (
                     <div key={b.bookingID}
-                      className={`border rounded-xl p-3 flex items-center justify-between gap-3 ${b.refundPreview?.alreadyRefunded ? "bg-amber-50 border-amber-200" : ""}`}>
+                      className={`border rounded-xl p-3 flex items-center justify-between gap-3 ${(b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment) ? "bg-amber-50 border-amber-200" : ""}`}>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
                         <p className="text-xs text-gray-500">{b.paymentDetails?.customerName || "—"} · {dateRange(b)}</p>
                         {b.refundPreview?.alreadyRefunded ? (
                           <p className="text-xs text-amber-700 mt-1">Payment already refunded earlier — this will just cancel the booking to match.</p>
+                        ) : b.refundPreview?.noPayment ? (
+                          <p className="text-xs text-amber-700 mt-1">No payment record found — this will just cancel the booking.</p>
                         ) : (
-                          <p className="text-xs text-gray-500">{fmt(b.refundPreview?.total || 0)} to refund</p>
+                          <>
+                            <p className="text-xs text-gray-500">{fmt(b.refundPreview?.total || 0)} to refund</p>
+                            {b.refundPreview?.existingRequest && (
+                              <p className="text-xs text-blue-700 mt-0.5">Customer already requested a refund — confirming will approve it.</p>
+                            )}
+                          </>
                         )}
                       </div>
                       <button
@@ -998,13 +1006,13 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
                         className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium ${
                           b.staged
                             ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                            : b.refundPreview?.alreadyRefunded
+                            : (b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment)
                               ? "bg-amber-600 text-white hover:bg-amber-700"
                               : "bg-red-600 text-white hover:bg-red-700"
                         }`}>
                         {b.staged
                           ? "Confirmed ✓"
-                          : b.refundPreview?.alreadyRefunded
+                          : (b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment)
                             ? "Confirm cancel"
                             : `Refund ${fmt(b.refundPreview?.total || 0)}`}
                       </button>
@@ -1053,7 +1061,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
         )}
 
         {!loading && !loadError && upcoming.length > 0 && (() => {
-          const toRefund = upcoming.filter((b) => !b.refundPreview?.alreadyRefunded);
+          const toRefund = upcoming.filter((b) => !b.refundPreview?.alreadyRefunded && !b.refundPreview?.noPayment);
           const total = toRefund.reduce((sum, b) => sum + (b.refundPreview?.total || 0), 0);
           const manual = toRefund.reduce((sum, b) => sum + (b.refundPreview?.manualAmount || 0), 0);
           return (
@@ -1108,7 +1116,9 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
 // step — the row button only opens it.
 function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) {
   const already = booking.refundPreview?.alreadyRefunded;
-  const hasManual = !already && (booking.refundPreview?.manualAmount || 0) > 0;
+  const noPayment = !!booking.refundPreview?.noPayment;
+  const cancelOnly = already || noPayment;
+  const hasManual = !cancelOnly && (booking.refundPreview?.manualAmount || 0) > 0;
   const p = booking.paymentDetails; // full detail from getPaymentDetailsByBookingID — may be null if lookup failed
 
   const stageColor = {
@@ -1200,13 +1210,18 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
         )}
 
         {/* What confirming this row actually does */}
-        {already ? (
+        {cancelOnly ? (
           <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued.
+            {noPayment
+              ? "No payment record was found for this booking — confirming this will just cancel it. Nothing is refunded."
+              : "Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued."}
           </p>
         ) : (
           <div className="text-sm bg-gray-50 border rounded-lg px-3 py-2 space-y-0.5">
             <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(booking.refundPreview?.total || 0)}</span></p>
+            {booking.refundPreview?.existingRequest && (
+              <p className="text-xs text-blue-700">The customer already requested a refund — confirming approves that request.</p>
+            )}
             {hasManual && (
               <p className="text-xs text-gray-500">
                 {fmt(booking.refundPreview.onlineAmount || 0)} via PayMongo + {fmt(booking.refundPreview.manualAmount)} handed back in person
@@ -1227,8 +1242,8 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
             </button>
           ) : (
             <button onClick={onConfirm}
-              className={`flex-1 px-4 py-2 text-white rounded-xl text-sm font-medium ${already ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
-              {already ? "Confirm cancel" : `Confirm refund ${fmt(booking.refundPreview?.total || 0)}`}
+              className={`flex-1 px-4 py-2 text-white rounded-xl text-sm font-medium ${cancelOnly ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
+              {cancelOnly ? "Confirm cancel" : `Confirm refund ${fmt(booking.refundPreview?.total || 0)}`}
             </button>
           )}
         </div>
