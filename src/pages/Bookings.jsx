@@ -172,6 +172,21 @@ const fmtDate = (val) => {
   } catch { return "—"; }
 };
 
+// Same parsing as fmtDate, but keeps the time — used for "Created", where the
+// exact moment the booking was made matters (two bookings can share a date).
+const fmtDateTime = (val) => {
+  if (!val) return "—";
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else if (val?.seconds !== undefined) d = new Date(val.seconds * 1000);
+    else d = new Date(val);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch { return "—"; }
+};
+
 // Same Firestore-Timestamp-or-string-or-seconds handling as fmtDate above,
 // but returns a raw millisecond number (or -Infinity for unparsable/empty
 // values) so sort() has something numeric to compare rather than strings.
@@ -181,6 +196,7 @@ const toMillis = (val) => {
     let d;
     if (typeof val?.toDate === "function") d = val.toDate();
     else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else if (val?.seconds !== undefined) d = new Date(val.seconds * 1000);
     else d = new Date(val);
     const ms = d.getTime();
     return isNaN(ms) ? -Infinity : ms;
@@ -696,6 +712,7 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
             {row("Vehicle",         booking.vehicleName)}
             {row("Service Type",    booking.serviceTypeName)}
             {row("Car ID",          booking.carID)}
+            {row("Created",         fmtDateTime(booking.createdAt))}
             {row("Start Date",      fmtDate(booking.startDateTime))}
             {row("End Date",        fmtDate(booking.endDateTime))}
             {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
@@ -1104,6 +1121,7 @@ export default function Bookings() {
     let av, bv;
     if (sortKey === "dates") { av = toMillis(a.startDateTime); bv = toMillis(b.startDateTime); }
     else if (sortKey === "fee") { av = a.totalFee ?? -Infinity; bv = b.totalFee ?? -Infinity; }
+    else if (sortKey === "created") { av = toMillis(a.createdAt); bv = toMillis(b.createdAt); }
     else return 0;
     return sortDir === "asc" ? av - bv : bv - av;
   });
@@ -1194,6 +1212,7 @@ export default function Bookings() {
                 <th className="px-4 py-3 text-left">Duration</th>
                 <SortableTh label="Total Fee" sortKey="fee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Payment</th>
+                <SortableTh label="Created" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3"></th>
               </tr>
@@ -1202,13 +1221,13 @@ export default function Bookings() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    {Array.from({ length: 9 }).map((__, j) => (
+                    {Array.from({ length: 10 }).map((__, j) => (
                       <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={9} className="text-center text-gray-400 py-12">No bookings found</td></tr>
+                <tr><td colSpan={10} className="text-center text-gray-400 py-12">No bookings found</td></tr>
               ) : (
                 pageItems.map((b) => {
                   const needsAction = b.status?.toLowerCase() === "cancellation_request";
@@ -1238,6 +1257,7 @@ export default function Bookings() {
                       </td>
                       <td className="px-4 py-3 font-semibold text-gray-800">{fmt(b.totalFee)}</td>
                       <td className="px-4 py-3 text-gray-600">{b.paymentMethod}</td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDateTime(b.createdAt)}</td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2">
