@@ -76,6 +76,7 @@ const META_BY_TYPE = {
   license_expiring:     { bg: "bg-yellow-100", emoji: "🪪", title: "License Expiring Soon" },
   license_expired:      { bg: "bg-red-100",    emoji: "🪪", title: "License Expired" },
   driver_assigned:      { bg: "bg-teal-100",   emoji: "🚗", title: "Trip Assigned" },
+  booking_cancelled:    { bg: "bg-red-100",    emoji: "🚫", title: "Booking Cancelled" },
   // A driver hit "Remind Staff" in My Trips — they can't start pickup /
   // return until the vehicle inspection is completed.
   inspection_pickup_needed: { bg: "bg-orange-100", emoji: "📋", title: "Pickup Inspection Needed" },
@@ -242,7 +243,7 @@ export default function Header({ title = "Dashboard" }) {
     if (user?.role === "Driver") {
       if (n.type === "license_expired" || n.type === "license_expiring" || n.refCollection === "account" || n.refCollection === "user") {
         navigate("/account");
-      } else if (n.refCollection === "bookings" && n.refID && n.type !== "driver_unassigned") {
+      } else if (n.refCollection === "bookings" && n.refID && n.type !== "driver_unassigned" && n.type !== "booking_cancelled") {
         navigate(`/my-trips?open=${n.refID}`);
       } else {
         navigate("/my-trips");

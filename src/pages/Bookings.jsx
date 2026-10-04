@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
 import TripMapModal from "../components/TripMapModal";
+import StoreLocationMapPicker from "../components/shared/StoreLocationMapPicker";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -31,6 +32,16 @@ function tripStops(booking) {
     stops.push({ key: `stop-${i}`, type: "stop", address: zone.label || `Stop ${i + 1}`, lat: zone.lat, lng: zone.lng });
   });
   return stops;
+}
+
+// The booking's destination stop: bookings.location is the destination text the
+// customer picked, and the matching geofence zone (labelled with that same text)
+// holds its coordinates. null when there is no such zone (older bookings, or the
+// destination sits on top of the pickup/dropoff pin).
+function destinationStop(booking) {
+  const label = (booking.location || "").trim().toLowerCase();
+  if (!label) return null;
+  return tripStops(booking).find((s) => s.type === "stop" && (s.address || "").trim().toLowerCase() === label) || null;
 }
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
@@ -346,8 +357,9 @@ function DeleteModal({ booking, onClose, onConfirm, deleting }) {
 // ─── INLINE LOCATION MAP ──────────────────────────────────────────────────────
 // Small read-only Leaflet map used inside the Edit modal: plots pickup, dropoff
 // and any extra stops. "Expand" opens the full TripMapModal. It's a preview —
-// the coordinates come from the booking's trip session, so editing the text
-// field above doesn't move the pins.
+// the coordinates come from the booking's trip session; picking a new location
+// with the Map button moves the destination pin here right away, but typing
+// into the text field alone does not.
 const MAP_PIN_COLOR = { pickup: "#4f46e5", dropoff: "#f59e0b", stop: "#0d9488" };
 
 function LocationMapPreview({ stops, title }) {
@@ -372,13 +384,22 @@ function LocationMapPreview({ stops, title }) {
         }),
       }).addTo(map).bindTooltip(st.type === "stop" ? (st.address || "Stop") : `${st.type === "pickup" ? "Pickup" : "Dropoff"}${st.address ? `: ${st.address}` : ""}`);
     });
-    // The modal has only just mounted — let it lay out before measuring.
-    requestAnimationFrame(() => {
-      if (!mapRef.current) return;
+    // The modal has only just mounted — let it lay out before measuring. The
+    // frame is cancelled on cleanup: under React StrictMode (and on any re-run)
+    // the effect's map is removed before this fires, and calling fitBounds on a
+    // removed map is what threw "_leaflet_pos".
+    let disposed = false;
+    const frame = requestAnimationFrame(() => {
+      if (disposed) return;
       map.invalidateSize();
-      if (valid.length > 1) map.fitBounds(L.latLngBounds(valid.map((v) => [v.lat, v.lng])), { padding: [24, 24], maxZoom: 16 });
+      if (valid.length > 1) map.fitBounds(L.latLngBounds(valid.map((v) => [v.lat, v.lng])), { padding: [24, 24], maxZoom: 16, animate: false });
     });
-    return () => { map.remove(); mapRef.current = null; };
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      map.remove();
+      mapRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(valid.map((v) => [v.lat, v.lng]))]);
 
@@ -411,6 +432,11 @@ function EditModal({ booking, onClose, onSave }) {
     notesAdmin: booking.notesAdmin || "",
     status:     defaultNextStatus,
   });
+  // { address, lat, lng } once a location was picked on the map this session.
+  // Cleared again if the text is typed over, so we never save coordinates that
+  // don't belong to the address text next to them.
+  const [locCoords, setLocCoords]           = useState(null);
+  const [mapOpen, setMapOpen]               = useState(false);
   const [saving, setSaving]                 = useState(false);
   const [error, setError]                   = useState(null);
   const [paymentStatus, setPaymentStatus]   = useState(null);
@@ -434,6 +460,24 @@ function EditModal({ booking, onClose, onSave }) {
       .finally(() => setPaymentLoading(false));
   }, [booking, currentStatus, getToken]);
 
+  // Where the picker opens: the pin picked this session, else the saved destination.
+  const pickerCoords = useMemo(() => {
+    if (locCoords) return { lat: locCoords.lat, lng: locCoords.lng };
+    const cur = destinationStop(booking);
+    return cur ? { lat: cur.lat, lng: cur.lng } : null;
+  }, [locCoords, booking]);
+
+  // Preview pins: swap the saved destination pin for the newly picked one.
+  const previewStops = useMemo(() => {
+    const base = tripStops(booking);
+    if (!locCoords) return base;
+    const cur = destinationStop(booking);
+    return [
+      ...base.filter((s) => s !== cur),
+      { key: "destination", type: "stop", address: locCoords.address, lat: locCoords.lat, lng: locCoords.lng },
+    ];
+  }, [booking, locCoords]);
+
   const approvedStatuses = ["approved", "paid"];
   const isApprovingWithUnpaidPayment =
     form.status === "ongoing" &&
@@ -447,7 +491,7 @@ function EditModal({ booking, onClose, onSave }) {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-        body: JSON.stringify(form),
+        body: JSON.stringify(locCoords ? { ...form, locationCoords: locCoords } : form),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to save");
@@ -492,10 +536,38 @@ function EditModal({ booking, onClose, onSave }) {
           )
         )}
         <div className="space-y-3">
-          <label className="block text-sm font-medium text-gray-700">Location
-            <input className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-          </label>
-          <LocationMapPreview stops={tripStops(booking)} title={`${booking.customerName || "Booking"} — ${booking.vehicleName || ""}`} />
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Location</label>
+            <div className="mt-1 flex gap-2">
+              <input
+                className="flex-1 min-w-0 border rounded-xl px-3 py-2 text-sm outline-none"
+                value={form.location}
+                onChange={(e) => { setForm({ ...form, location: e.target.value }); setLocCoords(null); }}
+              />
+              <button
+                type="button"
+                onClick={() => setMapOpen(true)}
+                className="px-3 py-2 rounded-xl border border-teal-500 text-teal-700 hover:bg-teal-50 transition-colors text-sm font-semibold whitespace-nowrap"
+              >📍 Map</button>
+            </div>
+            {locCoords && (
+              <p className="mt-1 text-xs text-teal-700">Pin set from the map — the trip's destination zone moves here when you save.</p>
+            )}
+          </div>
+          <StoreLocationMapPicker
+            isOpen={mapOpen}
+            onClose={() => setMapOpen(false)}
+            onConfirm={({ address, lat, lng }) => {
+              setForm((f) => ({ ...f, location: address }));
+              setLocCoords({ address, lat, lng });
+              setMapOpen(false);
+            }}
+            initialLabel={form.location}
+            initialCoords={pickerCoords}
+            title="📍 Pick Location"
+            subtitle="Search, click the map, or drag the pin"
+          />
+          <LocationMapPreview stops={previewStops} title={`${booking.customerName || "Booking"} — ${booking.vehicleName || ""}`} />
           <label className="block text-sm font-medium text-gray-700">Admin Notes
             <textarea rows={3} className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" value={form.notesAdmin} onChange={(e) => setForm({ ...form, notesAdmin: e.target.value })} />
           </label>
