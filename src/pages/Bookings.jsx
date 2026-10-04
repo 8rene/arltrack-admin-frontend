@@ -426,11 +426,10 @@ function LocationMapPreview({ stops, title }) {
 
 function EditModal({ booking, onClose, onSave }) {
   const currentStatus     = booking.status?.toLowerCase() || "";
-  const defaultNextStatus = currentStatus === "upcoming" ? "ongoing" : "completed";
   const [form, setForm] = useState({
     location:   booking.location || "",
     notesAdmin: booking.notesAdmin || "",
-    status:     defaultNextStatus,
+    status:     "", // "" = no status change; staff must pick a transition on purpose
   });
   // { address, lat, lng } once a location was picked on the map this session.
   // Cleared again if the text is typed over, so we never save coordinates that
@@ -488,10 +487,13 @@ function EditModal({ booking, onClose, onSave }) {
   const handleSave = async () => {
     setSaving(true); setError(null);
     try {
+      const payload = { ...form };
+      if (!payload.status) delete payload.status; // no status change
+      if (locCoords) payload.locationCoords = locCoords;
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-        body: JSON.stringify(locCoords ? { ...form, locationCoords: locCoords } : form),
+        body: JSON.stringify(payload),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to save");
@@ -573,6 +575,7 @@ function EditModal({ booking, onClose, onSave }) {
           </label>
           <label className="block text-sm font-medium text-gray-700">Status
             <select className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              <option value="">No change ({booking.status})</option>
               {booking.status?.toLowerCase() === "upcoming" ? (
                 <><option value="ongoing">Ongoing (Picked Up)</option><option value="cancelled">Cancelled</option></>
               ) : (
@@ -1136,6 +1139,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
         <div className="pt-1 border-t border-gray-100">
           {row("Notes (User)",    booking.notesUser)}
           {row("Notes (Admin)",   booking.notesAdmin)}
+          {booking.cancellationReason && row("Cancel Reason", booking.cancellationReason)}
         </div>
 
         {/* Trip History — always shown, not just when history exists, so it's
