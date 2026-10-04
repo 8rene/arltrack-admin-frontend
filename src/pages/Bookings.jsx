@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
+import { ROLES } from "../config/pagePermissions";
 import TripMapModal from "../components/TripMapModal";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 // Same shape MyTrips.jsx's tripStops() builds for TripMapModal — pickup,
 // dropoff, and any extra stops the customer selected at booking time
@@ -240,6 +243,8 @@ function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, classN
   );
 }
 
+// Admin refund/cancel only applies before the trip starts — an ongoing trip goes through the customer's cancellation request instead.
+const canRefundCancel = (status) => ["to pay", "upcoming"].includes(status?.toLowerCase());
 const canEdit  = (status) => ["upcoming", "ongoing"].includes(status?.toLowerCase());
 const isLocked = (status) => ["completed", "cancelled", "stolen"].includes(status?.toLowerCase());
 
@@ -338,6 +343,64 @@ function DeleteModal({ booking, onClose, onConfirm, deleting }) {
   );
 }
 
+// ─── INLINE LOCATION MAP ──────────────────────────────────────────────────────
+// Small read-only Leaflet map used inside the Edit modal: plots pickup, dropoff
+// and any extra stops. "Expand" opens the full TripMapModal. It's a preview —
+// the coordinates come from the booking's trip session, so editing the text
+// field above doesn't move the pins.
+const MAP_PIN_COLOR = { pickup: "#4f46e5", dropoff: "#f59e0b", stop: "#0d9488" };
+
+function LocationMapPreview({ stops, title }) {
+  const elRef  = useRef(null);
+  const mapRef = useRef(null);
+  const [expanded, setExpanded] = useState(false);
+  const valid = stops.filter((s) => typeof s.lat === "number" && typeof s.lng === "number");
+
+  useEffect(() => {
+    if (!elRef.current || valid.length === 0) return;
+    const map = L.map(elRef.current, { zoomControl: true, attributionControl: false, scrollWheelZoom: false });
+    mapRef.current = map;
+    map.setView([valid[0].lat, valid[0].lng], 14);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+    valid.forEach((st) => {
+      const color = MAP_PIN_COLOR[st.type] || MAP_PIN_COLOR.pickup;
+      L.marker([st.lat, st.lng], {
+        icon: L.divIcon({
+          className: "",
+          html: `<div style="width:22px;height:22px;border-radius:50% 50% 50% 0;background:${color};transform:rotate(-45deg);border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>`,
+          iconSize: [22, 22], iconAnchor: [11, 22],
+        }),
+      }).addTo(map).bindTooltip(st.type === "stop" ? (st.address || "Stop") : `${st.type === "pickup" ? "Pickup" : "Dropoff"}${st.address ? `: ${st.address}` : ""}`);
+    });
+    // The modal has only just mounted — let it lay out before measuring.
+    requestAnimationFrame(() => {
+      if (!mapRef.current) return;
+      map.invalidateSize();
+      if (valid.length > 1) map.fitBounds(L.latLngBounds(valid.map((v) => [v.lat, v.lng])), { padding: [24, 24], maxZoom: 16 });
+    });
+    return () => { map.remove(); mapRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(valid.map((v) => [v.lat, v.lng]))]);
+
+  if (valid.length === 0) {
+    return <div className="mt-2 text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-xl p-3">No map data for this booking.</div>;
+  }
+  return (
+    <div className="mt-2">
+      <div ref={elRef} className="h-44 w-full rounded-xl border border-gray-200 overflow-hidden z-0" />
+      <div className="flex items-center justify-between mt-1.5 text-xs text-gray-500">
+        <span className="flex items-center gap-3">
+          <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: MAP_PIN_COLOR.pickup }} />Pickup</span>
+          <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: MAP_PIN_COLOR.dropoff }} />Dropoff</span>
+          {valid.some((v) => v.type === "stop") && <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: MAP_PIN_COLOR.stop }} />Stop</span>}
+        </span>
+        <button type="button" onClick={() => setExpanded(true)} className="font-semibold text-teal-700 hover:underline">Expand →</button>
+      </div>
+      <TripMapModal open={expanded} onClose={() => setExpanded(false)} title={title} stops={stops} />
+    </div>
+  );
+}
+
 // ─── EDIT MODAL ───────────────────────────────────────────────────────────────
 
 function EditModal({ booking, onClose, onSave }) {
@@ -395,7 +458,7 @@ function EditModal({ booking, onClose, onSave }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <h2 className="font-bold text-lg text-gray-800">Edit Booking</h2>
         <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
         {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
@@ -432,6 +495,7 @@ function EditModal({ booking, onClose, onSave }) {
           <label className="block text-sm font-medium text-gray-700">Location
             <input className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
           </label>
+          <LocationMapPreview stops={tripStops(booking)} title={`${booking.customerName || "Booking"} — ${booking.vehicleName || ""}`} />
           <label className="block text-sm font-medium text-gray-700">Admin Notes
             <textarea rows={3} className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" value={form.notesAdmin} onChange={(e) => setForm({ ...form, notesAdmin: e.target.value })} />
           </label>
@@ -449,6 +513,126 @@ function EditModal({ booking, onClose, onSave }) {
           <button onClick={onClose} className="px-4 py-2 border rounded-xl text-sm">Cancel</button>
           <button onClick={handleSave} disabled={saving || isApprovingWithUnpaidPayment} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed">
             {saving ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── REFUND & CANCEL MODAL ────────────────────────────────────────────────────
+// Admin/Owner only. "Refund & cancel" hits POST /api/bookings/:id/refund-cancel,
+// which sends the PayMongo refund(s), cancels the booking + GPS session, flips
+// the refund-request/payment records and notifies the customer. "Cancel only"
+// cancels without returning any money.
+
+function RefundCancelModal({ booking, onClose, onDone }) {
+  const { fmt } = useCurrency();
+  const { getToken } = useAuth();
+  const [preview, setPreview]   = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [mode, setMode]         = useState("refund"); // "refund" | "cancel"
+  const [reason, setReason]     = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]       = useState(null);
+  const api = `${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`;
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${api}/refund-preview`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!alive) return;
+        if (!ok) throw new Error(j.message || "Could not load refund preview.");
+        setPreview(j.data);
+        if (!(j.data.total > 0)) setMode("cancel"); // nothing to refund → plain cancel
+      })
+      .catch((e) => alive && setError(e.message))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking.id]);
+
+  const hasMoney = (preview?.total || 0) > 0;
+  const blocked  = !!preview?.existingRequest && mode === "cancel";
+
+  const submit = async () => {
+    setSubmitting(true); setError(null);
+    try {
+      const res  = await fetch(`${api}/refund-cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ reason: reason.trim(), refund: mode === "refund" }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Request failed.");
+      onDone(json.message || "Booking cancelled.");
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
+  };
+
+  const opt = (value, title, desc) => (
+    <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${mode === value ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}>
+      <input type="radio" className="mt-1" checked={mode === value} onChange={() => setMode(value)} />
+      <div>
+        <p className="text-sm font-semibold text-gray-800">{title}</p>
+        <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+      </div>
+    </label>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+        <h2 className="font-bold text-lg text-gray-800">Cancel Booking</h2>
+        <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
+        {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
+
+        {loading ? (
+          <div className="text-sm text-gray-400">Checking payment…</div>
+        ) : preview && (
+          <>
+            {preview.alreadyRefunded ? (
+              <div className="text-sm bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">This payment was already refunded — cancelling will just close the booking.</div>
+            ) : hasMoney ? (
+              <div className="text-sm bg-gray-50 border border-gray-200 p-3 rounded-xl space-y-1">
+                <div className="flex justify-between"><span className="text-gray-500">Total to refund</span><span className="font-semibold">{fmt(preview.total)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Via PayMongo (automatic)</span><span>{fmt(preview.onlineAmount)}</span></div>
+                {preview.manualAmount > 0 && <div className="flex justify-between"><span className="text-gray-500">Hand back in person</span><span>{fmt(preview.manualAmount)}</span></div>}
+              </div>
+            ) : (
+              <div className="text-sm bg-gray-50 border border-gray-200 text-gray-600 p-3 rounded-xl">Nothing has been paid on this booking, so there is nothing to refund.</div>
+            )}
+
+            {preview.existingRequest && (
+              <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">
+                The customer already has a refund request ({preview.existingRequest.status}). Refunding here will approve that same request — no double refund.
+              </div>
+            )}
+
+            {hasMoney && (
+              <div className="space-y-2">
+                {opt("refund", "Refund & cancel", "Sends the PayMongo refund automatically, cancels the booking and emails the customer. Full refund, no fee.")}
+                {opt("cancel", "Cancel only (no refund)", "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.")}
+              </div>
+            )}
+
+            <label className="block text-sm font-medium text-gray-700">Reason (shown to the customer)
+              <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
+                className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" />
+            </label>
+            {blocked && <p className="text-xs text-red-600">Resolve the customer's open refund request first, or choose Refund & cancel.</p>}
+          </>
+        )}
+
+        <div className="flex gap-3 justify-end pt-1">
+          <button onClick={onClose} disabled={submitting} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Back</button>
+          <button
+            onClick={submit}
+            disabled={submitting || loading || !preview || !reason.trim() || blocked}
+            className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
+          >
+            {submitting ? "Processing…" : mode === "refund" && hasMoney ? "Refund & Cancel" : "Cancel Booking"}
           </button>
         </div>
       </div>
@@ -561,7 +745,7 @@ function CustomerProfileModal({ userID, onClose }) {
   );
 }
 
-function ViewModal({ booking, onClose, onViewCustomer }) {
+function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelete }) {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
   const navigate = useNavigate();
@@ -966,6 +1150,20 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
           </button>
         </div>
 
+        {/* Actions — only the ones that apply to this booking / this role. */}
+        {(onEdit || onRefund || onDelete) && (
+          <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">
+            {onEdit && canEdit(booking.status) && (
+              <button onClick={() => onEdit(booking)} className="flex-1 px-3 py-2 border border-teal-400 text-teal-600 rounded-xl text-sm hover:bg-teal-50 transition-colors">Edit</button>
+            )}
+            {onRefund && canRefundCancel(booking.status) && (
+              <button onClick={() => onRefund(booking)} className="flex-1 px-3 py-2 border border-orange-300 text-orange-600 rounded-xl text-sm hover:bg-orange-50 transition-colors whitespace-nowrap">Refund / Cancel</button>
+            )}
+            {onDelete && (
+              <button onClick={() => onDelete(booking)} className="flex-1 px-3 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 transition-colors">Delete</button>
+            )}
+          </div>
+        )}
         <button onClick={onClose} className="w-full mt-2 py-2 border rounded-xl text-sm">Close</button>
       </div>
 
@@ -983,7 +1181,9 @@ function ViewModal({ booking, onClose, onViewCustomer }) {
 
 export default function Bookings() {
   const { fmt } = useCurrency();
-  const { getToken } = useAuth();
+  const { getToken, effectiveRole } = useAuth();
+  const canRefundRole = [ROLES.ADMIN, ROLES.OWNER].includes(effectiveRole);
+  const [refundBooking, setRefundBooking] = useState(null);
   const [activeTab, setActiveTab]           = useState("All");
   const [search, setSearch]                 = useState("");
   const [allBookings, setAllBookings]       = useState([]);
@@ -1264,6 +1464,12 @@ export default function Bookings() {
                             disabled={isLocked(b.status)}
                             className={`px-3 py-1 border rounded-lg text-xs transition-colors ${isLocked(b.status) ? "border-gray-200 text-gray-300 cursor-not-allowed" : "border-teal-400 text-teal-600 hover:bg-teal-50"}`}
                           >Edit</button>
+                          {canRefundRole && canRefundCancel(b.status) && (
+                            <button
+                              onClick={() => setRefundBooking(b)}
+                              className="px-3 py-1 border border-orange-300 text-orange-600 rounded-lg text-xs hover:bg-orange-50 transition-colors whitespace-nowrap"
+                            >Refund / Cancel</button>
+                          )}
                           <button
                             onClick={() => setDeleteBooking(b)}
                             className="px-3 py-1 border border-red-200 text-red-500 rounded-lg text-xs hover:bg-red-50 transition-colors"
@@ -1280,8 +1486,24 @@ export default function Bookings() {
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
-      {viewBooking   && <ViewModal booking={viewBooking} onClose={() => setViewBooking(null)} onViewCustomer={setProfileUserID} />}
+      {viewBooking   && (
+        <ViewModal
+          booking={viewBooking}
+          onClose={() => setViewBooking(null)}
+          onViewCustomer={setProfileUserID}
+          onEdit={(b) => { setViewBooking(null); setEditBooking(b); }}
+          onRefund={canRefundRole ? (b) => { setViewBooking(null); setRefundBooking(b); } : undefined}
+          onDelete={(b) => { setViewBooking(null); setDeleteBooking(b); }}
+        />
+      )}
       {editBooking   && <EditModal booking={editBooking} onClose={() => setEditBooking(null)} onSave={() => { setEditBooking(null); fetchBookings(); }} />}
+      {refundBooking && (
+        <RefundCancelModal
+          booking={refundBooking}
+          onClose={() => setRefundBooking(null)}
+          onDone={(msg) => { setRefundBooking(null); showToast(msg, "success"); fetchBookings(); }}
+        />
+      )}
       {profileUserID && <CustomerProfileModal userID={profileUserID} onClose={() => setProfileUserID(null)} />}
       {deleteBooking && (
         <DeleteModal
