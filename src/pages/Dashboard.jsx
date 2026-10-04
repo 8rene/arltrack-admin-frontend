@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
+import usePolling from "../hooks/usePolling";
 import {
   collection,
   query,
@@ -204,8 +205,14 @@ export default function Dashboard() {
   // actually wants to know. Only the latest after-trip record per car
   // counts, same as Maintenance.jsx's own derivation, so a car's older
   // damage history doesn't linger once a newer clean trip supersedes it.
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "inventoryAfterTrip"), async (snap) => {
+  // CHANGED: was onSnapshot(collection(db, "inventoryAfterTrip")) — the whole
+  // collection on every dashboard open + on every change, each change then
+  // re-reading cars/brand/model/carParts too. Now one read on open, then every
+  // 5 minutes while the tab is visible. (Better long-term: store a per-car
+  // "latest damage" summary doc so this doesn't scan the history at all.)
+  const loadDamagedParts = async () => {
+      let snap;
+      try { snap = await getDocs(collection(db, "inventoryAfterTrip")); } catch { return; }
       const latestByCarID = {};
       snap.docs.forEach((d) => {
         const data = { id: d.id, ...d.data() };
@@ -266,9 +273,8 @@ export default function Dashboard() {
         carName: carNameMap[p.carID] || p.carID || "—",
         carPartName: p.carPartName || partNameMap[p.carPartID] || "Unknown Part",
       })));
-    });
-    return () => unsub();
-  }, []);
+  };
+  usePolling(loadDamagedParts, 5 * 60 * 1000);
 
   // REAL-TIME — bookings not yet started (pickup coming up)
   useEffect(() => {
@@ -442,14 +448,10 @@ export default function Dashboard() {
   // only on initial page load. Debounced since this is a full re-join, not a
   // cheap merge — one uploaded document shouldn't trigger the whole thing
   // to re-run 5 times in a row if a form saves in multiple field writes.
-  const licenseRefetchTimer = useRef(null);
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "userDocument"), () => {
-      clearTimeout(licenseRefetchTimer.current);
-      licenseRefetchTimer.current = setTimeout(() => fetchLicenseWarnings(true), 500);
-    });
-    return () => { unsub(); clearTimeout(licenseRefetchTimer.current); };
-  }, [fetchLicenseWarnings]);
+  // CHANGED: the onSnapshot(collection(db, "userDocument")) listener that used
+  // to live here read the entire collection on every dashboard open. The 60s
+  // visibility-aware timer above already refreshes the license join, so the
+  // listener is removed.
 
   // Pending edit / ID-resubmit requests — surfaced in Warning as soon as
   // submitted, same "needs admin attention" reasoning as an upcoming

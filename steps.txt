@@ -1,0 +1,43 @@
+list
+
+signup c
+register c
+
+verify id s
+accept user s
+
+book c
+pay c 
+
+assign driver s
+gps setup s
+vehicle inspect s
+
+give discount o
+
+receive payment/give discount d
+pickup customer d
+
+drive
+
+if w driver
+dropoff d
+give penalty d
+return deposit with computed penalty d
+
+vehicle after inspect s
+return car d or s
+
+if w/o driver
+dropoff s
+vehicle inspect s
+give penalty s
+return deposit s
+return car s
+
+
+maintenance o
+create report o
+
+system log o
+

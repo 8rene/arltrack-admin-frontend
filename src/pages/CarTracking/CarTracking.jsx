@@ -2,8 +2,10 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../../fireabase";
+import usePolling from "../../hooks/usePolling";
+import { getCarCatalog } from "../../utils/carCatalog";
 import TracebackPanel from "./TracebackPanel";
 import HistoryPanel from "./HistoryPanel";
 import ReviewPanel from "./ReviewPanel";
@@ -173,7 +175,7 @@ const CAR_SVG_RAW = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
   <circle cx="16.5" cy="15" r="1.5"/>
 </svg>`;
 
-const POLL_MS = 10_000;
+const POLL_MS = 30_000; // was 10s — each poll costs backend Firestore reads
 const API     = process.env.REACT_APP_API_URL;
 
 function timeAgo(iso) {
@@ -361,21 +363,14 @@ export default function CarTracking() {
   }, [tab]);
 
   // ── Fetch all cars + brand/model + photos from Firestore ──────────────────
+  // Served from a shared 5-minute cache (utils/carCatalog.js) instead of
+  // re-reading four whole collections every time this page opens.
   const fetchAllCars = useCallback(async () => {
     try {
-      const [carsSnap, brandSnap, modelSnap, imgSnap] = await Promise.all([
-        getDocs(collection(db, "cars")),
-        getDocs(collection(db, "brand")),
-        getDocs(collection(db, "model")),
-        getDocs(collection(db, "carImages")),
-      ]);
-      const imgMap = {};
-      imgSnap.docs.forEach(d => {
-        if (d.data().carID) imgMap[d.data().carID] = d.data().imageURL;
-      });
-      setAllCars(carsSnap.docs.map(d => ({ id: d.id, ...d.data(), imageURL: imgMap[d.id] || null })));
-      setBrandMap(Object.fromEntries(brandSnap.docs.map(d => [d.id, d.data().brandName || ""])));
-      setModelMap(Object.fromEntries(modelSnap.docs.map(d => [d.id, d.data().modelName || ""])));
+      const { cars, brandMap, modelMap, imgMap } = await getCarCatalog({ withImages: true });
+      setAllCars(cars.map(c => ({ ...c, imageURL: imgMap[c.id] || null })));
+      setBrandMap(brandMap);
+      setModelMap(modelMap);
     } catch (e) {
       console.error("[CarTracking] Firestore fetch error:", e);
     }
@@ -418,11 +413,8 @@ export default function CarTracking() {
     }
   }, [token]);
 
-  useEffect(() => {
-    fetchLocations();
-    const interval = setInterval(fetchLocations, POLL_MS);
-    return () => clearInterval(interval);
-  }, [fetchLocations]);
+  // Polls only while the tab is visible; refreshes once when it becomes visible again.
+  usePolling(fetchLocations, POLL_MS);
 
   // ── Fetch upcoming + ongoing bookings (for the badges / pickup-return-stolen panel) ─
   // Returns the freshly-combined array too (not just via setBookings) so

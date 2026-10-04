@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { collection, onSnapshot } from "firebase/firestore";
-import { db } from "../fireabase";
+import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 import TripMapModal from "../components/TripMapModal";
@@ -1039,14 +1038,12 @@ export default function Bookings() {
   // we just listen for *any* change to the bookings collection and re-run the
   // existing fetch. Bursts of writes (e.g. a booking + its history doc changing
   // together) are coalesced with a short debounce so we don't hammer the API.
-  const refetchTimer = useRef(null);
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "bookings"), () => {
-      clearTimeout(refetchTimer.current);
-      refetchTimer.current = setTimeout(() => fetchBookings(true), 400);
-    });
-    return () => { unsub(); clearTimeout(refetchTimer.current); };
-  }, [fetchBookings]);
+  //
+  // CHANGED: this used to be onSnapshot(collection(db, "bookings")) — which reads
+  // EVERY booking document each time the page opens and again on every change
+  // (per open tab), on top of the API re-fetch it triggered. Now it just
+  // re-runs the same API fetch every 45s while the tab is visible.
+  usePolling(() => fetchBookings(true), 45_000, { immediate: false });
 
   // Opens a specific status tab when linked in via ?tab=<Upcoming|Ongoing|...>
   // (used by Dashboard's stat cards). Runs once, on mount — doesn't need to

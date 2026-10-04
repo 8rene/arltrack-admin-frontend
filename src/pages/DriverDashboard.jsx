@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { collection, onSnapshot } from "firebase/firestore";
-import { db } from "../fireabase";
+import usePolling from "../hooks/usePolling";
 import { useAuth } from "../context/AuthContext";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -124,14 +123,10 @@ export default function DriverDashboard() {
   // any change to `bookings` and re-run the existing fetch, debounced. This
   // is the one dashboard where staleness matters most — a driver waiting on
   // this screen for their next assignment has no reason to think to refresh.
-  const refetchTimer = useRef(null);
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "bookings"), () => {
-      clearTimeout(refetchTimer.current);
-      refetchTimer.current = setTimeout(() => fetchAll(true), 400);
-    });
-    return () => { unsub(); clearTimeout(refetchTimer.current); };
-  }, [fetchAll]);
+  // CHANGED: was onSnapshot(collection(db, "bookings")) — a full-collection read
+  // per open tab. A driver waiting for an assignment still gets updates, every
+  // 30s while the tab is visible.
+  usePolling(() => fetchAll(true), 30_000, { immediate: false });
 
   // An Admin/Owner/Supervisor using "preview as Driver" hits this same
   // component, but the API call above is still scoped to their own real

@@ -1,7 +1,6 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { collection, onSnapshot } from "firebase/firestore";
-import { db } from "../fireabase";
+import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
 
 // Fire-and-forget audit log write — same pattern as Fleet.jsx's status
@@ -318,14 +317,10 @@ export default function Payments() {
   // Same approach as Bookings.jsx: the REST endpoint does the real work
   // (joins, formatting), so we just listen for any change to the payments
   // collection and re-run the existing fetch, debounced to coalesce bursts.
-  const refetchTimer = useRef(null);
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "payments"), () => {
-      clearTimeout(refetchTimer.current);
-      refetchTimer.current = setTimeout(() => fetchPayments(true), 400);
-    });
-    return () => { unsub(); clearTimeout(refetchTimer.current); };
-  }, [fetchPayments]);
+  // CHANGED: was onSnapshot(collection(db, "payments")) — a full-collection read
+  // on every page open + every change. Now re-runs the API fetch every 45s
+  // while the tab is visible.
+  usePolling(() => fetchPayments(true), 45_000, { immediate: false });
 
   // Deep-link from other pages (e.g. Car Tracking's payment modal linking
   // here with ?bookingID=...) — pre-fill the search box so the relevant

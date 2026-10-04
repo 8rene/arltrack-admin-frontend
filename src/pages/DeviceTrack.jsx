@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { collection, getDocs } from "firebase/firestore";
-import { db } from "../fireabase";
+import usePolling from "../hooks/usePolling";
+import { getCarCatalog } from "../utils/carCatalog";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -14,7 +14,7 @@ L.Icon.Default.mergeOptions({
 });
 
 const ONLINE_WINDOW_MS = 5 * 60 * 1000; // a device is "online" if it reported within the last 5 min
-const POLL_MS = 15_000;
+const POLL_MS = 30_000; // was 15s — each poll costs backend Firestore reads
 
 function timeAgo(iso) {
   if (!iso) return "—";
@@ -144,14 +144,10 @@ export default function DeviceTrack() {
 
   const fetchAllCars = useCallback(async () => {
     try {
-      const [carsSnap, brandSnap, modelSnap] = await Promise.all([
-        getDocs(collection(db, "cars")),
-        getDocs(collection(db, "brand")),
-        getDocs(collection(db, "model")),
-      ]);
-      setAllCars(carsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setBrandMap(Object.fromEntries(brandSnap.docs.map(d => [d.id, d.data().brandName || ""])));
-      setModelMap(Object.fromEntries(modelSnap.docs.map(d => [d.id, d.data().modelName || ""])));
+      const { cars, brandMap, modelMap } = await getCarCatalog(); // shared 5-min cache
+      setAllCars(cars);
+      setBrandMap(brandMap);
+      setModelMap(modelMap);
     } catch (e) {
       console.error("[DeviceTrack] Firestore fetch error:", e);
     }
@@ -198,11 +194,7 @@ export default function DeviceTrack() {
     }
   }, [token]);
 
-  useEffect(() => {
-    fetchLocations();
-    const interval = setInterval(fetchLocations, POLL_MS);
-    return () => clearInterval(interval);
-  }, [fetchLocations]);
+  usePolling(fetchLocations, POLL_MS); // visible-tab only
 
   // ── Init Leaflet map ────────────────────────────────────────────────────
   useEffect(() => {
