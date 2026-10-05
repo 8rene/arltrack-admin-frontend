@@ -238,24 +238,36 @@ export default function SimulatePanel() {
     cars.forEach(car => {
       const boundary = zoneBoundaries[car.id];
       let wasViolating = false;
-      let wasAtDestination = false;
+      let wasInside = false;          // inside the city shape, window or not
+      let wasAtDestination = null;    // null = first point, no transition to log yet
       car.points.forEach((p, i) => {
         const sec = i * STEP_SECONDS;
+        const mk = (type, city) => ({ id: `${car.id}-${type}-${sec}`, carId: car.id, carName: car.name, color: car.color, type, city, sec });
 
-        const violating = isViolatingShape(car, p, sec, boundary);
+        const windowOn = windowActiveAt(car.restrictedZone, sec);
+        const inside = boundary?.geometry
+          ? pointInGeometry(p.lat, p.lng, boundary.geometry)
+          : haversineKm(p.lat, p.lng, car.restrictedZone.lat, car.restrictedZone.lng) <= car.restrictedZone.radius;
+        const violating = windowOn && inside;
+        const city = car.restrictedZone.city;
+
         if (violating && !wasViolating) {
-          out.push({ id: `${car.id}-enter-${sec}`, carId: car.id, carName: car.name, color: car.color, type: "entered", city: car.restrictedZone.city, sec });
+          // Car drove in while the window was on = "entered". Car was already
+          // in the city when the window opened = "window started", not an entry.
+          out.push(mk(wasInside ? "window-started" : "entered", city));
         } else if (!violating && wasViolating) {
-          out.push({ id: `${car.id}-exit-${sec}`, carId: car.id, carName: car.name, color: car.color, type: "exited", city: car.restrictedZone.city, sec });
+          // Car drove out = "exited". Window closed while it was still in = "window ended".
+          out.push(mk(inside ? "window-ended" : "exited", city));
         }
         wasViolating = violating;
+        wasInside = inside;
 
         if (car.destination) {
           const atDest = isAtDestination(car.destination, p);
-          if (atDest && !wasAtDestination) {
-            out.push({ id: `${car.id}-arrived-${sec}`, carId: car.id, carName: car.name, color: car.color, type: "arrived", city: car.destination.label, sec });
-          } else if (!atDest && wasAtDestination) {
-            out.push({ id: `${car.id}-left-${sec}`, carId: car.id, carName: car.name, color: car.color, type: "left", city: car.destination.label, sec });
+          // Don't log "arrived" at 00:00 just because the day starts parked at the destination.
+          if (wasAtDestination !== null) {
+            if (atDest && !wasAtDestination) out.push(mk("arrived", car.destination.label));
+            else if (!atDest && wasAtDestination) out.push(mk("left", car.destination.label));
           }
           wasAtDestination = atDest;
         }
@@ -404,6 +416,18 @@ export default function SimulatePanel() {
       const usePolygon = !!boundary;
       const active = windowActiveAt(zone, curSec);
       let entry = zoneLayersRef.current[car.id];
+
+      // Coding zone is only drawn while its window is actually enforced —
+      // showing it outside the window made it look like the car was
+      // already restricted. Remove the layers; they're recreated when the
+      // window opens again.
+      if (!active) {
+        if (entry) {
+          Object.values(entry).forEach(l => l?.remove?.());
+          delete zoneLayersRef.current[car.id];
+        }
+        return;
+      }
       const style = active
         ? { color: car.color, fillColor: car.color, fillOpacity: 0.28, weight: 3, dashArray: null }
         : { color: car.color, fillColor: car.color, fillOpacity: 0.08, weight: 1.5, dashArray: "5 5" };
@@ -505,6 +529,8 @@ export default function SimulatePanel() {
   }, [focusedCar, idx, cars]);
 
   const hasData = cars.length > 0;
+  // Only events that have already happened at the current sim time — the list grows as the clock advances.
+  const occurredLogs = logs.filter(l => l.sec <= curSec);
 
   // Same top-center pulsing-pill notification the Live/Traceback tabs use —
   // one entry per currently-visible car that's actually violating its
@@ -590,7 +616,7 @@ export default function SimulatePanel() {
                 showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
               }`}
             >
-              🗒 Logs {logs.length ? `(${logs.length})` : ""}
+              🗒 Logs {occurredLogs.length ? `(${occurredLogs.length})` : ""}
             </button>
           </div>
 
@@ -665,10 +691,10 @@ export default function SimulatePanel() {
                 <p className="text-xs font-bold text-arl-dark">Logs</p>
                 <button onClick={() => setShowLogs(false)} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
               </div>
-              {!logs.length && <p className="text-[11px] text-gray-400 italic">No events today.</p>}
-              {logs.map(log => {
-                const occurred = log.sec <= curSec;
-                const verb = { entered: "entered", exited: "exited", arrived: "🏁 arrived at", left: "left" }[log.type];
+              {!occurredLogs.length && <p className="text-[11px] text-gray-400 italic">No events yet at {secToClock(curSec)}.</p>}
+              {[...occurredLogs].reverse().map(log => {
+                const occurred = true;
+                const verb = { entered: "entered", exited: "exited", arrived: "🏁 arrived at", left: "left", "window-started": "was already inside when the coding window started in", "window-ended": "was still inside when the coding window ended in" }[log.type];
                 return (
                   <button
                     key={log.id}
