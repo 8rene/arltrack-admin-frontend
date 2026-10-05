@@ -648,10 +648,6 @@ export default function Payments() {
                       {selected.paymongoFee.balance !== null && <Row label="Balance charge (online)" value={peso(selected.paymongoFee.balance, fmtCurrency)} />}
                       <div className="border-t pt-2 mt-1">
                         <Row label="Total PayMongo fee" value={peso(selected.paymongoFee.total, fmtCurrency)} bold />
-                        {selected.paymongoFee.vatTotal !== null && (
-                          <Row label={selected.paymongoFee.vatIsEstimate ? "VAT inside the fee (estimate)" : "VAT inside the fee"} value={peso(selected.paymongoFee.vatTotal, fmtCurrency)} />
-                        )}
-                        {selected.paymongoFee.netTotal !== null && <Row label="Net received after fee" value={peso(selected.paymongoFee.netTotal, fmtCurrency)} />}
                         {selected.gatewayFee > 0 && (
                           <Row
                             label="Gateway fee collected − PayMongo fee"
