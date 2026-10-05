@@ -18,9 +18,12 @@ const IconMap = ({ className = "w-4 h-4" }) => (
 
 // ─── FIELD DEFINITIONS ─────────────────────────────────────────────────────
 // Keep these in sync BY HAND with backend/models/systemSettings/systemSettings.model.js
+// Percentages (0-100), not flat pesos. Computed server-side on every booking:
+//   service fee = % of the rental fee only
+//   gateway fee = % of everything else (rental + extra + driver's fee + service fee + security deposit)
 const FLAT_FEE_FIELDS = [
-  { key: "serviceFee", label: "Service Fee", hint: "Flat platform/service fee, added to every booking." },
-  { key: "gatewayFee", label: "Gateway Fee", hint: "Flat payment gateway fee, added to every booking." },
+  { key: "serviceFeePercent", label: "Service Fee (%)", unit: "%", hint: "Percent of the RENTAL FEE only — the extra fee, driver's fee and security deposit are not included." },
+  { key: "gatewayFeePercent", label: "Gateway Fee (%)", unit: "%", hint: "Percent of the whole booking: rental + extra fee + driver's fee + service fee + security deposit." },
 ];
 
 const AREA_FEE_FIELDS = [
@@ -195,8 +198,8 @@ export default function Settings() {
     setNotice(null);
     try {
       const payload = {
-        serviceFee: Number(form.serviceFee),
-        gatewayFee: Number(form.gatewayFee),
+        serviceFeePercent: Number(form.serviceFeePercent),
+        gatewayFeePercent: Number(form.gatewayFeePercent),
         extraFeeOutsideArea: Number(form.extraFeeOutsideArea),
         driversFeeBaseArea: Number(form.driversFeeBaseArea),
         driversFeeOutsideArea: Number(form.driversFeeOutsideArea),
@@ -210,6 +213,9 @@ export default function Settings() {
         if (typeof val === "number" && (!Number.isFinite(val) || val < 0)) {
           throw new Error(`"${key}" must be a valid number.`);
         }
+      }
+      for (const key of ["serviceFeePercent", "gatewayFeePercent"]) {
+        if (payload[key] > 100) throw new Error(`"${key}" must be a percentage between 0 and 100.`);
       }
       if (payload.baseAreaKeywords.length === 0) {
         throw new Error("At least one base-area keyword is required.");
@@ -281,21 +287,21 @@ export default function Settings() {
                 <IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Booking Fees
               </h2>
               <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-                Flat fees added to every booking, shown to the customer at checkout.
+                Percentage fees added to every booking, shown to the customer at checkout. Bookings already made keep the amounts they were charged.
               </p>
             </div>
             <div className="grid sm:grid-cols-3 gap-4">
-              {FLAT_FEE_FIELDS.map(({ key, label, hint }) => (
+              {FLAT_FEE_FIELDS.map(({ key, label, hint, unit = "%" }) => (
                 <div key={key} className="space-y-1">
                   <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>{label}</label>
                   <div className="relative">
-                    <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>₱</span>
+                    <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
                     <input
-                      type="number" min="0" step="1"
+                      type="number" min="0" max="100" step="0.01"
                       value={form[key]}
                       onChange={(e) => handleNumberChange(key, e.target.value)}
                       disabled={!editMode}
-                      className={`${inputCls} pl-6`}
+                      className={`${inputCls} pr-7`}
                     />
                   </div>
                   <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>{hint}</p>

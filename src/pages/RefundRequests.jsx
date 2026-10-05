@@ -195,6 +195,11 @@ export default function RefundRequests() {
   const [busyId, setBusyId]     = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null); // request being rejected
   const [rejectReason, setRejectReason] = useState("");
+  // Approving a request that carries a 48-hour deposit forfeit opens a confirmation
+  // (with an optional, reason-required "waive the forfeit" override).
+  const [approveTarget, setApproveTarget] = useState(null);
+  const [waiveForfeit, setWaiveForfeit]   = useState(false);
+  const [waiveReason, setWaiveReason]     = useState("");
   // Which method staff picked when handing the in-person part of a refund back, per request id.
   const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
   const [sortDir, setSortDir] = useState("asc");
@@ -239,12 +244,22 @@ export default function RefundRequests() {
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
-  const approve = async (id) => {
+  // A request with a deposit forfeit asks for confirmation first; anything else approves straight away.
+  const startApprove = (r) => {
+    if (r.planPreview && r.planPreview.forfeit > 0) {
+      setApproveTarget(r); setWaiveForfeit(false); setWaiveReason("");
+    } else {
+      approve(r.refundRequestID);
+    }
+  };
+
+  const approve = async (id, opts = {}) => {
     setBusyId(id);
     try {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/${id}/approve`, {
         method: "PATCH",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(opts.waiveForfeit ? { waiveForfeit: true, waiveReason: opts.waiveReason } : {}),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to approve refund.");
@@ -254,7 +269,7 @@ export default function RefundRequests() {
       // booking — so take the server's version of the request rather than guessing.
       setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, ...(data.data || {}), status: "Approved", planPreview: undefined } : r));
     } catch (e) { showToast(e.message, "error"); fetchRequests(); }
-    finally { setBusyId(null); }
+    finally { setBusyId(null); setApproveTarget(null); }
   };
 
   const submitReject = async () => {
@@ -323,6 +338,54 @@ export default function RefundRequests() {
           toast.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
         }`}>{toast.msg}</div>
       )}
+
+      {/* Approve confirmation: shows the 48-hour policy outcome + the staff override */}
+      {approveTarget && approveTarget.planPreview && (() => {
+        const pv = approveTarget.planPreview;
+        const when = pv.tier === "no_show" ? "after the pickup time" : pv.hoursBeforePickup !== null && pv.hoursBeforePickup !== undefined ? `${Math.max(0, Math.round(pv.hoursBeforePickup * 10) / 10)} hours before pickup` : "under 48 hours before pickup";
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setApproveTarget(null)} />
+            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-arl-dark">Approve Refund</h3>
+                <button onClick={() => setApproveTarget(null)} className="text-gray-400 hover:text-gray-600"><IconX /></button>
+              </div>
+              <p className="text-sm text-gray-500">{approveTarget.customerName}</p>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm space-y-1">
+                <p className="text-amber-800 font-semibold">Requested {when}</p>
+                <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(pv.grossPaid)}</span></div>
+                <div className="flex justify-between text-amber-700"><span>Deposit kept (48-hour policy)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.forfeit)}</span></div>
+                <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(waiveForfeit ? pv.grossPaid : pv.total)}</span></div>
+              </div>
+              <p className="text-[11px] text-gray-400">The timing is judged by when the customer sent the request, not by when you approve it.</p>
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                <input type="checkbox" className="mt-0.5" checked={waiveForfeit} onChange={(e) => setWaiveForfeit(e.target.checked)} />
+                <span>Waive the deposit forfeit and refund the full {fmt(pv.grossPaid)} <span className="text-gray-400">(goodwill, duplicate charge, etc.)</span></span>
+              </label>
+              {waiveForfeit && (
+                <textarea
+                  value={waiveReason}
+                  onChange={(e) => setWaiveReason(e.target.value)}
+                  placeholder="Reason for waiving (required, saved in the audit log)"
+                  rows={2}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
+                />
+              )}
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setApproveTarget(null)} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Cancel</button>
+                <button
+                  onClick={() => approve(approveTarget.refundRequestID, { waiveForfeit, waiveReason })}
+                  disabled={busyId === approveTarget.refundRequestID || (waiveForfeit && !waiveReason.trim())}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                >
+                  {busyId === approveTarget.refundRequestID ? "Approving..." : "Confirm Approve"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Reject reason modal */}
       {rejectTarget && (
@@ -490,6 +553,21 @@ export default function RefundRequests() {
                           {r.planPreview.total !== r.amount && <> · <span className="text-gray-400">(was {fmt(r.amount)} when requested)</span></>}
                         </p>
                       )}
+                      {/* 48-hour policy outcome: judged from when the customer ASKED */}
+                      {(() => {
+                        const tier   = r.status === "Pending" && r.planPreview ? r.planPreview.tier : r.policyTier;
+                        const kept   = r.status === "Pending" && r.planPreview ? r.planPreview.forfeit : Number(r.depositForfeited) || 0;
+                        if (!tier) return null;
+                        const label  = tier === "full" ? "Full refund" : tier === "no_show" ? "No-show" : "Under 48h";
+                        const cls    = tier === "full" ? "bg-green-100 text-green-700 border-green-200" : "bg-amber-100 text-amber-700 border-amber-200";
+                        return (
+                          <p className="text-[11px] mt-0.5 max-w-[220px]">
+                            <span className={`inline-block rounded-full border px-2 py-0.5 font-semibold ${cls}`}>{label}</span>
+                            {kept > 0 && <span className="text-amber-700 font-semibold"> {fmt(kept)} deposit kept</span>}
+                            {r.forfeitWaived && <span className="text-blue-600 font-semibold" title={r.forfeitWaivedReason || ""}> forfeit waived</span>}
+                          </p>
+                        );
+                      })()}
                       {Array.isArray(r.parts) && r.parts.length > 0 && (
                         <div className="mt-1 space-y-0.5">
                           {r.parts.map((pt, i) => (
@@ -516,7 +594,7 @@ export default function RefundRequests() {
                         {r.status === "Pending" ? (
                           <div className="flex justify-end gap-2">
                             <button
-                              onClick={() => approve(r.refundRequestID)}
+                              onClick={() => startApprove(r)}
                               disabled={busyId === r.refundRequestID}
                               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
                             >

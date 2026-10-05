@@ -606,7 +606,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
   const { getToken } = useAuth();
   const [preview, setPreview]   = useState(null);
   const [loading, setLoading]   = useState(true);
-  const [mode, setMode]         = useState("refund"); // "refund" | "cancel"
+  const [mode, setMode]         = useState("refund"); // "refund" | "cancel" | "no_show"
   const [reason, setReason]     = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]       = useState(null);
@@ -629,15 +629,18 @@ function RefundCancelModal({ booking, onClose, onDone }) {
   }, [booking.id]);
 
   const hasMoney = (preview?.total || 0) > 0;
-  const blocked  = !!preview?.existingRequest && mode === "cancel";
+  const blocked  = !!preview?.existingRequest && (mode === "cancel" || mode === "no_show");
+  const ns       = preview?.noShow;
+  const canNoShow = !!ns && ns.pickupPassed && !preview?.alreadyRefunded;
 
   const submit = async () => {
     setSubmitting(true); setError(null);
     try {
-      const res  = await fetch(`${api}/refund-cancel`, {
+      // A no-show (pickup time passed, customer never came) keeps the deposit and refunds the rest.
+      const res  = await fetch(mode === "no_show" ? `${api}/no-show` : `${api}/refund-cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-        body: JSON.stringify({ reason: reason.trim(), refund: mode === "refund" }),
+        body: JSON.stringify(mode === "no_show" ? { reason: reason.trim() } : { reason: reason.trim(), refund: mode === "refund" }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Request failed.");
@@ -689,6 +692,15 @@ function RefundCancelModal({ booking, onClose, onDone }) {
               <div className="space-y-2">
                 {opt("refund", "Refund & cancel", "Sends the PayMongo refund automatically, cancels the booking and emails the customer. Full refund, no fee.")}
                 {opt("cancel", "Cancel only (no refund)", "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.")}
+                {canNoShow && opt("no_show", "Customer didn't show up (no-show)", `Pickup time has passed. Keeps the ${fmt(ns.forfeit)} deposit and refunds the rest (${fmt(ns.total)}).`)}
+              </div>
+            )}
+            {mode === "no_show" && canNoShow && (
+              <div className="text-sm bg-amber-50 border border-amber-200 p-3 rounded-xl space-y-1">
+                <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(ns.grossPaid)}</span></div>
+                <div className="flex justify-between text-amber-700"><span>Deposit kept (no-show)</span><span className="font-semibold">-{fmt(ns.forfeit)}</span></div>
+                <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(ns.total)}</span></div>
+                {ns.manualAmount > 0 && <p className="text-xs text-orange-600">{fmt(ns.manualAmount)} of this must be handed back in person.</p>}
               </div>
             )}
 
@@ -707,7 +719,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
             disabled={submitting || loading || !preview || !reason.trim() || blocked}
             className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
           >
-            {submitting ? "Processing…" : mode === "refund" && hasMoney ? "Refund & Cancel" : "Cancel Booking"}
+            {submitting ? "Processing…" : mode === "no_show" ? "Mark as No-show" : mode === "refund" && hasMoney ? "Refund & Cancel" : "Cancel Booking"}
           </button>
         </div>
       </div>

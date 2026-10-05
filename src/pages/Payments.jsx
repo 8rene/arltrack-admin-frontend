@@ -627,7 +627,10 @@ export default function Payments() {
                   <Section title="Fee Breakdown">
                     <Row label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
                     <Row label="Extra Fee" value={peso(selected.extraFee, fmtCurrency)} />
-                    <Row label="Service Fee" value={peso(selected.serviceFee, fmtCurrency)} />
+                    {selected.driversFee > 0 && <Row label="Driver's Fee" value={peso(selected.driversFee, fmtCurrency)} />}
+                    <Row label={selected.serviceFeeRate > 0 ? `Service Fee (${selected.serviceFeeRate}% of rental)` : "Service Fee"} value={peso(selected.serviceFee, fmtCurrency)} />
+                    {selected.securityDeposit > 0 && <Row label="Security Deposit (refundable)" value={peso(selected.securityDeposit, fmtCurrency)} />}
+                    {selected.gatewayFee > 0 && <Row label={selected.gatewayFeeRate > 0 ? `Gateway Fee (${selected.gatewayFeeRate}% of ${peso(selected.gatewayFeeBase, fmtCurrency)})` : "Gateway Fee"} value={peso(selected.gatewayFee, fmtCurrency)} />}
                     <div className="border-t pt-2 mt-1">
                       <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
                       {selected.discountAmount > 0 && (
@@ -637,6 +640,28 @@ export default function Payments() {
                       <Row label="Balance" value={peso(selected.balance, fmtCurrency)} bold color={selected.balance > 0 ? "text-red-500" : "text-green-600"} />
                     </div>
                   </Section>
+
+                  {/* PayMongo's own cost for the online charge(s): what PayMongo actually keeps, not the gateway fee the customer paid us. */}
+                  {selected.paymongoFee && selected.paymongoFee.total !== null && (
+                    <Section title="PayMongo Transaction Fee">
+                      {selected.paymongoFee.deposit !== null && <Row label="Deposit charge" value={peso(selected.paymongoFee.deposit, fmtCurrency)} />}
+                      {selected.paymongoFee.balance !== null && <Row label="Balance charge (online)" value={peso(selected.paymongoFee.balance, fmtCurrency)} />}
+                      <div className="border-t pt-2 mt-1">
+                        <Row label="Total PayMongo fee" value={peso(selected.paymongoFee.total, fmtCurrency)} bold />
+                        {selected.paymongoFee.vatTotal !== null && (
+                          <Row label={selected.paymongoFee.vatIsEstimate ? "VAT inside the fee (estimate)" : "VAT inside the fee"} value={peso(selected.paymongoFee.vatTotal, fmtCurrency)} />
+                        )}
+                        {selected.paymongoFee.netTotal !== null && <Row label="Net received after fee" value={peso(selected.paymongoFee.netTotal, fmtCurrency)} />}
+                        {selected.gatewayFee > 0 && (
+                          <Row
+                            label="Gateway fee collected − PayMongo fee"
+                            value={peso(selected.gatewayFee - selected.paymongoFee.total, fmtCurrency)}
+                            color={selected.gatewayFee - selected.paymongoFee.total >= 0 ? "text-green-600" : "text-red-500"}
+                          />
+                        )}
+                      </div>
+                    </Section>
+                  )}
 
                   {selected.refundDue > 0 && (
                     <Section title="Refund Due to Customer">
