@@ -183,7 +183,6 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
         const color = colorForCar(idx);
         const isFocused = focusedCar === car.id;
         const segments = buildSegments(records);
-        let trackEl = null;
 
         return (
           <div key={car.id} className="flex items-center gap-2 mb-1">
@@ -191,7 +190,6 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
               {car.name}
             </span>
             <div
-              ref={el => { trackEl = el; }}
               onPointerDown={e => handlePointerDown(e, car.id, e.currentTarget)}
               className="flex-1 h-2 relative bg-gray-100 rounded cursor-pointer"
               style={{ boxShadow: isFocused ? `0 0 0 1px ${color}` : "none", touchAction: "none" }}

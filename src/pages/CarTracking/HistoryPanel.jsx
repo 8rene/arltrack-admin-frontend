@@ -116,7 +116,7 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
       const isLegacyArray = Array.isArray(parsed);
       const points = isLegacyArray ? parsed : (parsed.points || []);
       setReviewData({
-        label: `${car?.name || selectedCar} · ${fmtDateTime(item.startedAt)} → ${item.endedAt ? fmtDateTime(item.endedAt) : "ongoing"}`,
+        label: `${car?.name || selectedCar} · ${fmtDateTime(item.startedAt)} → ${item.endedAt ? fmtDateTime(item.endedAt) : item.status === "ended" ? "—" : "ongoing"}`,
         cars: [{ id: selectedCar, name: car?.name || selectedCar }],
         records: { [selectedCar]: points },
         zonesAlerts: isLegacyArray ? undefined : {
@@ -209,7 +209,7 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-xs font-semibold text-gray-700">
-                          {fmtDateTime(item.startedAt)} → {item.endedAt ? fmtDateTime(item.endedAt) : "ongoing"}
+                          {fmtDateTime(item.startedAt)} → {item.endedAt ? fmtDateTime(item.endedAt) : item.status === "ended" ? "—" : "ongoing"}
                         </p>
                         {item.status && (
                           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLES[item.status] || "bg-gray-100 text-gray-500"}`}>
@@ -217,7 +217,17 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                           </span>
                         )}
                       </div>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Archived {fmtDateTime(item.lastArchivedAt)}</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        Archived {fmtDateTime(item.lastArchivedAt)}
+                        {typeof item.pointCount === "number" && (
+                          <>
+                            {" · "}
+                            <span className={item.pointCount === 0 ? "font-semibold text-amber-600" : "font-semibold text-gray-500"}>
+                              {item.pointCount === 0 ? "No GPS points" : `${item.pointCount.toLocaleString()} points`}
+                            </span>
+                          </>
+                        )}
+                      </p>
                     </div>
                     <button
                       onClick={() => handleReview(item)}
