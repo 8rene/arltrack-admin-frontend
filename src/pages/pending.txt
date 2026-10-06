@@ -383,3 +383,11 @@ ask why is payments bookings and driver dashboard and ashboard change main claud
 
 
 payment not showing the column of transaction fee
+
+
+ngayon ba dapat si paymongo magaggree na refunded na
+so mali ang notification nic ustomer
+dapat sabihin pala muna na Please wait for 1-3 business days to be refunded then status is not changed yet as well
+
+notification when created maintenance to owner
+refund request another staauts waiting, for the paymongo to list

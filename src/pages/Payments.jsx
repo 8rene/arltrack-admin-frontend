@@ -151,6 +151,14 @@ const stageOf   = (p) => p.paymentStage || p.status;
 
 const CHANNEL_LABEL = { gcash: "GCash", paymaya: "Maya", qrph: "QRPH" };
 const channelOf = (p) => CHANNEL_LABEL[String(p.paymongoChannel || "").toLowerCase()] || p.paymongoChannel || p.paymentMethod;
+const TXN_STATUS_STYLE = {
+  "Paid":        "bg-green-100 text-green-700",
+  "Pending":     "bg-amber-100 text-amber-700",
+  "Failed":      "bg-red-100 text-red-700",
+  "Cancelled":   "bg-gray-200 text-gray-600",
+  "Refunded":    "bg-purple-100 text-purple-700",
+  "Not yet due": "bg-gray-100 text-gray-500",
+};
 const refOf = (p) => {
   const r = p.depositPaymongoPaymentID || p.paymongoPaymentID || p.referenceNumber;
   return r && r !== "—" && r !== "N/A" ? r : null;
@@ -608,14 +616,46 @@ export default function Payments() {
 
                   <Section title="Payment Info">
                     <Row label="Payment ID" value={selected.paymentID} mono />
-                    <Row label="PayMongo Ref" value={refOf(selected)} mono />
-                    {selected.balancePaymongoPaymentID && <Row label="Balance Ref" value={selected.balancePaymongoPaymentID} mono />}
                     <Row label="Payment Type" value={selected.methodOfPayment} />
-                    <Row label="Channel" value={channelOf(selected)} />
-                    <Row label="Paid at" value={fmtDate(selected.paidAt || selected.confirmedAt)} />
-                    {selected.confirmedBy && <Row label="Confirmed by" value={selected.confirmedBy} />}
                     <Row label="Submitted" value={fmtDate(selected.createdAt)} />
                   </Section>
+
+                  {/* Every charge on this payment — deposit and balance, including pending / failed / not-yet-due ones. */}
+                  {Array.isArray(selected.paymongoTransactions) && selected.paymongoTransactions.length > 0 && (
+                    <Section title="Transactions">
+                      {selected.paymongoTransactions.map((t, i) => (
+                        <div key={`${t.phase}-${i}`} className="rounded-lg border border-gray-200 bg-white p-3 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-semibold text-gray-800">{t.phase === "balance" ? "Balance" : (selected.payType === "Full" ? "Full payment" : "Deposit")}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${TXN_STATUS_STYLE[t.status] || "bg-gray-100 text-gray-600"}`}>{t.status}</span>
+                          </div>
+                          <p className={`text-sm break-all ${t.ref ? "font-mono text-gray-800" : "text-gray-400 italic"}`}>
+                            {t.ref || (t.source === "in_person" ? "No PayMongo ref — paid in person" : t.status === "Paid" ? "No ref recorded" : "No ref yet")}
+                          </p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-gray-600">
+                            <span className="font-semibold text-gray-800">{peso(t.amount, fmtCurrency)}</span>
+                            {t.fee !== null && t.fee !== undefined && <span>PayMongo fee {peso(t.fee, fmtCurrency)}</span>}
+                            {t.channel && <span>{CHANNEL_LABEL[String(t.channel).toLowerCase()] || t.channel}</span>}
+                            {t.paidAt && <span>{fmtDate(t.paidAt)}</span>}
+                            {t.by && <span>by {t.by}</span>}
+                          </div>
+                        </div>
+                      ))}
+                      {/* PayMongo's own cost for the online charge(s): what PayMongo keeps, not the gateway fee the customer paid us. */}
+                      {selected.paymongoFee && selected.paymongoFee.total !== null && (
+                        <div className="border-t pt-2 mt-1">
+                          <Row label="Total PayMongo fee" value={peso(selected.paymongoFee.total, fmtCurrency)} bold />
+                          {selected.gatewayFee > 0 && (
+                            <Row
+                              label="Gateway fee collected − PayMongo fee"
+                              value={peso(selected.gatewayFee - selected.paymongoFee.total, fmtCurrency)}
+                              color={selected.gatewayFee - selected.paymongoFee.total >= 0 ? "text-green-600" : "text-red-500"}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </Section>
+                  )}
 
                   {selected.payType !== "Full" && (
                     <Section title="Balance">
@@ -650,24 +690,6 @@ export default function Payments() {
                       <Row label="Balance" value={peso(selected.balance, fmtCurrency)} bold color={selected.balance > 0 ? "text-red-500" : "text-green-600"} />
                     </div>
                   </Section>
-
-                  {/* PayMongo's own cost for the online charge(s): what PayMongo actually keeps, not the gateway fee the customer paid us. */}
-                  {selected.paymongoFee && selected.paymongoFee.total !== null && (
-                    <Section title="PayMongo Transaction Fee">
-                      {selected.paymongoFee.deposit !== null && <Row label="Deposit charge" value={peso(selected.paymongoFee.deposit, fmtCurrency)} />}
-                      {selected.paymongoFee.balance !== null && <Row label="Balance charge (online)" value={peso(selected.paymongoFee.balance, fmtCurrency)} />}
-                      <div className="border-t pt-2 mt-1">
-                        <Row label="Total PayMongo fee" value={peso(selected.paymongoFee.total, fmtCurrency)} bold />
-                        {selected.gatewayFee > 0 && (
-                          <Row
-                            label="Gateway fee collected − PayMongo fee"
-                            value={peso(selected.gatewayFee - selected.paymongoFee.total, fmtCurrency)}
-                            color={selected.gatewayFee - selected.paymongoFee.total >= 0 ? "text-green-600" : "text-red-500"}
-                          />
-                        )}
-                      </div>
-                    </Section>
-                  )}
 
                   {selected.refundDue > 0 && (
                     <Section title="Refund Due to Customer">
@@ -1065,8 +1087,8 @@ function Section({ title, children }) {
 function Row({ label, value, mono, bold, color }) {
   return (
     <div className="flex justify-between items-start gap-2">
-      <span className="text-xs text-gray-500 shrink-0">{label}</span>
-      <span className={`text-xs text-right break-all ${mono ? "font-mono" : ""} ${bold ? "font-semibold" : ""} ${color || "text-gray-800"}`}>
+      <span className="text-sm text-gray-500 shrink-0">{label}</span>
+      <span className={`text-sm text-right break-all ${mono ? "font-mono" : ""} ${bold ? "font-semibold" : ""} ${color || "text-gray-800"}`}>
         {value ?? "—"}
       </span>
     </div>
