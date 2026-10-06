@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
 
@@ -274,6 +274,7 @@ export default function Payments() {
   const [sortKey, setSortKey]             = useState(null); // null = default/unsorted (API order)
   const [sortDir, setSortDir]             = useState("asc");
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -583,6 +584,15 @@ export default function Payments() {
                     <Row label="Name" value={selected.customerName} />
                     <Row label="Booking ID" value={selected.bookingID} mono />
                     <Row label="Vehicle" value={selected.vehicleName} />
+                    {selected.bookingID && (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/bookings?open=${encodeURIComponent(selected.bookingID)}`)}
+                        className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition-colors"
+                      >
+                        View booking →
+                      </button>
+                    )}
                   </Section>
 
                   {selected.refundRequestID && (
@@ -913,6 +923,7 @@ export default function Payments() {
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Car</th>
               <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Type</th>
               <SortableTh label="Discount" sortKey="discount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Refund</th>
               <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -935,7 +946,7 @@ export default function Payments() {
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={14} className="text-center py-16 text-gray-400 text-sm">
+              <tr><td colSpan={15} className="text-center py-16 text-gray-400 text-sm">
                 {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
               </td></tr>
             ) : paginated.map((p, i) => (
@@ -943,12 +954,11 @@ export default function Payments() {
                 <td className="px-4 py-3 font-mono text-xs text-arl-dark font-semibold">{p.paymentID}</td>
                 <td className="px-4 py-3">
                   <div className="font-semibold text-gray-800 text-xs">{p.customerName}</div>
-                  <div className="text-xs text-gray-400 font-mono">{p.bookingID}</div>
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600">{p.vehicleName}</td>
+                <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.totalFee, fmtCurrency)}</td>
                 <td className="px-4 py-3">
-                  <div className="text-xs font-semibold text-gray-800">{peso(p.totalFee, fmtCurrency)}</div>
-                  {p.methodOfPayment && p.methodOfPayment !== "—" && (
+                  {p.methodOfPayment && p.methodOfPayment !== "—" ? (
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                       p.methodOfPayment.toLowerCase().includes("full")
                         ? "bg-blue-100 text-blue-700"
@@ -956,6 +966,8 @@ export default function Payments() {
                         ? "bg-purple-100 text-purple-700"
                         : "bg-orange-100 text-orange-700"
                     }`}>{p.methodOfPayment}</span>
+                  ) : (
+                    <span className="text-gray-300 text-xs">—</span>
                   )}
                 </td>
                 <td className="px-4 py-3 text-xs font-semibold">

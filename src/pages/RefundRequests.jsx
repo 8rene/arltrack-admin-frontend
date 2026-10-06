@@ -512,17 +512,6 @@ export default function RefundRequests() {
                   <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                     <td className="px-5 py-4">
                       <p className="font-semibold text-arl-dark">{r.customerName || "—"}</p>
-                      {r.paymentID ? (
-                        <button
-                          onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
-                          className="text-xs font-medium text-teal-600 hover:text-teal-700 hover:underline"
-                          title="Open this payment"
-                        >
-                          {r.paymentID}
-                        </button>
-                      ) : (
-                        <p className="text-xs text-gray-400">—</p>
-                      )}
                     </td>
                     <td className="px-5 py-4">
                       {r.bookingID ? (
