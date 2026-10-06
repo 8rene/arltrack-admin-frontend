@@ -917,6 +917,7 @@ export default function Payments() {
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Refund</th>
               <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Balance" sortKey="balance" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">PayMongo Fee</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Method</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Ref</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
@@ -934,7 +935,7 @@ export default function Payments() {
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={13} className="text-center py-16 text-gray-400 text-sm">
+              <tr><td colSpan={14} className="text-center py-16 text-gray-400 text-sm">
                 {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
               </td></tr>
             ) : paginated.map((p, i) => (
@@ -972,6 +973,11 @@ export default function Payments() {
                 <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.amountPaid, fmtCurrency)}</td>
                 <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
                   {peso(p.balance, fmtCurrency)}
+                </td>
+                <td className="px-4 py-3 text-xs font-semibold text-gray-800" title={p.paymongoFee && p.paymongoFee.total !== null ? [p.paymongoFee.deposit !== null && `Deposit charge: ${peso(p.paymongoFee.deposit, fmtCurrency)}`, p.paymongoFee.balance !== null && `Balance charge: ${peso(p.paymongoFee.balance, fmtCurrency)}`].filter(Boolean).join(" · ") : "Not recorded (cash payment or paid before fee tracking)"}>
+                  {p.paymongoFee && p.paymongoFee.total !== null
+                    ? peso(p.paymongoFee.total, fmtCurrency)
+                    : <span className="text-gray-300">—</span>}
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600">{channelOf(p)}</td>
                 <td className="px-4 py-3 text-xs font-mono text-gray-600" title={p.balancePaymongoPaymentID ? `Balance: ${p.balancePaymongoPaymentID}` : undefined}>{refOf(p) || "—"}</td>

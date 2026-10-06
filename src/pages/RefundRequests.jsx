@@ -500,6 +500,7 @@ export default function RefundRequests() {
                   <th className="px-5 py-3 font-semibold">Booking</th>
                   <th className="px-5 py-3 font-semibold">Reason</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th className="px-5 py-3 font-semibold">Deposit</th>
                   <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Status</th>
@@ -585,6 +586,24 @@ export default function RefundRequests() {
                           {fmt(r.manualRefund.amount)} in person — {r.manualRefund.issued ? `handed back${r.manualRefund.method ? ` (${r.manualRefund.method})` : ""}` : "not yet handed back"}
                         </p>
                       )}
+                    </td>
+                    <td className="px-5 py-4 whitespace-nowrap">
+                      {(() => {
+                        // Pending: live preview. Resolved: what was saved when the request was made.
+                        const tier = r.status === "Pending" && r.planPreview ? r.planPreview.tier : r.policyTier;
+                        const kept = r.status === "Pending" && r.planPreview ? r.planPreview.forfeit : Number(r.depositForfeited) || 0;
+                        // Rejected = nothing is refunded, so there is no deposit decision. No tier = older request from before the 48-hour rule.
+                        if (r.status === "Rejected" || !tier) return <span className="text-gray-300">—</span>;
+                        if (kept > 0) {
+                          return <span className="inline-block rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700" title={`${fmt(kept)} deposit kept`}>Kept</span>;
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1">
+                            <span className="inline-block rounded-full border border-green-200 bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">Not kept</span>
+                            {r.forfeitWaived && <span className="text-[11px] font-semibold text-blue-600" title={r.forfeitWaivedReason || ""}>waived</span>}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.createdAt)} /></td>
                     <td className="px-5 py-4 whitespace-nowrap"><DateCell date={updatedDate(r)} /></td>
