@@ -288,7 +288,7 @@ export default function Dashboard() {
   // REAL-TIME — maintenance not yet done (still Scheduled)
   useEffect(() => {
     const unsub = onSnapshot(
-      query(collection(db, "carMaintenance"), where("status", "==", "Scheduled")),
+      query(collection(db, "maintenance"), where("status", "==", "Scheduled")),
       (snap) => setUpcomingMaintenance(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     );
     return () => unsub();

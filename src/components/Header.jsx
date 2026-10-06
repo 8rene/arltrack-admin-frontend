@@ -55,7 +55,7 @@ const ROUTE_BY_COLLECTION = {
   user: "/users",
   cars: "/car-tracking",
   refundRequests: "/refund-requests",
-  carMaintenance: "/maintenance",
+  maintenance: "/maintenance",
   // Profile edit / ID resubmit approve-reject notifications (sent to the
   // requester themself, not staff) — nothing to deep-link into beyond
   // their own Account page.

@@ -900,9 +900,8 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     navigate(`/maintenance?${params.toString()}`);
   };
 
-  // Maintenance records already linked to THIS booking (auto-scheduled by
-  // postRentalMaintenance.job.js, or filed manually via the button below)
-  // — so staff can see at a glance whether post-rental cleaning/repair
+  // Maintenance records already linked to THIS booking (filed manually
+  // via the button below) — so staff can see at a glance whether post-rental cleaning/repair
   // has already been scheduled instead of guessing or re-filing it.
   const [linkedMaintenance, setLinkedMaintenance] = useState(null); // null = loading
   useEffect(() => {
