@@ -205,6 +205,9 @@ export function AuthProvider({ children }) {
             const patch = {};
             if (data.username !== undefined && data.username !== prev.username) patch.username = data.username;
             if (data.phone    !== undefined && data.phone    !== prev.phone)    patch.phone    = data.phone;
+            // Profile photo: same live-sync, so the top bar updates after an
+            // upload here or from another tab/device.
+            if (data.profileImage !== undefined && data.profileImage !== prev.profileImage) patch.profileImage = data.profileImage;
             if (!Object.keys(patch).length) return prev;
             const next = { ...prev, ...patch };
             try { localStorage.setItem("user", JSON.stringify(next)); } catch {}

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 
@@ -33,16 +33,51 @@ const statusBg = {
   Rejected: "bg-red-50 border border-red-200",
   Failed:   "bg-red-50 border border-red-200",
 };
-function StatusBadge({ status }) {
-  const dot = statusDot[status] || "bg-gray-400";
-  const bg  = statusBg[status]  || "bg-gray-50 border border-gray-200";
+// "Approved" is stored as-is, but it is a WAITING state, not a finished one: the booking is
+// cancelled and PayMongo has been asked to refund, yet the money isn't back until PayMongo
+// confirms (and staff hand back any in-person part). So the screen shows what it is waiting on:
+//   paymongo → a refund part hasn't been confirmed by PayMongo yet
+//   handback → every online part is done, only the in-person cash is left for staff to hand back
+const WAIT_STAGE = {
+  paymongo: { label: "Waiting for PayMongo",  dot: "bg-blue-500",   bg: "bg-blue-50 border border-blue-200",     tip: "Approved — waiting for PayMongo to confirm the refund." },
+  handback: { label: "Waiting for hand-back", dot: "bg-orange-500", bg: "bg-orange-50 border border-orange-200", tip: "Approved — the online part is done; the in-person amount still has to be handed back." },
+};
+const stageOf = (r) => {
+  if (!r || r.status !== "Approved") return null;
+  const parts = Array.isArray(r.parts) ? r.parts : [];
+  const onlinePending = parts.length === 0 || parts.some((x) => x.status !== "succeeded"); // older requests without parts → assume PayMongo
+  const handbackPending = !!(r.manualRefund && !r.manualRefund.issued);
+  if (onlinePending) return "paymongo";
+  return handbackPending ? "handback" : "paymongo";
+};
+const handbackDue = (r) => (r && r.status === "Approved" && r.manualRefund && !r.manualRefund.issued ? Number(r.manualRefund.amount) || 0 : 0);
+
+function StatusBadge({ status, stage }) {
+  const w   = stage ? WAIT_STAGE[stage] : null;
+  const dot = w ? w.dot : (statusDot[status] || "bg-gray-400");
+  const bg  = w ? w.bg  : (statusBg[status]  || "bg-gray-50 border border-gray-200");
   return (
-    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${bg}`}>
+    <span title={w ? w.tip : undefined} className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${bg}`}>
       <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
-      {status}
+      {w ? w.label : status}
     </span>
   );
 }
+
+// How long an approved refund has been waiting (since it was approved). Lets stuck ones stand out.
+const waitStartMs = (r) => {
+  const d = r.processedAt || r.updatedAt;
+  const t = d && d.toDate ? d.toDate() : d ? new Date(d) : null;
+  return t && !isNaN(t) ? t.getTime() : 0;
+};
+const fmtWaiting = (r) => {
+  const t = waitStartMs(r);
+  if (!t) return null;
+  const hours = Math.max(0, (Date.now() - t) / 3600000);
+  return { text: hours < 48 ? `${Math.max(1, Math.floor(hours))}h` : `${Math.floor(hours / 24)}d`, late: hours >= 72 };
+};
+// Queue order inside the Active tab: needs-review first, waiting-on-money below.
+const groupOf = (r) => (r.status === "Pending" ? 0 : 1);
 
 // "Active" = still an open queue item admin needs to act on or is waiting
 // on PayMongo for. "History" = resolved, permanent record — money already
@@ -201,6 +236,8 @@ export default function RefundRequests() {
   const [waiveForfeit, setWaiveForfeit]   = useState(false);
   const [waiveReason, setWaiveReason]     = useState("");
   // Which method staff picked when handing the in-person part of a refund back, per request id.
+  // Method staff pick when they hand the in-person part of a refund back, per request id (default Cash).
+  const [handbackMethod, setHandbackMethod] = useState({});
   const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
   const [sortDir, setSortDir] = useState("asc");
 
@@ -272,6 +309,25 @@ export default function RefundRequests() {
     finally { setBusyId(null); setApproveTarget(null); }
   };
 
+  // Staff confirm they physically handed the in-person part back. The backend finishes the
+  // request (→ Refunded) once every PayMongo part has also succeeded.
+  const markHandedBack = async (r) => {
+    const id = r.refundRequestID;
+    setBusyId(id);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/${id}/manual-issued`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ method: handbackMethod[id] || "Cash" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to mark the refund as handed back.");
+      showToast(data.message || "Marked as handed back.");
+      fetchRequests(); // status may have moved to Refunded (history) — take the server's version
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setBusyId(null); }
+  };
+
   const submitReject = async () => {
     if (!rejectTarget) return;
     const id = rejectTarget.refundRequestID;
@@ -308,7 +364,17 @@ export default function RefundRequests() {
   // Sort after search/tab/status filtering, before pagination, so Page 1 is the
   // top of whatever sort is active.
   const sorted = [...filtered].sort((a, b) => {
-    if (!sortKey) return 0;
+    // Active tab: Pending (needs a decision) always above the ones waiting on money,
+    // whatever column is sorted — the chosen sort then applies inside each group.
+    if (tab === "active") {
+      const g = groupOf(a) - groupOf(b);
+      if (g) return g;
+    }
+    if (!sortKey) {
+      // default inside the waiting group: longest-waiting first, so stuck ones are on top
+      if (tab === "active" && groupOf(a) === 1) return waitStartMs(a) - waitStartMs(b);
+      return 0;
+    }
     if (sortKey === "customer") {
       const c = (a.customerName || "").localeCompare(b.customerName || "", undefined, { sensitivity: "base" });
       return sortDir === "asc" ? c : -c;
@@ -328,6 +394,11 @@ export default function RefundRequests() {
   const showActions = tab !== "history";
 
   const pendingCount = requests.filter((r) => r.status === "Pending").length;
+  const waitingCount = requests.filter((r) => r.status === "Approved").length;
+  // Section headers inside the Active tab (only when both groups are on screen / any waiting exists)
+  const nPendingShown = filtered.filter((r) => r.status === "Pending").length;
+  const nWaitingShown = filtered.filter((r) => r.status === "Approved").length;
+  const showSections  = tab === "active" && statusF === "All" && nWaitingShown > 0;
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -450,8 +521,13 @@ export default function RefundRequests() {
           >
             {t.label}
             {t.key === "active" && pendingCount > 0 && (
-              <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-yellow-100 text-yellow-700 text-[11px] font-bold">
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-yellow-100 text-yellow-700 text-[11px] font-bold" title="Needs review">
                 {pendingCount}
+              </span>
+            )}
+            {t.key === "active" && waitingCount > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-gray-100 text-gray-500 text-[11px] font-bold" title="Approved, waiting for the money to go back">
+                {waitingCount}
               </span>
             )}
           </button>
@@ -475,7 +551,7 @@ export default function RefundRequests() {
                 statusF === s ? "bg-arl-dark text-white border-arl-dark" : "bg-white text-gray-600 border-gray-200 hover:border-arl-dark"
               }`}
             >
-              {s}
+              {s === "Approved" ? "Waiting" : s}
             </button>
           ))}
         </div>
@@ -508,8 +584,23 @@ export default function RefundRequests() {
                 </tr>
               </thead>
               <tbody>
-                {paginated.map((r) => (
-                  <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
+                {paginated.map((r, idx) => {
+                  const g = groupOf(r);
+                  const firstOfGroup = idx === 0 || groupOf(paginated[idx - 1]) !== g;
+                  const header = showSections && firstOfGroup && (g === 1 || nPendingShown > 0);
+                  return (
+                  <Fragment key={r.refundRequestID}>
+                    {header && (
+                      <tr className="bg-gray-50/80">
+                        <td colSpan={showActions ? 9 : 8} className="px-5 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+                          {g === 0
+                            ? `Needs review · ${nPendingShown}`
+                            : `Waiting for the money to go back · ${nWaitingShown}`}
+                          {g === 1 && <span className="ml-2 font-medium normal-case tracking-normal text-gray-400">approved and booking cancelled — longest waiting first</span>}
+                        </td>
+                      </tr>
+                    )}
+                  <tr className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                     <td className="px-5 py-4">
                       <p className="font-semibold text-arl-dark">{r.customerName || "—"}</p>
                     </td>
@@ -596,7 +687,17 @@ export default function RefundRequests() {
                     </td>
                     <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.createdAt)} /></td>
                     <td className="px-5 py-4 whitespace-nowrap"><DateCell date={updatedDate(r)} /></td>
-                    <td className="px-5 py-4"><StatusBadge status={r.status} /></td>
+                    <td className="px-5 py-4">
+                      <StatusBadge status={r.status} stage={stageOf(r)} />
+                      {r.status === "Approved" && (() => {
+                        const w = fmtWaiting(r);
+                        return w ? (
+                          <p className={`mt-1 text-[11px] ${w.late ? "font-semibold text-amber-600" : "text-gray-400"}`}>
+                            Waiting {w.text}{w.late ? " — worth checking" : ""}
+                          </p>
+                        ) : null;
+                      })()}
+                    </td>
                     {showActions && (
                       <td className="px-5 py-4 text-right">
                         {r.status === "Pending" ? (
@@ -617,7 +718,28 @@ export default function RefundRequests() {
                             </button>
                           </div>
                         ) : r.status === "Approved" ? (
-                          <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>
+                          <div className="flex flex-col items-end gap-1.5">
+                            {stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
+                            {handbackDue(r) > 0 && (
+                              <div className="flex items-center gap-1.5">
+                                <select
+                                  value={handbackMethod[r.refundRequestID] || "Cash"}
+                                  onChange={(e) => setHandbackMethod((m) => ({ ...m, [r.refundRequestID]: e.target.value }))}
+                                  className="rounded-lg border border-gray-200 px-2 py-1 text-xs"
+                                >
+                                  <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
+                                </select>
+                                <button
+                                  onClick={() => markHandedBack(r)}
+                                  disabled={busyId === r.refundRequestID}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50"
+                                  title="Confirm you handed this amount back to the customer in person"
+                                >
+                                  <IconCheck /> {busyId === r.refundRequestID ? "…" : `Handed back ${fmt(handbackDue(r))}`}
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         ) : r.status === "Failed" ? (
                           <span className="text-xs text-red-500 italic">Needs manual follow-up</span>
                         ) : (
@@ -626,7 +748,9 @@ export default function RefundRequests() {
                       </td>
                     )}
                   </tr>
-                ))}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}

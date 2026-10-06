@@ -246,6 +246,31 @@ function toMillis(val) {
 const isNewSignup = (u) =>
   String(u?.status || "").toLowerCase() === "locked" && u?.isVerified !== true;
 
+// Profile photo with an initials fallback — used when the account has no
+// photo, or the image can't be loaded (e.g. removed from Storage). Pass a
+// `key` that changes with `src` so a failed load is retried on a new photo.
+function UserAvatar({ src, initials, className = "w-9 h-9 text-sm", onClick }) {
+  const [failed, setFailed] = useState(false);
+  const base = `${className} rounded-xl flex-shrink-0`;
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        onError={() => setFailed(true)}
+        onClick={onClick}
+        className={`${base} object-cover bg-gray-100 ${onClick ? "cursor-zoom-in" : ""}`}
+      />
+    );
+  }
+  return (
+    <div className={`${base} bg-teal-600 text-white flex items-center justify-center font-bold`}>
+      {initials}
+    </div>
+  );
+}
+
 function NewSignupBadge() {
   return (
     <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-teal-50 border border-teal-200 text-teal-700">
@@ -802,9 +827,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                     <tr key={u.id} className="border-t hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">
-                            {initials}
-                          </div>
+                          <UserAvatar key={u.profileImage || "none"} src={u.profileImage} initials={initials} />
                           <div>
                             <p className="font-semibold text-gray-800 flex items-center gap-1">
                               {fullName}
@@ -888,6 +911,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
   // so this costs no extra request. Recursive: the nested modal is the
   // same component, so a referrer's own referrer can be drilled into too.
   const [nestedUserID, setNestedUserID] = useState(null);
+  const [showPhoto, setShowPhoto] = useState(false); // enlarged profile photo
   const nestedUser = nestedUserID ? users?.find((u) => u.id === nestedUserID) : null;
   const det  = user.details  || {};
   const addr = user.address  || {};
@@ -913,8 +937,23 @@ function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
-          <div>
+        <div className="flex items-center gap-4 p-5 border-b sticky top-0 bg-white z-10">
+          <UserAvatar
+            key={user.profileImage || "none"}
+            src={user.profileImage}
+            initials={((det.firstName?.[0] || user.email?.[0] || "?") + (det.lastName?.[0] || "")).toUpperCase()}
+            className="w-16 h-16 text-xl"
+            onClick={user.profileImage ? () => setShowPhoto(true) : undefined}
+          />
+          {showPhoto && user.profileImage && (
+            <div
+              className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out"
+              onClick={(e) => { e.stopPropagation(); setShowPhoto(false); }}
+            >
+              <img src={user.profileImage} alt={fullName} className="max-w-full max-h-full rounded-2xl object-contain" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
             <h2 className="font-bold text-xl text-gray-800 flex items-center gap-2">
               {fullName}
               {user.isFlagged && <Icons.Flag className="w-4 h-4 text-red-500 fill-red-500 stroke-red-500" />}
@@ -1184,7 +1223,7 @@ function DocumentsTab({ users, onRefresh, roleLabel = "Customers" }) {
                     <tr key={u.id} className="border-t hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">{initials}</div>
+                          <UserAvatar key={u.profileImage || "none"} src={u.profileImage} initials={initials} />
                           <div>
                             <p className="font-semibold text-gray-800 flex items-center gap-1.5">
                               {fullName}

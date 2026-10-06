@@ -71,6 +71,8 @@ const META_BY_TYPE = {
   pickup_overdue:       { bg: "bg-orange-100", emoji: "⏰", title: "Pickup Overdue" },
   return_overdue:       { bg: "bg-red-100",    emoji: "⏰", title: "Return Overdue" },
   maintenance_overdue:  { bg: "bg-red-100",    emoji: "🔧", title: "Maintenance Overdue" },
+  // A Supervisor scheduled maintenance — sent to the Owner(s) only.
+  maintenance_created:  { bg: "bg-teal-100",   emoji: "🔧", title: "Maintenance Created" },
   refund_request:       { bg: "bg-blue-100",   emoji: "💸", title: "Refund Request" },
   refund_due:           { bg: "bg-blue-100",   emoji: "💰", title: "Refund Due" },
   license_expiring:     { bg: "bg-yellow-100", emoji: "🪪", title: "License Expiring Soon" },
@@ -324,9 +326,7 @@ export default function Header({ title = "Dashboard" }) {
             onClick={() => navigate("/account")}
             className="flex items-center gap-2 px-3 py-1 rounded-full border hover:bg-teal-50 transition-colors"
           >
-            <div className="w-8 h-8 rounded-full bg-arl-primary flex items-center justify-center text-white text-xs font-bold">
-              {initials}
-            </div>
+            <AvatarBubble key={user.profileImage || "none"} src={user.profileImage} initials={initials} className="w-8 h-8 text-xs" />
             <div className="flex flex-col items-start">
               <span className="text-xs font-semibold text-arl-dark">{user.username || "User"}</span>
               <span className="text-xs text-gray-400">{user.role}</span>
@@ -336,5 +336,27 @@ export default function Header({ title = "Dashboard" }) {
         </div>
       </div>
     </header>
+  );
+}
+
+// Round profile photo with an initials fallback — used when the account has
+// no photo yet, or the image can't be loaded. Give it a `key` that changes
+// with `src` so a failed load is retried when the photo is replaced.
+function AvatarBubble({ src, initials, className = "" }) {
+  const [failed, setFailed] = useState(false);
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt=""
+        onError={() => setFailed(true)}
+        className={`${className} rounded-full object-cover shrink-0`}
+      />
+    );
+  }
+  return (
+    <div className={`${className} rounded-full bg-arl-primary flex items-center justify-center text-white font-bold shrink-0`}>
+      {initials}
+    </div>
   );
 }

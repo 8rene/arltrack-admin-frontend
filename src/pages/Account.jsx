@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   doc, getDoc, collection, query, where, getDocs,
@@ -85,6 +85,13 @@ const IconClose = ({ className = "w-5 h-5" }) => (
 const IconKey = ({ className = "w-4 h-4" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+  </svg>
+);
+
+const IconCamera = ({ className = "w-4 h-4" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
   </svg>
 );
 
@@ -770,6 +777,11 @@ export default function Account() {
   const [pendingIdReq, setPendingIdReq]           = useState(false);
   const [allProfileReqs, setAllProfileReqs]       = useState([]);
 
+  const fileInputRef = useRef(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError]         = useState(null);
+  const [photoFailed, setPhotoFailed]       = useState(false);
+
   const canEditDirectly = user?.role === "Owner" || user?.role === "Admin";
   // Driver's license expiry only matters for Driver/Supervisor accounts —
   // Owner/Admin don't drive, Customer is out of scope on this side.
@@ -848,6 +860,7 @@ export default function Account() {
         role: user.role,
         username: userData.username || user.username || "",
         phone: userData.phone || "",
+        profileImage: userData.profileImage || "",
         status: userData.status || "active",
         isVerified: userData.isVerified || false,
         createdAt: userData.createdAt || null,
@@ -899,6 +912,57 @@ export default function Account() {
     .join("")
     .toUpperCase();
 
+  const photoUrl = user.profileImage || profile?.profileImage || "";
+
+  // Profile photo — same flow as the customer app: upload straight to
+  // Firebase Storage at avatars/{uid}, then send the URL to the backend,
+  // which stores it on this account's user doc. Applies immediately for
+  // every role (no review step).
+  const handlePhotoChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // lets the same file be picked again later
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setPhotoError("Please choose an image file."); return; }
+    if (file.size > 5 * 1024 * 1024)      { setPhotoError("Photo must be 5 MB or smaller."); return; }
+
+    setUploadingPhoto(true);
+    setPhotoError(null);
+    try {
+      const storageRef = ref(storage, `avatars/${user.uid}`);
+      await uploadBytes(storageRef, file, { contentType: file.type });
+      const url = new URL(await getDownloadURL(storageRef));
+      // Same storage path every time, so add a version param — otherwise the
+      // browser keeps showing the previously cached photo.
+      url.searchParams.set("v", String(Date.now()));
+      const profileImage = url.toString();
+
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/avatar`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ profileImage }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.message || "Could not save your photo.");
+
+      updateUser({ profileImage });
+      setProfile((p) => (p ? { ...p, profileImage } : p));
+      setPhotoFailed(false);
+      setNotice({ submitted: false, photo: true });
+      setTimeout(() => setNotice(null), 5000);
+    } catch (err) {
+      setPhotoError(
+        err?.code === "storage/unauthorized"
+          ? "You don't have permission to upload a photo. Check the Firebase Storage rules for avatars/."
+          : (err.message || "Upload failed. Please try again.")
+      );
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const handleSignOut = async () => {
     await logout();
     navigate("/");
@@ -928,15 +992,49 @@ export default function Account() {
             ? notice.idResubmit
               ? `Your new ${notice.documentKind === "document" ? "document" : "license"} photo was submitted and is pending admin review.`
               : "Your edit request was submitted and is pending admin approval."
-            : "Your profile was updated."}
+            : notice.photo ? "Your profile photo was updated." : "Your profile was updated."}
+        </div>
+      )}
+
+      {photoError && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm flex items-start justify-between gap-3">
+          <span>{photoError}</span>
+          <button onClick={() => setPhotoError(null)} className="text-red-400 hover:text-red-600 shrink-0" aria-label="Dismiss">
+            <IconClose className="w-4 h-4" />
+          </button>
         </div>
       )}
 
       {/* HEADER CARD */}
       <div className="bg-white rounded-2xl border shadow-card overflow-hidden">
         <div className="bg-arl-primary px-6 py-8 flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-white/15 border-2 border-white/30 flex items-center justify-center text-white text-xl font-bold shrink-0">
-            {initials}
+          <div className="relative shrink-0">
+            {photoUrl && !photoFailed ? (
+              <img
+                key={photoUrl}
+                src={photoUrl}
+                alt=""
+                onError={() => setPhotoFailed(true)}
+                className="w-16 h-16 rounded-full object-cover border-2 border-white/30 bg-white/15"
+              />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-white/15 border-2 border-white/30 flex items-center justify-center text-white text-xl font-bold">
+                {initials}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingPhoto}
+              title="Change photo"
+              aria-label="Change profile photo"
+              className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white text-arl-primary shadow flex items-center justify-center hover:bg-gray-100 disabled:opacity-60"
+            >
+              {uploadingPhoto
+                ? <span className="w-3.5 h-3.5 border-2 border-arl-primary border-t-transparent rounded-full animate-spin" />
+                : <IconCamera className="w-4 h-4" />}
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-white text-lg font-semibold truncate">{fullName !== "—" ? fullName : (user.username || "User")}</p>
