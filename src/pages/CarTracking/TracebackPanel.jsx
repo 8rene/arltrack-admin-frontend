@@ -248,7 +248,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   // reviewData.zonesAlerts (set by History/Review from the archive JSON) and
   // marks a car unavailable when that data isn't present.
   const [zonesAlerts, setZonesAlerts] = useState({});
-  // { [carId]: { bookingSessionID, bookingID, status, pickupTime, returnTime } | null } —
+  // { [carId]: { bookingSessionID, bookingID, status, startedAt, endedAt } | null } —
   // whichever session owns the currently-viewed date, per car. Live mode gets
   // this from the traceback endpoint (which already looks the session up for
   // geofence data); review mode reads it off reviewData.sessionMeta (set by

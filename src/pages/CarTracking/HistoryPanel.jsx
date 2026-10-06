@@ -116,7 +116,7 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
       const isLegacyArray = Array.isArray(parsed);
       const points = isLegacyArray ? parsed : (parsed.points || []);
       setReviewData({
-        label: `${car?.name || selectedCar} · ${fmtDateTime(item.pickupTime)} → ${fmtDateTime(item.returnTime)}`,
+        label: `${car?.name || selectedCar} · ${fmtDateTime(item.startedAt)} → ${item.endedAt ? fmtDateTime(item.endedAt) : "ongoing"}`,
         cars: [{ id: selectedCar, name: car?.name || selectedCar }],
         records: { [selectedCar]: points },
         zonesAlerts: isLegacyArray ? undefined : {
@@ -131,8 +131,8 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
             bookingSessionID: item.bookingSessionID,
             bookingID:        item.bookingID,
             status:           item.status,
-            pickupTime:       item.pickupTime,
-            returnTime:       item.returnTime,
+            startedAt:        item.startedAt,
+            endedAt:          item.endedAt,
           },
         },
       });
@@ -209,7 +209,7 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-xs font-semibold text-gray-700">
-                          {fmtDateTime(item.pickupTime)} → {fmtDateTime(item.returnTime)}
+                          {fmtDateTime(item.startedAt)} → {item.endedAt ? fmtDateTime(item.endedAt) : "ongoing"}
                         </p>
                         {item.status && (
                           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLES[item.status] || "bg-gray-100 text-gray-500"}`}>

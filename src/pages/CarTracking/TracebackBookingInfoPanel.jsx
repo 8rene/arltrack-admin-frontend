@@ -37,7 +37,7 @@ const STATUS_STYLES = {
  *    at history, not steering a trip in progress.
  *
  * The booking's customer/location details aren't in `session` (that only
- * carries bookingSessionID/bookingID/status/pickupTime/returnTime), so this
+ * carries bookingSessionID/bookingID/status/startedAt/endedAt), so this
  * looks the rest up client-side out of GET /api/bookings, same approach as
  * TripSummaryPanel — there's no GET /api/bookings/:id endpoint yet.
  */
@@ -148,7 +148,7 @@ export default function TracebackBookingInfoPanel({
               </p>
             )}
             <p className="text-xs text-gray-500 mt-1">
-              {fmtDateTime(session.pickupTime)} → {fmtDateTime(session.returnTime)}
+              {fmtDateTime(session.startedAt)} → {session.endedAt ? fmtDateTime(session.endedAt) : "ongoing"}
             </p>
             {session.bookingID && (
               <p className="text-[11px] text-gray-400 mt-1">Booking ID: {session.bookingID}</p>

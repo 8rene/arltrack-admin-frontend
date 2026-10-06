@@ -567,7 +567,7 @@ function ActiveTripsTab() {
 
               {isOngoing && (
                 <div className="flex items-center gap-4 text-xs bg-gray-50 rounded-lg px-3 py-2">
-                  <span className="text-gray-500">Picked up: <span className="font-semibold text-arl-dark">{fmtTime(trip.pickupTime) || "—"}</span></span>
+                  <span className="text-gray-500">Picked up: <span className="font-semibold text-arl-dark">{fmtTime(trip.startedAt) || "—"}</span></span>
                   <span className="text-gray-500">
                     Dropped off: <span className="font-semibold text-arl-dark">{droppedOff || "Not recorded"}</span>
                   </span>
@@ -785,11 +785,11 @@ function HistoryTab() {
               </button>
             </div>
 
-            {trip.status === "completed" && (trip.pickupTime || trip.droppedOffTime || trip.returnTime) && (
+            {trip.status === "completed" && (trip.startedAt || trip.droppedOffTime || trip.returnedAt) && (
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400 bg-gray-50 rounded-lg px-2.5 py-1.5">
-                <span>Picked up: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.pickupTime)}</span></span>
+                <span>Picked up: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.startedAt)}</span></span>
                 <span>Dropped off: <span className="font-semibold text-gray-600">{trip.droppedOffTime ? fmtDateTimeLong(trip.droppedOffTime) : "Not recorded"}</span></span>
-                <span>Returned: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.returnTime)}</span></span>
+                <span>Returned: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.returnedAt)}</span></span>
               </div>
             )}
           </div>
