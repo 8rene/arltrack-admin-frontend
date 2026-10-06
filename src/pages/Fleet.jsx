@@ -762,7 +762,7 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, notice, onNext,
   // in development (mount → effect → cleanup → effect again, on the same
   // instance). Without this, that double-invoke fires sendCode() twice on
   // mount — two real /send-otp calls, two emails, and since the backend
-  // stores the code with a plain overwrite (adminOtpCodes/{email}.set(...)),
+  // stores the code with a plain overwrite (otpCodes/{email}.set(...)),
   // whichever of the two calls' writes lands second silently invalidates
   // the code in the email that arrived first. A ref survives the
   // double-invoke (only the effect re-runs, not the component instance),
