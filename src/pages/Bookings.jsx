@@ -1151,6 +1151,21 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
           {row("Notes (User)",    booking.notesUser)}
           {row("Notes (Admin)",   booking.notesAdmin)}
           {booking.cancellationReason && row("Cancel Reason", booking.cancellationReason)}
+          {/* The customer's own request to cancel an ongoing trip (cancellationRequests).
+              This is the only place the approver can read WHY it was asked. */}
+          {booking.cancellationRequest && (
+            <div className="mt-2 rounded-xl border border-orange-100 bg-orange-50/60 px-3 py-2">
+              <p className="text-xs font-semibold text-orange-700 mb-1">Cancellation request</p>
+              {row("Status", String(booking.cancellationRequest.status || "").replace(/^./, (c) => c.toUpperCase()))}
+              {row("Reason", booking.cancellationRequest.reason || "—")}
+              {row("Requested", fmtDateTime(booking.cancellationRequest.requestedAt))}
+              {booking.cancellationRequest.processedAt && row(
+                "Processed",
+                `${fmtDateTime(booking.cancellationRequest.processedAt)}${booking.cancellationRequest.processedByName ? ` by ${booking.cancellationRequest.processedByName}` : ""}`
+              )}
+              {booking.cancellationRequest.rejectReason && row("Reject reason", booking.cancellationRequest.rejectReason)}
+            </div>
+          )}
         </div>
 
         {/* Trip History — always shown, not just when history exists, so it's

@@ -563,6 +563,21 @@ export default function VehicleDocs() {
       const snap = await getDocs(
         query(collection(db, "bookings"), where("carID", "==", car.carID || car.id))
       );
+      // Who drives a booking lives in driverAssignments now, not on the booking.
+      // A driver's own bookings = the ones they hold or completed (legacy
+      // booking.driverID still honoured until the migration cleanup has run).
+      let myKeys = null;
+      if (isDriver) {
+        const aSnap = await getDocs(
+          query(collection(db, "driverAssignments"), where("driverID", "==", user?.uid))
+        );
+        myKeys = new Set(
+          aSnap.docs
+            .map(d => d.data())
+            .filter(a => a.status === "assigned" || a.status === "completed")
+            .map(a => a.bookingID)
+        );
+      }
       const all = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         // A driver only ever gets their own bookings for this car — this
@@ -570,7 +585,7 @@ export default function VehicleDocs() {
         // below at all (see the toggled condition on that section).
         // Without this, a driver deep-linked here would see every other
         // driver's/customer's trip history for the same car.
-        .filter(b => !isDriver || b.driverID === user?.uid);
+        .filter(b => !isDriver || b.driverID === user?.uid || myKeys.has(b.bookingID || b.id));
 
       // Every upcoming/ongoing booking for this car (not just whichever one
       // sorts first) — feeds both the default "target" pick below and the
