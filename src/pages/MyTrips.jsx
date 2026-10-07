@@ -191,6 +191,7 @@ function ActiveTripsTab() {
   const [mapTrip, setMapTrip] = useState(null);
   const [paymentTrip, setPaymentTrip] = useState(null);
   const [returnTrip, setReturnTrip] = useState(null);   // Return checklist panel
+  const [depositOnly, setDepositOnly] = useState(false); // true = opened from "Return deposit" (deposit view only)
   const [penaltyTrip, setPenaltyTrip] = useState(null);  // driver "Note a penalty" form
   const [collectingBalance, setCollectingBalance] = useState(false);
   const [collectBalanceError, setCollectBalanceError] = useState(null);
@@ -392,7 +393,7 @@ function ActiveTripsTab() {
   // Return is always clickable — it opens the checklist showing what is still
   // missing (drop-off, inspection, penalties, GPS device check) and only
   // enables "Confirm Return" once everything is done. No override.
-  const handleReturn = (trip) => setReturnTrip(trip);
+  const handleReturn = (trip) => { setDepositOnly(false); setReturnTrip(trip); };
 
   const loadReturnChecklist = useCallback(async () => {
     if (!returnTrip) return null;
@@ -667,6 +668,7 @@ function ActiveTripsTab() {
       />
       <ReturnChecklistModal
         open={!!returnTrip}
+        depositOnly={depositOnly}
         onClose={() => setReturnTrip(null)}
         title={returnTrip ? `${returnTrip.customerName} — ${returnTrip.vehicleName}` : ""}
         driverName="You"
@@ -695,7 +697,7 @@ function ActiveTripsTab() {
         collecting={collectingBalance}
         collectError={collectBalanceError}
         onMarkRefundIssued={handleMarkRefundIssued}
-        onReturnDeposit={paymentTrip?.status === "ongoing" ? () => { const t = paymentTrip; setPaymentTrip(null); setReturnTrip(t); } : undefined}
+        onReturnDeposit={paymentTrip?.status === "ongoing" ? () => { const t = paymentTrip; setPaymentTrip(null); setDepositOnly(true); setReturnTrip(t); } : undefined}
         markingRefund={markingRefund}
         refundError={refundError}
         pendingApprovalNote="The initial payment hasn't been approved yet — ask an admin or supervisor to approve it before collecting the rest."
