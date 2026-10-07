@@ -32,6 +32,7 @@ export default function ReturnChecklistModal({
   const [busy, setBusy] = useState(false);
   const [refundMethod, setRefundMethod] = useState(REFUND_METHODS[0]);
   const [refundRef, setRefundRef] = useState("");
+  const [showPenalties, setShowPenalties] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -43,7 +44,7 @@ export default function ReturnChecklistModal({
 
   useEffect(() => {
     if (open) refresh();
-    else setData(null);
+    else { setData(null); setShowPenalties(false); }
   }, [open, refresh]);
 
   if (!open) return null;
@@ -97,7 +98,40 @@ export default function ReturnChecklistModal({
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Deposit &amp; penalties</p>
               <div className="flex justify-between"><span className="text-gray-500">Driver</span><span className="font-medium text-arl-dark">{driverName || "No driver"}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Deposit held <span className="text-[11px] text-gray-400">({data.depositStatus})</span></span><span className="font-medium">{data.depositHeld == null ? "—" : peso(data.depositHeld)}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Penalties given ({data.penalties?.filter((p) => p.status === "Confirmed").length || 0})</span><span className="font-medium text-red-600">− {peso(data.penaltyTotal)}</span></div>
+              <div className="flex justify-between items-center">
+                <button type="button" onClick={() => setShowPenalties((v) => !v)} disabled={!data.penalties?.length}
+                  aria-expanded={showPenalties}
+                  className="flex items-center gap-1 text-gray-500 hover:text-arl-dark disabled:hover:text-gray-500 disabled:cursor-default">
+                  <span>Penalties given ({data.penalties?.filter((p) => p.status === "Confirmed").length || 0})</span>
+                  {!!data.penalties?.length && (
+                    <svg className={`w-3.5 h-3.5 transition-transform ${showPenalties ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                  )}
+                </button>
+                <span className="font-medium text-red-600">− {peso(data.penaltyTotal)}</span>
+              </div>
+              {showPenalties && !!data.penalties?.length && (
+                <ul className="bg-white border border-gray-100 rounded-lg divide-y divide-gray-100 text-xs">
+                  {data.penalties.map((pen, idx) => {
+                    const items = Array.isArray(pen.lineItems) ? pen.lineItems : [];
+                    const inactive = pen.status && pen.status !== "Confirmed";
+                    const unpaid = Math.max(0, (pen.amount || 0) - (pen.paidAmount || 0));
+                    return (
+                      <li key={pen.penaltyID || pen.id || idx} className={`px-3 py-2 ${inactive ? "opacity-60" : ""}`}>
+                        <div className="flex justify-between gap-2">
+                          <span className="font-medium text-arl-dark">
+                            {items.length ? items.map((li) => li.description).filter(Boolean).join(", ") : (pen.description || pen.type || "Penalty")}
+                          </span>
+                          <span className={`font-semibold ${inactive ? "line-through text-gray-400" : "text-red-600"}`}>{peso(pen.amount)}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-gray-400 mt-0.5">
+                          <span>{inactive ? pen.status : unpaid > 0 ? "Unpaid" : "Paid"}</span>
+                          {!inactive && unpaid > 0 && (pen.paidAmount || 0) > 0 && <span>{peso(unpaid)} left</span>}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
               <div className="flex justify-between border-t border-gray-200 pt-1 mt-1">
                 <span className="font-semibold text-arl-dark">
                   {data.depositSettled ? (owes ? "Settled — customer owed" : "Settled — deposit returned") : (owes ? "Customer will owe" : "Deposit to return")}
