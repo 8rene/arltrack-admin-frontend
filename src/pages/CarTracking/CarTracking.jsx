@@ -14,6 +14,7 @@ import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
 import PaymentStatusModal from "../../components/PaymentStatusModal";
 import ReturnChecklistModal from "../../components/ReturnChecklistModal";
+import DriverPenaltyModal from "../../components/DriverPenaltyModal";
 import GeofenceBanner from "../../components/GeofenceBanner";
 import PlaceLabel from "../../components/PlaceLabel";
 import { isGeofenceBreachedNow, isCodingRestrictedNow, activeCodingAlertNow } from "../../utils/geofenceAlerts";
@@ -281,6 +282,8 @@ export default function CarTracking() {
   const [actionBusyId, setActionBusyId] = useState(null); // booking doc id currently being acted on
   const [paymentModalBooking, setPaymentModalBooking] = useState(null);
   const [returnModalBooking, setReturnModalBooking] = useState(null); // Return checklist panel
+  const [returnDepositOnly, setReturnDepositOnly] = useState(false);   // true = opened from the payment modal's "Return deposit"
+  const [penaltyBooking, setPenaltyBooking] = useState(null);         // in-place "Note a penalty" form
   const [collectingBalance,   setCollectingBalance]   = useState(false);
   const [collectBalanceError, setCollectBalanceError] = useState(null);
   const [confirmingPayment,   setConfirmingPayment]   = useState(false);
@@ -860,7 +863,7 @@ export default function CarTracking() {
   // still missing (drop-off, inspection, penalties, GPS device check) and
   // only enables "Confirm Return" once everything is done. No override —
   // the server enforces the same rules on the PATCH itself.
-  const handleReturn = (b) => setReturnModalBooking(b);
+  const handleReturn = (b) => { setReturnDepositOnly(false); setReturnModalBooking(b); };
 
   const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
   const loadReturnChecklist = useCallback(async () => {
@@ -870,6 +873,26 @@ export default function CarTracking() {
     if (!json.success) throw new Error(json.message || "Couldn't load the checklist.");
     return json.data;
   }, [returnModalBooking, token]);
+
+  // Staff "Note a penalty" — same in-place form the driver gets, instead of
+  // sending them off to the Penalties page. Staff create via POST /api/penalties.
+  const loadLateFee = useCallback(async () => {
+    if (!penaltyBooking) return null;
+    const res = await fetch(`${API}/api/penalties/late-fee-preview/${encodeURIComponent(penaltyBooking.bookingID || penaltyBooking.id)}`, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    return res.ok ? json.data : null;
+  }, [penaltyBooking, token]);
+
+  const submitPenalty = async (body) => {
+    const res = await fetch(`${API}/api/penalties`, {
+      method: "POST", headers: authHeaders,
+      body: JSON.stringify({ ...body, bookingID: penaltyBooking.bookingID || penaltyBooking.id }),
+    });
+    const json = await res.json();
+    if (!res.ok || json.success === false) throw new Error(json.message || "Couldn't charge the penalty.");
+    setNotice({ type: "ok", msg: "Penalty charged — the customer was notified and it's deducted from the deposit." });
+    await fetchBookings();
+  };
 
   const settleDepositNow = async ({ method, referenceNumber }) => {
     const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/settle-deposit`, {
@@ -1687,11 +1710,20 @@ export default function CarTracking() {
       onClose={() => setReturnModalBooking(null)}
       title={returnModalBooking ? `${returnModalBooking.customerName} — ${returnModalBooking.vehicleName}` : ""}
       driverName={returnModalBooking?.driverName}
+      depositOnly={returnDepositOnly}
       loadChecklist={loadReturnChecklist}
       onSettleDeposit={settleDepositNow}
       onConfirmReturn={confirmReturn}
       onMarkDroppedOff={dropoffFromChecklist}
-      onNotePenalty={() => navigate(`/penalties?bookingID=${encodeURIComponent(returnModalBooking.bookingID || returnModalBooking.id)}`)}
+      onNotePenalty={() => { const b = returnModalBooking; setReturnModalBooking(null); setPenaltyBooking(b); }}
+    />
+
+    <DriverPenaltyModal
+      open={!!penaltyBooking}
+      onClose={() => setPenaltyBooking(null)}
+      title={penaltyBooking ? `${penaltyBooking.customerName} — ${penaltyBooking.vehicleName}` : ""}
+      loadLateFee={loadLateFee}
+      onSubmit={submitPenalty}
     />
 
     <PaymentStatusModal
@@ -1727,6 +1759,12 @@ export default function CarTracking() {
       markingRefund={markingRefund}
       refundError={refundError}
       onGoToPayments={() => navigate(`/payments?bookingID=${paymentModalBooking?.bookingID || paymentModalBooking?.id || ""}`)}
+      onNotePenalty={String(paymentModalBooking?.status || "").toLowerCase() === "ongoing"
+        ? () => { const b = paymentModalBooking; setPaymentModalBooking(null); setPenaltyBooking(b); }
+        : undefined}
+      onReturnDeposit={String(paymentModalBooking?.status || "").toLowerCase() === "ongoing"
+        ? () => { const b = paymentModalBooking; setPaymentModalBooking(null); setReturnDepositOnly(true); setReturnModalBooking(b); }
+        : undefined}
     />
     </>
   );

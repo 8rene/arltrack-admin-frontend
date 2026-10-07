@@ -68,7 +68,7 @@ export default function PaymentStatusModal({
   onCollectBalance, collecting, collectError,
   onApplyDiscount, applyingDiscount, discountError,
   onMarkRefundIssued, markingRefund, refundError, onReturnDeposit,
-  onGoToPayments, pendingApprovalNote,
+  onGoToPayments, pendingApprovalNote, onNotePenalty,
 }) {
   const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0, refundDue: 0, depositAmount: 0, depositStatus: "—", confirmedPenaltyTotal: 0, amountToReturn: 0 };
 
@@ -212,6 +212,14 @@ export default function PaymentStatusModal({
               )}
               {/* Driver shortcut: opens the Drop-off & return checklist, where the
                   deposit is actually settled (deduct penalties + confirm handback). */}
+              {onNotePenalty && !p.depositSettled && (
+                <button
+                  onClick={onNotePenalty}
+                  className="w-full py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-all"
+                >
+                  + Note a penalty
+                </button>
+              )}
               {onReturnDeposit && p.depositStatus === "Held" && !p.depositSettled && (
                 <button
                   onClick={onReturnDeposit}
