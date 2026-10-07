@@ -679,7 +679,14 @@ function RefundCancelModal({ booking, onClose, onDone }) {
                 {preview.manualAmount > 0 && <div className="flex justify-between"><span className="text-gray-500">Hand back in person</span><span>{fmt(preview.manualAmount)}</span></div>}
               </div>
             ) : (
-              <div className="text-sm bg-gray-50 border border-gray-200 text-gray-600 p-3 rounded-xl">Nothing has been paid on this booking, so there is nothing to refund.</div>
+              <div className="text-sm bg-gray-50 border border-gray-200 text-gray-600 p-3 rounded-xl">{preview.unrefundableAmount > 0 ? "Nothing can be refunded through PayMongo for this booking." : "Nothing has been paid on this booking, so there is nothing to refund."}</div>
+            )}
+
+            {!preview.alreadyRefunded && preview.unrefundableAmount > 0 && (
+              <div className="text-sm bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl">
+                <span className="font-semibold">{fmt(preview.unrefundableAmount)} — Payment ID does not exist.</span>{" "}
+                It was paid online but no PayMongo payment ID is on record, so it can't be refunded through PayMongo{hasMoney ? " (the amount above is only the part that can be)" : ""}. Fix the payment record or refund it from the PayMongo dashboard.
+              </div>
             )}
 
             {preview.existingRequest && (

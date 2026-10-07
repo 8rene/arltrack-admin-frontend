@@ -442,7 +442,8 @@ function ReasonModal({ action, onClose, onSubmit, submitting }) {
 // penalties oldest-first — not just this one row — so a partial amount
 // can end up settling an older penalty before this one if there's more
 // than one outstanding.
-const SHORTFALL_METHODS = ["InStore", "GCash", "Maya", "BankTransfer", "PayMongo"];
+// In-person only: nothing in the customer app pays a penalty online, so there is no PayMongo option here.
+const SHORTFALL_METHODS = ["InStore", "GCash", "Maya", "BankTransfer"];
 
 function MarkPaidModal({ penalty, maxAmount = 0, onClose, onSubmit, submitting }) {
   const owed = Math.max(0, (penalty.amount || 0) - (penalty.paidAmount || 0));

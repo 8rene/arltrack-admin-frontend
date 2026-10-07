@@ -1227,6 +1227,11 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
                 {fmt(booking.refundPreview.onlineAmount || 0)} via PayMongo + {fmt(booking.refundPreview.manualAmount)} handed back in person
               </p>
             )}
+            {!cancelOnly && (booking.refundPreview?.unrefundableAmount || 0) > 0 && (
+              <p className="text-xs text-red-600 font-semibold">
+                {fmt(booking.refundPreview.unrefundableAmount)} not refundable — Payment ID does not exist
+              </p>
+            )}
           </div>
         )}
 

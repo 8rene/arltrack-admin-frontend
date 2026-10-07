@@ -631,6 +631,7 @@ export default function RefundRequests() {
                         <p className="text-[11px] text-gray-500 max-w-[220px]">
                           {fmt(r.planPreview.onlineAmount)} via PayMongo
                           {r.planPreview.manualAmount > 0 && <> · <span className="text-orange-600 font-semibold">{fmt(r.planPreview.manualAmount)} to hand back in person</span></>}
+                          {r.planPreview.unrefundableAmount > 0 && <> · <span className="text-red-600 font-semibold">{fmt(r.planPreview.unrefundableAmount)} not refundable — Payment ID does not exist</span></>}
                           {r.planPreview.total !== r.amount && <> · <span className="text-gray-400">(was {fmt(r.amount)} when requested)</span></>}
                         </p>
                       )}
@@ -660,6 +661,11 @@ export default function RefundRequests() {
                             </p>
                           ))}
                         </div>
+                      )}
+                      {Number(r.unrefundableAmount) > 0 && (
+                        <p className="text-[11px] mt-0.5 text-red-600 font-semibold max-w-[240px]" title="Paid online, but no PayMongo payment ID is on record, so this can't be refunded through PayMongo. It is not a hand-back.">
+                          {fmt(r.unrefundableAmount)} not refunded — Payment ID does not exist
+                        </p>
                       )}
                       {r.manualRefund && (
                         <p className={`text-[11px] mt-0.5 ${r.manualRefund.issued ? "text-green-600" : "text-orange-600 font-semibold"}`}>
