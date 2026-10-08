@@ -529,7 +529,7 @@ function MarkPaidModal({ penalty, maxAmount = 0, onClose, onSubmit, submitting }
 
 // ─── PENALTY DETAILS MODAL ───────────────────────────────────────────────
 //
-// Opened from the table's "Details" action — shows everything about one
+// Opened from the table's "View" action — shows everything about one
 // penalty (line items, computed vs. charged amount, late-fee math if it's
 // a late fee, payment status, who did what and when) without leaving this
 // page. "View Booking →" at the bottom is the only thing that still
@@ -863,16 +863,19 @@ export default function Penalties() {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
         <table className="w-full text-sm table-fixed">
           <colgroup>
-            <col style={{ width: "20%" }} /><col style={{ width: "14%" }} /><col style={{ width: "12%" }} />
-            <col style={{ width: "11%" }} /><col style={{ width: "8%" }} /><col style={{ width: "8%" }} />
-            <col style={{ width: "8%" }} /><col style={{ width: "19%" }} />
+            <col style={{ width: "8%" }} /><col style={{ width: "6%" }} /><col style={{ width: "16%" }} />
+            <col style={{ width: "11%" }} /><col style={{ width: "11%" }} /><col style={{ width: "11%" }} />
+            <col style={{ width: "7%" }} /><col style={{ width: "7%" }} /><col style={{ width: "7%" }} />
+            <col style={{ width: "16%" }} />
           </colgroup>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
+              <th className="px-4 py-3 text-left font-semibold">Date</th>
+              <th className="px-4 py-3 text-left font-semibold">Time</th>
               <th className="px-4 py-3 text-left font-semibold">Charges</th>
+              <th className="px-4 py-3 text-left font-semibold">Booking ID</th>
               <th className="px-4 py-3 text-left font-semibold">Customer</th>
               <th className="px-4 py-3 text-left font-semibold">Car</th>
-              <th className="px-4 py-3 text-left font-semibold">Created</th>
               <th className="px-4 py-3 text-left font-semibold">Amount</th>
               <th className="px-4 py-3 text-left font-semibold">Paid</th>
               <th className="px-4 py-3 text-left font-semibold">Status</th>
@@ -883,36 +886,34 @@ export default function Penalties() {
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 8 }).map((_, j) => (
+                  {Array.from({ length: 10 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">No penalties found.</td></tr>
+              <tr><td colSpan={10} className="text-center py-16 text-gray-400 text-sm">No penalties found.</td></tr>
             ) : paginated.map((p, i) => {
               const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(p);
               const rowClass = statMatch ? "bg-red-50/40 ring-1 ring-inset ring-red-100" : i % 2 === 1 ? "bg-gray-50/20" : "";
               return (
                 <tr key={p.id} className={`border-b border-gray-50 last:border-0 ${rowClass}`}>
+                  <td className="px-4 py-3 text-xs text-gray-700">
+                    {toDate(p.createdAt)?.toLocaleDateString(undefined, { dateStyle: "medium" }) || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-500">
+                    {toDate(p.createdAt)?.toLocaleTimeString(undefined, { timeStyle: "short" }) || "—"}
+                  </td>
                   <td className="px-4 py-3 text-xs text-gray-700 truncate" title={(p.lineItems || []).map((i) => `${i.description}: ${peso(i.amount)}`).join(", ")}>
                     {(p.lineItems || []).map((i) => i.description).join(", ") || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-500 font-mono truncate" title={p.bookingID || ""}>
+                    {p.bookingID || "—"}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700 truncate">{p.customerName || "—"}</td>
                   <td className="px-4 py-3 text-xs text-gray-500 truncate">
                     {p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName}` : "—"}
                     <div className="text-[10px] text-gray-400">{p.plateNumber}</div>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-700">
-                    {(() => {
-                      const d = toDate(p.createdAt);
-                      return d ? (
-                        <>
-                          {d.toLocaleDateString(undefined, { dateStyle: "medium" })}
-                          <div className="text-[10px] text-gray-400">{d.toLocaleTimeString(undefined, { timeStyle: "short" })}</div>
-                        </>
-                      ) : "—";
-                    })()}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700">{peso(p.amount)}</td>
                   <td className="px-4 py-3 text-xs text-gray-700">{peso(p.paidAmount)}</td>
@@ -947,7 +948,7 @@ export default function Penalties() {
                       )}
                       <button onClick={() => setDetailsModal(p)}
                         className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors font-medium">
-                        Details
+                        View
                       </button>
                     </div>
                   </td>
