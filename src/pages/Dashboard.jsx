@@ -182,32 +182,18 @@ export default function Dashboard() {
 
   // REAL-TIME — cancellation_request bookings
   useEffect(() => {
-    // Pending requests are rows in cancellationRequests now. The old shape
-    // (booking.status flipped to "cancellation_request") is still listened to
-    // until the migration's cleanup phase has run; both feed the same alert list.
-    let current = [];
-    let legacy  = [];
-    // A booking that already has a request row is not listed twice if it also still carries the old shape.
-    const push = () => {
-      const seen = new Set(current.map((r) => r.bookingID));
-      setCancelBookings([...current, ...legacy.filter((b) => !seen.has(b.bookingID || b.id))]);
-    };
-    const unsubNew = onSnapshot(
+    // Pending requests are rows in cancellationRequests -- the only source.
+    const unsub = onSnapshot(
       query(collection(db, "cancellationRequests"), where("status", "==", "pending")),
       (snap) => {
-        current = snap.docs.map((d) => {
+        setCancelBookings(snap.docs.map((d) => {
           const r = d.data();
           // bookingID is the booking's business ID, which is what the alert links to.
           return { id: d.id, ...r, status: "cancellation_request", createdAt: r.requestedAt, updatedAt: r.requestedAt };
-        });
-        push();
+        }));
       }
     );
-    const unsubOld = onSnapshot(
-      query(collection(db, "bookings"), where("status", "==", "cancellation_request")),
-      (snap) => { legacy = snap.docs.map((d) => ({ id: d.id, ...d.data() })); push(); }
-    );
-    return () => { unsubNew(); unsubOld(); };
+    return () => unsub();
   }, []);
 
   // REAL-TIME — damaged/stolen/missing parts, sourced from inventoryAfterTrip.

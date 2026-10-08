@@ -415,3 +415,34 @@ no penalty create in car tracking  supervisor
 customer has watchers
 
 penaltypage sort
+
+
+bookings car tracking direct from vehicle
+
+simulate proper fix
+
+mytrips changes has a bad refresh
+driver second penalty dont notify the customer
+
+return button on driver not allowed
+
+vehicle inspection have history have its status pdate when itshould not
+
+trip hisotry coulndt find that trips archived
+
+bookings details alwyas create and not linked towards them
+
+balik owner gps setup
+
+
+
+location ata time testing 
+restrict pickup and location
+
+
+debug 22 hours has 2 day minimum have a proper connection and compute
+coding restriction error
+
+coding restrict in web
+dummy price
+simulate remove
