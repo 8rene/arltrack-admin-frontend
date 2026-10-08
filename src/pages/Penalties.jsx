@@ -863,15 +863,16 @@ export default function Penalties() {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
         <table className="w-full text-sm table-fixed">
           <colgroup>
-            <col style={{ width: "24%" }} /><col style={{ width: "16%" }} /><col style={{ width: "12%" }} />
-            <col style={{ width: "10%" }} /><col style={{ width: "10%" }} /><col style={{ width: "8%" }} />
-            <col style={{ width: "20%" }} />
+            <col style={{ width: "20%" }} /><col style={{ width: "14%" }} /><col style={{ width: "12%" }} />
+            <col style={{ width: "11%" }} /><col style={{ width: "8%" }} /><col style={{ width: "8%" }} />
+            <col style={{ width: "8%" }} /><col style={{ width: "19%" }} />
           </colgroup>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
               <th className="px-4 py-3 text-left font-semibold">Charges</th>
               <th className="px-4 py-3 text-left font-semibold">Customer</th>
               <th className="px-4 py-3 text-left font-semibold">Car</th>
+              <th className="px-4 py-3 text-left font-semibold">Created</th>
               <th className="px-4 py-3 text-left font-semibold">Amount</th>
               <th className="px-4 py-3 text-left font-semibold">Paid</th>
               <th className="px-4 py-3 text-left font-semibold">Status</th>
@@ -888,7 +889,7 @@ export default function Penalties() {
                 </tr>
               ))
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">No penalties found.</td></tr>
+              <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">No penalties found.</td></tr>
             ) : paginated.map((p, i) => {
               const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(p);
               const rowClass = statMatch ? "bg-red-50/40 ring-1 ring-inset ring-red-100" : i % 2 === 1 ? "bg-gray-50/20" : "";
@@ -901,6 +902,17 @@ export default function Penalties() {
                   <td className="px-4 py-3 text-xs text-gray-500 truncate">
                     {p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName}` : "—"}
                     <div className="text-[10px] text-gray-400">{p.plateNumber}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-700">
+                    {(() => {
+                      const d = toDate(p.createdAt);
+                      return d ? (
+                        <>
+                          {d.toLocaleDateString(undefined, { dateStyle: "medium" })}
+                          <div className="text-[10px] text-gray-400">{d.toLocaleTimeString(undefined, { timeStyle: "short" })}</div>
+                        </>
+                      ) : "—";
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700">{peso(p.amount)}</td>
                   <td className="px-4 py-3 text-xs text-gray-700">{peso(p.paidAmount)}</td>
