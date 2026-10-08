@@ -412,3 +412,5 @@ penalties date and time given
 car tracking mark as receive mode of payment no ref
 
 no penalty create in car tracking  supervisor
+
+customer has watchers

@@ -513,9 +513,12 @@ export default function Users() {
       const addressMap = Object.fromEntries(addressSnap.docs.map(d => [d.data().userID || d.id, { docId: d.id, ...d.data() }]));
       const docMap     = Object.fromEntries(docSnap.docs.map(d => [d.data().userID || d.id, { docId: d.id, ...d.data() }]));
       const bookingCount = {};
+      const completedCount = {};
       bookingsSnap.docs.forEach(d => {
-        const uid = d.data().userID;
-        if (uid) bookingCount[uid] = (bookingCount[uid] || 0) + 1;
+        const { userID: uid, status } = d.data();
+        if (!uid) return;
+        bookingCount[uid] = (bookingCount[uid] || 0) + 1;
+        if (String(status || "").toLowerCase() === "completed") completedCount[uid] = (completedCount[uid] || 0) + 1;
       });
 
       const merged = baseUsers.map(u => ({
@@ -524,6 +527,7 @@ export default function Users() {
         address:      addressMap[u.id] || {},
         document:     docMap[u.id]     || {},
         bookingCount: bookingCount[u.id] || 0,
+        completedBookingCount: completedCount[u.id] || 0,
       }));
 
       setUsers(merged);
@@ -996,6 +1000,9 @@ function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
                 <Field label="ID Status" value={user.isVerified ? "✓ Verified" : "Pending"} />
                 <Field label="Flagged"   value={user.isFlagged ? "Yes" : "No"} />
                 <Field label="Joined"    value={fmtDate(user.createdAt)} />
+                {roleLabelSingular === "Customer" && (
+                  <Field label="Bookings" value={`${user.bookingCount || 0} total · ${user.completedBookingCount || 0} completed`} />
+                )}
               </Section>
               <Section title="Referral">
                 <Field label="Referral Code"  value={ref.code} />
@@ -1025,6 +1032,10 @@ function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
                           {p.name || "—"} {p.username && <span className="text-gray-400">(@{p.username})</span>}
                         </span>
                         <span className="flex items-center gap-2 text-xs text-gray-400 shrink-0">
+                          {(() => {
+                            const iu = users?.find((u) => u.id === p.id);
+                            return iu ? <span>{iu.bookingCount || 0} {iu.bookingCount === 1 ? "booking" : "bookings"}</span> : null;
+                          })()}
                           {fmtDate(p.createdAt)}
                           <span className={`px-2 py-0.5 rounded-full font-medium capitalize ${
                             p.status?.toLowerCase() === "locked" ? "bg-red-50 text-red-600" :

@@ -738,24 +738,44 @@ function RefundCancelModal({ booking, onClose, onDone }) {
 
 // ─── CUSTOMER PROFILE MODAL ─────────────────────────────────────────────
 // Opened from the Customer name in either the table row or ViewModal,
-// instead of navigating to /users. Pulls the base user doc (by-uid) and
-// the userDetails doc (details) — the same two pieces Customers.jsx's own
-// detail view uses for its "Account" and "Personal Details" sections.
-// Address/document images live in separate collections with no REST
-// endpoint yet, so this stays a lighter, quicker profile than the full
-// Customers.jsx view rather than trying to replicate all of it here.
-function CustomerProfileModal({ userID, onClose }) {
+// instead of navigating to /users. Pulls the base user doc (by-uid, which
+// also carries the profile photo + referral info) and the userDetails doc
+// (details).
+//
+// Booking counts come from the `bookings` list this page already loaded
+// (/api/bookings?status=all returns every booking with its userID), so
+// showing "how many bookings has this person made" costs no extra request.
+//
+// The invited-users list only shows each person's booking count plus a
+// "View" button. View swaps THIS modal's content to a brief profile of that
+// invited user (same modal, no stacking); the back arrow returns to the
+// original customer's view.
+const IconArrowLeft = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="19" y1="12" x2="5" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <polyline points="12 19 5 12 12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// Profile photo with an initials fallback (no photo, or the image fails to load).
+function ProfileAvatar({ src, initials, className = "w-16 h-16 text-xl" }) {
+  const [failed, setFailed] = useState(false);
+  const base = `${className} rounded-xl flex-shrink-0`;
+  if (src && !failed) {
+    return <img src={src} alt="" onError={() => setFailed(true)} className={`${base} object-cover bg-gray-100`} />;
+  }
+  return <div className={`${base} bg-teal-600 text-white flex items-center justify-center font-bold`}>{initials}</div>;
+}
+
+// Loads one customer's base doc + details. Safe to call with a null id (idle).
+function useCustomerProfile(userID) {
   const { getToken } = useAuth();
-  const [basic, setBasic]     = useState(null);
-  const [details, setDetails] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
+  const [state, setState] = useState({ basic: null, details: null, loading: !!userID, error: null });
 
   useEffect(() => {
-    if (!userID) return;
+    if (!userID) { setState({ basic: null, details: null, loading: false, error: null }); return; }
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    setState({ basic: null, details: null, loading: true, error: null });
     const headers = { Authorization: `Bearer ${getToken()}` };
     Promise.all([
       fetch(`${process.env.REACT_APP_API_URL}/api/users/by-uid/${userID}`, { headers }).then((r) => r.json()),
@@ -764,19 +784,49 @@ function CustomerProfileModal({ userID, onClose }) {
       .then(([basicRes, detailsRes]) => {
         if (cancelled) return;
         if (!basicRes?.success) throw new Error(basicRes?.message || "Could not load customer profile.");
-        setBasic(basicRes.data);
         // Details 404s for a customer who never filled in personal info —
         // that's a normal state here, not an error worth surfacing.
-        setDetails(detailsRes?.success ? detailsRes.data : null);
+        setState({ basic: basicRes.data, details: detailsRes?.success ? detailsRes.data : null, loading: false, error: null });
       })
-      .catch((e) => !cancelled && setError(e.message))
-      .finally(() => !cancelled && setLoading(false));
+      .catch((e) => !cancelled && setState({ basic: null, details: null, loading: false, error: e.message }));
     return () => { cancelled = true; };
   }, [userID, getToken]);
 
-  const fullName = details
+  return state;
+}
+
+const profileFullName = (details, basic) =>
+  (details
     ? `${details.firstName || ""} ${details.middleName ? details.middleName + " " : ""}${details.lastName || ""}`.trim()
-    : "";
+    : "") || basic?.username || "Customer Profile";
+
+const profileInitials = (details, basic) =>
+  ((details?.firstName?.[0] || basic?.email?.[0] || "?") + (details?.lastName?.[0] || "")).toUpperCase();
+
+function CustomerProfileModal({ userID, bookings, onClose }) {
+  const [subID, setSubID] = useState(null); // invited user currently being viewed (null = original customer)
+  const root = useCustomerProfile(userID);
+  const sub  = useCustomerProfile(subID);
+  const cur  = subID ? sub : root;
+  const { basic, details, loading, error } = cur;
+
+  // userID -> { total, completed } across every booking this page loaded.
+  const statsMap = useMemo(() => {
+    const m = new Map();
+    (bookings || []).forEach((b) => {
+      if (!b.userID) return;
+      const s = m.get(b.userID) || { total: 0, completed: 0 };
+      s.total += 1;
+      if ((b.status || "").toLowerCase() === "completed") s.completed += 1;
+      m.set(b.userID, s);
+    });
+    return m;
+  }, [bookings]);
+  const statsOf = (id) => statsMap.get(id) || { total: 0, completed: 0 };
+
+  const shownID = subID || userID;
+  const stats   = statsOf(shownID);
+  const bookingsText = `${stats.total} total · ${stats.completed} completed`;
 
   const refBy = basic?.referral?.referredBy;
   const refByText = refBy
@@ -796,11 +846,19 @@ function CustomerProfileModal({ userID, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-2 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="font-bold text-lg text-gray-800">
-            {fullName || basic?.username || "Customer Profile"}
-          </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {subID && (
+              <button onClick={() => setSubID(null)} title="Back" aria-label="Back"
+                className="shrink-0 p-1.5 -ml-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100">
+                <IconArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            <h2 className="font-bold text-lg text-gray-800 truncate">
+              {loading ? (subID ? "Invited user" : "Customer Profile") : profileFullName(details, basic)}
+            </h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0">
             <IconX className="w-5 h-5" />
           </button>
         </div>
@@ -811,25 +869,55 @@ function CustomerProfileModal({ userID, onClose }) {
           <div className="py-8 text-center text-sm text-red-500">{error}</div>
         ) : (
           <div>
+            <div className="flex items-center gap-3 pb-3 mb-1 border-b border-gray-100">
+              <ProfileAvatar key={basic?.profileImage || "none"} src={basic?.profileImage} initials={profileInitials(details, basic)} />
+              <div className="min-w-0">
+                <p className="font-semibold text-gray-800 truncate">{profileFullName(details, basic)}</p>
+                <p className="text-xs text-gray-400 truncate">@{basic?.username || "—"}</p>
+                <p className="mt-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200">
+                  {stats.total} {stats.total === 1 ? "booking" : "bookings"}
+                </p>
+              </div>
+            </div>
+
             {row("Email",     basic?.email)}
             {row("Phone",     basic?.phone)}
             {row("Username",  basic?.username)}
             {row("Status",    basic?.status)}
             {row("ID Status", basic?.isVerified ? "✓ Verified" : "Pending")}
             {row("Joined",    fmtDate(basic?.createdAt))}
-            {row("Referral Code", basic?.referral?.code)}
-            {row("Referred By",   refByText)}
-            {row("Invited",       String(basic?.referral?.invitedCount || 0))}
-            {basic?.referral?.invited?.length > 0 && (
-              <ul className="mt-1 mb-1 text-xs text-gray-600 list-disc pl-5 space-y-0.5">
-                {basic.referral.invited.map((p) => (
-                  <li key={p.id}>{p.name || "—"}{p.username ? ` (@${p.username})` : ""}</li>
-                ))}
-              </ul>
-            )}
-            {details && (
+            {row("Bookings",  bookingsText)}
+
+            {subID ? (
+              // Brief view of an invited user: just the essentials.
+              row("Invited", String(basic?.referral?.invitedCount || 0))
+            ) : (
               <>
-                {row("Birth Date", details.birthDate ? fmtDate(details.birthDate) : "—")}
+                {row("Referral Code", basic?.referral?.code)}
+                {row("Referred By",   refByText)}
+                {row("Invited",       String(basic?.referral?.invitedCount || 0))}
+                {basic?.referral?.invited?.length > 0 && (
+                  <ul className="mt-1 mb-1 divide-y border rounded-xl">
+                    {basic.referral.invited.map((p) => {
+                      const n = statsOf(p.id).total;
+                      return (
+                        <li key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                          <span className="min-w-0 truncate text-gray-700">
+                            {p.name || "—"}{p.username && <span className="text-gray-400"> (@{p.username})</span>}
+                          </span>
+                          <span className="flex items-center gap-2 shrink-0">
+                            <span className="text-xs text-gray-500">{n} {n === 1 ? "booking" : "bookings"}</span>
+                            <button onClick={() => setSubID(p.id)}
+                              className="px-2.5 py-1 border border-teal-200 text-teal-700 rounded-lg text-xs font-semibold hover:bg-teal-50">
+                              View
+                            </button>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {details && row("Birth Date", details.birthDate ? fmtDate(details.birthDate) : "—")}
               </>
             )}
           </div>
@@ -1613,7 +1701,7 @@ export default function Bookings() {
           onDone={(msg) => { setRefundBooking(null); showToast(msg, "success"); fetchBookings(); }}
         />
       )}
-      {profileUserID && <CustomerProfileModal userID={profileUserID} onClose={() => setProfileUserID(null)} />}
+      {profileUserID && <CustomerProfileModal userID={profileUserID} bookings={allBookings} onClose={() => setProfileUserID(null)} />}
       {deleteBooking && (
         <DeleteModal
           booking={deleteBooking}
