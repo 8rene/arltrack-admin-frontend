@@ -88,6 +88,61 @@ const IconKey = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconCamera = ({ className = "w-4 h-4" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+  </svg>
+);
+
+// Max size / types accepted for a profile photo. Checked here before the
+// upload so a wrong file fails fast instead of after a slow Storage round
+// trip. (Your Firebase Storage rules should enforce the same limits.)
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+/* ── Profile photo with camera button ──
+   Shows the current photo (or initials fallback) and lets the logged-in
+   user pick a new one. Give it a `key` that changes with `src` so a
+   failed image load is retried when the photo is replaced. */
+function ProfileAvatar({ src, initials, uploading, onPick }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="relative w-16 h-16 shrink-0">
+      {src && !failed ? (
+        <img
+          src={src}
+          alt=""
+          onError={() => setFailed(true)}
+          className="w-16 h-16 rounded-full object-cover border-2 border-white/30"
+        />
+      ) : (
+        <div className="w-16 h-16 rounded-full bg-white/15 border-2 border-white/30 flex items-center justify-center text-white text-xl font-bold">
+          {initials}
+        </div>
+      )}
+      {uploading && (
+        <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center">
+          <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+        </div>
+      )}
+      <label
+        title="Change profile photo"
+        className={`absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white text-arl-primary shadow flex items-center justify-center ${uploading ? "opacity-60 pointer-events-none" : "cursor-pointer hover:bg-gray-100"}`}
+      >
+        <IconCamera className="w-4 h-4" />
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          disabled={uploading}
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onPick(f); }}
+        />
+      </label>
+    </div>
+  );
+}
+
 /* ── Detail row ── */
 function DetailRow({ icon, label, value }) {
   return (
@@ -765,6 +820,8 @@ export default function Account() {
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [notice, setNotice] = useState(null);
   const [profileTab, setProfileTab] = useState("details"); // "details" | "document"
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError]         = useState(null);
 
   const [pendingProfileReq, setPendingProfileReq] = useState(false);
   const [pendingIdReq, setPendingIdReq]           = useState(false);
@@ -900,6 +957,51 @@ export default function Account() {
     .join("")
     .toUpperCase();
 
+  // Profile photo: upload to Storage at avatars/{uid} (the only path the
+  // backend will accept), then tell the backend to point profileImage at
+  // it. Any role can do this for their own account — no review step.
+  const handleAvatarPick = async (file) => {
+    setAvatarError(null);
+    if (!AVATAR_TYPES.includes(file.type)) {
+      setAvatarError("Please choose a JPG, PNG or WebP image.");
+      return;
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      setAvatarError("That image is too large. Please choose one under 5 MB.");
+      return;
+    }
+    setAvatarUploading(true);
+    try {
+      const storageRef = ref(storage, `avatars/${user.uid}`);
+      await uploadBytes(storageRef, file, { contentType: file.type });
+      const baseUrl = await getDownloadURL(storageRef);
+      // Same object path is reused on every change, so add a version
+      // param to stop the browser showing the old cached photo. The
+      // backend only checks the host and object path, not the query.
+      const profileImage = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
+
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/profile/avatar`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ profileImage }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.message || "Could not save your profile photo.");
+
+      // Updates AuthContext + localStorage, so the header avatar changes too.
+      updateUser({ profileImage });
+      setNotice({ submitted: false });
+      setTimeout(() => setNotice(null), 5000);
+    } catch (e) {
+      setAvatarError(e.message || "Upload failed. Please try again.");
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   const handleSignOut = async () => {
     await logout();
     navigate("/");
@@ -933,12 +1035,25 @@ export default function Account() {
         </div>
       )}
 
+      {avatarError && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm flex items-start justify-between gap-3">
+          <span>{avatarError}</span>
+          <button onClick={() => setAvatarError(null)} className="shrink-0 text-red-400 hover:text-red-600" aria-label="Dismiss">
+            <IconClose className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* HEADER CARD */}
       <div className="bg-white rounded-2xl border shadow-card overflow-hidden">
         <div className="bg-arl-primary px-6 py-8 flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-white/15 border-2 border-white/30 flex items-center justify-center text-white text-xl font-bold shrink-0">
-            {initials}
-          </div>
+          <ProfileAvatar
+            key={user.profileImage || "none"}
+            src={user.profileImage}
+            initials={initials}
+            uploading={avatarUploading}
+            onPick={handleAvatarPick}
+          />
           <div className="min-w-0 flex-1">
             <p className="text-white text-lg font-semibold truncate">{fullName !== "—" ? fullName : (user.username || "User")}</p>
             <p className="text-white/70 text-sm truncate">{user.email}</p>
