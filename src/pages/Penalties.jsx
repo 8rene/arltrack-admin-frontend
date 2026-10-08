@@ -97,6 +97,37 @@ const toDate = (val) => {
 };
 const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
 
+// ─── SORT HEADER — same clickable <th> as Bookings/Payments/Maintenance ───
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-4 py-3 text-left font-semibold select-none ${className}`}>
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs px-1.5 py-1 -mx-1.5 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
+// Order used when sorting the Status column — most urgent first when ascending.
+const SETTLEMENT_RANK = { Pending: 0, "Partially Paid": 1, Paid: 2, Waived: 3, Voided: 4 };
+
 // One predicate per stat card, shared by the card's count AND the row
 // highlight/default sort, so the number on a card can never silently
 // drift from what clicking it actually shows.
@@ -673,7 +704,20 @@ export default function Penalties() {
     setSearchParams((prev) => { prev.delete("bookingID"); return prev; }, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const toggleStatFilter = (key) => setActiveStatFilter((v) => (v === key ? null : key));
+  const [sortKey, setSortKey] = useState(null); // null = default (newest first; active stat card's rows on top)
+  const [sortDir, setSortDir] = useState("asc");
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const toggleStatFilter = (key) => {
+    setActiveStatFilter((v) => {
+      const next = v === key ? null : key;
+      if (next) { setSortKey(null); setSortDir("asc"); } // card's "matching rows on top" needs the default order
+      return next;
+    });
+  };
 
   const showToast = (msg, type = "error") => {
     setToast({ msg, type });
@@ -748,6 +792,22 @@ export default function Penalties() {
   // Matching rows float to the top when a stat card is active — nothing
   // is filtered out of the list, same interaction as Maintenance.jsx.
   const sorted = [...records].sort((a, b) => {
+    // A clicked column header wins over the default order.
+    if (sortKey) {
+      const dir = sortDir === "asc" ? 1 : -1;
+      const text = (x, y) => (x || "").toString().localeCompare((y || "").toString(), undefined, { sensitivity: "base", numeric: true }) * dir;
+      switch (sortKey) {
+        case "date":     return ((toDate(a.createdAt)?.getTime() || 0) - (toDate(b.createdAt)?.getTime() || 0)) * dir;
+        case "charges":  return text((a.lineItems || []).map((i) => i.description).join(", "), (b.lineItems || []).map((i) => i.description).join(", "));
+        case "booking":  return text(a.bookingID, b.bookingID);
+        case "customer": return text(a.customerName, b.customerName);
+        case "car":      return text(`${a.brandName} ${a.modelName} ${a.plateNumber}`, `${b.brandName} ${b.modelName} ${b.plateNumber}`);
+        case "amount":   return ((a.amount || 0) - (b.amount || 0)) * dir;
+        case "paid":     return ((a.paidAmount || 0) - (b.paidAmount || 0)) * dir;
+        case "status":   return ((SETTLEMENT_RANK[a.settlementStatus] ?? 99) - (SETTLEMENT_RANK[b.settlementStatus] ?? 99)) * dir;
+        default: break;
+      }
+    }
     if (activeStatFilter) {
       const pred = STAT_FILTERS[activeStatFilter].predicate;
       const aM = pred(a), bM = pred(b);
@@ -768,7 +828,7 @@ export default function Penalties() {
   });
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, activeStatFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, activeStatFilter, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bookings.jsx doesn't yet auto-open a specific booking's panel from a
   // URL param — this gets staff to the right page with the bookingID
@@ -863,22 +923,22 @@ export default function Penalties() {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
         <table className="w-full text-sm table-fixed">
           <colgroup>
-            <col style={{ width: "8%" }} /><col style={{ width: "6%" }} /><col style={{ width: "16%" }} />
+            <col style={{ width: "8%" }} /><col style={{ width: "6%" }} /><col style={{ width: "14%" }} />
             <col style={{ width: "11%" }} /><col style={{ width: "11%" }} /><col style={{ width: "11%" }} />
-            <col style={{ width: "7%" }} /><col style={{ width: "7%" }} /><col style={{ width: "7%" }} />
-            <col style={{ width: "16%" }} />
+            <col style={{ width: "8%" }} /><col style={{ width: "8%" }} /><col style={{ width: "8%" }} />
+            <col style={{ width: "15%" }} />
           </colgroup>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
-              <th className="px-4 py-3 text-left font-semibold">Date</th>
+              <SortableTh label="Date"       sortKey="date"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left font-semibold">Time</th>
-              <th className="px-4 py-3 text-left font-semibold">Charges</th>
-              <th className="px-4 py-3 text-left font-semibold">Booking ID</th>
-              <th className="px-4 py-3 text-left font-semibold">Customer</th>
-              <th className="px-4 py-3 text-left font-semibold">Car</th>
-              <th className="px-4 py-3 text-left font-semibold">Amount</th>
-              <th className="px-4 py-3 text-left font-semibold">Paid</th>
-              <th className="px-4 py-3 text-left font-semibold">Status</th>
+              <SortableTh label="Charges"    sortKey="charges"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Booking ID" sortKey="booking"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Customer"   sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Car"        sortKey="car"      sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Amount"     sortKey="amount"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Paid"       sortKey="paid"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Status"     sortKey="status"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left font-semibold">Actions</th>
             </tr>
           </thead>
