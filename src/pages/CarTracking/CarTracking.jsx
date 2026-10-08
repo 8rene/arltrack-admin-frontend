@@ -904,7 +904,9 @@ export default function CarTracking() {
   };
 
   const confirmReturn = async () => {
-    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}`, {
+    // Keep a copy — the modal clears returnModalBooking right after this resolves.
+    const returned = returnModalBooking;
+    const res = await fetch(`${API}/api/bookings/${returned.id}`, {
       method: "PATCH", headers: authHeaders, body: JSON.stringify({ status: "completed" }),
     });
     const json = await res.json();
@@ -912,6 +914,19 @@ export default function CarTracking() {
     setNotice({ type: "ok", msg: "Car marked returned — trip history saved." });
     await fetchBookings();
     if (selected) fetchCarSession(selected);
+
+    // Hand off to Maintenance with the returned car selected and this
+    // booking linked (basis defaults to "Post-Rental" there). Only runs
+    // for a real Return — the deposit-only flow settles via
+    // settleDepositNow, not this function. Drivers return from My Trips
+    // instead and can't open /maintenance, so this stays supervisor-side.
+    if (returned?.carID) {
+      const params = new URLSearchParams({
+        carID: returned.carID,
+        bookingID: returned.bookingID || returned.id || "",
+      });
+      navigate(`/maintenance?${params.toString()}`, { state: { returnedBooking: true } });
+    }
   };
 
   const dropoffFromChecklist = async () => {

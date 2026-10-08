@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useLocation } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
 
@@ -234,6 +234,7 @@ const EMPTY_FORM = {
 export default function Maintenance() {
   const token = localStorage.getItem("token");
   const [searchParams] = useSearchParams();
+  const location = useLocation();
 
   const [records, setRecords]             = useState([]);
   const [cars, setCars]                   = useState([]);
@@ -399,6 +400,16 @@ export default function Maintenance() {
     if (carID) {
       setForm((f) => ({ ...f, carID, bookingID: bookingID || "", basis: bookingID ? "Post-Rental" : f.basis }));
       setShowAdd(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Arrived straight from a Return on Car Tracking (see confirmReturn
+  // there) — tell staff why the form is open instead of silently landing
+  // here. Closing the form skips post-rental maintenance.
+  useEffect(() => {
+    if (location.state?.returnedBooking) {
+      showToast("Car returned. Add its post-rental maintenance below, or close the form to skip.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
