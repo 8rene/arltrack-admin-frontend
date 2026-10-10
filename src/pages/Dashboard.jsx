@@ -186,10 +186,13 @@ export default function Dashboard() {
     const unsub = onSnapshot(
       query(collection(db, "cancellationRequests"), where("status", "==", "pending")),
       (snap) => {
-        setCancelBookings(snap.docs.map((d) => {
+        // A pending row that has a refundRequestID belongs to a refund request (decided on the Refund Requests page),
+        // not a mid-trip cancellation request, so it is not counted here.
+        setCancelBookings(snap.docs.filter((d) => !d.data().refundRequestID).map((d) => {
           const r = d.data();
+          const created = r.createdAt ?? r.requestedAt;   // requestedAt was renamed createdAt; old rows still have it
           // bookingID is the booking's business ID, which is what the alert links to.
-          return { id: d.id, ...r, status: "cancellation_request", createdAt: r.requestedAt, updatedAt: r.requestedAt };
+          return { id: d.id, ...r, status: "cancellation_request", createdAt: created, updatedAt: created };
         }));
       }
     );
@@ -513,7 +516,9 @@ export default function Dashboard() {
     const unsubRefund = onSnapshot(
       query(collection(db, "refundRequests"), where("status", "==", "Pending")),
       (snap) => {
-        const rows = snap.docs.map((d) => {
+        // A staff-created refund sits in Pending only while staff's own cancellation is being processed -- nobody
+        // is waiting to review it, and it no longer carries userID (that lives on its cancellation row).
+        const rows = snap.docs.filter((d) => d.data().source !== "staff").map((d) => {
           const data = d.data();
           const u = userMapRef.current[data.userID] || {};
           return {
@@ -521,7 +526,7 @@ export default function Dashboard() {
             userID: data.userID,
             name: u.username || u.email || data.userID,
             kind: "refundRequest",
-            amount: data.amount || 0,
+            amount: data.toRefundAmount ?? data.amount ?? 0,   // amount was renamed toRefundAmount
             bookingID: data.bookingID || null,
             _due: toJsDate(data.createdAt) || new Date(),
           };

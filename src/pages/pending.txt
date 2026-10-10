@@ -446,3 +446,8 @@ coding restriction error
 coding restrict in web
 dummy price
 simulate remove
+
+deposit fee return when booking is tomorrow
+2hours grace
+
+userss dont search using userID

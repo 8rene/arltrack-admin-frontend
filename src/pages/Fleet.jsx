@@ -950,6 +950,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
     if (r.outcome === "refunded") return `Refunded ${fmt(r.amount || 0)}`;
     if (r.outcome === "already_refunded") return "Cancelled — already refunded earlier";
     if (r.outcome === "nothing_owed") return "Cancelled — nothing had been paid";
+    if (r.outcome === "deposit_forfeited") return "Cancelled — deposit kept, nothing to refund";
     if (r.outcome === "no_payment") return "Cancelled — no payment record found";
     return "Resolved";
   };

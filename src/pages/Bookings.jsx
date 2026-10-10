@@ -1253,7 +1253,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
               <p className="text-xs font-semibold text-orange-700 mb-1">Cancellation request</p>
               {row("Status", String(booking.cancellationRequest.status || "").replace(/^./, (c) => c.toUpperCase()))}
               {row("Reason", booking.cancellationRequest.reason || "—")}
-              {row("Requested", fmtDateTime(booking.cancellationRequest.requestedAt))}
+              {row("Requested", fmtDateTime(booking.cancellationRequest.createdAt || booking.cancellationRequest.requestedAt))}
               {booking.cancellationRequest.processedAt && row(
                 "Processed",
                 `${fmtDateTime(booking.cancellationRequest.processedAt)}${booking.cancellationRequest.processedByName ? ` by ${booking.cancellationRequest.processedByName}` : ""}`

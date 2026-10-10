@@ -616,7 +616,7 @@ export default function RefundRequests() {
                       ) : "—"}
                     </td>
                     <td className="px-5 py-4">
-                      <p className="text-gray-700">{r.reason}</p>
+                      <p className="text-gray-700">{r.customerReason !== undefined ? r.customerReason : r.reason}</p>
                       {r.notes && <p className="text-xs text-gray-400 max-w-[220px] truncate" title={r.notes}>{r.notes}</p>}
                       {r.status === "Rejected" && r.rejectReason && (
                         <p className="text-xs text-red-500 max-w-[220px] truncate" title={r.rejectReason}>Reason: {r.rejectReason}</p>
@@ -624,9 +624,6 @@ export default function RefundRequests() {
                     </td>
                     <td className="px-5 py-4">
                       <p className="font-semibold text-arl-dark">{fmt(r.planPreview ? r.planPreview.total : r.amount)}</p>
-                      {r.autoCreated && (
-                        <p className="text-[11px] text-amber-600 max-w-[200px]">Opened automatically — payment arrived after the booking was cancelled.</p>
-                      )}
                       {r.status === "Pending" && r.planPreview && (
                         <p className="text-[11px] text-gray-500 max-w-[220px]">
                           {fmt(r.planPreview.onlineAmount)} via PayMongo
@@ -637,7 +634,7 @@ export default function RefundRequests() {
                       )}
                       {/* 48-hour policy outcome: judged from when the customer ASKED */}
                       {(() => {
-                        const tier   = r.status === "Pending" && r.planPreview ? r.planPreview.tier : r.policyTier;
+                        const tier   = r.status === "Pending" && r.planPreview ? r.planPreview.tier : (r.policyTier || (typeof r.returnDeposit === "boolean" ? (r.returnDeposit ? "full" : "late") : null)); // newer requests carry returnDeposit instead of policyTier
                         const kept   = r.status === "Pending" && r.planPreview ? r.planPreview.forfeit : Number(r.depositForfeited) || 0;
                         if (!tier) return null;
                         const label  = tier === "full" ? "Full refund" : tier === "no_show" ? "No-show" : "Under 48h";
