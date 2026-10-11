@@ -33,6 +33,7 @@ import RefundArchivePage from "./pages/RefundArchivePage";
 import PenaltyArchivePage from "./pages/PenaltyArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
 import ReviewsArchivePage from "./pages/ReviewsArchivePage";
+import MaintenanceArchivePage from "./pages/MaintenanceArchivePage";
 import Reviews from "./pages/Reviews";
 import MyTrips from "./pages/MyTrips";
 import Account from "./pages/Account";
@@ -233,6 +234,11 @@ function AppRoutes() {
             <Route path="/archives/refund-requests" element={
                 <ProtectedRoute>
                     <DashboardLayout><RefundArchivePage /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/archives/maintenance" element={
+                <ProtectedRoute>
+                    <DashboardLayout><MaintenanceArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/archives/audit-log" element={

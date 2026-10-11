@@ -165,7 +165,7 @@ export default function PenaltyArchivePage() {
               <p className="text-xs text-gray-500 mb-2">{restoreConfirmRecord.customerName || restoreConfirmRecord.userID || "—"} — {peso(restoreConfirmRecord.amount)} ({restoreConfirmRecord.status})</p>
             )}
             <p className="text-sm text-gray-500 mb-5">
-              It will move back to the live Penalties list. If its booking or payment were archived alongside it, those are restored too.
+              It will move back to the live Penalties list, with its payment entries. If its booking or payment were archived alongside it, those come back too (with the booking's driver, cancellation and maintenance records).
             </p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>

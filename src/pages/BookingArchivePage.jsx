@@ -92,7 +92,8 @@ export default function BookingArchivePage() {
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
   // ── CASCADE RESTORE ──────────────────────────────────────────
-  // Restores booking + linked payment + linked reviews back to live collections,
+  // Restores booking + linked payment, reviews, session, penalties, refund requests, payment entries,
+  // driver assignments, cancellation requests and maintenance records back to live collections,
   // then removes all three archive records.
   const handleRestore = async (bookingArchivesId) => {
     setRestoreConfirmId(null);
@@ -112,7 +113,8 @@ export default function BookingArchivePage() {
   };
 
   // ── CASCADE DELETE ───────────────────────────────────────────
-  // Permanently deletes bookingArchive + linked paymentsArchives + reviewsArchives.
+  // Permanently deletes bookingArchive + every linked archive (payment, reviews, session, penalties, refunds,
+  // payment entries, driver assignments, cancellation requests, maintenance) + inspection records.
   const handleDelete = async (bookingArchivesId) => {
     setConfirmId(null);
     setActionId(bookingArchivesId);
@@ -182,8 +184,12 @@ export default function BookingArchivePage() {
             <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 mb-4 space-y-1">
               <p className="text-xs font-semibold text-teal-800">This will also restore:</p>
               <ul className="text-xs text-teal-700 list-disc ml-4 space-y-0.5">
-                <li>The linked payment (if any)</li>
+                <li>The linked payment and its payment entries (if any)</li>
                 <li>All linked reviews (if any)</li>
+                <li>The linked booking session (if any)</li>
+                <li>Penalties and refund requests (if any)</li>
+                <li>Driver assignments and cancellation requests (if any)</li>
+                <li>Maintenance records linked to this booking (if any)</li>
               </ul>
               <p className="text-xs text-teal-600 mt-1">All matching archive records will be removed once restored.</p>
             </div>
@@ -325,9 +331,12 @@ export default function BookingArchivePage() {
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 space-y-1">
               <p className="text-xs font-semibold text-amber-800">This will also permanently delete:</p>
               <ul className="text-xs text-amber-700 list-disc ml-4 space-y-0.5">
-                <li>The linked payment archive (if any)</li>
+                <li>The linked payment archive and its payment entries (if any)</li>
                 <li>All linked review archives (if any)</li>
                 <li>The linked booking session archive (if any)</li>
+                <li>Penalty and refund request archives (if any)</li>
+                <li>Driver assignment and cancellation request archives (if any)</li>
+                <li>Maintenance archives linked to this booking (if any)</li>
                 <li>This booking's vehicle inspection records — before/after parts status and photos (if any)</li>
               </ul>
               <p className="text-xs text-amber-600 mt-1">This action cannot be undone.</p>
@@ -440,7 +449,7 @@ export default function BookingArchivePage() {
                       <button
                         onClick={() => setRestoreConfirmId(r.bookingArchivesId)}
                         disabled={!!actionId}
-                        title="Restores booking, payment, and reviews back to live collections and removes all archive records"
+                        title="Restores the booking and everything archived with it (payment, entries, reviews, session, penalties, refunds, driver, cancellation, maintenance) and removes the archive records"
                         className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap"
                       >
                         {actionId === r.bookingArchivesId ? "…" : "Restore"}
@@ -473,7 +482,7 @@ export default function BookingArchivePage() {
                       <button
                         onClick={() => setConfirmId(r.bookingArchivesId)}
                         disabled={!!actionId}
-                        title="Permanently deletes this archive and all linked payment/review/session/inspection archives"
+                        title="Permanently deletes this archive and everything archived with it, plus its inspection records"
                         className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap"
                       >
                         Delete

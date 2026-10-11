@@ -171,7 +171,7 @@ export default function PaymentsArchivePage() {
               </p>
             )}
             <p className="text-sm text-gray-500 mb-5">
-              If the linked booking is still archived, it will be restored along with this payment.
+              It will move back to the live Payments list, with its payment entries. If the linked booking is still archived, it is restored along with this payment (with its driver, cancellation and maintenance records).
             </p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
