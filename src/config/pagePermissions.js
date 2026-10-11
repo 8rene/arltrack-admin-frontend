@@ -66,6 +66,7 @@ export const PAGE_ACCESS = {
   "/archives/audit-log": [OWNER, ADMIN],
   "/archives/reviews": [OWNER, ADMIN],
   "/archives/maintenance": [OWNER, ADMIN],
+  "/archives/vehicle-inspection": [OWNER, ADMIN],
   "/reviews": [OWNER, ADMIN],
   "/archives/users": [OWNER, ADMIN],
 

@@ -190,6 +190,7 @@ export default function BookingArchivePage() {
                 <li>Penalties and refund requests (if any)</li>
                 <li>Driver assignments and cancellation requests (if any)</li>
                 <li>Maintenance records linked to this booking (if any)</li>
+                <li>This booking's vehicle inspection records — before/after parts status and photo links (if any)</li>
               </ul>
               <p className="text-xs text-teal-600 mt-1">All matching archive records will be removed once restored.</p>
             </div>
@@ -337,7 +338,8 @@ export default function BookingArchivePage() {
                 <li>Penalty and refund request archives (if any)</li>
                 <li>Driver assignment and cancellation request archives (if any)</li>
                 <li>Maintenance archives linked to this booking (if any)</li>
-                <li>This booking's vehicle inspection records — before/after parts status and photos (if any)</li>
+                <li>This booking's vehicle inspection archive — before/after parts status and photo links (if any)</li>
+                <li>The inspection photos and the GPS history file stored in Firebase Storage (they are removed from Storage too)</li>
               </ul>
               <p className="text-xs text-amber-600 mt-1">This action cannot be undone.</p>
             </div>

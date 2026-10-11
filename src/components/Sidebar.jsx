@@ -281,6 +281,15 @@ const nav = [
         ),
       },
       {
+        label: "Vehicle Inspection Archive",
+        path: "/archives/vehicle-inspection",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.6-3.4A9 9 0 113.4 7.6 9 9 0 0120.6 7.6z" />
+          </svg>
+        ),
+      },
+      {
         label: "Payments Archive",
         path: "/archives/payments",
         icon: (
