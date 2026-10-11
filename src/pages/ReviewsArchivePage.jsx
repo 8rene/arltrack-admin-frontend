@@ -57,7 +57,7 @@ export default function ReviewsArchivePage() {
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    setTimeout(() => setToast(null), 7000);
   };
 
   const fetchRecords = useCallback(async () => {
@@ -82,8 +82,8 @@ export default function ReviewsArchivePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Restore failed.");
-      setRecords((prev) => prev.filter((r) => r.reviewsArchivesID !== reviewsArchivesID));
-      showToast("Review restored to active table.", "success");
+      fetchRecords();
+      showToast(data.message || "Review restored to active table.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
   };
@@ -96,8 +96,8 @@ export default function ReviewsArchivePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Delete failed.");
-      setRecords((prev) => prev.filter((r) => r.reviewsArchivesID !== reviewsArchivesID));
-      showToast("Permanently deleted.", "success");
+      fetchRecords();
+      showToast(data.message || "Permanently deleted.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
   };
@@ -131,8 +131,10 @@ export default function ReviewsArchivePage() {
 
       {confirmId && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-96">
             <h3 className="font-semibold text-gray-800 mb-2">Permanently Delete?</h3>
+            <p className="text-sm text-gray-500 mb-3">If this booking is still in the Booking Archive, deleting this review also permanently deletes the <b>whole archived booking</b> and everything archived with it (payment, payment entries, refund requests, penalties, reviews, session, driver assignments, cancellation requests, maintenance and inspection records).</p>
+            <p className="text-sm text-gray-500 mb-3">If the booking archive no longer exists, only this review is deleted. Transaction logs are always kept.</p>
             <p className="text-sm text-gray-500 mb-5">This action cannot be undone.</p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
@@ -144,14 +146,14 @@ export default function ReviewsArchivePage() {
 
       {restoreConfirmId && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-80">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-96">
             <h3 className="font-semibold text-gray-800 mb-2">Restore this review?</h3>
             {restoreConfirmRecord && (
               <p className="text-xs text-gray-500 mb-2">
                 {restoreConfirmRecord.reviewerName || "—"} · Booking {restoreConfirmRecord.bookingID || "—"}
               </p>
             )}
-            <p className="text-sm text-gray-500 mb-5">It will move back to the live reviews table.</p>
+            <p className="text-sm text-gray-500 mb-5">If this booking is still in the Booking Archive, restoring this review restores the <b>whole booking</b> with it: payment and payment entries, all refund requests, all penalties, reviews, session, driver assignments, cancellation requests and maintenance records. If the booking archive no longer exists, only this review is restored.</p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
               <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
@@ -250,7 +252,7 @@ export default function ReviewsArchivePage() {
                       <button onClick={() => setRestoreConfirmId(r.reviewsArchivesID)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap">
                         {actionId === r.reviewsArchivesID ? "…" : "Restore"}
                       </button>
-                      {effectiveRole === ROLES.OWNER && (
+                      {(effectiveRole === ROLES.OWNER || effectiveRole === ROLES.ADMIN) && (
                       <button onClick={() => setConfirmId(r.reviewsArchivesID)} disabled={!!actionId} className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap">
                         Delete
                       </button>

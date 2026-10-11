@@ -478,7 +478,7 @@ export default function BookingArchivePage() {
                       >
                         Session
                       </button>
-                      {effectiveRole === ROLES.OWNER && (
+                      {(effectiveRole === ROLES.OWNER || effectiveRole === ROLES.ADMIN) && (
                       <button
                         onClick={() => setConfirmId(r.bookingArchivesId)}
                         disabled={!!actionId}
