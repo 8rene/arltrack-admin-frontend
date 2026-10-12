@@ -4,9 +4,27 @@ import { db } from "../fireabase";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
+const EMPTY_FORM = { carPartName: "", carPartTypeID: "", serialNumber: "", price: "" };
+
+// Parts are priced in PHP (what it costs to replace the part).
+const formatPeso = (n) =>
+  `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Price text box -> { value } where value is:
+//   a number      → set the price
+//   null          → box was empty
+// or { error } when it isn't a valid amount.
+const parsePriceInput = (raw) => {
+  const t = String(raw ?? "").trim();
+  if (t === "") return { value: null };
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return { error: "Price must be a number that is 0 or greater." };
+  return { value: n };
+};
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 //
-// Inventory — the vehicle PARTS CATALOG (name, type, serial number).
+// Inventory — the vehicle PARTS CATALOG (name, type, serial number, price).
 // Config-style data an admin sets up once and edits occasionally, so it's
 // grouped under "System" in the sidebar — but deliberately its own page,
 // not folded into the generic Settings screen.
@@ -27,7 +45,7 @@ export default function Inventory() {
   const [partTypes, setPartTypes]     = useState([]); // [{id, carPartName}]
 
   const [editingID, setEditingID]     = useState(null);
-  const [formState, setFormState]     = useState({ carPartName: "", carPartTypeID: "", serialNumber: "" });
+  const [formState, setFormState]     = useState(EMPTY_FORM);
   const [isAdding, setIsAdding]       = useState(false);
   const [saving, setSaving]           = useState(false);
   const [toast, setToast]             = useState(null);
@@ -111,13 +129,14 @@ export default function Inventory() {
       carPartName:   part.carPartName || "",
       carPartTypeID: part.carPartTypeID || "",
       serialNumber:  part.serialNumber || "",
+      price:         part.price != null ? String(part.price) : "",
     });
   };
 
   const startAdd = () => {
     setEditingID(null);
     setIsAdding(true);
-    setFormState({ carPartName: "", carPartTypeID: partTypes[0]?.id || "", serialNumber: "" });
+    setFormState({ ...EMPTY_FORM, carPartTypeID: partTypes[0]?.id || "" });
   };
 
   const cancelForm = () => {
@@ -127,6 +146,8 @@ export default function Inventory() {
 
   const saveEdit = async () => {
     if (!formState.carPartName.trim()) { showToast("Part name is required.", "error"); return; }
+    const price = parsePriceInput(formState.price);
+    if (price.error) { showToast(price.error, "error"); return; }
     setSaving(true);
     try {
       const res = await authedFetch(`/api/car-parts/${editingID}`, {
@@ -135,11 +156,14 @@ export default function Inventory() {
           carPartName:   formState.carPartName.trim(),
           carPartTypeID: formState.carPartTypeID,
           serialNumber:  formState.serialNumber.trim(),
+          // Empty box on an existing part = remove its price (null).
+          price:         price.value,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to update part.");
-      setParts(prev => prev.map(p => p.id === editingID ? { ...p, ...formState } : p));
+      // Use the server's copy so price / carPartPricingID are exactly what was saved.
+      setParts(prev => prev.map(p => p.id === editingID ? { ...p, ...json.data } : p));
       setEditingID(null);
       showToast("Part updated.");
     } catch (e) {
@@ -152,6 +176,8 @@ export default function Inventory() {
 
   const saveNew = async () => {
     if (!formState.carPartName.trim()) { showToast("Part name is required.", "error"); return; }
+    const price = parsePriceInput(formState.price);
+    if (price.error) { showToast(price.error, "error"); return; }
     setSaving(true);
     try {
       const res = await authedFetch("/api/car-parts", {
@@ -161,6 +187,8 @@ export default function Inventory() {
           carPartName:   formState.carPartName.trim(),
           carPartTypeID: formState.carPartTypeID,
           serialNumber:  formState.serialNumber.trim(),
+          // Part and price are created together; empty box = no price yet.
+          price:         price.value,
         }),
       });
       const json = await res.json();
@@ -206,7 +234,7 @@ export default function Inventory() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-arl-dark">Parts Inventory</h1>
         <p className="text-sm text-gray-400 mt-0.5">
-          The parts catalog for each vehicle — name, type, and serial number. Per-trip
+          The parts catalog for each vehicle — name, type, serial number, and replacement price. Per-trip
           condition (Good/Damaged) is recorded separately, per booking, on Vehicle Inspections.
         </p>
       </div>
@@ -296,7 +324,12 @@ export default function Inventory() {
                           {part.serialNumber ? ` · ${part.serialNumber}` : ""}
                         </p>
                       </div>
-                      <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex items-center gap-4 shrink-0">
+                        {part.price != null ? (
+                          <span className="text-sm font-semibold text-gray-700">{formatPeso(part.price)}</span>
+                        ) : (
+                          <span className="text-xs text-gray-300 italic">No price</span>
+                        )}
                         <button onClick={() => startEdit(part)} className="text-xs font-semibold text-teal-600 hover:text-teal-700">Edit</button>
                         <button onClick={() => removePart(part)} className="text-xs font-semibold text-red-500 hover:text-red-600">Remove</button>
                       </div>
@@ -315,7 +348,7 @@ export default function Inventory() {
 function PartFormRow({ formState, setFormState, partTypes, onSave, onCancel, saving, inputCls }) {
   return (
     <div className="rounded-xl border-2 border-teal-300 ring-1 ring-teal-100 bg-teal-50/20 px-3 py-3">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 mb-2">
         <div>
           <label className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Part Name</label>
           <input
@@ -346,6 +379,22 @@ function PartFormRow({ formState, setFormState, partTypes, onSave, onCancel, sav
             onChange={e => setFormState(prev => ({ ...prev, serialNumber: e.target.value }))}
             placeholder="Optional"
           />
+        </div>
+        <div>
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Price (₱)</label>
+          <div className="relative">
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">₱</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              className={`${inputCls} pl-6`}
+              value={formState.price}
+              onChange={e => setFormState(prev => ({ ...prev, price: e.target.value }))}
+              placeholder="0.00"
+            />
+          </div>
         </div>
       </div>
       <div className="flex items-center justify-end gap-2">
