@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
 import usePolling from "../hooks/usePolling";
+import { buildFlaggedParts } from "../utils/damagedParts";
 import {
   collection,
   query,
@@ -221,41 +222,24 @@ export default function Dashboard() {
   // 5 minutes while the tab is visible. (Better long-term: store a per-car
   // "latest damage" summary doc so this doesn't scan the history at all.)
   const loadDamagedParts = async () => {
-      let snap;
-      try { snap = await getDocs(collection(db, "inventoryAfterTrip")); } catch { return; }
-      const latestByCarID = {};
-      snap.docs.forEach((d) => {
-        const data = { id: d.id, ...d.data() };
-        const cid = data.carID;
-        if (!cid) return;
-        // .seconds (not ._seconds) — these are real client-SDK Timestamp
-        // objects from a live Firestore read, which expose the value as
-        // a public `.seconds` property. `._seconds` only shows up when a
-        // Timestamp gets JSON-serialized through the backend's own API
-        // responses — a different code path entirely. Using the wrong
-        // one here meant `ts`/`ets` were always 0, so whichever record
-        // happened to load first for a car stuck as "latest" forever,
-        // and a genuinely newer damage report never replaced it.
-        const ts  = data.recordedAt?.seconds ?? 0;
-        const ets = latestByCarID[cid]?.recordedAt?.seconds ?? -1;
-        if (ts > ets) latestByCarID[cid] = data;
-      });
+      let snap, jobsSnap;
+      try {
+        [snap, jobsSnap] = await Promise.all([
+          getDocs(collection(db, "inventoryAfterTrip")),
+          // Completed jobs are what "resolve" a damaged part — the inspection
+          // record itself is never edited (see utils/damagedParts.js).
+          getDocs(query(collection(db, "maintenance"), where("status", "==", "Completed"))),
+        ]);
+      } catch { return; }
 
-      const parts = [];
-      Object.values(latestByCarID).forEach((rec) => {
-        (rec.damageParts || []).forEach((p) => {
-          if (!["Damaged", "Stolen", "Missing"].includes(p.status)) return;
-          parts.push({
-            id: `${rec.carID}_${p.carPartID}`,
-            carID: rec.carID,
-            carPartID: p.carPartID,
-            carPartName: p.carPartName || null,
-            status: p.status,
-            bookingID: rec.bookingID,
-            _type: "damaged_part",
-          });
-        });
+      // Latest after-trip record per car, minus parts a Completed maintenance
+      // job has since covered. Timestamps are live client-SDK ones (.seconds);
+      // toMs() in the helper handles both that and the backend's JSON form.
+      const { flagged } = buildFlaggedParts({
+        afterRecords: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+        jobs: jobsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
       });
+      const parts = flagged.map((p) => ({ ...p, _type: "damaged_part" }));
 
       const carIDs = [...new Set(parts.map(p => p.carID).filter(Boolean))];
       let carNameMap = {};

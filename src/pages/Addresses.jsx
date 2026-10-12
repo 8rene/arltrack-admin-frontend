@@ -67,7 +67,7 @@ function Toast({ toast }) {
   if (!toast) return null;
   return (
     <div
-      className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
+      className={`fixed top-5 right-5 z-[70] px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
         toast.type === "success"
           ? "bg-green-50 text-green-700 border border-green-200"
           : "bg-red-50 text-red-700 border border-red-200"
@@ -81,7 +81,7 @@ function Toast({ toast }) {
 function Modal({ title, onClose, children, footer, width = "max-w-md", busy = false }) {
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
       onClick={() => !busy && onClose()}
     >
       <div
@@ -167,11 +167,16 @@ function Pill({ children, tone = "teal" }) {
   );
 }
 
-const RowActions = ({ onEdit, onDelete }) => (
-  <div className="flex items-center gap-3 justify-end">
-    <button onClick={onEdit} className="text-xs font-semibold text-teal-600 hover:text-teal-700">Edit</button>
+// Full-size buttons (not tiny text links) so the Actions column isn't mostly empty.
+const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
+const RowActions = ({ onView, onEdit, onDelete }) => (
+  <div className="flex items-center gap-2 justify-end">
+    {onView && (
+      <button onClick={onView} className={`${actionBtn} border-gray-200 text-gray-600 hover:bg-gray-50`}>View</button>
+    )}
+    <button onClick={onEdit} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
     {onDelete && (
-      <button onClick={onDelete} className="text-xs font-semibold text-red-500 hover:text-red-600">Delete</button>
+      <button onClick={onDelete} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>Delete</button>
     )}
   </div>
 );
@@ -281,6 +286,7 @@ export default function Addresses() {
 
   const [dialog, setDialog] = useState(null);   // { existing } — existing null = adding
   const [toDelete, setToDelete] = useState(null);
+  const [viewStack, setViewStack] = useState([]); // [{ levelKey, row }] — last one is shown; drilling in pushes
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -310,6 +316,7 @@ export default function Addresses() {
       regionName, provinceById, municipalityById,
       provincesPerRegion: count(bundle.provinces, "regionID"),
       municipalitiesPerProvince: count(bundle.municipalities, "provinceID"),
+      barangaysPerMunicipality: count(bundle.barangays, "municipalityID"),
       provinceName: (id) => provinceById[id]?.provinceName || "",
       municipalityName: (id) => municipalityById[id]?.municipalityName || "",
       regionOfProvince: (id) => provinceById[id]?.regionID || "",
@@ -533,6 +540,7 @@ export default function Addresses() {
                     ))}
                     <td className="px-5 py-3">
                       <RowActions
+                        onView={() => setViewStack([{ levelKey, row }])}
                         onEdit={() => setDialog({ existing: row })}
                         onDelete={canDelete ? () => setToDelete(row) : null}
                       />
@@ -556,6 +564,18 @@ export default function Addresses() {
             <button disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)} className={`${btnGhost} !py-1.5 !px-3`}>Next</button>
           </div>
         </div>
+      )}
+
+      {viewStack.length > 0 && (
+        <ViewDialog
+          current={viewStack[viewStack.length - 1]}
+          canGoBack={viewStack.length > 1}
+          bundle={bundle}
+          lk={lk}
+          onOpen={(key, row) => setViewStack((s) => [...s, { levelKey: key, row }])}
+          onBack={() => setViewStack((s) => s.slice(0, -1))}
+          onClose={() => setViewStack([])}
+        />
       )}
 
       {dialog && (
@@ -582,6 +602,148 @@ export default function Addresses() {
         </ConfirmDialog>
       )}
     </div>
+  );
+}
+
+// ─── View one entry: where it sits + everything under it ────────────────────
+const SINGULAR = { Provinces: "province", Municipalities: "municipality", Barangays: "barangay" };
+const CHILD_OF = { regions: "provinces", provinces: "municipalities", municipalities: "barangays", barangays: null };
+
+function ViewDialog({ current, canGoBack, bundle, lk, onOpen, onBack, onClose }) {
+  const { levelKey, row } = current;
+  const level = LEVEL[levelKey];
+  const childKey = CHILD_OF[levelKey];
+  const child = childKey ? LEVEL[childKey] : null;
+  const [q, setQ] = useState("");
+
+  // Where this entry sits (Region › Province › Municipality), top-down.
+  const trail = useMemo(() => {
+    const t = [];
+    if (levelKey === "provinces") t.push({ label: "Region", value: lk.regionName[row.regionID] });
+    if (levelKey === "municipalities") {
+      t.push({ label: "Region", value: lk.regionName[lk.regionOfProvince(row.provinceID)] });
+      t.push({ label: "Province", value: lk.provinceName(row.provinceID) });
+    }
+    if (levelKey === "barangays") {
+      const provID = lk.provinceOfMunicipality(row.municipalityID);
+      t.push({ label: "Region", value: lk.regionName[lk.regionOfProvince(provID)] });
+      t.push({ label: "Province", value: lk.provinceName(provID) });
+      t.push({ label: "Municipality", value: lk.municipalityName(row.municipalityID) });
+    }
+    return t;
+  }, [levelKey, row, lk]);
+
+  // Everything underneath: direct children for the list, plus totals for the chips.
+  const { children, totals } = useMemo(() => {
+    const byName = (list, f) => [...list].sort((a, b) => cmp(a[f], b[f]));
+    if (levelKey === "regions") {
+      const provs = bundle.provinces.filter((p) => p.regionID === row.regionID);
+      const provSet = new Set(provs.map((p) => p.provinceID));
+      const munis = bundle.municipalities.filter((m) => provSet.has(m.provinceID));
+      const muniSet = new Set(munis.map((m) => m.municipalityID));
+      const brgys = bundle.barangays.filter((b) => muniSet.has(b.municipalityID));
+      return { children: byName(provs, "provinceName"), totals: [["Provinces", provs.length], ["Municipalities", munis.length], ["Barangays", brgys.length]] };
+    }
+    if (levelKey === "provinces") {
+      const munis = bundle.municipalities.filter((m) => m.provinceID === row.provinceID);
+      const muniSet = new Set(munis.map((m) => m.municipalityID));
+      const brgys = bundle.barangays.filter((b) => muniSet.has(b.municipalityID));
+      return { children: byName(munis, "municipalityName"), totals: [["Municipalities", munis.length], ["Barangays", brgys.length]] };
+    }
+    if (levelKey === "municipalities") {
+      const brgys = bundle.barangays.filter((b) => b.municipalityID === row.municipalityID);
+      return { children: byName(brgys, "barangayName"), totals: [["Barangays", brgys.length]] };
+    }
+    return { children: [], totals: [] };
+  }, [levelKey, row, bundle]);
+
+  const countText = (n = 0, one, many) => `${n} ${n === 1 ? one : many}`;
+  const detail = (c) => {
+    if (childKey === "provinces") return countText(lk.municipalitiesPerProvince[c.provinceID], "municipality", "municipalities");
+    if (childKey === "municipalities") return countText(lk.barangaysPerMunicipality[c.municipalityID], "barangay", "barangays");
+    return "";
+  };
+
+  const shown = q.trim() ? children.filter((c) => (c[child.nameField] || "").toLowerCase().includes(q.trim().toLowerCase())) : children;
+
+  return (
+    <Modal
+      title={`${level.singular}: ${row[level.nameField] || "—"}`}
+      onClose={onClose}
+      width="max-w-lg"
+      footer={
+        <>
+          {canGoBack && <button onClick={onBack} className={btnGhost}>← Back</button>}
+          <button onClick={onClose} className={btnPrimary}>Close</button>
+        </>
+      }
+    >
+      <div className="space-y-4 pb-2">
+        {trail.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {trail.map((t) => (
+              <span key={t.label} className="text-xs text-gray-500">
+                <span className="text-gray-400">{t.label}:</span> <span className="font-semibold text-gray-700">{t.value || "—"}</span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {totals.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {totals.map(([label, n]) => <Pill key={label} tone="teal">{n.toLocaleString()} {n === 1 ? SINGULAR[label] : label.toLowerCase()}</Pill>)}
+          </div>
+        )}
+
+        {child ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                {child.label} under {row[level.nameField]}
+              </p>
+              {children.length > 8 && (
+                <input
+                  type="text" value={q} onChange={(e) => setQ(e.target.value)}
+                  placeholder={`Search ${child.label.toLowerCase()}…`}
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs w-44 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                />
+              )}
+            </div>
+            {children.length === 0 ? (
+              <p className="text-sm text-gray-400 border border-dashed border-gray-200 rounded-xl px-4 py-6 text-center">
+                No {child.label.toLowerCase()} under this {level.singular.toLowerCase()} yet.
+              </p>
+            ) : shown.length === 0 ? (
+              <p className="text-sm text-gray-400 px-1">Nothing matches “{q}”.</p>
+            ) : (
+              <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-xl divide-y divide-gray-50">
+                {shown.map((c) => {
+                  const id = c[child.idField];
+                  // Barangays are the last level — nothing further to open.
+                  const openable = childKey !== "barangays";
+                  const Tag = openable ? "button" : "div";
+                  return (
+                    <Tag
+                      key={id}
+                      {...(openable ? { onClick: () => onOpen(childKey, c) } : {})}
+                      className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left text-sm ${openable ? "hover:bg-teal-50/50 cursor-pointer" : ""}`}
+                    >
+                      <span className="font-medium text-gray-800">{c[child.nameField] || "—"}</span>
+                      <span className="flex items-center gap-2 text-xs text-gray-400 shrink-0">
+                        {detail(c)}
+                        {openable && <span className="text-gray-300">›</span>}
+                      </span>
+                    </Tag>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">Barangays are the last level — there's nothing under this one.</p>
+        )}
+      </div>
+    </Modal>
   );
 }
 

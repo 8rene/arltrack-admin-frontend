@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams, useLocation } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
+import { buildFlaggedParts } from "../utils/damagedParts";
 
 const API_URL = process.env.REACT_APP_API_URL;
 const PAGE_SIZE = 15;
@@ -132,6 +133,12 @@ const fmtDate = (val) => {
   if (!d || isNaN(d)) return "—";
   return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
 };
+// Today as YYYY-MM-DD in the browser's local timezone. isoDate() goes through
+// toISOString() (UTC), which returns *yesterday* between 12:00am and 8:00am in PH.
+const localISODate = (d = new Date()) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 const isoDate = (val) => {
   const d = toDate(val);
   if (!d || isNaN(d)) return "";
@@ -216,6 +223,12 @@ const BASIS_ICON = {
 // the real source of truth is always the backend response.
 const FALLBACK_STATUSES = ["Scheduled", "Completed", "Cancelled"];
 const FALLBACK_BASIS    = ["Post-Rental", "Monthly", "Mileage-based", "Annual", "Repair/Unplanned"];
+const PART_AFTER_OPTIONS = ["Good", "Damaged"]; // fixed — not read from the backend config
+
+// Pre-fills the "After" condition: a job normally leaves the part Good. How it
+// was fixed (repaired / replaced...) goes in the part's description.
+// Same rule the backend uses when a job is completed without one chosen.
+const defaultAfter = () => "Good";
 
 const EMPTY_FORM = {
   carID: "", bookingID: "", basis: "",
@@ -225,7 +238,7 @@ const EMPTY_FORM = {
   overrideTotal: "",
   description: "",
   maintenanceDate: "", status: "Scheduled",
-  partsAddressed: [], // [{ carID, carPartID, carPartName, tripPhase, bookingID }] — damaged parts this job is meant to fix, resolved on completion
+  partsAddressed: [], // [{ carPartID, carPartName, conditionBefore, conditionAfter, price, description }] — parts this job works on
   useToday: false,      // true = maintenanceDate always mirrors today's date
 };
 
@@ -250,6 +263,9 @@ export default function Maintenance() {
   const [view, setView]                   = useState("table");
   const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [damagedParts, setDamagedParts]   = useState([]);
+  const [partNames, setPartNames]         = useState({}); // carPartID -> name, fallback for parts missing from the catalog
+  // The open modal's car: every part with its catalog price, from /api/car-part-pricing/car/:carID
+  const [catalog, setCatalog]             = useState({ carID: "", parts: [], loading: false });
   const [customName, setCustomName]       = useState("");
   const [customPrice, setCustomPrice]     = useState("");
   const [sortKey, setSortKey] = useState(null); // null = default (open first, soonest due on top)
@@ -326,58 +342,22 @@ export default function Maintenance() {
       if (configRes.ok) setConfig(configJson.data);
 
       const partsMap = Object.fromEntries(partsSnap.docs.map(d => [d.id, d.data()]));
-      const pickLatestByCarID = (snap) => {
-        const byCarID = {};
-        snap.docs.forEach(d => {
-          const data = { id: d.id, ...d.data() };
-          const cid  = data.carID;
-          if (!cid) return;
-          const existing = byCarID[cid];
-          // .seconds, not ._seconds — see Dashboard.jsx's identical fix
-          // for why: these are live client-SDK Timestamps, which expose
-          // the value as a public `.seconds`, not the underscore-prefixed
-          // form the backend's own JSON responses use.
-          const ts  = data.recordedAt?.seconds ?? 0;
-          const ets = existing?.recordedAt?.seconds ?? -1;
-          if (!existing || ts > ets) byCarID[cid] = data;
-        });
-        return Object.values(byCarID);
-      };
+      setPartNames(Object.fromEntries(Object.entries(partsMap).map(([id, d]) => [id, d.carPartName || ""])));
 
-      const latestBefore = pickLatestByCarID(beforeSnap);
-      const latestAfter  = pickLatestByCarID(afterSnap);
-      const carIDsWithRecords = new Set([
-        ...latestBefore.map(r => r.carID),
-        ...latestAfter.map(r => r.carID),
-      ]);
-      const beforeByCarID = Object.fromEntries(latestBefore.map(r => [r.carID, r]));
-      const afterByCarID  = Object.fromEntries(latestAfter.map(r => [r.carID, r]));
-
-      const damaged = [];
-      carIDsWithRecords.forEach(carID => {
-        const afterRec  = afterByCarID[carID];
-        const beforeRec = beforeByCarID[carID];
-        const record    = afterRec || beforeRec;
-        if (!record) return;
-        const carLabel = carMap[carID]?.label || "Unknown Car";
-        const source   = afterRec ? "after_trip" : "before_trip";
-        (record.damageParts || []).forEach(p => {
-          if (!["Damaged", "Stolen", "Missing"].includes(p.status)) return;
-          const partName = p.carPartName || partsMap[p.carPartID]?.carPartName || "Unknown Part";
-          damaged.push({
-            id:          `${carID}_${p.carPartID}`,
-            carPartID:   p.carPartID,
-            carPartName: partName,
-            status:      p.status,
-            carID,
-            carLabel,
-            source,
-            bookingID:   record.bookingID,
-          });
-        });
+      // Inspection records are history and never edited. A part is flagged
+      // while the latest inspection lists it as damaged/stolen/missing AND no
+      // Completed maintenance job has covered it since (utils/damagedParts.js).
+      const toDocs = (snap) => snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const { flagged } = buildFlaggedParts({
+        afterRecords:  toDocs(afterSnap),
+        beforeRecords: toDocs(beforeSnap),
+        jobs:          maintJson.data || [],
       });
-
-      setDamagedParts(damaged);
+      setDamagedParts(flagged.map(p => ({
+        ...p,
+        carPartName: p.carPartName || partsMap[p.carPartID]?.carPartName || "Unknown Part",
+        carLabel:    carMap[p.carID]?.label || "Unknown Car",
+      })));
     } catch (e) { console.error(e); showToast(e.message || "Failed to load data.", "error"); }
     finally { setLoading(false); }
   }, [authedFetch]);
@@ -419,11 +399,66 @@ export default function Maintenance() {
   const scheduled = records.filter(r => r.status === "Scheduled").length;
   const completed = records.filter(r => r.status === "Completed").length;
 
-  const computedTotal = useMemo(() => {
+  const servicesTotal = useMemo(() => {
     const catalogSum = form.services.reduce((s, x) => s + (Number(x.price) || 0), 0);
     const customSum  = form.customServices.reduce((s, x) => s + (Number(x.price) || 0), 0);
     return catalogSum + customSum;
   }, [form.services, form.customServices]);
+  const partsTotal = useMemo(
+    () => form.partsAddressed.reduce((s, p) => s + (Number(p.price) || 0), 0),
+    [form.partsAddressed]
+  );
+  const computedTotal = servicesTotal + partsTotal;
+
+  const modalOpen = showAdd || !!editRecord;
+  const closeModal = useCallback(() => { setEditRecord(null); setShowAdd(false); }, []);
+
+  // Esc closes the modal.
+  useEffect(() => {
+    if (!modalOpen) return;
+    const onKey = (e) => { if (e.key === "Escape" && !saving) closeModal(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modalOpen, closeModal, saving]);
+
+  // Load the chosen car's parts + catalog prices while the modal is open.
+  useEffect(() => {
+    if (!modalOpen || !form.carID) { setCatalog({ carID: "", parts: [], loading: false }); return; }
+    let cancelled = false;
+    setCatalog({ carID: form.carID, parts: [], loading: true });
+    (async () => {
+      try {
+        const res = await authedFetch(`/api/car-part-pricing/car/${form.carID}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Failed to load parts.");
+        if (!cancelled) setCatalog({ carID: form.carID, parts: json.data || [], loading: false });
+      } catch (e) {
+        if (!cancelled) { setCatalog({ carID: form.carID, parts: [], loading: false }); showToast(e.message || "Couldn't load this vehicle's parts.", "error"); }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalOpen, form.carID, authedFetch]);
+
+  const catalogByID = useMemo(
+    () => Object.fromEntries(catalog.parts.map(p => [p.carPartID, p])),
+    [catalog.parts]
+  );
+  const flaggedByPart = useMemo(
+    () => Object.fromEntries(damagedParts.filter(p => p.carID === form.carID).map(p => [p.carPartID, p])),
+    [damagedParts, form.carID]
+  );
+
+  // Rows added before the catalog finished loading (Schedule Fix / pre-selected
+  // damaged parts) get their catalog price once it arrives. Rows that already
+  // have a price — including saved ones being edited — are never touched.
+  useEffect(() => {
+    if (catalog.loading || catalog.carID !== form.carID) return;
+    setForm(f => {
+      if (!f.partsAddressed.some(p => p.price === undefined)) return f;
+      return { ...f, partsAddressed: f.partsAddressed.map(p => p.price === undefined ? { ...p, price: catalogByID[p.carPartID]?.price ?? 0 } : p) };
+    });
+  }, [catalog.loading, catalog.carID, catalogByID, form.carID]);
 
   const handleSave = async () => {
     if (!form.carID || !form.basis || !form.maintenanceDate) {
@@ -447,7 +482,13 @@ export default function Maintenance() {
         description:          form.description,
         maintenanceDate:      form.maintenanceDate,
         status:               form.status,
-        partsAddressed:       form.partsAddressed,
+        partsAddressed:       form.partsAddressed.map(p => ({
+          carPartID:       p.carPartID,
+          conditionBefore: p.conditionBefore,
+          conditionAfter:  p.conditionAfter === "Damaged" ? "Damaged" : "Good",
+          description:     (p.description || "").trim(),
+          price:           Number(p.price) || 0,
+        })),
       };
 
       const res = editRecord
@@ -477,7 +518,17 @@ export default function Maintenance() {
       description:          r.description || "",
       maintenanceDate:      isoDate(r.maintenanceDate),
       status:               r.status || "Scheduled",
-      partsAddressed:       r.partsAddressed || [],
+      // Saved entries are { carPartID, conditionBefore, conditionAfter, description, price }.
+      // Older ones lack some of that (and carry a name) — price falls back to 0 so a
+      // legacy job's total isn't changed just by opening and saving it.
+      partsAddressed:       (r.partsAddressed || []).map(p => ({
+        carPartID:       p.carPartID,
+        carPartName:     p.carPartName || "",
+        conditionBefore: p.conditionBefore || "Good",
+        conditionAfter:  p.conditionAfter === "Damaged" ? "Damaged" : "Good",
+        description:     p.description || "",
+        price:           p.price ?? 0,
+      })),
     });
     setEditRecord(r);
     setShowAdd(false);
@@ -490,51 +541,60 @@ export default function Maintenance() {
     setShowAdd(true);
   };
 
-  // Triggered from the "Damaged/Stolen Parts Require Attention" banners
-  // above — instead of resolving the part immediately on the spot, this
-  // opens the normal Schedule Maintenance panel pre-filled to that part's
-  // vehicle, with the part itself already checked under "Fixed Damage
-  // Parts" below. Same rule as checking it manually there: nothing about
-  // the part's actual record changes until this job is saved and later
-  // marked Completed.
+  // A flagged part as a row for the modal. The price stays undefined until the
+  // car's catalog has loaded (see the effect above), then becomes its catalog price.
+  const entryFromFlagged = (p) => ({
+    carPartID:       p.carPartID,
+    carPartName:     p.carPartName,
+    conditionBefore: p.status,                 // Damaged | Stolen | Missing
+    conditionAfter:  defaultAfter(p.status),
+    price:           undefined,
+    description:     "",
+  });
+
+  // "Schedule Fix" on a banner: opens the modal for that vehicle with the part
+  // already on the job. Nothing about the part changes until the job is Completed.
   const openScheduleForPart = (part) => {
-    setForm({
-      ...EMPTY_FORM,
-      carID: part.carID,
-      partsAddressed: [{
-        carID:       part.carID,
-        carPartID:   part.carPartID,
-        carPartName: part.carPartName,
-        tripPhase:   part.source === "after_trip" ? "after" : "before",
-        bookingID:   part.bookingID,
-      }],
-    });
+    setForm({ ...EMPTY_FORM, carID: part.carID, partsAddressed: [entryFromFlagged(part)] });
     setCustomName(""); setCustomPrice("");
     setEditRecord(null);
     setShowAdd(true);
   };
 
-  // Toggles one damaged/stolen/missing part in/out of this maintenance
-  // job's "will be fixed here" checklist. Purely local state until Save —
-  // nothing about the part's actual record changes yet, and even after
-  // saving, the real resolution only happens once this job's own status
-  // becomes "Completed" (see updateMaintenanceStatus on the backend).
-  const toggleAddressedPart = (part) => {
-    setForm(f => {
-      const already = f.partsAddressed.some(p => p.carPartID === part.carPartID);
-      return {
-        ...f,
-        partsAddressed: already
-          ? f.partsAddressed.filter(p => p.carPartID !== part.carPartID)
-          : [...f.partsAddressed, {
-              carID: part.carID,
-              carPartID: part.carPartID,
-              carPartName: part.carPartName,
-              tripPhase: part.source === "after_trip" ? "after" : "before",
-              bookingID: part.bookingID,
-            }],
-      };
-    });
+  // Choosing a vehicle in the modal. A new job starts with that vehicle's
+  // still-flagged parts already on it (remove any you won't fix). Changing the
+  // vehicle of a saved job clears its parts — they belong to the old car.
+  const onCarChange = (carID) => {
+    setForm(f => ({
+      ...f,
+      carID,
+      partsAddressed: editRecord || !carID ? [] : damagedParts.filter(p => p.carID === carID).map(entryFromFlagged),
+    }));
+  };
+
+  const addPart = (carPartID) => {
+    const cat = catalogByID[carPartID];
+    if (!cat) return;
+    const cond = flaggedByPart[carPartID]?.status || "Good";
+    setForm(f => f.partsAddressed.some(p => p.carPartID === carPartID) ? f : ({
+      ...f,
+      partsAddressed: [...f.partsAddressed, {
+        carPartID,
+        carPartName:     cat.carPartName,
+        conditionBefore: cond,
+        conditionAfter:  defaultAfter(cond),
+        price:           cat.price ?? 0,
+        description:     "",
+      }],
+    }));
+  };
+
+  const updatePart = (carPartID, patch) => {
+    setForm(f => ({ ...f, partsAddressed: f.partsAddressed.map(p => p.carPartID === carPartID ? { ...p, ...patch } : p) }));
+  };
+
+  const removePart = (carPartID) => {
+    setForm(f => ({ ...f, partsAddressed: f.partsAddressed.filter(p => p.carPartID !== carPartID) }));
   };
 
   const toggleService = (serviceID, serviceName) => {
@@ -610,14 +670,12 @@ export default function Maintenance() {
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
   useEffect(() => { setPage(1); }, [search, statusFilter, sortKey, sortDir, activeStatFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isOpen = showAdd || !!editRecord;
-
   return (
     <div className="w-full px-4 space-y-5">
 
       {/* Toast */}
       {toast && (
-        <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
+        <div className={`fixed top-5 right-5 z-[70] px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
           toast.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
         }`}>{toast.msg}</div>
       )}
@@ -695,7 +753,7 @@ export default function Maintenance() {
                         </div>
                       ))}
                     </div>
-                    <p className="text-xs text-red-500">Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part checked below.</p>
+                    <p className="text-xs text-red-500">Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part already added.</p>
                   </div>
                 )}
                 {stolenOnly.length > 0 && (
@@ -718,7 +776,7 @@ export default function Maintenance() {
                         </div>
                       ))}
                     </div>
-                    <p className="text-xs text-purple-500">File a police report if needed. Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part checked below.</p>
+                    <p className="text-xs text-purple-500">File a police report if needed. Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part already added.</p>
                   </div>
                 )}
               </>
@@ -783,8 +841,13 @@ export default function Maintenance() {
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700 truncate">
                     {r.basis ? `${BASIS_ICON[r.basis] || ""} ${r.basis}` : "—"}
-                    {r.services?.length > 0 && (
-                      <div className="text-[10px] text-gray-400">{r.services.length} service{r.services.length > 1 ? "s" : ""}</div>
+                    {(r.services?.length > 0 || r.partsAddressed?.length > 0) && (
+                      <div className="text-[10px] text-gray-400">
+                        {[
+                          r.services?.length > 0 && `${r.services.length} service${r.services.length > 1 ? "s" : ""}`,
+                          r.partsAddressed?.length > 0 && `${r.partsAddressed.length} part${r.partsAddressed.length > 1 ? "s" : ""}`,
+                        ].filter(Boolean).join(" · ")}
+                      </div>
                     )}
                   </td>
                   <td className={`px-4 py-3 text-xs whitespace-nowrap ${isOverdueJob(r) ? "text-red-500 font-semibold" : "text-gray-500"}`}>
@@ -815,207 +878,23 @@ export default function Maintenance() {
           <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
         </div>
 
-        {/* Edit / Add Panel */}
-        {isOpen && (
-          <div className="w-96 shrink-0 bg-white rounded-2xl border border-gray-100 shadow-soft p-5 space-y-4 sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-gray-800 text-sm">
-                {editRecord ? "Edit Record" : "Schedule Maintenance"}
-              </h2>
-              <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
-                className="text-gray-400 hover:text-gray-600">
-                <IconX className="w-4 h-4" />
-              </button>
-            </div>
-
-            <Field label="Vehicle *">
-              <select value={form.carID} onChange={e => setForm(f => ({...f, carID: e.target.value}))}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none">
-                <option value="">Select vehicle…</option>
-                {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.plateNumber ? `· ${c.plateNumber}` : ""}</option>)}
-              </select>
-            </Field>
-
-            {form.bookingID && (
-              <div className="rounded-xl bg-teal-50 border border-teal-200 px-3 py-2 text-xs text-teal-700 flex items-center justify-between gap-2">
-                <span>Linked to booking <span className="font-semibold">{form.bookingID}</span></span>
-                <button type="button" onClick={() => setForm(f => ({ ...f, bookingID: "" }))}
-                  className="text-teal-500 hover:text-teal-700 underline shrink-0">
-                  Unlink
-                </button>
-              </div>
-            )}
-
-            <Field label="Maintenance Basis *">
-              <div className="flex flex-wrap gap-1.5">
-                {config.basisOptions.map(b => (
-                  <button key={b} type="button" onClick={() => setForm(f => ({...f, basis: b}))}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
-                      form.basis === b ? "border-teal-500 bg-teal-50 text-teal-700" : "border-gray-100 text-gray-600 hover:border-gray-300"
-                    }`}>
-                    {BASIS_ICON[b] || ""} {b}
-                  </button>
-                ))}
-              </div>
-            </Field>
-
-            <Field label="Services Performed">
-              <div className="max-h-72 overflow-y-auto pr-1 space-y-3 border border-gray-100 rounded-xl p-3">
-                {config.serviceCatalog.map(group => (
-                  <div key={group.group}>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">{group.group}</p>
-                    <div className="space-y-1.5">
-                      {group.services.map(s => {
-                        const selected = form.services.find(x => x.serviceID === s.serviceID);
-                        return (
-                          <div key={s.serviceID} className="flex items-center gap-2">
-                            <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
-                              <input type="checkbox" checked={!!selected}
-                                onChange={() => toggleService(s.serviceID, s.serviceName)}
-                                className="accent-teal-600 shrink-0" />
-                              <span className="text-xs text-gray-700 truncate">{s.serviceName}</span>
-                            </label>
-                            {selected && !form.useManualTotal && (
-                              <input type="number" placeholder="₱0" value={selected.price || ""}
-                                onChange={e => updateServicePrice(s.serviceID, e.target.value)}
-                                className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-
-                {/* Custom / "Other" services */}
-                <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Other</p>
-                  {form.customServices.map((c, idx) => (
-                    <div key={idx} className="flex items-center gap-2 mb-1.5">
-                      <span className="text-xs text-gray-700 flex-1 truncate">{c.name}</span>
-                      {!form.useManualTotal && <span className="text-xs text-gray-500">{peso(c.price)}</span>}
-                      <button type="button" onClick={() => removeCustomService(idx)} className="text-gray-400 hover:text-red-500">
-                        <IconX className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                  <div className="flex gap-1.5">
-                    <input type="text" value={customName} onChange={e => setCustomName(e.target.value)}
-                      placeholder="Custom service…"
-                      className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
-                    {!form.useManualTotal && (
-                      <input type="number" value={customPrice} onChange={e => setCustomPrice(e.target.value)}
-                        placeholder="₱0"
-                        className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
-                    )}
-                    <button type="button" onClick={addCustomService}
-                      className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-teal-400 hover:text-teal-600">
-                      +
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </Field>
-
-            <Field label="Total Cost">
-              <label className="flex items-center gap-2 mb-2 cursor-pointer">
-                <input type="checkbox" checked={form.useManualTotal}
-                  onChange={e => setForm(f => ({...f, useManualTotal: e.target.checked}))}
-                  className="accent-teal-600" />
-                <span className="text-xs text-gray-600">Enter total manually instead of itemizing</span>
-              </label>
-
-              {form.useManualTotal ? (
-                <input type="number" value={form.overrideTotal} onChange={e => setForm(f => ({...f, overrideTotal: e.target.value}))}
-                  placeholder="₱0"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
-              ) : (
-                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 border border-gray-100">
-                  <span className="text-xs text-gray-500">Auto-computed from services</span>
-                  <span className="text-sm font-bold text-gray-800">{peso(computedTotal)}</span>
-                </div>
-              )}
-            </Field>
-
-            <Field label="Description">
-              <textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
-                rows={3} placeholder="Details of the maintenance…"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none resize-none" />
-            </Field>
-
-            {/* Damaged/stolen/missing parts this job is meant to fix.
-                Checking a box only records intent — the actual resolution
-                (flipping the part's status back to Good on its trip
-                record) only happens once this record's own status is
-                later set to Completed, not the moment it's checked here.
-                That way a job that ends up Cancelled instead never
-                silently marks a part as fixed that was never worked on. */}
-            {form.carID && (
-              <Field label="Fixed Damage Parts">
-                {damagedParts.filter(p => p.carID === form.carID).length === 0 ? (
-                  <p className="text-xs text-gray-400 px-1">No damaged/stolen/missing parts on record for this vehicle.</p>
-                ) : (
-                  <div className="space-y-1.5 border border-gray-200 rounded-xl p-2 max-h-36 overflow-y-auto">
-                    {damagedParts.filter(p => p.carID === form.carID).map(p => (
-                      <label key={p.id} className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-gray-50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="accent-teal-600"
-                          checked={form.partsAddressed.some(sel => sel.carPartID === p.carPartID)}
-                          onChange={() => toggleAddressedPart(p)}
-                        />
-                        <span className="text-sm text-gray-700">{p.carPartName}</span>
-                        <span className="text-xs text-gray-400">({p.status})</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </Field>
-            )}
-
-            <Field label="Maintenance Date *">
-              <label className="flex items-center gap-2 mb-1.5 cursor-pointer">
-                <input type="checkbox" checked={form.useToday}
-                  onChange={e => setForm(f => ({
-                    ...f,
-                    useToday: e.target.checked,
-                    maintenanceDate: e.target.checked ? isoDate(new Date()) : f.maintenanceDate,
-                    status: e.target.checked ? "Completed" : f.status,
-                  }))}
-                  className="accent-teal-600" />
-                <span className="text-xs text-gray-600">Today</span>
-              </label>
-              <input type="date" value={form.maintenanceDate} disabled={form.useToday}
-                onChange={e => setForm(f => ({...f, maintenanceDate: e.target.value}))}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none disabled:bg-gray-50 disabled:text-gray-400" />
-            </Field>
-            <Field label="Status">
-              <div className="grid grid-cols-2 gap-1.5">
-                {config.statusOptions.map(s => (
-                  <button key={s} onClick={() => setForm(f => ({...f, status: s}))}
-                    className={`px-2 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
-                      form.status === s
-                        ? "border-teal-500 bg-teal-50 text-teal-700"
-                        : "border-gray-100 text-gray-600 hover:border-gray-300"
-                    }`}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </Field>
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => { setEditRecord(null); setShowAdd(false); }}
-                className="flex-1 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">
-                Cancel
-              </button>
-              <button onClick={handleSave} disabled={saving}
-                className="flex-1 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
-                {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
-              </button>
-            </div>
-          </div>
-        )}
       </div>}
+
+      {/* Schedule / Edit modal */}
+      {modalOpen && (
+        <MaintenanceModal
+          form={form} setForm={setForm} config={config} cars={cars}
+          editRecord={editRecord} saving={saving}
+          onClose={closeModal} onSave={handleSave} onCarChange={onCarChange}
+          servicesTotal={servicesTotal} partsTotal={partsTotal} computedTotal={computedTotal}
+          toggleService={toggleService} updateServicePrice={updateServicePrice}
+          customName={customName} setCustomName={setCustomName}
+          customPrice={customPrice} setCustomPrice={setCustomPrice}
+          addCustomService={addCustomService} removeCustomService={removeCustomService}
+          catalog={catalog} catalogByID={catalogByID} flaggedByPart={flaggedByPart} partNames={partNames}
+          addPart={addPart} updatePart={updatePart} removePart={removePart}
+        />
+      )}
     </div>
   );
 }
@@ -1060,6 +939,370 @@ function Field({ label, children }) {
     <div className="space-y-1">
       <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{label}</label>
       {children}
+    </div>
+  );
+}
+
+// ─── PART BADGE ──────────────────────────────────────────────────────────────
+
+const PART_BADGE = {
+  Good:     "bg-green-50 text-green-700 border-green-200",
+  Damaged:  "bg-red-50 text-red-700 border-red-200",
+  Missing:  "bg-orange-50 text-orange-700 border-orange-200",
+  Stolen:   "bg-purple-50 text-purple-700 border-purple-200",
+};
+
+function PartBadge({ label }) {
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${PART_BADGE[label] || "bg-gray-50 text-gray-600 border-gray-200"}`}>
+      {label}
+    </span>
+  );
+}
+
+const IconLock = ({ className = "w-3 h-3" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M8 11V7a4 4 0 118 0v4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+function ModalSection({ n, title, hint, children }) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-baseline gap-2">
+        <span className="w-5 h-5 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">{n}</span>
+        <h3 className="text-sm font-bold text-gray-800">{title}</h3>
+        {hint && <span className="text-xs text-gray-400">{hint}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+// ─── MAINTENANCE MODAL ───────────────────────────────────────────────────────
+// Three sections — Job (what/when), Work (services + parts), Total.
+// Parts: pick from the vehicle's own parts (name · catalog price · condition).
+// A picked part is a row with a locked name, the condition it was in, what the
+// job does to it, and a price you can change. That price is saved on the job
+// only — it never changes the catalog price.
+
+function MaintenanceModal({
+  form, setForm, config, cars, editRecord, saving,
+  onClose, onSave, onCarChange,
+  servicesTotal, partsTotal, computedTotal,
+  toggleService, updateServicePrice,
+  customName, setCustomName, customPrice, setCustomPrice, addCustomService, removeCustomService,
+  catalog, catalogByID, flaggedByPart, partNames,
+  addPart, updatePart, removePart,
+}) {
+  const car = cars.find(c => c.id === form.carID);
+  const afterOptions = PART_AFTER_OPTIONS;
+
+  const addedIDs       = new Set(form.partsAddressed.map(p => p.carPartID));
+  const available      = catalog.parts.filter(p => !addedIDs.has(p.carPartID));
+  const needsAttention = available.filter(p => flaggedByPart[p.carPartID]);
+  const others         = available.filter(p => !flaggedByPart[p.carPartID]);
+  const optionLabel = (p) =>
+    `${p.carPartName} — ${p.price != null ? peso(p.price) : "no price set"}${flaggedByPart[p.carPartID] ? ` · ${flaggedByPart[p.carPartID].status}` : ""}`;
+
+  const effectiveTotal = form.useManualTotal && form.overrideTotal !== "" ? Number(form.overrideTotal) || 0 : computedTotal;
+  const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none";
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={editRecord ? "Edit maintenance record" : "Schedule maintenance"}>
+      <div className="absolute inset-0 bg-black/40" />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+          <div>
+            <h2 className="font-bold text-gray-800 text-base">{editRecord ? "Edit Maintenance" : "Schedule Maintenance"}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {car ? `${car.label}${car.plateNumber ? ` · ${car.plateNumber}` : ""}` : "Choose a vehicle to begin"}
+            </p>
+          </div>
+          <button onClick={onClose} disabled={saving} aria-label="Close" className="w-8 h-8 disabled:opacity-40 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+            <IconX className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-7">
+
+          {/* 1 · JOB */}
+          <ModalSection n="1" title="Job">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Vehicle *">
+                <select value={form.carID} onChange={e => onCarChange(e.target.value)} className={inputCls}>
+                  <option value="">Select vehicle…</option>
+                  {cars.map(c => <option key={c.id} value={c.id}>{c.label} {c.plateNumber ? `· ${c.plateNumber}` : ""}</option>)}
+                </select>
+              </Field>
+
+              <Field label="Maintenance Date *">
+                <div className="flex items-center gap-3">
+                  <input type="date" value={form.maintenanceDate} disabled={form.useToday}
+                    onChange={e => setForm(f => ({ ...f, maintenanceDate: e.target.value }))}
+                    className={`${inputCls} disabled:bg-gray-50 disabled:text-gray-400`} />
+                  <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                    <input type="checkbox" checked={form.useToday}
+                      onChange={e => setForm(f => ({
+                        ...f,
+                        useToday: e.target.checked,
+                        maintenanceDate: e.target.checked ? localISODate() : f.maintenanceDate,
+                        status: e.target.checked ? "Completed" : f.status,
+                      }))}
+                      className="accent-teal-600" />
+                    <span className="text-xs text-gray-600">Today</span>
+                  </label>
+                </div>
+              </Field>
+
+              <div className="md:col-span-2">
+                <Field label="Maintenance Basis *">
+                  <div className="flex flex-wrap gap-1.5">
+                    {config.basisOptions.map(b => (
+                      <button key={b} type="button" onClick={() => setForm(f => ({ ...f, basis: b }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
+                          form.basis === b ? "border-teal-500 bg-teal-50 text-teal-700" : "border-gray-100 text-gray-600 hover:border-gray-300"
+                        }`}>
+                        {BASIS_ICON[b] || ""} {b}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+
+              <Field label="Status">
+                <div className="flex gap-1.5">
+                  {config.statusOptions.map(s => (
+                    <button key={s} type="button" onClick={() => setForm(f => ({ ...f, status: s }))}
+                      className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
+                        form.status === s ? "border-teal-500 bg-teal-50 text-teal-700" : "border-gray-100 text-gray-600 hover:border-gray-300"
+                      }`}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                {form.status === "Completed" && form.partsAddressed.length > 0 && (
+                  <p className="text-[11px] text-gray-400 mt-1">Completing marks each part below as done and updates its condition.</p>
+                )}
+              </Field>
+
+              {form.bookingID ? (
+                <div className="rounded-xl bg-teal-50 border border-teal-200 px-3 py-2 text-xs text-teal-700 flex items-center justify-between gap-2 self-end">
+                  <span>Linked to booking <span className="font-semibold">{form.bookingID}</span></span>
+                  <button type="button" onClick={() => setForm(f => ({ ...f, bookingID: "" }))}
+                    className="text-teal-500 hover:text-teal-700 underline shrink-0">Unlink</button>
+                </div>
+              ) : <div className="hidden md:block" />}
+
+              <div className="md:col-span-2">
+                <Field label="Job Notes">
+                  <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                    rows={2} placeholder="What the mechanic found, where it was done, anything worth remembering…"
+                    className={`${inputCls} resize-none`} />
+                </Field>
+              </div>
+            </div>
+          </ModalSection>
+
+          {/* 2 · WORK */}
+          <ModalSection n="2" title="Work" hint="services done and parts handled">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+
+              {/* Services */}
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Services Performed</p>
+                <div className="max-h-80 overflow-y-auto pr-1 space-y-3 border border-gray-100 rounded-xl p-3">
+                  {config.serviceCatalog.map(group => (
+                    <div key={group.group}>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">{group.group}</p>
+                      <div className="space-y-1.5">
+                        {group.services.map(s => {
+                          const selected = form.services.find(x => x.serviceID === s.serviceID);
+                          return (
+                            <div key={s.serviceID} className="flex items-center gap-2">
+                              <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                                <input type="checkbox" checked={!!selected}
+                                  onChange={() => toggleService(s.serviceID, s.serviceName)}
+                                  className="accent-teal-600 shrink-0" />
+                                <span className="text-xs text-gray-700 truncate">{s.serviceName}</span>
+                              </label>
+                              {selected && (
+                                <input type="number" min="0" placeholder="₱0" value={selected.price || ""}
+                                  onChange={e => updateServicePrice(s.serviceID, e.target.value)}
+                                  className="w-24 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+
+                  <div>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Other</p>
+                    {form.customServices.map((c, idx) => (
+                      <div key={idx} className="flex items-center gap-2 mb-1.5">
+                        <span className="text-xs text-gray-700 flex-1 truncate">{c.name}</span>
+                        <span className="text-xs text-gray-500">{peso(c.price)}</span>
+                        <button type="button" onClick={() => removeCustomService(idx)} className="text-gray-400 hover:text-red-500">
+                          <IconX className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                    <div className="flex gap-1.5">
+                      <input type="text" value={customName} onChange={e => setCustomName(e.target.value)}
+                        placeholder="Custom service…"
+                        className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                      <input type="number" min="0" value={customPrice} onChange={e => setCustomPrice(e.target.value)}
+                        placeholder="₱0"
+                        className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                      <button type="button" onClick={addCustomService}
+                        className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-teal-400 hover:text-teal-600">+</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Parts */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  Parts {form.partsAddressed.length > 0 && <span className="text-gray-300">· {form.partsAddressed.length}</span>}
+                </p>
+
+                {!form.carID ? (
+                  <p className="text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl px-3 py-4 text-center">
+                    Select a vehicle to load its parts.
+                  </p>
+                ) : (
+                  <>
+                    <select value="" onChange={e => e.target.value && addPart(e.target.value)}
+                      disabled={catalog.loading || available.length === 0}
+                      className={`${inputCls} disabled:bg-gray-50 disabled:text-gray-400`}>
+                      <option value="">
+                        {catalog.loading ? "Loading parts…" : available.length === 0 ? (catalog.parts.length === 0 ? "This vehicle has no parts on record" : "All parts added") : "+ Select parts…"}
+                      </option>
+                      {needsAttention.length > 0 && (
+                        <optgroup label="Needs attention">
+                          {needsAttention.map(p => <option key={p.carPartID} value={p.carPartID}>{optionLabel(p)}</option>)}
+                        </optgroup>
+                      )}
+                      {others.length > 0 && (
+                        <optgroup label="Other parts">
+                          {others.map(p => <option key={p.carPartID} value={p.carPartID}>{optionLabel(p)}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+
+                    {form.partsAddressed.length === 0 ? (
+                      <p className="text-xs text-gray-400 px-1">No parts on this job yet.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                        {form.partsAddressed.map(p => {
+                          const cat = catalogByID[p.carPartID];
+                          const name = cat?.carPartName || p.carPartName || partNames[p.carPartID] || "Removed part";
+                          const differs = cat && cat.price != null && Number(p.price) !== Number(cat.price);
+                          return (
+                            <div key={p.carPartID} className="rounded-xl border border-gray-200 p-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <div className="relative flex-1 min-w-0">
+                                  <input readOnly value={name} tabIndex={-1} title="Part names can't be edited here"
+                                    className="w-full bg-gray-100 border border-gray-200 rounded-lg pl-7 pr-2.5 py-1.5 text-xs font-semibold text-gray-700 cursor-not-allowed outline-none" />
+                                  <IconLock className="w-3 h-3 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                                </div>
+                                <button type="button" onClick={() => removePart(p.carPartID)} aria-label={`Remove ${name}`}
+                                  className="text-gray-400 hover:text-red-500 shrink-0"><IconX className="w-3.5 h-3.5" /></button>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] text-gray-400">Before</span>
+                                <PartBadge label={p.conditionBefore} />
+                                <span className="text-gray-300 text-xs">→</span>
+                                <span className="text-[11px] text-gray-400">After</span>
+                                <select value={p.conditionAfter === "Damaged" ? "Damaged" : "Good"} onChange={e => updatePart(p.carPartID, { conditionAfter: e.target.value })}
+                                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-arl-light outline-none">
+                                                                    {afterOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                                </select>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <div className="relative w-32 shrink-0">
+                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
+                                  <input type="number" min="0" value={p.price ?? ""} placeholder="0"
+                                    onChange={e => updatePart(p.carPartID, { price: e.target.value })}
+                                    className="w-full border border-gray-200 rounded-lg pl-6 pr-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                                </div>
+                                {cat && cat.price != null && (
+                                  <span className="text-[11px] text-gray-400 truncate">
+                                    Catalog {peso(cat.price)}
+                                    {differs && (
+                                      <button type="button" onClick={() => updatePart(p.carPartID, { price: cat.price })}
+                                        className="ml-1.5 text-teal-600 hover:underline">reset</button>
+                                    )}
+                                  </span>
+                                )}
+                                {cat && cat.price == null && <span className="text-[11px] text-gray-400">No catalog price</span>}
+                              </div>
+
+                              <input type="text" value={p.description || ""} placeholder="What was done (e.g. repaired / replaced with new OEM unit)"
+                                onChange={e => updatePart(p.carPartID, { description: e.target.value })}
+                                className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <p className="text-[11px] text-gray-400 px-1">
+                      Prices here belong to this job only — they never change the catalog price.
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+          </ModalSection>
+
+          {/* 3 · TOTAL */}
+          <ModalSection n="3" title="Total">
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-2 text-sm">
+              <div className="flex justify-between text-gray-600"><span>Services</span><span>{peso(servicesTotal)}</span></div>
+              <div className="flex justify-between text-gray-600"><span>Parts</span><span>{peso(partsTotal)}</span></div>
+              <div className="flex justify-between text-gray-500 border-t border-gray-200 pt-2 text-xs">
+                <span>Sum of the above</span><span>{peso(computedTotal)}</span>
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer pt-1">
+                <input type="checkbox" checked={form.useManualTotal}
+                  onChange={e => setForm(f => ({ ...f, useManualTotal: e.target.checked }))}
+                  className="accent-teal-600" />
+                <span className="text-xs text-gray-600">Enter the total manually instead (replaces the sum)</span>
+              </label>
+              {form.useManualTotal && (
+                <input type="number" min="0" value={form.overrideTotal}
+                  onChange={e => setForm(f => ({ ...f, overrideTotal: e.target.value }))}
+                  placeholder="₱0" className={inputCls} />
+              )}
+
+              <div className="flex justify-between items-center border-t border-gray-200 pt-2">
+                <span className="font-semibold text-gray-700">Total</span>
+                <span className="text-lg font-bold text-gray-900">{peso(effectiveTotal)}</span>
+              </div>
+            </div>
+          </ModalSection>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
+          <button onClick={onClose}
+            className="px-5 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
+          <button onClick={onSave} disabled={saving || catalog.loading}
+            className="px-6 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
+            {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

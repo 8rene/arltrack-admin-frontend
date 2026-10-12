@@ -83,7 +83,7 @@ function Toast({ toast }) {
   if (!toast) return null;
   return (
     <div
-      className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
+      className={`fixed top-5 right-5 z-[70] px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
         toast.type === "success"
           ? "bg-green-50 text-green-700 border border-green-200"
           : "bg-red-50 text-red-700 border border-red-200"
@@ -97,7 +97,7 @@ function Toast({ toast }) {
 function Modal({ title, onClose, children, footer, width = "max-w-md", busy = false }) {
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
       onClick={() => !busy && onClose()}
     >
       <div
@@ -183,11 +183,16 @@ function Pill({ children, tone = "teal" }) {
   );
 }
 
-const RowActions = ({ onEdit, onDelete }) => (
-  <div className="flex items-center gap-3 justify-end">
-    <button onClick={onEdit} className="text-xs font-semibold text-teal-600 hover:text-teal-700">Edit</button>
+// Full-size buttons (not tiny text links) so the Actions column isn't mostly empty.
+const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
+const RowActions = ({ onView, onEdit, onDelete }) => (
+  <div className="flex items-center gap-2 justify-end">
+    {onView && (
+      <button onClick={onView} className={`${actionBtn} border-gray-200 text-gray-600 hover:bg-gray-50`}>View</button>
+    )}
+    <button onClick={onEdit} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
     {onDelete && (
-      <button onClick={onDelete} className="text-xs font-semibold text-red-500 hover:text-red-600">Delete</button>
+      <button onClick={onDelete} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>Delete</button>
     )}
   </div>
 );
