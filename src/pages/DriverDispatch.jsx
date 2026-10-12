@@ -244,6 +244,17 @@ export default function DriverDispatch() {
         throw new Error(json.message || "Failed to assign driver.");
       }
       setConflict(null);
+      // Assignment is done: drop the dropdown selection for this booking so it
+      // doesn't linger (or come back pre-selected if the driver is later unassigned).
+      setPicked((prev) => {
+        if (!(bookingDocID in prev)) return prev;
+        const { [bookingDocID]: _done, ...rest } = prev;
+        return rest;
+      });
+      // If this was the booking we arrived to assign (amber banner + pulsing
+      // driver cards), leave assign mode no matter how it was assigned —
+      // clicking a driver card OR using the dropdown + Assign button.
+      if (assignForBooking?.bookingId === bookingDocID) cancelAssignMode();
       showToast("Driver assigned.");
       fetchBoard();
       return true;
@@ -264,8 +275,7 @@ export default function DriverDispatch() {
   // mode stays open until it actually succeeds.
   const handleQuickAssignDriver = async (driverID) => {
     if (!assignForBooking) return;
-    const ok = await doAssign(assignForBooking.bookingId, driverID);
-    if (ok) cancelAssignMode();
+    await doAssign(assignForBooking.bookingId, driverID); // leaves assign mode itself on success
   };
 
   const doUnassign = async (bookingDocID) => {
@@ -277,6 +287,11 @@ export default function DriverDispatch() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to unassign driver.");
+      setPicked((prev) => {
+        if (!(bookingDocID in prev)) return prev;
+        const { [bookingDocID]: _done, ...rest } = prev;
+        return rest;
+      });
       showToast("Driver unassigned.");
       fetchBoard();
     } catch (e) {

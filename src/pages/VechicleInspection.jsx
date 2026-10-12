@@ -182,10 +182,11 @@ export default function VehicleDocs() {
 
   // Active tab: "before" | "after"  — same as Inventory's activeTab
   const [tripType, setTripType] = useState("before");
-  // Before/After photo card can be folded away when someone only wants the Past Trips
-  // history below it. Just a view preference: staged uploads/status edits live in
-  // state above, and the body stays mounted (CSS-hidden), so nothing is lost.
-  const [docsCollapsed, setDocsCollapsed] = useState(false);
+  // Top-level tab for the selected car: "upcoming" (inspect the open booking)
+  // or "history" (past trips table). The Upcoming content stays mounted
+  // (CSS-hidden) while History is open, so staged uploads/status edits survive
+  // a tab switch.
+  const [pageTab, setPageTab] = useState("upcoming");
 
   // Existing docs per phase (same as Inventory's beforeRecord / afterRecord)
   const [beforeDoc, setBeforeDoc] = useState(null);
@@ -449,59 +450,20 @@ export default function VehicleDocs() {
 
   }, []);
 
-  // ── Deep-linked into a closed booking → auto-expand its row in Past
-  // Trips (instead of showing it in the panel meant for pickup/return).
-  // Waits for pastBookings to actually contain the row (it loads async
-  // right after this flag is set in selectCar), expands it once, then
-  // clears the flag so re-collapsing it later doesn't get forced back
-  // open. `pendingScrollID` hands off to the effect below, which waits
-  // for the row's actual data — not a guessed timeout — before scrolling.
-  const [highlightRowID, setHighlightRowID] = useState(null);
-  const [pendingScrollID, setPendingScrollID] = useState(null);
+  // ── Deep-linked into a closed booking → switch to the History tab and open
+  // that trip's record in the modal (instead of showing it in the Upcoming
+  // panel, which is built for pickup/return). Waits for pastBookings to
+  // actually contain the row (it loads async right after this flag is set in
+  // selectCar), opens it once, then clears the flag so closing the modal
+  // later doesn't get forced back open.
   useEffect(() => {
     if (!historyFocusID) return;
     const match = pastBookings.find(b => (b.bookingID || b.id) === historyFocusID);
     if (!match) return;
+    setPageTab("history");
     toggleHistoryRow(match);
-    setHighlightRowID(historyFocusID);
-    setPendingScrollID(historyFocusID);
     setHistoryFocusID(null);
   }, [historyFocusID, pastBookings, toggleHistoryRow]);
-
-  // Scrolls only once BOTH of these are true — not a fixed delay guess:
-  //   1. toggleHistoryRow's fetch for this row has resolved
-  //      (historyRecords[bID].loading === false)
-  //   2. `bookingLoading` is false — PastTripsSection is gated behind
-  //      `!bookingLoading && pastBookings.length > 0` (see the render
-  //      below), and bookingLoading doesn't flip to false until AFTER
-  //      setPastBookings/setHistoryFocusID run in selectCar (it's still
-  //      awaiting the active booking's own photo/inventory loads at that
-  //      point). Without this check, the history record could finish
-  //      loading — and this effect would consume pendingScrollID and give
-  //      up for good — before the section even existed in the DOM,
-  //      which is exactly why the scroll was silently never happening.
-  // requestAnimationFrame gives the browser one paint to apply the
-  // now-expanded row's real height before scrollIntoView measures it.
-  useEffect(() => {
-    if (!pendingScrollID || bookingLoading) return;
-    const record = historyRecords[pendingScrollID];
-    if (!record || record.loading) return; // still fetching — wait for the next update
-    const el = document.getElementById(`history-row-${pendingScrollID}`);
-    if (!el) return; // section hasn't painted into the DOM yet — wait for the next render
-    const raf = requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-    setPendingScrollID(null);
-    return () => cancelAnimationFrame(raf);
-  }, [pendingScrollID, historyRecords, bookingLoading]);
-
-  // Highlight fades on its own timer, independent of when the scroll
-  // actually happens.
-  useEffect(() => {
-    if (!highlightRowID) return;
-    const timer = setTimeout(() => setHighlightRowID(null), 2200);
-    return () => clearTimeout(timer);
-  }, [highlightRowID]);
 
   /* ── Open a car — mirrors Inventory's openCar exactly ── */
   const selectCar = useCallback(async (car, forcedBookingID) => {
@@ -524,7 +486,7 @@ export default function VehicleDocs() {
     setHistoryFocusID(null);
     setUpcomingBookings([]);
     setActiveBookingIndex(0);
-    setDocsCollapsed(false);
+    setPageTab("upcoming");
 
     // Load parts
     setPartsLoading(true);
@@ -1083,10 +1045,6 @@ export default function VehicleDocs() {
     setAfterStatusEdits({});
     setUploads({});
     setTripType("before");
-    // Default back to visible on every booking switch — otherwise a Hide
-    // toggled on a previous booking would stay collapsed here too, even
-    // though nothing about that choice was really "for" this booking.
-    setDocsCollapsed(false);
 
     setSwitchingBooking(true);
     try {
@@ -1110,8 +1068,6 @@ export default function VehicleDocs() {
     }
   };
 
-  // Pickup/Return focus mode exists to get these photos taken, so it always shows them.
-  const docsHidden              = docsCollapsed && !inPickupMode && !inReturnMode;
   // Whether a saved parts-condition record exists for the tab being viewed
   // (After deliberately doesn't fall back to Before's — the After trip needs
   // its own). Photos alone no longer complete an inspection; the backend
@@ -1299,6 +1255,32 @@ export default function VehicleDocs() {
               </div>
             </div>
 
+            {/* Upcoming | History — Upcoming is where inspections are done,
+                History is the searchable record of past trips. History is
+                locked during a pickup/return task, same as the other-vehicle
+                lock. */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-1.5 flex gap-1">
+              <PageTab
+                active={pageTab === "upcoming"}
+                onClick={() => setPageTab("upcoming")}
+                label="Upcoming"
+                count={bookingLoading ? null : upcomingBookings.length}
+                dot={hasUnsavedChanges}
+                dotTitle="Unsaved changes"
+              />
+              <PageTab
+                active={pageTab === "history"}
+                onClick={() => setPageTab("history")}
+                label="History"
+                count={bookingLoading ? null : pastBookings.length}
+                disabled={inPickupMode || inReturnMode}
+                disabledTitle="Finish or cancel this pickup/return first"
+              />
+            </div>
+
+            {/* Upcoming tab — kept mounted (hidden) while History is open so
+                staged photos/status edits aren't lost. */}
+            <div className={pageTab === "upcoming" ? "space-y-4" : "hidden"}>
             {/* Booking + Docs Section — same structure as Inventory.
                 Gated on bookingLoading only (the first load of a car) —
                 NOT docsLoading/switchingBooking, so stepping Next/Previous
@@ -1313,7 +1295,14 @@ export default function VehicleDocs() {
                 <span className="text-xl">📋</span>
                 <div>
                   <p className="text-sm font-semibold text-gray-500">No upcoming booking for this vehicle</p>
-                  <p className="text-xs text-gray-400">Photo documentation is tied to bookings. Trip history is below.</p>
+                  <p className="text-xs text-gray-400">
+                    Photo documentation is tied to bookings.{" "}
+                    {pastBookings.length > 0 && (
+                      <button type="button" onClick={() => setPageTab("history")} className="text-teal-600 hover:text-teal-700 font-semibold">
+                        View trip history →
+                      </button>
+                    )}
+                  </p>
                 </div>
               </div>
             ) : (
@@ -1329,33 +1318,44 @@ export default function VehicleDocs() {
                       </h3>
                     </div>
                     <div className="flex items-center gap-2">
-                      {/* Next/Previous — only shown once this car actually has more
-                          than one open booking to browse between. */}
-                      {upcomingBookings.length > 1 && (
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => goToUpcomingIndex(activeBookingIndex - 1)}
-                            disabled={activeBookingIndex <= 0 || switchingBooking || inPickupMode || inReturnMode}
-                            title={inPickupMode || inReturnMode ? "Finish or cancel this pickup/return first" : "Previous upcoming booking"}
-                            className="w-6 h-6 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                          >
-                            ‹
-                          </button>
-                          <span className="text-[11px] font-semibold text-gray-400 tabular-nums whitespace-nowrap">
-                            {switchingBooking ? "…" : `${activeBookingIndex + 1} of ${upcomingBookings.length}`}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => goToUpcomingIndex(activeBookingIndex + 1)}
-                            disabled={activeBookingIndex >= upcomingBookings.length - 1 || switchingBooking || inPickupMode || inReturnMode}
-                            title={inPickupMode || inReturnMode ? "Finish or cancel this pickup/return first" : "Next upcoming booking"}
-                            className="w-6 h-6 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                          >
-                            ›
-                          </button>
-                        </div>
-                      )}
+                      {/* Prev / Next — only shown once this car actually has more
+                          than one open booking to browse between. Segmented
+                          control with text labels + a position pill, and the
+                          neighbouring booking's start date in the tooltip. */}
+                      {upcomingBookings.length > 1 && (() => {
+                        const locked   = switchingBooking || inPickupMode || inReturnMode;
+                        const prevB    = upcomingBookings[activeBookingIndex - 1];
+                        const nextB    = upcomingBookings[activeBookingIndex + 1];
+                        const lockHint = "Finish or cancel this pickup/return first";
+                        const btn = "flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-teal-50 hover:text-teal-700 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-600 disabled:cursor-not-allowed transition-colors";
+                        return (
+                          <div className="inline-flex items-stretch rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-x divide-gray-200">
+                            <button
+                              type="button"
+                              onClick={() => goToUpcomingIndex(activeBookingIndex - 1)}
+                              disabled={!prevB || locked}
+                              title={locked && (inPickupMode || inReturnMode) ? lockHint : prevB ? `Previous booking · starts ${fmtDateShort(prevB.startDateTime)}` : "No earlier booking"}
+                              className={btn}
+                            >
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                              Prev
+                            </button>
+                            <span className="flex items-center px-3 text-xs font-bold text-gray-700 tabular-nums bg-gray-50 min-w-[64px] justify-center">
+                              {switchingBooking ? "…" : `${activeBookingIndex + 1} / ${upcomingBookings.length}`}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => goToUpcomingIndex(activeBookingIndex + 1)}
+                              disabled={!nextB || locked}
+                              title={locked && (inPickupMode || inReturnMode) ? lockHint : nextB ? `Next booking · starts ${fmtDateShort(nextB.startDateTime)}` : "No later booking"}
+                              className={btn}
+                            >
+                              Next
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+                            </button>
+                          </div>
+                        );
+                      })()}
                       <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("green") ? "bg-green-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("yellow") ? "bg-yellow-400" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("blue") ? "bg-blue-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("red") ? "bg-red-500" : "bg-gray-400"}`} />
                         {activeBooking.status?.replace("_", " ") || "—"}
                       </span>
@@ -1391,7 +1391,7 @@ export default function VehicleDocs() {
                 {/* Before / After Tabs — same as Inventory */}
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
                   {/* Tab bar */}
-                  <div className={`flex items-center bg-gray-50 border-gray-100 p-1 gap-1 ${docsHidden ? "" : "border-b"}`}>
+                  <div className={`flex items-center bg-gray-50 border-gray-100 p-1 gap-1 border-b`}>
                     <TabButton
                       active={tripType === "before"}
                       onClick={() => {
@@ -1399,7 +1399,6 @@ export default function VehicleDocs() {
                         // backing out of the focused return task — same as
                         // hitting Cancel, just via a different door.
                         if (inReturnMode) cancelReturnFocus();
-                        setDocsCollapsed(false);
                         setTripType("before");
                         setUploads({});
                       }}
@@ -1416,7 +1415,6 @@ export default function VehicleDocs() {
                         // backing out of the focused pickup task — same as
                         // hitting Cancel, just via a different door.
                         if (inPickupMode) cancelPickupFocus();
-                        setDocsCollapsed(false);
                         setTripType("after");
                         setUploads({});
                       }}
@@ -1427,28 +1425,10 @@ export default function VehicleDocs() {
                       dimmed={inPickupMode}
                     />
 
-                    {/* Hide / Show — not offered during a pickup/return task */}
-                    {!inPickupMode && !inReturnMode && (
-                      <div className="flex items-center gap-2 pl-1 shrink-0">
-                        {docsHidden && hasUnsavedChanges && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 whitespace-nowrap">
-                            {pendingChangeCount} unsaved
-                          </span>
-                        )}
-                        <button type="button"
-                          onClick={() => setDocsCollapsed((v) => !v)}
-                          aria-expanded={!docsHidden}
-                          title={docsHidden ? "Show the Before/After photos" : "Hide the Before/After photos (unsaved changes are kept)"}
-                          className="flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold text-gray-500 hover:text-gray-700 hover:bg-white/60 transition-colors">
-                          {docsHidden ? "Show" : "Hide"}
-                          <span className={`transition-transform ${docsHidden ? "" : "rotate-180"}`}>▾</span>
-                        </button>
-                      </div>
-                    )}
                   </div>
 
                   {/* Tab content */}
-                  <div className={`p-5 space-y-5 ${docsHidden ? "hidden" : ""}`}>
+                  <div className="p-5 space-y-5">
 
                     {/* Instruction banner */}
                     <div className={`px-3 py-2 rounded-xl text-xs font-medium ${
@@ -1668,33 +1648,33 @@ export default function VehicleDocs() {
               </div>
             )}
 
-            {/* Past Trips — shown regardless of whether there's a current
-                active booking, since history persists independent of that.
-                Now shown to Drivers too (previously hidden outright): the
-                `all` bookings list above is filtered to the driver's own
-                bookings when isDriver, so pastBookings here can only ever
-                contain trips this driver actually drove — never another
-                driver's or a different customer's. Staff (Owner/Admin/
-                Supervisor) still see every past trip for the car, same as
-                before. Edit controls stay Admin-only either way via
-                canEditHistory. */}
-            {!bookingLoading && pastBookings.length > 0 && (
-              <PastTripsSection
-                pastBookings={pastBookings}
-                pastBookingNames={pastBookingNames}
-                parts={carParts}
-                carID={selectedCar?.carID || selectedCar?.id}
-                expandedHistoryID={expandedHistoryID}
-                historyRecords={historyRecords}
-                onToggleRow={toggleHistoryRow}
-                getPartFieldKey={getPartFieldKey}
-                onViewPhoto={setViewingPhoto}
-                highlightRowID={highlightRowID}
-                canEditHistory={canEditHistory}
-                onEditPart={handleEditHistoryPart}
-                onReplacePhoto={handleReplaceHistoryPhoto}
-                onPageChange={() => setExpandedHistoryID(null)}
-              />
+            </div>
+
+            {/* History tab — past trips table. Staff see every past trip for
+                the car; a Driver only sees their own (pastBookings is already
+                filtered to the driver's bookings in selectCar). Edit controls
+                stay Admin-only via canEditHistory. */}
+            {pageTab === "history" && (
+              bookingLoading ? (
+                <div className="bg-white rounded-2xl border border-gray-100 p-5 animate-pulse h-48" />
+              ) : (
+                <PastTripsSection
+                  pastBookings={pastBookings}
+                  pastBookingNames={pastBookingNames}
+                  parts={carParts}
+                  carID={selectedCar?.carID || selectedCar?.id}
+                  expandedHistoryID={expandedHistoryID}
+                  historyRecords={historyRecords}
+                  onToggleRow={toggleHistoryRow}
+                  onCloseRow={() => setExpandedHistoryID(null)}
+                  getPartFieldKey={getPartFieldKey}
+                  onViewPhoto={setViewingPhoto}
+                  lightboxOpen={!!viewingPhoto}
+                  canEditHistory={canEditHistory}
+                  onEditPart={handleEditHistoryPart}
+                  onReplacePhoto={handleReplaceHistoryPhoto}
+                />
+              )
             )}
           </div>
         )}
@@ -1713,6 +1693,32 @@ function SectionTitle({ title }) {
       <h2 className="font-bold text-gray-700 text-sm uppercase tracking-wider">{title}</h2>
       <div className="flex-1 h-px bg-gray-100" />
     </div>
+  );
+}
+
+function PageTab({ active, onClick, label, count, dot, dotTitle, disabled, disabledTitle }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={disabled ? disabledTitle : undefined}
+      className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-all ${
+        active
+          ? "bg-teal-600 text-white shadow-sm"
+          : disabled
+            ? "text-gray-300 cursor-not-allowed"
+            : "text-gray-500 hover:text-gray-800 hover:bg-gray-50"
+      }`}
+    >
+      <span>{label}</span>
+      {count !== null && count !== undefined && (
+        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${active ? "bg-white/25 text-white" : "bg-gray-100 text-gray-500"}`}>
+          {count}
+        </span>
+      )}
+      {dot && <span title={dotTitle} className="w-2 h-2 rounded-full bg-amber-400" />}
+    </button>
   );
 }
 
@@ -1888,10 +1894,23 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
 }
 
 const PAST_TRIPS_PAGE_SIZE = 10;
-// One grid template shared by the header and every row so the columns line up.
-// Booking ID only appears from lg up; below that the template drops it.
-const PAST_TRIPS_GRID =
-  "grid-cols-[108px_minmax(0,1fr)_190px_72px_16px] lg:grid-cols-[108px_minmax(0,1.4fr)_minmax(0,1fr)_190px_72px_16px]";
+// Text the History search box matches a trip's date against — the same
+// "Oct 12, 2026" the table shows, plus long month name, ISO, numeric and the
+// time of day, so "october", "2026-10-12", "10/12" and "3:00 pm" all work.
+const isoLocalDate = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const dateSearchText = (val) => {
+  const sec = toSec(val);
+  if (!isFinite(sec)) return "";
+  const d = new Date(sec * 1000);
+  return [
+    fmtDateShort(val),
+    d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+    isoLocalDate(d),
+    d.toLocaleDateString("en-PH"),
+    d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", hour12: true }),
+  ].join(" ").toLowerCase();
+};
 
 const tripDays = (b) => {
   const st = toSec(b.startDateTime), en = toSec(b.endDateTime);
@@ -1929,18 +1948,50 @@ function SortableHeader({ label, sortKey: key, sortKeyState, sortDir, onSort, cl
   );
 }
 
-function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expandedHistoryID, historyRecords, onToggleRow, getPartFieldKey, onViewPhoto, highlightRowID, canEditHistory, onEditPart, onReplacePhoto, onPageChange }) {
+function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expandedHistoryID, historyRecords, onToggleRow, onCloseRow, getPartFieldKey, onViewPhoto, lightboxOpen, canEditHistory, onEditPart, onReplacePhoto }) {
   const [page, setPage] = useState(1);
   const [jumpedFor, setJumpedFor] = useState(null);
   const [sortKey, setSortKey] = useState(null); // null = default (API order)
   const [sortDir, setSortDir] = useState("asc");
+  const [search, setSearch]     = useState("");
+  const [dateFrom, setDateFrom] = useState(""); // "YYYY-MM-DD" from <input type="date">
+  const [dateTo, setDateTo]     = useState("");
   const handleSort = (key) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("asc"); }
     setPage(1);
   };
 
-  const sortedBookings = !sortKey ? pastBookings : [...pastBookings].sort((a, b) => {
+  const hasFilters   = !!(search.trim() || dateFrom || dateTo);
+  const clearFilters = () => { setSearch(""); setDateFrom(""); setDateTo(""); setPage(1); };
+
+  // Search: every space-separated word must appear somewhere in booking ID,
+  // customer name, or the start/end dates (see dateSearchText).
+  const terms  = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  // Date range: keeps trips that OVERLAP the range (a trip running Oct 10–14
+  // shows up for a range of Oct 12–12). Either end may be left empty.
+  const fromMs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
+  const toMs   = dateTo   ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+
+  const filteredBookings = pastBookings.filter((b) => {
+    const id = b.bookingID || b.id;
+    if (terms.length) {
+      const hay = [id, pastBookingNames[id] || "", dateSearchText(b.startDateTime), dateSearchText(b.endDateTime)]
+        .join(" ").toLowerCase();
+      if (!terms.every((t) => hay.includes(t))) return false;
+    }
+    if (fromMs !== null || toMs !== null) {
+      const st = toSec(b.startDateTime) * 1000, en = toSec(b.endDateTime) * 1000;
+      if (!isFinite(st) && !isFinite(en)) return false;
+      const tripStart = isFinite(st) ? st : en;
+      const tripEnd   = isFinite(en) ? en : st;
+      if (fromMs !== null && tripEnd   < fromMs) return false;
+      if (toMs   !== null && tripStart > toMs)   return false;
+    }
+    return true;
+  });
+
+  const sortedBookings = !sortKey ? filteredBookings : [...filteredBookings].sort((a, b) => {
     const aID = a.bookingID || a.id, bID = b.bookingID || b.id;
     if (sortKey === "customer") {
       const c = (pastBookingNames[aID] || aID || "").localeCompare(pastBookingNames[bID] || bID || "");
@@ -1957,15 +2008,11 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
     return sortDir === "asc" ? av - bv : bv - av;
   });
 
-  // Deep links (Car Tracking / Bookings / Dashboard) expand + scroll to one
-  // row by id. That row has to be on the visible page or the scroll finds
-  // nothing, so whenever the focused row changes, jump to the page containing
-  // it. Focus = the highlighted row, else the expanded one (the expanded row
-  // outlives the 2s highlight, which matters if the list mounts late). Manual
-  // Prev/Next collapses the open row, so this never fights the user's paging.
-  // Done during render (not in an effect) so the right page is already in the
-  // DOM by the time the parent's scroll effect runs.
-  const focusID = highlightRowID || expandedHistoryID;
+  // Deep links (Car Tracking / Bookings / Dashboard) open one trip's modal by
+  // id. Jump the table to the page containing that trip so it's visible
+  // behind the modal. Done during render (not in an effect) so the right page
+  // is already showing by the time the modal opens.
+  const focusID = expandedHistoryID;
   if (focusID !== jumpedFor) {
     setJumpedFor(focusID);
     if (focusID) {
@@ -1977,96 +2024,199 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
   const totalPages = Math.max(1, Math.ceil(sortedBookings.length / PAST_TRIPS_PAGE_SIZE));
   const safePage   = Math.min(page, totalPages);
   const visible    = sortedBookings.slice((safePage - 1) * PAST_TRIPS_PAGE_SIZE, safePage * PAST_TRIPS_PAGE_SIZE);
-  const goToPage   = (n) => { setPage(n); if (onPageChange) onPageChange(); };
+
+  const openBooking = expandedHistoryID
+    ? pastBookings.find((b) => (b.bookingID || b.id) === expandedHistoryID)
+    : null;
+
+  const th = "text-[10px] font-semibold text-gray-400 uppercase tracking-wide";
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
-      <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100">
-        <span className="text-base">🕘</span>
-        <h3 className="font-bold text-gray-800 text-sm">Past Trips</h3>
-        <span className="text-xs text-gray-400">({pastBookings.length})</span>
+      {/* Search + date range */}
+      <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-gray-100">
+        <div className="relative flex-1 min-w-[220px]">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Search booking ID, customer or date…"
+            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+          />
+        </div>
+        <label className="flex flex-col gap-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+          From
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            className="px-3 py-1.5 border border-gray-200 rounded-xl text-sm normal-case font-normal text-gray-700 outline-none focus:ring-2 focus:ring-teal-400"
+          />
+        </label>
+        <label className="flex flex-col gap-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+          To
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            className="px-3 py-1.5 border border-gray-200 rounded-xl text-sm normal-case font-normal text-gray-700 outline-none focus:ring-2 focus:ring-teal-400"
+          />
+        </label>
+        {hasFilters && (
+          <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+            Clear
+          </button>
+        )}
       </div>
 
-      {/* Column header — same grid template as each row below it (108px
-          status / flexible name / 180px dates / 16px chevron gutter) so
-          the labels line up exactly instead of floating disconnected
-          from what they're labeling. */}
-      {pastBookings.length > 0 && (
-        <div className={`grid ${PAST_TRIPS_GRID} gap-4 px-5 py-2 border-b border-gray-100 bg-gray-50/50`}>
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Status</span>
-          <SortableHeader label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-          <span className="hidden lg:block text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Booking ID</span>
-          <SortableHeader label="Trip Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-          <SortableHeader label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-          <span />
-        </div>
-      )}
+      <div className="px-5 py-2 text-[11px] text-gray-400 border-b border-gray-100 bg-gray-50/50">
+        {hasFilters
+          ? `${sortedBookings.length} of ${pastBookings.length} past trips match · date range includes any trip that overlaps it`
+          : `${pastBookings.length} past trip${pastBookings.length === 1 ? "" : "s"} · click a row to view its inspection record`}
+      </div>
 
-      <div className="divide-y divide-gray-50">
-        {visible.map((booking) => {
-          const bID = booking.bookingID || booking.id;
-          const isExpanded = expandedHistoryID === bID;
-          const record = historyRecords[bID];
-          const status = booking.status?.toLowerCase();
-
-          return (
-            <div
-              key={bID}
-              id={`history-row-${bID}`}
-              className={`transition-colors duration-1000 ${highlightRowID === bID ? "bg-teal-50" : ""}`}
-            >
-              <button
-                onClick={() => onToggleRow(booking)}
-                className={`w-full grid ${PAST_TRIPS_GRID} items-center gap-4 px-5 py-2.5 hover:bg-gray-50/60 transition-colors text-left`}
-              >
-                <span className={`inline-flex items-center justify-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
-                  {status?.replace("_", " ") || "—"}
-                </span>
-
-                {/* Customer name is what staff actually want to scan for
-                    here. Falls back to the ID only while the name is still
-                    resolving or has no user on file. */}
-                <span className="min-w-0 text-xs font-semibold text-gray-700 truncate">
-                  {pastBookingNames[bID] || bID}
-                </span>
-
-                <span className="hidden lg:block min-w-0 text-[10px] font-mono text-gray-400 truncate" title={bID}>
-                  {bID}
-                </span>
-
-                <span className="text-xs text-gray-500 tabular-nums whitespace-nowrap">
-                  {fmtDateShort(booking.startDateTime)} – {fmtDateShort(booking.endDateTime)}
-                </span>
-
-                <span className="text-xs text-gray-400 tabular-nums whitespace-nowrap">
-                  {tripDays(booking)}
-                </span>
-
-                <span className={`text-gray-400 text-xs justify-self-end transition-transform ${isExpanded ? "rotate-180" : ""}`}>▾</span>
-              </button>
-
-              {isExpanded && (
-                <div className="px-5 pb-3.5">
-                  {!record || record.loading ? (
-                    <div className="h-16 flex items-center justify-center text-gray-400 text-xs">Loading trip record…</div>
-                  ) : (
-                    <PastTripDetail record={record} parts={parts} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} canEditHistory={canEditHistory} onEditPart={onEditPart} onReplacePhoto={onReplacePhoto} bID={bID} carID={carID} />
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      {/* Table — every row opens that trip's record in a modal */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left">
+          <thead className="border-b border-gray-100 bg-gray-50/50">
+            <tr>
+              <th className="px-5 py-2 w-[120px]"><span className={th}>Status</span></th>
+              <th className="px-3 py-2"><SortableHeader label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-3 py-2 hidden lg:table-cell"><span className={th}>Booking ID</span></th>
+              <th className="px-3 py-2"><SortableHeader label="Trip Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-3 py-2"><SortableHeader label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-5 py-2 w-8" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {visible.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-5 py-10 text-center text-xs text-gray-400">
+                  {pastBookings.length === 0
+                    ? "No past trips for this vehicle yet."
+                    : "No trips match your search or date range."}
+                </td>
+              </tr>
+            ) : visible.map((booking) => {
+              const bID    = booking.bookingID || booking.id;
+              const status = booking.status?.toLowerCase();
+              return (
+                <tr
+                  key={bID}
+                  onClick={() => onToggleRow(booking)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleRow(booking); } }}
+                  tabIndex={0}
+                  role="button"
+                  className="cursor-pointer hover:bg-teal-50/40 focus:bg-teal-50/40 focus:outline-none transition-colors"
+                >
+                  <td className="px-5 py-2.5">
+                    <span className={`inline-flex items-center justify-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
+                      {status?.replace("_", " ") || "—"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 max-w-[220px]">
+                    <span className="block text-xs font-semibold text-gray-700 truncate">{pastBookingNames[bID] || bID}</span>
+                  </td>
+                  <td className="px-3 py-2.5 hidden lg:table-cell max-w-[200px]">
+                    <span className="block text-[10px] font-mono text-gray-400 truncate" title={bID}>{bID}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums whitespace-nowrap">
+                    {fmtDateShort(booking.startDateTime)} – {fmtDateShort(booking.endDateTime)}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-gray-400 tabular-nums whitespace-nowrap">{tripDays(booking)}</td>
+                  <td className="px-5 py-2.5 text-right text-gray-300 text-base leading-none">›</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
       <Pagination
         page={safePage}
         totalPages={totalPages}
-        onChange={goToPage}
+        onChange={setPage}
         start={(safePage - 1) * PAST_TRIPS_PAGE_SIZE}
         pageSize={PAST_TRIPS_PAGE_SIZE}
-        count={pastBookings.length}
+        count={sortedBookings.length}
       />
+
+      {openBooking && (
+        <TripHistoryModal
+          key={expandedHistoryID}
+          booking={openBooking}
+          customerName={pastBookingNames[expandedHistoryID]}
+          record={historyRecords[expandedHistoryID]}
+          parts={parts}
+          carID={carID}
+          getPartFieldKey={getPartFieldKey}
+          onViewPhoto={onViewPhoto}
+          canEditHistory={canEditHistory}
+          onEditPart={onEditPart}
+          onReplacePhoto={onReplacePhoto}
+          onClose={onCloseRow}
+          escDisabled={lightboxOpen}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── One past trip's full inspection record, shown over the table instead of
+   expanding inline. z-40 so the photo lightbox (z-50) opens on top of it. ── */
+function TripHistoryModal({ booking, customerName, record, parts, carID, getPartFieldKey, onViewPhoto, canEditHistory, onEditPart, onReplacePhoto, onClose, escDisabled }) {
+  const bID    = booking.bookingID || booking.id;
+  const status = booking.status?.toLowerCase();
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !escDisabled) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, escDisabled]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-gray-100">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-bold text-gray-800 text-sm truncate">{customerName || record?.userFullName || "Trip record"}</h3>
+              <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
+                {status?.replace("_", " ") || "—"}
+              </span>
+            </div>
+            <p className="text-[11px] font-mono text-gray-400 mt-0.5 truncate" title={bID}>{bID}</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {fmtDate(booking.startDateTime)} – {fmtDate(booking.endDateTime)} · {tripDays(booking)}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none shrink-0" aria-label="Close">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {!record || record.loading ? (
+            <div className="h-32 flex items-center justify-center text-gray-400 text-xs">Loading trip record…</div>
+          ) : (
+            <PastTripDetail
+              record={record}
+              parts={parts}
+              getPartFieldKey={getPartFieldKey}
+              onViewPhoto={onViewPhoto}
+              canEditHistory={canEditHistory}
+              onEditPart={onEditPart}
+              onReplacePhoto={onReplacePhoto}
+              bID={bID}
+              carID={carID}
+            />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

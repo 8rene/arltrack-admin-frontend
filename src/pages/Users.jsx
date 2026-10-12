@@ -40,6 +40,12 @@ const Icons = {
       <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
   ),
+  Lock: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0110 0v4" />
+    </svg>
+  ),
   Moon: (props) => (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
@@ -621,13 +627,15 @@ export default function Users() {
       </div>
 
       {/* STAT CARDS — also act as quick filters for the List tab below */}
-      <div className={`grid gap-4 ${showVerification ? "grid-cols-5" : "grid-cols-3"}`}>
+      <div className={`grid gap-4 ${showVerification ? "grid-cols-3 xl:grid-cols-6" : "grid-cols-2 md:grid-cols-4"}`}>
         <StatCard title="Total"    value={users.length} Icon={Icons.Users}       color="teal"
           selected={directoryFilter === "All"}      onClick={() => { setDirectoryFilter("All");      setSubTab("directory"); }} />
         <StatCard title="Active"   value={users.filter(u => u.status?.toLowerCase() === "active").length}   Icon={Icons.CheckCircle} color="green"
           selected={directoryFilter === "active"}   onClick={() => { setDirectoryFilter("active");   setSubTab("directory"); }} />
         <StatCard title="Inactive" value={users.filter(u => u.status?.toLowerCase() === "inactive").length} Icon={Icons.Moon}        color="gray"
           selected={directoryFilter === "inactive"} onClick={() => { setDirectoryFilter("inactive"); setSubTab("directory"); }} />
+        <StatCard title="Locked"   value={users.filter(u => u.status?.toLowerCase() === "locked").length}   Icon={Icons.Lock}        color="amber"
+          selected={directoryFilter === "locked"}   onClick={() => { setDirectoryFilter("locked");   setSubTab("directory"); }} />
         {showVerification && <StatCard title="ID Verified" value={verifiedCount} Icon={Icons.IdCard} color="blue"
           selected={directoryFilter === "verified"} onClick={() => { setDirectoryFilter("verified"); setSubTab("directory"); }} />}
         {showVerification && <StatCard title="Flagged"     value={flaggedCount}  Icon={Icons.Flag}   color="red"
@@ -683,7 +691,6 @@ export default function Users() {
 // ─── DIRECTORY TAB (used for Customers, Drivers, Supervisors, Admins) ─────────
 function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showBookings, filterStatus, setFilterStatus, viewerRole, currentRoleName }) {
   const [search, setSearch]       = useState("");
-  const setFilter = setFilterStatus;
   const [detailUser, setDetailUser]       = useState(null);
   const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -744,10 +751,11 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
   };
 
   const filtered = users.filter(u => {
-    const q = search.toLowerCase();
+    const q = search.trim().toLowerCase();
     const fullName = `${u.details?.firstName || ""} ${u.details?.lastName || ""}`.toLowerCase();
-    const matchSearch = !search || fullName.includes(q) || (u.email || "").toLowerCase().includes(q) || (u.username || "").toLowerCase().includes(q)
-      || (u.referral?.code || "").toLowerCase().includes(q);
+    const matchSearch = !q || fullName.includes(q) || (u.email || "").toLowerCase().includes(q) || (u.username || "").toLowerCase().includes(q)
+      || (u.referral?.code || "").toLowerCase().includes(q)
+      || String(u.id || "").toLowerCase().includes(q); // search by user ID
     const matchStatus =
       filterStatus === "All" ||
       (filterStatus === "flagged"  && u.isFlagged) ||
@@ -790,14 +798,8 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
     <>
       <div className="flex flex-wrap gap-3 items-center">
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name or email..."
+          placeholder="Search by name, email or user ID..."
           className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-        {["All", "active", "inactive", "locked", "flagged"].map(s => (
-          <button key={s} onClick={() => setFilter(s)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium capitalize transition-all ${filterStatus === s ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
-            {s}
-          </button>
-        ))}
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
@@ -2096,6 +2098,7 @@ function StatCard({ title, value, Icon, color, selected, onClick }) {
     gray:  "bg-gray-100 text-gray-500",
     blue:  "bg-blue-50 text-blue-600",
     red:   "bg-red-50 text-red-500",
+    amber: "bg-amber-50 text-amber-600",
   };
   const clickable = typeof onClick === "function";
   return (

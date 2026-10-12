@@ -969,6 +969,13 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     });
   };
 
+  // Vehicle name -> Car Tracking (Live tab) with this car already selected.
+  // CarTracking already reads location.state.selectCarId (same deep link
+  // Header notifications and GPS Setup use) and selects that car.
+  const goToCarTracking = () => {
+    navigate("/car-tracking", { state: { selectCarId: booking.carID } });
+  };
+
   const goToPayments = () => {
     navigate(`/payments?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
   };
@@ -1073,7 +1080,17 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
               )}
             </div>
             {row("Phone",           booking.phone)}
-            {row("Vehicle",         booking.vehicleName)}
+            {row("Vehicle",
+              booking.carID && booking.vehicleName ? (
+                <button
+                  onClick={goToCarTracking}
+                  title="Open in Car Tracking"
+                  className="text-indigo-600 hover:underline font-medium text-right"
+                >
+                  {booking.vehicleName}
+                </button>
+              ) : booking.vehicleName
+            )}
             {row("Service Type",    booking.serviceTypeName)}
             {row("Car ID",          booking.carID)}
             {row("Created",         fmtDateTime(booking.createdAt))}
