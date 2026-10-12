@@ -911,7 +911,7 @@ export default function CarTracking() {
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.message || "Return failed.");
-    setNotice({ type: "ok", msg: "Car marked returned — trip history saved." });
+    setNotice({ type: "ok", msg: "Booking marked complete — trip history saved." });
     await fetchBookings();
     if (selected) fetchCarSession(selected);
 
@@ -1495,7 +1495,7 @@ export default function CarTracking() {
                       className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50"
                     >
                       <Icons.Flag className="w-3.5 h-3.5" />
-                      {actionBusyId === ongoing.id ? "…" : "Return"}
+                      {actionBusyId === ongoing.id ? "…" : "Mark Complete"}
                     </button>
                     <button
                       onClick={() => setPaymentModalBooking(ongoing)}

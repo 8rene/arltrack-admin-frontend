@@ -787,11 +787,11 @@ function HistoryTab() {
               </button>
             </div>
 
-            {trip.status === "completed" && (trip.startedAt || trip.droppedOffTime || trip.returnedAt) && (
+            {trip.status === "completed" && (trip.startedAt || trip.droppedOffTime || trip.completedAt) && (
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400 bg-gray-50 rounded-lg px-2.5 py-1.5">
                 <span>Picked up: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.startedAt)}</span></span>
                 <span>Dropped off: <span className="font-semibold text-gray-600">{trip.droppedOffTime ? fmtDateTimeLong(trip.droppedOffTime) : "Not recorded"}</span></span>
-                <span>Returned: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.returnedAt)}</span></span>
+                <span>Completed: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.completedAt)}</span></span>
               </div>
             )}
           </div>

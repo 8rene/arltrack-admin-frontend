@@ -9,7 +9,7 @@ const REFUND_METHODS = ["Cash", "GCash", "Maya", "BankTransfer"];
  * disabled or silently redirecting. It shows every requirement and its state
  * (dropped off, after-trip inspection, penalties covered, GPS device unassigned),
  * the deposit / penalty / amount-to-return summary, and the driver on the
- * trip. "Confirm Return" stays disabled until every requirement is met —
+ * trip. "Confirm Complete" stays disabled until every requirement is met —
  * there is no override; the server enforces the same rules.
  *
  * Shared by Car Tracking (supervisor) and My Trips (driver); the caller
@@ -69,7 +69,7 @@ export default function ReturnChecklistModal({
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="font-bold text-arl-dark">{depositOnly ? "Return deposit" : "Drop-off & return"}</h3>
+            <h3 className="font-bold text-arl-dark">{depositOnly ? "Return deposit" : "Drop-off & complete"}</h3>
             {title && <p className="text-xs text-gray-400 mt-0.5">{title}</p>}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
@@ -140,7 +140,7 @@ export default function ReturnChecklistModal({
               </div>
               {owes && <p className="text-[11px] text-gray-400">The deposit is used up first; the rest is collected with Mark Paid on the Penalties page (or the customer pays online).</p>}
               {data.depositSettled && data.stillOwed > 0 && (
-                <p className="text-[11px] text-red-600">{peso(data.stillOwed)} in penalties is still unpaid (Penalties page → Mark Paid). This doesn&apos;t block Return.</p>
+                <p className="text-[11px] text-red-600">{peso(data.stillOwed)} in penalties is still unpaid (Penalties page → Mark Paid). This doesn&apos;t block completing the booking.</p>
               )}
             </div>
 
@@ -188,7 +188,7 @@ export default function ReturnChecklistModal({
               {!depositOnly && <button disabled={!data.canReturn || busy}
                 onClick={() => run(async () => { await onConfirmReturn(); onClose(); })}
                 className="flex-1 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                {busy ? "…" : data.canReturn ? "Confirm Return" : "Not ready yet"}
+                {busy ? "…" : data.canReturn ? "Confirm Complete" : "Not ready yet"}
               </button>}
             </div>
           </>
