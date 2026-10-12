@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import PaymentEntriesPanel from "./PaymentEntriesPanel";
 
 // Turns a camelCase/PascalCase field name into a readable label, e.g.
 // "bookingArchivesId" -> "Booking Archives Id".
@@ -38,7 +39,7 @@ function formatValue(key, val) {
  * truncate most fields to fit a row. Pass the raw record object; every key
  * on it is shown unless listed in hideKeys.
  */
-export default function ArchiveDetailModal({ title, record, onClose, hideKeys = [], labelOverrides = {} }) {
+export default function ArchiveDetailModal({ title, record, onClose, hideKeys = [], labelOverrides = {}, entriesQuery = null, entriesTitle }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -83,6 +84,12 @@ export default function ArchiveDetailModal({ title, record, onClose, hideKeys = 
                 </span>
               </div>
             ))
+          )}
+          {/* A deleted booking's money rows move to the archive too; the panel reads both, so an archived record still shows them. */}
+          {entriesQuery && (
+            <div className="pt-3 border-t border-gray-100">
+              <PaymentEntriesPanel query={entriesQuery} title={entriesTitle || "Money movements"} />
+            </div>
           )}
         </div>
       </div>

@@ -1742,6 +1742,7 @@ export default function CarTracking() {
     />
 
     <PaymentStatusModal
+      bookingID={paymentModalBooking?.bookingID || paymentModalBooking?.id}
       open={!!paymentModalBooking}
       onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); setConfirmPaymentError(null); setDiscountError(null); setRefundError(null); }}
       customerName={paymentModalBooking?.customerName}

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
+import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 
 // ─── SVG ICONS ─────────────────────────────────────────────────────────────
 
@@ -224,6 +225,7 @@ export default function RefundRequests() {
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
   const [tab, setTab]           = useState("active");
+  const [openEntries, setOpenEntries] = useState(null);   // refundRequestID whose money movements are expanded
   const [statusF, setStatusF]   = useState("All");
   const [search, setSearch]     = useState("");
   const [toast, setToast]       = useState(null);
@@ -692,6 +694,13 @@ export default function RefundRequests() {
                     <td className="px-5 py-4 whitespace-nowrap"><DateCell date={updatedDate(r)} /></td>
                     <td className="px-5 py-4">
                       <StatusBadge status={r.status} stage={stageOf(r)} />
+                      <button
+                        type="button"
+                        onClick={() => setOpenEntries((v) => (v === r.refundRequestID ? null : r.refundRequestID))}
+                        className="mt-1 block text-[11px] font-medium text-teal-700 hover:underline"
+                      >
+                        {openEntries === r.refundRequestID ? "Hide money movements" : "Money movements"}
+                      </button>
                       {r.status === "Approved" && (() => {
                         const w = fmtWaiting(r);
                         return w ? (
@@ -751,6 +760,17 @@ export default function RefundRequests() {
                       </td>
                     )}
                   </tr>
+                  {openEntries === r.refundRequestID && (
+                    <tr className="border-b border-gray-50 bg-gray-50/40">
+                      <td colSpan={showActions ? 9 : 8} className="px-5 py-4">
+                        <PaymentEntriesPanel
+                          key={`${r.refundRequestID}-${r.status}-${r.updatedAt || ""}`}
+                          query={{ refundRequestID: r.refundRequestID }}
+                          title="Money movements for this refund"
+                        />
+                      </td>
+                    </tr>
+                  )}
                   </Fragment>
                   );
                 })}

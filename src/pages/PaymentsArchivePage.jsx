@@ -187,6 +187,8 @@ export default function PaymentsArchivePage() {
           record={viewRecord}
           onClose={() => setViewRecord(null)}
           labelOverrides={{ paymentsArchivesId: "Archive ID", bookingID: "Booking ID" }}
+          entriesQuery={{ paymentID: viewRecord.paymentID || viewRecord.originalId }}
+          entriesTitle="All money movements on this payment"
         />
       )}
 

@@ -182,6 +182,8 @@ export default function RefundArchivePage() {
           record={viewRecord}
           onClose={() => setViewRecord(null)}
           labelOverrides={{ refundArchivesId: "Archive ID", refundRequestID: "Refund Request ID", userID: "User ID", customerName: "Customer" }}
+          entriesQuery={{ refundRequestID: viewRecord.refundRequestID || viewRecord.originalId }}
+          entriesTitle="Money movements for this refund"
         />
       )}
 

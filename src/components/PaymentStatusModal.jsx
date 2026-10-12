@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import PaymentEntriesPanel from "./shared/PaymentEntriesPanel";
 
 const STATUS_STYLE = {
   approved: "bg-green-50 text-green-700 border border-green-200",
@@ -69,6 +70,7 @@ export default function PaymentStatusModal({
   onApplyDiscount, applyingDiscount, discountError,
   onMarkRefundIssued, markingRefund, refundError, onReturnDeposit,
   onGoToPayments, pendingApprovalNote, onNotePenalty,
+  bookingID,   // staff screens pass this to show every money movement; the driver screen leaves it out (drivers can't read entries)
 }) {
   const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0, refundDue: 0, depositAmount: 0, depositStatus: "—", confirmedPenaltyTotal: 0, amountToReturn: 0 };
 
@@ -374,6 +376,16 @@ export default function PaymentStatusModal({
                   <p className="text-[11px] text-gray-400">Sets the total discount on this booking — entering a new amount replaces the old one, it doesn't add to it.</p>
                 </>
               )}
+            </div>
+          )}
+
+          {bookingID && (
+            <div className="pt-3 border-t border-gray-100">
+              <PaymentEntriesPanel
+                key={`${bookingID}-${p.paymentStatus}-${p.amountPaid}-${p.refundIssued}`}
+                query={{ bookingID }}
+                title="Money movements"
+              />
             </div>
           )}
         </div>

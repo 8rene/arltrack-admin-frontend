@@ -219,6 +219,8 @@ export default function BookingArchivePage() {
           record={viewRecord}
           onClose={() => setViewRecord(null)}
           labelOverrides={{ bookingArchivesId: "Archive ID", bookingID: "Booking ID", carID: "Car ID", userID: "User ID" }}
+          entriesQuery={{ bookingID: viewRecord.bookingID }}
+          entriesTitle="Money movements for this booking"
         />
       )}
 
@@ -234,6 +236,8 @@ export default function BookingArchivePage() {
             record={paymentModal.data}
             onClose={() => setPaymentModal(null)}
             labelOverrides={{ paymentsArchivesId: "Archive ID", bookingID: "Booking ID", userID: "User ID" }}
+            entriesQuery={{ paymentID: paymentModal.data.paymentID || paymentModal.data.originalId }}
+            entriesTitle="All money movements on this payment"
           />
         ) : (
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30" onClick={() => setPaymentModal(null)}>

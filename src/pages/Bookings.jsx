@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
+import DeleteBundleModal from "../components/shared/DeleteBundleModal";
+import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 import { ROLES } from "../config/pagePermissions";
 import TripMapModal from "../components/TripMapModal";
 import StoreLocationMapPicker from "../components/shared/StoreLocationMapPicker";
@@ -45,13 +47,6 @@ function destinationStop(booking) {
 }
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
-
-const IconTrash = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <polyline points="3 6 5 6 21 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
 
 const IconWarning = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -314,45 +309,6 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
   );
 }
 
-
-// ─── DELETE CONFIRM MODAL ─────────────────────────────────────────────────────
-
-function DeleteModal({ booking, onClose, onConfirm, deleting }) {
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600">
-            <IconTrash className="w-5 h-5" />
-          </div>
-          <h2 className="font-bold text-lg text-gray-800">Delete Booking</h2>
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-1">
-          <p className="text-sm font-semibold text-amber-800">This will cascade-delete:</p>
-          <ul className="text-sm text-amber-700 list-disc ml-4 space-y-0.5">
-            <li>The booking record</li>
-            <li>Its linked payment (if any)</li>
-            <li>All linked reviews (if any)</li>
-          </ul>
-          <p className="text-xs text-amber-600 mt-2">All records will be archived before deletion and can be found in their respective Archive pages.</p>
-        </div>
-        <p className="text-sm text-gray-600">
-          Are you sure you want to delete booking <span className="font-mono font-semibold text-gray-800">{booking.bookingID || booking.id}</span>?
-        </p>
-        <div className="flex gap-3 justify-end pt-1">
-          <button onClick={onClose} disabled={deleting} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Cancel</button>
-          <button
-            onClick={onConfirm}
-            disabled={deleting}
-            className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
-          >
-            {deleting ? "Deleting…" : "Yes, Delete"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── INLINE LOCATION MAP ──────────────────────────────────────────────────────
 // Small read-only Leaflet map used inside the Edit modal: plots pickup, dropoff
@@ -1364,6 +1320,11 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
           </button>
         </div>
 
+        {/* Every money movement for this booking (deposit, balance, penalties paid, refunds) — read-only. */}
+        <div className="mt-3 pt-3 border-t">
+          <PaymentEntriesPanel query={{ bookingID: booking.bookingID || booking.id }} title="Money movements for this booking" />
+        </div>
+
         {/* Actions — only the ones that apply to this booking / this role. */}
         {(onEdit || onRefund || onDelete) && (
           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">
@@ -1406,7 +1367,6 @@ export default function Bookings() {
   const [viewBooking, setViewBooking]       = useState(null);
   const [editBooking, setEditBooking]       = useState(null);
   const [deleteBooking, setDeleteBooking]   = useState(null);
-  const [deleting, setDeleting]             = useState(false);
   const [deleteToast, setDeleteToast]       = useState(null);
   // Customer name → profile modal, in place, instead of navigating to /users.
   // Shared by both the table row and ViewModal (ViewModal passes its own
@@ -1482,21 +1442,12 @@ export default function Bookings() {
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
   }, [searchParams, allBookings, loading, setSearchParams]);
 
-  const handleDeleteConfirm = async () => {
-    if (!deleteBooking) return;
-    setDeleting(true);
-    try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${deleteBooking.id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Delete failed.");
-      setAllBookings((prev) => prev.filter((b) => b.id !== deleteBooking.id));
-      showToast(`Booking archived and deleted. ${json.data?.reviewsArchivedCount > 0 ? `${json.data.reviewsArchivedCount} review(s) also archived.` : ""}`, "success");
-      setDeleteBooking(null);
-    } catch (err) { showToast(err.message, "error"); }
-    finally { setDeleting(false); }
+  // DeleteBundleModal does the asking + the DELETE call (blockers, force, whole-booking archive); we only react.
+  const handleDeleted = (json) => {
+    const removed = deleteBooking;
+    setAllBookings((prev) => prev.filter((b) => b.id !== removed.id));
+    showToast(json?.message || "Booking archived.", "success");
+    setDeleteBooking(null);
   };
 
   const counts = {
@@ -1720,11 +1671,12 @@ export default function Bookings() {
       )}
       {profileUserID && <CustomerProfileModal userID={profileUserID} bookings={allBookings} onClose={() => setProfileUserID(null)} />}
       {deleteBooking && (
-        <DeleteModal
-          booking={deleteBooking}
-          onClose={() => !deleting && setDeleteBooking(null)}
-          onConfirm={handleDeleteConfirm}
-          deleting={deleting}
+        <DeleteBundleModal
+          kind="booking"
+          id={deleteBooking.id}
+          label={deleteBooking.bookingID || deleteBooking.id}
+          onClose={() => setDeleteBooking(null)}
+          onDone={handleDeleted}
         />
       )}
     </div>

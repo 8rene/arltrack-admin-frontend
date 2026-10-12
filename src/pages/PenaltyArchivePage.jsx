@@ -181,6 +181,8 @@ export default function PenaltyArchivePage() {
           record={viewRecord}
           onClose={() => setViewRecord(null)}
           labelOverrides={{ penaltyArchivesId: "Archive ID", penaltyID: "Penalty ID", userID: "User ID", customerName: "Customer" }}
+          entriesQuery={{ penaltyID: viewRecord.penaltyID || viewRecord.originalId }}
+          entriesTitle="Payments on this penalty"
         />
       )}
 
