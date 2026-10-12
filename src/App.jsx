@@ -23,6 +23,9 @@ import AuditLog from "./pages/AuditLog";
 import SessionLogs from "./pages/SessionLogs";
 import TransactionLogs from "./pages/TransactionLogs";
 import Settings from "./pages/Settings";
+import Holidays from "./pages/Holidays";
+import CodingRestrictions from "./pages/CodingRestrictions";
+import Addresses from "./pages/Addresses";
 import VehicleInspection from "./pages/VechicleInspection";
 import SessionLogArchivePage from "./pages/SessionLogArchivePage";
 import PaymentsArchivePage from "./pages/PaymentsArchivePage";
@@ -193,6 +196,21 @@ function AppRoutes() {
             <Route path="/settings" element={
                 <ProtectedRoute>
                     <DashboardLayout><Settings /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/holidays" element={
+                <ProtectedRoute>
+                    <DashboardLayout><Holidays /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/coding-restrictions" element={
+                <ProtectedRoute>
+                    <DashboardLayout><CodingRestrictions /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/addresses" element={
+                <ProtectedRoute>
+                    <DashboardLayout><Addresses /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/session-logs" element={

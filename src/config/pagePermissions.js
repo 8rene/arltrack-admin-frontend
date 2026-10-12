@@ -56,6 +56,14 @@ export const PAGE_ACCESS = {
   "/transaction-logs": [ADMIN],
   "/settings": [OWNER, ADMIN],
 
+  // Setup catalogs. View/add/edit is open to all three staff roles; DELETE is
+  // narrower (Owner/Admin) and enforced by the backend (routes/holidays,
+  // routes/codingRules, routes/addresses) — each page hides its Delete
+  // buttons for Supervisor to match.
+  "/holidays": [OWNER, ADMIN, SUPERVISOR],
+  "/coding-restrictions": [OWNER, ADMIN, SUPERVISOR],
+  "/addresses": [OWNER, ADMIN, SUPERVISOR],
+
   // Archives — Owner keeps access, Admin added per this round's decision.
   "/archives/session-log": [OWNER, ADMIN],
   "/archives/payments": [OWNER, ADMIN],

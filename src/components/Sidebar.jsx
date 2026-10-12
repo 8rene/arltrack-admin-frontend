@@ -198,6 +198,38 @@ const nav = [
         ),
       },
       {
+        // Public holidays that suspend number coding.
+        label: "Holidays",
+        path: "/holidays",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <rect x="3" y="5" width="18" height="16" rx="2" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16 3v4M8 3v4M3 11h18" />
+          </svg>
+        ),
+      },
+      {
+        // Per-city plate-number coding schedules.
+        label: "Coding Restrictions",
+        path: "/coding-restrictions",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <circle cx="12" cy="12" r="9" />
+            <path strokeLinecap="round" d="M5.6 5.6l12.8 12.8" />
+          </svg>
+        ),
+      },
+      {
+        // Region → Province → Municipality → Barangay catalog.
+        label: "Addresses",
+        path: "/addresses",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+          </svg>
+        ),
+      },
+      {
         label: "System Settings",
         path: "/settings",
         icon: (
