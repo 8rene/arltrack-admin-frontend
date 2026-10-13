@@ -883,6 +883,16 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
   );
 }
 
+// Check circle for each step in the booking checklist (View modal, "Step by step" tab).
+const STEP_STYLE = {
+  done:    { dot: "bg-green-500 text-white border-green-500",                      text: "text-gray-800" },
+  current: { dot: "bg-white text-teal-700 border-teal-500 ring-4 ring-teal-100",   text: "text-gray-900" },
+  todo:    { dot: "bg-white text-gray-400 border-gray-300",                        text: "text-gray-500" },
+  skipped: { dot: "bg-gray-100 text-gray-400 border-gray-200",                     text: "text-gray-400" },
+  missing: { dot: "bg-amber-50 text-amber-600 border-amber-300",                   text: "text-gray-700" },
+  stopped: { dot: "bg-red-500 text-white border-red-500",                          text: "text-red-700" },
+};
+
 function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelete }) {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
@@ -1004,223 +1014,154 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     navigate(`/penalties?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
   };
 
+  // ── Two tabs: "Step by step" (a checklist with View buttons) and "Details" ──
+  // The 8 steps: Booked → Paid → Driver → Before-trip inspection → Pickup & trip
+  // → Drop-off & after-trip inspection → Maintenance → Deposit & completion.
+  // Each step's check is worked out from data this modal already has, and its
+  // View button jumps to the page where that step is handled.
+  const [tab, setTab] = useState("steps");
+
+  const status        = (booking.status || "").toLowerCase();
+  const dead          = status === "cancelled" || status === "stolen";
+  const isChauffeur   = (booking.modeOfDriving || "").toLowerCase().includes("chauffeur");
+  const before        = inventoryCheck?.before || null;
+  const after         = inventoryCheck?.after || null;
+  const maint         = linkedMaintenance || [];
+  const maintAllDone  = maint.length > 0 && maint.every((m) => m.status === "Completed");
+  const depStatus     = booking.deposit?.status || (booking.paymentStatus === "Refunded" ? "Refunded" : null);
+  const depositClosed = ["Settled", "Refunded", "Forfeited", "Waived"].includes(depStatus);
+  const paid          = ["upcoming", "ongoing", "completed", "cancellation_request"].includes(status) || !!booking.deposit;
+  const started       = !!booking.startedAt || status === "ongoing" || status === "completed";
+  const droppedOff    = !!booking.droppedOffTime || status === "completed";
+  const invLabel      = (rec) => (rec.inventoryOverallStatus === "has damage" ? `Has damage (${rec.damageParts?.length || 0})` : "Good");
+  const pendingMaint  = maint.filter((m) => m.status !== "Completed").length;
+  const penaltyCount  = (linkedPenalties || []).length;
+
+  const monitorText = !started ? "Not started"
+    : !droppedOff ? "Trip in progress — track it live"
+    : booking.hasHistory ? "GPS trail saved" : "No GPS trail saved";
+  const penaltiesDone = penaltyCount > 0;
+
+  const stepDefs = [
+    { key: "booked", title: "Booked", done: true, sub: fmtDateTime(booking.createdAt) },
+    { key: "paid", title: "Paid", done: paid, sub: paid ? (booking.paymentMethod || "Paid") : "Awaiting deposit" },
+    {
+      key: "driver", title: "Driver assigned", done: !isChauffeur || !!booking.driverID,
+      sub: !isChauffeur ? "Self-drive — no driver needed" : booking.driverID ? (booking.driverName || "Assigned") : "No driver yet",
+    },
+    { key: "before", title: "Before-trip inspection", done: !!before, sub: inventoryLoading ? "Checking…" : before ? invLabel(before) : "Not recorded" },
+    {
+      // One process: pickup → monitor → drop-off. Done once the car is dropped off.
+      key: "trip", title: "Pickup, monitor & drop-off", done: droppedOff,
+      sub: droppedOff ? "Dropped off" : started ? "Trip in progress" : "Not started",
+      parts: [
+        { key: "pickup", label: "Pickup", done: started, text: booking.startedAt ? fmtDateTime(booking.startedAt) : started ? "Trip started" : "Not picked up yet" },
+        {
+          key: "monitor", label: "Monitor", done: droppedOff, text: monitorText,
+          actions: [
+            { label: "Car Tracking", onClick: goToCarTracking },
+            ...(booking.hasHistory ? [{ label: "Trip History", onClick: goToHistory }] : []),
+          ],
+        },
+        { key: "dropoff", label: "Drop-off", done: droppedOff, text: booking.droppedOffTime ? fmtDateTime(booking.droppedOffTime) : droppedOff ? "Dropped off" : "Not dropped off yet" },
+      ],
+    },
+    {
+      // Green once the after-trip inspection has been recorded.
+      key: "after", title: "Post-rental inspection", done: !!after,
+      warn: after?.inventoryOverallStatus === "has damage",
+      sub: inventoryLoading ? "Checking…" : after ? invLabel(after) : droppedOff ? "Dropped off · not inspected yet" : "Not recorded",
+    },
+    {
+      key: "maintenance", title: "Maintenance", done: maintAllDone,
+      skipped: !maintAllDone && linkedMaintenance !== null && maint.length === 0 && status === "completed",
+      sub: linkedMaintenance === null ? "Checking…"
+        : maint.length === 0 ? (status === "completed" ? "None filed" : "None filed yet")
+        : maintAllDone ? "Completed" : `${pendingMaint} in progress`,
+    },
+    {
+      key: "penalties", title: "Penalties", done: penaltiesDone,
+      skipped: !penaltiesDone && linkedPenalties !== null && status === "completed",
+      sub: linkedPenalties === null ? "Checking…"
+        : penaltyCount ? `${penaltyCount} noted` : status === "completed" ? "None noted" : "None noted yet",
+    },
+    {
+      key: "deposit", title: "Deposit & completion", done: depositClosed,
+      sub: depStatus || (Number(booking.securityDeposit) > 0 ? "Not settled yet" : "No deposit"),
+    },
+  ];
+
+  // done / skipped as computed; the first one not done is "current" (or "stopped" on a
+  // cancelled booking); on a finished booking, gaps show as "missing".
+  let currentSeen = false;
+  const steps = stepDefs.map((d, i) => {
+    let state;
+    if (d.done) state = "done";
+    else if (d.skipped) state = "skipped";
+    else if (status === "completed") state = "missing";
+    else if (!currentSeen) { state = dead ? "stopped" : "current"; currentSeen = true; }
+    else state = "todo";
+    return { ...d, n: i + 1, state };
+  });
+  const countable = steps.filter((s) => s.state !== "skipped");
+  const doneCount = countable.filter((s) => s.state === "done").length;
+
+  // Every button is named after the page it opens.
+  const goToDispatch = () => navigate("/driver-dispatch", {
+    state: { assignBookingId: booking.bookingID || booking.id, assignCustomerName: booking.customerName },
+  });
+  const stepActions = {
+    booked:      [{ label: "Details", onClick: () => setTab("details") }],
+    paid:        [{ label: "Payments", onClick: goToPayments }],
+    driver:      isChauffeur ? [{ label: "Driver Dispatch", onClick: goToDispatch }] : [],
+    before:      [{ label: "Vehicle Inspections", onClick: goToInventory }],
+    after:       [{ label: "Vehicle Inspections", onClick: goToInventory }],
+    maintenance: [{ label: "Maintenance", onClick: goToMaintenance }],
+    penalties:   [{ label: "Penalties", onClick: goToNotePenalty }],
+    deposit:     [{ label: "Payments", onClick: goToPayments }],
+  };
+
+  const stepBtn = "px-3.5 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition whitespace-nowrap";
+  const partBtn = "px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition whitespace-nowrap";
+
+  const tabBtn = (key, label) => (
+    <button
+      onClick={() => setTab(key)}
+      className={`px-5 py-2.5 text-sm font-semibold border-b-2 -mb-px transition ${
+        tab === key ? "border-teal-600 text-teal-700" : "border-transparent text-gray-400 hover:text-gray-600"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold text-lg text-gray-800">Booking Details</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <IconX className="w-5 h-5" />
-          </button>
-        </div>
-        <StatusBadge status={booking.status} />
-
-        {/* Two columns side by side: core booking details on the left,
-            payment + driving mode (each with a jump-to-page button) on
-            the right — instead of one long stacked list where the
-            payment/chauffeur rows were easy to scroll past. */}
-        <div className="grid md:grid-cols-2 gap-6">
-          <div>
-            {row("Booking ID",      booking.bookingID || booking.id)}
-            <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
-              <span className="text-gray-500 font-medium w-36 shrink-0">Customer</span>
-              {booking.userID ? (
-                <button
-                  onClick={() => onViewCustomer(booking.userID)}
-                  className="text-indigo-600 hover:underline font-medium text-right"
-                >
-                  {booking.customerName || "—"}
-                </button>
-              ) : (
-                <span className="text-gray-800 text-right">{booking.customerName || "—"}</span>
-              )}
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+        {/* Header */}
+        <div className="px-6 pt-5 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <h2 className="font-bold text-lg text-gray-800">Booking Details</h2>
+              <StatusBadge status={booking.status} />
             </div>
-            {row("Phone",           booking.phone)}
-            {row("Vehicle",
-              booking.carID && booking.vehicleName ? (
-                <button
-                  onClick={goToCarTracking}
-                  title="Open in Car Tracking"
-                  className="text-indigo-600 hover:underline font-medium text-right"
-                >
-                  {booking.vehicleName}
-                </button>
-              ) : booking.vehicleName
-            )}
-            {row("Service Type",    booking.serviceTypeName)}
-            {row("Car ID",          booking.carID)}
-            {row("Created",         fmtDateTime(booking.createdAt))}
-            {row("Start Date",      fmtDate(booking.startDateTime))}
-            {row("End Date",        fmtDate(booking.endDateTime))}
-            {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
-            {/* Location — the address string, plus a map (same component
-                MyTrips.jsx uses) plotting pickup, dropoff, and any extra
-                stops, instead of just printing the raw address text. */}
-            <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
-              <span className="text-gray-500 font-medium w-36 shrink-0">Location</span>
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-gray-800 text-right truncate">{booking.location || "—"}</span>
-                {locationStops.length > 0 ? (
-                  <button
-                    onClick={() => setMapOpen(true)}
-                    className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
-                  >
-                    View Map →
-                  </button>
-                ) : (
-                  <span className="text-xs text-gray-300 shrink-0">No map data</span>
-                )}
-              </div>
-            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0">
+              <IconX className="w-5 h-5" />
+            </button>
           </div>
-
-          <div>
-            {row("Rental Fee",  fmt(booking.rentalFee))}
-            {row("Service Fee", fmt(booking.serviceFee))}
-            {Number(booking.gatewayFee) > 0 && row("Gateway Fee", fmt(booking.gatewayFee))}
-            {row("Extra Fee",   fmt(booking.extraFee))}
-            {Number(booking.driversFee) > 0 && row("Driver's Fee", fmt(booking.driversFee))}
-            {/* Refundable security deposit — charged inside the booking total
-                and marked Held (payments.deposit) once the first payment
-                settles; Penalties settles against it at Return. */}
-            {row("Security Deposit", booking.paymentStatus === "Refunded" && booking.securityDeposit > 0
-              ? `${fmt(booking.securityDeposit)} · Refunded`
-              : booking.deposit
-                ? (booking.deposit.status === "Waived"
-                    ? "Waived"
-                    : `${fmt(booking.deposit.amount)} · ${booking.deposit.status || "Held"}`)
-                : Number(booking.securityDeposit) > 0
-                  ? `${fmt(booking.securityDeposit)} · Awaiting payment`
-                  : "Not collected")}
-            {row("Total Fee",   fmt(booking.totalFee))}
-
-            {/* Payment Method — paired with a jump straight to the matching
-                Payments record instead of just showing the method as inert
-                text, since "what's the actual payment status/proof" is the
-                natural next question. Payments.jsx already supports
-                ?bookingID= to pre-filter to this booking (same pattern as
-                goToHistory's Car Tracking link below). */}
-            <div className="flex justify-between items-center py-2 border-b border-gray-50 text-sm">
-              <span className="text-gray-500 font-medium w-28 shrink-0">Payment</span>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-800">{booking.paymentMethod || "—"}</span>
-                <button
-                  onClick={goToPayments}
-                  className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
-                >
-                  View →
-                </button>
-              </div>
-            </div>
-
-            {/* Mode of Driving (Self-drive / With Chauffeur) — when a
-                chauffeur is involved, jump straight to Driver Dispatch to
-                see or assign one, same idea as the payment button above. */}
-            <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
-              <span className="text-gray-500 font-medium w-28 shrink-0">Driving</span>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-800">{booking.modeOfDriving || "—"}</span>
-                {booking.modeOfDriving?.toLowerCase().includes("chauffeur") && (
-                  <button
-                    onClick={() => navigate("/driver-dispatch", {
-                      state: { assignBookingId: booking.bookingID || booking.id, assignCustomerName: booking.customerName },
-                    })}
-                    className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
-                  >
-                    View →
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Driver — the actual chauffeur assigned via Driver Dispatch
-                (booking.driverID, resolved to a name/phone by
-                getAllBookings), or an explicit "No driver assigned" so an
-                unassigned chauffeur booking never just looks like a
-                blank/missing field. */}
-            <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
-              <span className="text-gray-500 font-medium w-28 shrink-0">Driver</span>
-              {booking.driverID ? (
-                <span className="text-gray-800 text-right">
-                  {booking.driverName || "—"}
-                  {booking.driverPhone && booking.driverPhone !== "—" ? ` · ${booking.driverPhone}` : ""}
-                </span>
-              ) : (
-                <span className="text-gray-400 italic text-right">No driver assigned</span>
-              )}
-            </div>
-
-            {/* System Inventory — before/after-trip part condition, checked
-                inline against THIS booking's own records (not a link that
-                assumes you'll land on the right one — Vehicle Inspections'
-                own deep-link picks a car's nearest/upcoming booking, which
-                for a past booking is very likely a different one).
-                The jump-to-inspection action lives here now instead of as
-                its own top "Inspect Vehicle" button — same goToInventory
-                target either way, just worded as "Inspect Vehicle" when
-                nothing's recorded yet vs "View full record" once it is, so
-                there's one action for this, not two doing the same thing. */}
-            <div className="py-2 border-b border-gray-50 last:border-0 text-sm space-y-1.5">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500 font-medium w-28 shrink-0">Inventory</span>
-                {inventoryLoading && (
-                  <span className="text-xs text-gray-400 italic">Checking…</span>
-                )}
-              </div>
-
-              {!inventoryLoading && !inventoryCheck?.before && !inventoryCheck?.after && (
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-gray-300">Not recorded</span>
-                  <button
-                    onClick={goToInventory}
-                    className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg px-2.5 py-1 transition-colors"
-                  >
-                    📸 Inspect Vehicle →
-                  </button>
-                </div>
-              )}
-
-              {!inventoryLoading && (inventoryCheck?.before || inventoryCheck?.after) && (
-                <div className="flex flex-col gap-1 pl-0">
-                  {["before", "after"].map((slot) => {
-                    const rec = inventoryCheck?.[slot];
-                    if (!rec) {
-                      return (
-                        <div key={slot} className="flex justify-between items-center text-xs text-gray-300">
-                          <span className="capitalize">{slot}-trip</span>
-                          <span>Not recorded</span>
-                        </div>
-                      );
-                    }
-                    const hasDamage = rec.inventoryOverallStatus === "has damage";
-                    return (
-                      <div key={slot} className="flex justify-between items-center text-xs">
-                        <span className="capitalize text-gray-500">{slot}-trip</span>
-                        <span className={`font-semibold ${hasDamage ? "text-red-600" : "text-green-600"}`}>
-                          {hasDamage ? `Has damage (${rec.damageParts?.length || 0})` : "Good"}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  <button
-                    onClick={goToInventory}
-                    className="self-end text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors mt-1"
-                  >
-                    View full record →
-                  </button>
-                </div>
-              )}
-            </div>
+          <p className="text-sm text-gray-500 mt-1 truncate">
+            {booking.customerName || "—"}{booking.vehicleName ? ` · ${booking.vehicleName}` : ""}
+          </p>
+          <div className="flex border-b border-gray-100 mt-3">
+            {tabBtn("steps", "Step by step")}
+            {tabBtn("details", "Details")}
           </div>
         </div>
 
-        {/* Notes / additional info — full width beneath the two columns. */}
-        <div className="pt-1 border-t border-gray-100">
-          {row("Notes (User)",    booking.notesUser)}
-          {row("Notes (Admin)",   booking.notesAdmin)}
-          {booking.cancellationReason && row("Cancel Reason", booking.cancellationReason)}
+        {/* Body */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
           {/* The customer's own request to cancel an ongoing trip (cancellationRequests).
-              This is the only place the approver can read WHY it was asked. */}
+              Shown on both tabs — this is the only place the approver can read WHY it was asked. */}
           {booking.cancellationRequest && (
             <div className="mt-2 rounded-xl border border-orange-100 bg-orange-50/60 px-3 py-2">
               <p className="text-xs font-semibold text-orange-700 mb-1">Cancellation request</p>
@@ -1234,98 +1175,160 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
               {booking.cancellationRequest.rejectReason && row("Reject reason", booking.cancellationRequest.rejectReason)}
             </div>
           )}
-        </div>
 
-        {/* Trip History — always shown, not just when history exists, so it's
-            clear whether this booking's GPS trail was ever archived. */}
-        <div className="flex justify-between items-center py-2.5 px-3 rounded-xl bg-gray-50 border border-gray-100">
-          <div>
-            <p className="text-sm font-medium text-gray-700">Trip History</p>
-            <p className="text-xs text-gray-400">
-              {booking.hasHistory ? "GPS trail available for playback" : "No archived GPS trail for this booking"}
-            </p>
-          </div>
-          {booking.hasHistory ? (
-            <button
-              onClick={goToHistory}
-              className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-3 py-1.5 transition-colors shrink-0"
-            >
-              View in Car Tracking →
-            </button>
+          {tab === "steps" ? (
+            <>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+                {doneCount} of {countable.length} steps done
+              </p>
+              <ol className="space-y-2">
+                {steps.map((st) => {
+                  const sty = STEP_STYLE[st.state];
+                  const actions = stepActions[st.key] || [];
+                  return (
+                    <li
+                      key={st.key}
+                      className={`rounded-xl border ${st.state === "current" ? "border-teal-200 bg-teal-50/40" : "border-gray-100 bg-white"}`}
+                    >
+                      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                        <span className={`w-8 h-8 shrink-0 rounded-full border-2 flex items-center justify-center text-xs font-bold ${sty.dot}`}>
+                          {st.state === "done" ? <IconCheck className="w-4 h-4" />
+                            : st.state === "stopped" ? <IconX className="w-4 h-4" />
+                            : st.state === "skipped" ? "–"
+                            : st.state === "missing" ? "!"
+                            : st.n}
+                        </span>
+                        <div className="min-w-0 flex-1 basis-40">
+                          <p className={`text-sm font-semibold leading-snug ${sty.text}`}>{st.n}. {st.title}</p>
+                          <p className={`text-xs mt-0.5 ${st.warn ? "text-red-600 font-semibold" : "text-gray-400"}`}>
+                            {st.state === "stopped" ? `Stopped here — booking ${status}` : st.sub}
+                          </p>
+                        </div>
+                        {actions.length > 0 && (
+                          <div className="flex items-center gap-2 shrink-0 ml-auto">
+                            {actions.map((a) => (
+                              <button key={a.label} onClick={a.onClick} className={stepBtn}>{a.label}</button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {st.parts && (
+                        <ul className="pl-[3.75rem] pr-4 pb-3 pt-0.5 space-y-2">
+                          {st.parts.map((p) => (
+                            <li key={p.key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                              <span className={`w-5 h-5 shrink-0 rounded-full border flex items-center justify-center text-[10px] font-bold ${
+                                p.done === undefined ? "bg-gray-100 text-gray-400 border-gray-200"
+                                : p.done ? "bg-green-500 text-white border-green-500"
+                                : "bg-white text-gray-300 border-gray-300"
+                              }`}>
+                                {p.done ? <IconCheck className="w-3 h-3" /> : p.done === undefined ? "•" : ""}
+                              </span>
+                              <div className="min-w-0 flex-1 basis-40">
+                                <span className="text-sm font-medium text-gray-700">{p.label}</span>
+                                <span className={`text-xs ml-2 ${p.warn ? "text-red-600 font-semibold" : "text-gray-400"}`}>{p.text}</span>
+                              </div>
+                              {p.actions && (
+                                <div className="flex items-center gap-2 shrink-0 ml-auto">
+                                  {p.actions.map((a) => (
+                                    <button key={a.label} onClick={a.onClick} className={partBtn}>{a.label}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </>
           ) : (
-            <span className="text-xs text-gray-300 shrink-0">—</span>
+            <div className="grid md:grid-cols-2 gap-x-8">
+              <div>
+                {row("Booking ID",      booking.bookingID || booking.id)}
+                <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
+                  <span className="text-gray-500 font-medium w-36 shrink-0">Customer</span>
+                  {booking.userID ? (
+                    <button onClick={() => onViewCustomer(booking.userID)} className="text-indigo-600 hover:underline font-medium text-right">
+                      {booking.customerName || "—"}
+                    </button>
+                  ) : (
+                    <span className="text-gray-800 text-right">{booking.customerName || "—"}</span>
+                  )}
+                </div>
+                {row("Phone",           booking.phone)}
+                {row("Vehicle",
+                  booking.carID && booking.vehicleName ? (
+                    <button onClick={goToCarTracking} title="Open in Car Tracking" className="text-indigo-600 hover:underline font-medium text-right">
+                      {booking.vehicleName}
+                    </button>
+                  ) : booking.vehicleName
+                )}
+                {row("Service Type",    booking.serviceTypeName)}
+                {row("Car ID",          booking.carID)}
+                {row("Created",         fmtDateTime(booking.createdAt))}
+                {row("Start Date",      fmtDate(booking.startDateTime))}
+                {row("End Date",        fmtDate(booking.endDateTime))}
+                {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
+                <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
+                  <span className="text-gray-500 font-medium w-36 shrink-0">Location</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-gray-800 text-right truncate">{booking.location || "—"}</span>
+                    {locationStops.length > 0 ? (
+                      <button onClick={() => setMapOpen(true)} className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0">
+                        View Map →
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-300 shrink-0">No map data</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                {row("Rental Fee",  fmt(booking.rentalFee))}
+                {row("Service Fee", fmt(booking.serviceFee))}
+                {Number(booking.gatewayFee) > 0 && row("Gateway Fee", fmt(booking.gatewayFee))}
+                {row("Extra Fee",   fmt(booking.extraFee))}
+                {Number(booking.driversFee) > 0 && row("Driver's Fee", fmt(booking.driversFee))}
+                {row("Security Deposit", booking.paymentStatus === "Refunded" && booking.securityDeposit > 0
+                  ? `${fmt(booking.securityDeposit)} · Refunded`
+                  : booking.deposit
+                    ? (booking.deposit.status === "Waived"
+                        ? "Waived"
+                        : `${fmt(booking.deposit.amount)} · ${booking.deposit.status || "Held"}`)
+                    : Number(booking.securityDeposit) > 0
+                      ? `${fmt(booking.securityDeposit)} · Awaiting payment`
+                      : "Not collected")}
+                {row("Total Fee",   fmt(booking.totalFee))}
+                {row("Payment",     booking.paymentMethod)}
+                {row("Driving",     booking.modeOfDriving)}
+                <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
+                  <span className="text-gray-500 font-medium w-36 shrink-0">Driver</span>
+                  {booking.driverID ? (
+                    <span className="text-gray-800 text-right">
+                      {booking.driverName || "—"}
+                      {booking.driverPhone && booking.driverPhone !== "—" ? ` · ${booking.driverPhone}` : ""}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400 italic text-right">{isChauffeur ? "No driver assigned" : "Not needed"}</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="md:col-span-2 pt-1 mt-1 border-t border-gray-100">
+                {row("Notes (User)",  booking.notesUser)}
+                {row("Notes (Admin)", booking.notesAdmin)}
+                {booking.cancellationReason && row("Cancel Reason", booking.cancellationReason)}
+              </div>
+            </div>
           )}
         </div>
 
-        {/* Linked Maintenance — same "always shown" treatment as Trip
-            History above, so an empty state is a deliberate "none yet",
-            not a section that silently disappears. */}
-        <div className="flex justify-between items-center py-2.5 px-3 rounded-xl bg-gray-50 border border-gray-100">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-700">Linked Maintenance</p>
-            {linkedMaintenance === null ? (
-              <p className="text-xs text-gray-400">Loading…</p>
-            ) : linkedMaintenance.length === 0 ? (
-              <p className="text-xs text-gray-400">No maintenance record linked to this booking yet</p>
-            ) : (
-              <ul className="mt-1 space-y-0.5">
-                {linkedMaintenance.map((m) => (
-                  <li key={m.id} className="text-xs text-gray-600">
-                    {m.basis} — <span className={m.status === "Completed" ? "text-green-600" : "text-amber-600"}>{m.status}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <button
-            onClick={goToMaintenance}
-            className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-3 py-1.5 transition-colors shrink-0"
-          >
-            {linkedMaintenance?.length ? "View / add another →" : "+ Post-Rental Maintenance"}
-          </button>
-        </div>
-
-        {/* Penalties already noted against this booking — same "always
-            shown" treatment as Trip History / Linked Maintenance above.
-            "Note a Penalty" hands off to Penalties.jsx (see goToNotePenalty)
-            with the bookingID pre-filled and locked, so the penalty it
-            creates is guaranteed to link back to this exact booking. A
-            penalty is confirmed and the customer notified the instant
-            it's created there — no Draft step in between anymore. */}
-        <div className="flex justify-between items-center py-2.5 px-3 rounded-xl bg-gray-50 border border-gray-100">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-700">Penalties</p>
-            {linkedPenalties === null ? (
-              <p className="text-xs text-gray-400">Loading…</p>
-            ) : linkedPenalties.length === 0 ? (
-              <p className="text-xs text-gray-400">No penalty noted against this booking yet</p>
-            ) : (
-              <ul className="mt-1 space-y-0.5">
-                {linkedPenalties.map((p) => (
-                  <li key={p.penaltyID} className="text-xs text-gray-600">
-                    {fmt(p.amount)} — <span className={
-                      p.status === "Confirmed" ? "text-green-600"
-                      : "text-gray-400"
-                    }>{p.status}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <button
-            onClick={goToNotePenalty}
-            className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-3 py-1.5 transition-colors shrink-0"
-          >
-            {linkedPenalties?.length ? "View / note another →" : "+ Note a Penalty"}
-          </button>
-        </div>
-
-        {/* Every money movement for this booking (deposit, balance, penalties paid, refunds) — read-only. */}
-        <div className="mt-3 pt-3 border-t">
-          <PaymentEntriesPanel query={{ bookingID: booking.bookingID || booking.id }} title="Money movements for this booking" />
-        </div>
-
         {/* Actions — only the ones that apply to this booking / this role. */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0">
         {(onEdit || onRefund || onDelete) && (
           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">
             {onEdit && canEdit(booking.status) && (
@@ -1339,7 +1342,8 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
             )}
           </div>
         )}
-        <button onClick={onClose} className="w-full mt-2 py-2 border rounded-xl text-sm">Close</button>
+          <button onClick={onClose} className="w-full mt-2 py-2 border rounded-xl text-sm">Close</button>
+        </div>
       </div>
 
       <TripMapModal
