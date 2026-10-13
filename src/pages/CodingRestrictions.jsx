@@ -12,12 +12,6 @@ const DAY_NAMES = [
   "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
 ];
 
-// Today as a Manila calendar date / weekday (Mon=1 ... Sun=7), independent of
-// the browser's own timezone — the backend stores PHT calendar dates.
-const phtNow = () => new Date(Date.now() + 8 * 60 * 60 * 1000);
-
-const todayWeekdayPHT = () => phtNow().getUTCDay() || 7;
-
 const inputCls =
   "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300";
 
@@ -78,7 +72,7 @@ function Toast({ toast }) {
   if (!toast) return null;
   return (
     <div
-      className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
+      className={`fixed top-5 right-5 z-[70] px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
         toast.type === "success"
           ? "bg-green-50 text-green-700 border border-green-200"
           : "bg-red-50 text-red-700 border border-red-200"
@@ -92,7 +86,7 @@ function Toast({ toast }) {
 function Modal({ title, onClose, children, footer, width = "max-w-md", busy = false }) {
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
       onClick={() => !busy && onClose()}
     >
       <div
@@ -163,26 +157,18 @@ function ErrorBanner({ children, onRetry }) {
   );
 }
 
-function Pill({ children, tone = "teal" }) {
-  const tones = {
-    teal: "bg-teal-50 text-teal-700 border-teal-100",
-    blue: "bg-blue-50 text-blue-700 border-blue-100",
-    gray: "bg-gray-50 text-gray-600 border-gray-200",
-    green: "bg-green-50 text-green-700 border-green-100",
-    amber: "bg-amber-50 text-amber-700 border-amber-100",
-  };
-  return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${tones[tone]}`}>
-      {children}
-    </span>
-  );
-}
-
-const RowActions = ({ onEdit, onDelete }) => (
-  <div className="flex items-center gap-3 justify-end">
-    <button onClick={onEdit} className="text-xs font-semibold text-teal-600 hover:text-teal-700">Edit</button>
+// Full-size buttons (not tiny text links) — same look as Holidays and Addresses.
+const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
+const RowActions = ({ onView, onEdit, onDelete }) => (
+  <div className="flex items-center gap-2 justify-end">
+    {onView && (
+      <button onClick={onView} className={`${actionBtn} border-gray-200 text-gray-600 hover:bg-gray-50`}>View</button>
+    )}
+    {onEdit && (
+      <button onClick={onEdit} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
+    )}
     {onDelete && (
-      <button onClick={onDelete} className="text-xs font-semibold text-red-500 hover:text-red-600">Delete</button>
+      <button onClick={onDelete} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>Delete</button>
     )}
   </div>
 );
@@ -278,11 +264,11 @@ export default function CodingRestrictions() {
 
   const [city, setCity] = useState(null);       // opened city, or null = city list
   const [search, setSearch] = useState("");
-  const [dayFilter, setDayFilter] = useState("");
 
   const [ruleDialog, setRuleDialog] = useState(null); // { rule } — rule null = adding
   const [cityDialog, setCityDialog] = useState(false);
   const [toDelete, setToDelete] = useState(null);
+  const [cityToDelete, setCityToDelete] = useState(null); // { city, count }
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -317,11 +303,9 @@ export default function CodingRestrictions() {
   }, [data, search]);
 
   const cityRules = useMemo(
-    () => (city ? data.rules.filter((r) => r.city === city && (!dayFilter || r.dayName === dayFilter)) : []),
-    [data.rules, city, dayFilter]
+    () => (city ? data.rules.filter((r) => r.city === city) : []),
+    [data.rules, city]
   );
-  const totalForCity = city ? data.rules.filter((r) => r.city === city).length : 0;
-  const todayDow = todayWeekdayPHT();
 
   const confirmDelete = async () => {
     setBusy(true);
@@ -337,7 +321,21 @@ export default function CodingRestrictions() {
     }
   };
 
-  const openCity = (c) => { setCity(c); setDayFilter(""); };
+  const confirmDeleteCity = async () => {
+    setBusy(true);
+    try {
+      await api(`/api/coding-rules/city/${encodeURIComponent(cityToDelete.city)}`, { method: "DELETE" });
+      showToast(`Deleted ${cityToDelete.city}.`);
+      setCityToDelete(null);
+      await load();
+    } catch (e) {
+      showToast(`Failed to delete: ${e.message}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openCity = (c) => setCity(c);
 
   return (
     <div className="w-full px-4">
@@ -356,7 +354,7 @@ export default function CodingRestrictions() {
             {loading
               ? "Loading…"
               : city
-                ? `${cityRules.length}${dayFilter ? ` of ${totalForCity}` : ""} rule${totalForCity === 1 ? "" : "s"} · plates ending in the banned digits can't be driven in ${city} during the window.`
+                ? `${cityRules.length} rule${cityRules.length === 1 ? "" : "s"} · plates ending in the banned digits can't be driven in ${city} during the window.`
                 : `${data.cities.length} cit${data.cities.length === 1 ? "y" : "ies"} with coding schedules. Open a city to see its rules.`}
           </p>
         </div>
@@ -369,16 +367,7 @@ export default function CodingRestrictions() {
 
       {/* ── Filters ── */}
       <div className="flex flex-wrap gap-3 items-end mb-4">
-        {city ? (
-          <div className="w-48">
-            <Field label="Filter by day">
-              <select className={inputCls} value={dayFilter} onChange={(e) => setDayFilter(e.target.value)}>
-                <option value="">All days</option>
-                {DAY_NAMES.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </Field>
-          </div>
-        ) : (
+        {!city && (
           <input
             type="text"
             placeholder="Search city…"
@@ -403,7 +392,7 @@ export default function CodingRestrictions() {
                 <th className={thCls}>City</th>
                 <th className={thCls}>Rules</th>
                 <th className={thCls}>Coding days</th>
-                <th className="px-5 py-3" />
+                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -419,8 +408,11 @@ export default function CodingRestrictions() {
                     <td className="px-5 py-3 font-semibold text-gray-800">{r.city}</td>
                     <td className="px-5 py-3 text-gray-600">{r.count === 1 ? "1 rule" : `${r.count} rules`}</td>
                     <td className="px-5 py-3 text-gray-500">{r.days || "—"}</td>
-                    <td className="px-5 py-3 text-right">
-                      <button className="text-xs font-semibold text-teal-600 hover:text-teal-700">Open →</button>
+                    <td className="px-5 py-3">
+                      <RowActions
+                        onView={() => openCity(r.city)}
+                        onDelete={canDelete ? () => setCityToDelete(r) : null}
+                      />
                     </td>
                   </tr>
                 ))
@@ -446,13 +438,12 @@ export default function CodingRestrictions() {
               {loading ? (
                 <SkeletonRows rows={5} cols={4} />
               ) : cityRules.length === 0 ? (
-                <EmptyRow cols={4}>No rules{dayFilter ? ` on ${dayFilter}` : ""}.</EmptyRow>
+                <EmptyRow cols={4}>No rules yet.</EmptyRow>
               ) : (
                 cityRules.map((r) => (
                   <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50/50">
                     <td className="px-5 py-3 font-semibold text-gray-800">
                       {r.dayName || "—"}
-                      {r.dayOfWeek === todayDow && <span className="ml-2 align-middle"><Pill tone="green">Today</Pill></span>}
                     </td>
                     <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{r.startTime} – {r.endTime}</td>
                     <td className="px-5 py-3"><DigitChips digits={r.bannedDigits} /></td>
@@ -492,6 +483,20 @@ export default function CodingRestrictions() {
             openCity(name);
           }}
         />
+      )}
+
+      {cityToDelete && (
+        <ConfirmDialog
+          title="Delete city?"
+          danger
+          confirmLabel="Delete city"
+          busy={busy}
+          onConfirm={confirmDeleteCity}
+          onCancel={() => setCityToDelete(null)}
+        >
+          Remove <strong>{cityToDelete.city}</strong> and {cityToDelete.count === 1 ? "its 1 coding rule" : `all ${cityToDelete.count} of its coding rules`}?
+          Vehicles won't be checked for coding in this city anymore. This can't be undone.
+        </ConfirmDialog>
       )}
 
       {toDelete && (

@@ -209,9 +209,10 @@ const EmptyRow = ({ cols, children }) => (
 // Backend: routes/addresses. View/add/edit — Owner, Admin, Supervisor.
 // Delete — Owner and Admin only (mirrored here by `canDelete`).
 //
-// Every add/edit requires picking the parent (region for a province, …) so
-// the hierarchy never gets a dangling link. Deleting does NOT cascade — a
-// deleted region's provinces stay in place (the confirm dialog says so).
+// Add / Edit open one tree-editor modal (see TreeEditor): Edit shows the whole
+// branch from the Region down, saved in a single POST /api/addresses/batch.
+// The row-level Delete button still removes just that one entry and does NOT
+// cascade — its confirm dialog says so.
 
 const PAGE_SIZE = 25;
 const collator = new Intl.Collator("en");
@@ -286,11 +287,11 @@ export default function Addresses() {
 
   const [dialog, setDialog] = useState(null);   // { existing } — existing null = adding
   const [toDelete, setToDelete] = useState(null);
-  const [viewStack, setViewStack] = useState([]); // [{ levelKey, row }] — last one is shown; drilling in pushes
+  const [viewing, setViewing] = useState(null); // { levelKey, row }
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const json = await api("/api/addresses");
       setBundle(sortBundle({ ...EMPTY, ...(json.data || {}) }));
@@ -391,24 +392,16 @@ export default function Addresses() {
   };
 
   // ── parent choices for the add/edit dialog ──
-  const parentOptions = useMemo(() => {
-    if (!level.parent) return [];
-    if (levelKey === "provinces") return bundle.regions.map((r) => ({ value: r.regionID, label: r.regionName }));
-    if (levelKey === "municipalities") return bundle.provinces.map((p) => ({ value: p.provinceID, label: p.provinceName }));
-    return bundle.municipalities
+  const parentOptionsBy = useMemo(() => ({
+    provinces: bundle.regions.map((r) => ({ value: r.regionID, label: r.regionName })),
+    municipalities: bundle.provinces.map((p) => ({ value: p.provinceID, label: p.provinceName })),
+    barangays: bundle.municipalities
       .map((m) => ({ value: m.municipalityID, label: `${m.municipalityName} — ${lk.provinceName(m.provinceID)}` }))
-      .sort((a, b) => cmp(a.label, b.label));
-  }, [bundle, levelKey, level.parent, lk]);
+      .sort((a, b) => cmp(a.label, b.label)),
+  }), [bundle, lk]);
 
   // ── local patching after a successful save/delete ──
   const patchLevel = (key, fn) => setBundle((b) => sortBundle({ ...b, [key]: fn(b[key]) }));
-
-  const onSaved = (entry, isNew) => {
-    const id = entry[level.idField];
-    patchLevel(levelKey, (list) => (isNew ? [...list, entry] : list.map((x) => (x[level.idField] === id ? entry : x))));
-    setDialog(null);
-    showToast(`${level.singular} ${isNew ? "added" : "updated"}.`);
-  };
 
   const confirmDelete = async () => {
     const id = toDelete[level.idField];
@@ -540,7 +533,7 @@ export default function Addresses() {
                     ))}
                     <td className="px-5 py-3">
                       <RowActions
-                        onView={() => setViewStack([{ levelKey, row }])}
+                        onView={() => setViewing({ levelKey, row })}
                         onEdit={() => setDialog({ existing: row })}
                         onDelete={canDelete ? () => setToDelete(row) : null}
                       />
@@ -566,26 +559,20 @@ export default function Addresses() {
         </div>
       )}
 
-      {viewStack.length > 0 && (
-        <ViewDialog
-          current={viewStack[viewStack.length - 1]}
-          canGoBack={viewStack.length > 1}
-          bundle={bundle}
-          lk={lk}
-          onOpen={(key, row) => setViewStack((s) => [...s, { levelKey: key, row }])}
-          onBack={() => setViewStack((s) => s.slice(0, -1))}
-          onClose={() => setViewStack([])}
-        />
+      {viewing && (
+        <ViewDialog levelKey={viewing.levelKey} row={viewing.row} bundle={bundle} onClose={() => setViewing(null)} />
       )}
 
       {dialog && (
-        <EntryDialog
-          level={level}
+        <TreeEditor
+          levelKey={levelKey}
           existing={dialog.existing}
-          parentOptions={parentOptions}
+          bundle={bundle}
+          parentOptionsBy={parentOptionsBy}
+          canDelete={canDelete}
           api={api}
           onClose={() => setDialog(null)}
-          onSaved={onSaved}
+          onSaved={(msg) => { setDialog(null); showToast(msg); load({ silent: true }); }}
         />
       )}
 
@@ -605,214 +592,467 @@ export default function Addresses() {
   );
 }
 
-// ─── View one entry: where it sits + everything under it ────────────────────
-const SINGULAR = { Provinces: "province", Municipalities: "municipality", Barangays: "barangay" };
+// ─── View: the same tree as the editor, read-only ────────────────────────────
 const CHILD_OF = { regions: "provinces", provinces: "municipalities", municipalities: "barangays", barangays: null };
 
-function ViewDialog({ current, canGoBack, bundle, lk, onOpen, onBack, onClose }) {
-  const { levelKey, row } = current;
+function ViewDialog({ levelKey, row, bundle, onClose }) {
+  const [resolved] = useState(() => resolveRoot(bundle, levelKey, row));
+  const [{ nodes, rootKey }] = useState(() => buildDraft(bundle, resolved.rootLevelKey, resolved.rootRow));
+  const [open, setOpen] = useState(() => new Set(resolved.pathKeys));
+  const kids = useMemo(() => {
+    const m = {};
+    Object.values(nodes).forEach((n) => { if (n.parentKey) (m[n.parentKey] = m[n.parentKey] || []).push(n); });
+    Object.keys(m).forEach((k) => { m[k] = m[k].sort((a, b) => a.order - b.order).map((n) => n.key); });
+    return m;
+  }, [nodes]);
+  const toggleOpen = (key) => setOpen((s) => { const t = new Set(s); t.has(key) ? t.delete(key) : t.add(key); return t; });
+  const ctx = { nodes, kids, open, problems: {}, canDelete: false, readOnly: true, focusKey: resolved.focusKey, toggleOpen, countBelow: () => 0 };
   const level = LEVEL[levelKey];
-  const childKey = CHILD_OF[levelKey];
-  const child = childKey ? LEVEL[childKey] : null;
-  const [q, setQ] = useState("");
-
-  // Where this entry sits (Region › Province › Municipality), top-down.
-  const trail = useMemo(() => {
-    const t = [];
-    if (levelKey === "provinces") t.push({ label: "Region", value: lk.regionName[row.regionID] });
-    if (levelKey === "municipalities") {
-      t.push({ label: "Region", value: lk.regionName[lk.regionOfProvince(row.provinceID)] });
-      t.push({ label: "Province", value: lk.provinceName(row.provinceID) });
-    }
-    if (levelKey === "barangays") {
-      const provID = lk.provinceOfMunicipality(row.municipalityID);
-      t.push({ label: "Region", value: lk.regionName[lk.regionOfProvince(provID)] });
-      t.push({ label: "Province", value: lk.provinceName(provID) });
-      t.push({ label: "Municipality", value: lk.municipalityName(row.municipalityID) });
-    }
-    return t;
-  }, [levelKey, row, lk]);
-
-  // Everything underneath: direct children for the list, plus totals for the chips.
-  const { children, totals } = useMemo(() => {
-    const byName = (list, f) => [...list].sort((a, b) => cmp(a[f], b[f]));
-    if (levelKey === "regions") {
-      const provs = bundle.provinces.filter((p) => p.regionID === row.regionID);
-      const provSet = new Set(provs.map((p) => p.provinceID));
-      const munis = bundle.municipalities.filter((m) => provSet.has(m.provinceID));
-      const muniSet = new Set(munis.map((m) => m.municipalityID));
-      const brgys = bundle.barangays.filter((b) => muniSet.has(b.municipalityID));
-      return { children: byName(provs, "provinceName"), totals: [["Provinces", provs.length], ["Municipalities", munis.length], ["Barangays", brgys.length]] };
-    }
-    if (levelKey === "provinces") {
-      const munis = bundle.municipalities.filter((m) => m.provinceID === row.provinceID);
-      const muniSet = new Set(munis.map((m) => m.municipalityID));
-      const brgys = bundle.barangays.filter((b) => muniSet.has(b.municipalityID));
-      return { children: byName(munis, "municipalityName"), totals: [["Municipalities", munis.length], ["Barangays", brgys.length]] };
-    }
-    if (levelKey === "municipalities") {
-      const brgys = bundle.barangays.filter((b) => b.municipalityID === row.municipalityID);
-      return { children: byName(brgys, "barangayName"), totals: [["Barangays", brgys.length]] };
-    }
-    return { children: [], totals: [] };
-  }, [levelKey, row, bundle]);
-
-  const countText = (n = 0, one, many) => `${n} ${n === 1 ? one : many}`;
-  const detail = (c) => {
-    if (childKey === "provinces") return countText(lk.municipalitiesPerProvince[c.provinceID], "municipality", "municipalities");
-    if (childKey === "municipalities") return countText(lk.barangaysPerMunicipality[c.municipalityID], "barangay", "barangays");
-    return "";
-  };
-
-  const shown = q.trim() ? children.filter((c) => (c[child.nameField] || "").toLowerCase().includes(q.trim().toLowerCase())) : children;
 
   return (
     <Modal
       title={`${level.singular}: ${row[level.nameField] || "—"}`}
       onClose={onClose}
-      width="max-w-lg"
-      footer={
-        <>
-          {canGoBack && <button onClick={onBack} className={btnGhost}>← Back</button>}
-          <button onClick={onClose} className={btnPrimary}>Close</button>
-        </>
-      }
+      width="max-w-3xl"
+      footer={<button onClick={onClose} className={btnPrimary}>Close</button>}
     >
-      <div className="space-y-4 pb-2">
-        {trail.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {trail.map((t) => (
-              <span key={t.label} className="text-xs text-gray-500">
-                <span className="text-gray-400">{t.label}:</span> <span className="font-semibold text-gray-700">{t.value || "—"}</span>
-              </span>
-            ))}
-          </div>
-        )}
-
-        {totals.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {totals.map(([label, n]) => <Pill key={label} tone="teal">{n.toLocaleString()} {n === 1 ? SINGULAR[label] : label.toLowerCase()}</Pill>)}
-          </div>
-        )}
-
-        {child ? (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-                {child.label} under {row[level.nameField]}
-              </p>
-              {children.length > 8 && (
-                <input
-                  type="text" value={q} onChange={(e) => setQ(e.target.value)}
-                  placeholder={`Search ${child.label.toLowerCase()}…`}
-                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs w-44 focus:outline-none focus:ring-2 focus:ring-teal-100"
-                />
-              )}
-            </div>
-            {children.length === 0 ? (
-              <p className="text-sm text-gray-400 border border-dashed border-gray-200 rounded-xl px-4 py-6 text-center">
-                No {child.label.toLowerCase()} under this {level.singular.toLowerCase()} yet.
-              </p>
-            ) : shown.length === 0 ? (
-              <p className="text-sm text-gray-400 px-1">Nothing matches “{q}”.</p>
-            ) : (
-              <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-xl divide-y divide-gray-50">
-                {shown.map((c) => {
-                  const id = c[child.idField];
-                  // Barangays are the last level — nothing further to open.
-                  const openable = childKey !== "barangays";
-                  const Tag = openable ? "button" : "div";
-                  return (
-                    <Tag
-                      key={id}
-                      {...(openable ? { onClick: () => onOpen(childKey, c) } : {})}
-                      className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left text-sm ${openable ? "hover:bg-teal-50/50 cursor-pointer" : ""}`}
-                    >
-                      <span className="font-medium text-gray-800">{c[child.nameField] || "—"}</span>
-                      <span className="flex items-center gap-2 text-xs text-gray-400 shrink-0">
-                        {detail(c)}
-                        {openable && <span className="text-gray-300">›</span>}
-                      </span>
-                    </Tag>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-400">Barangays are the last level — there's nothing under this one.</p>
-        )}
+      <div className="space-y-3 pb-2">
+        <p className="text-xs text-gray-400 leading-relaxed">
+          Region → Province → Municipality → Barangay. Open any row with ▸ to see what's under it.
+        </p>
+        <div className="border border-gray-100 rounded-xl p-2 bg-gray-50/40">
+          <TreeNode nodeKey={rootKey} isRoot ctx={ctx} />
+        </div>
       </div>
     </Modal>
   );
 }
 
-// ─── Add / edit one entry at any level ───────────────────────────────────────
-function EntryDialog({ level, existing, parentOptions, api, onClose, onSaved }) {
+// ─── Add / edit an entry AND everything under it, in one modal ───────────────
+//
+// A collapsible tree: Region → Provinces → Municipalities → Barangays. Every
+// name can be renamed in place, and every open row has an "add" box for its
+// children, so creating a new region means building its whole branch right
+// here. Nothing is sent until "Save changes": all edits are collected into one
+// list of operations and posted to /api/addresses/batch, so the whole branch
+// saves together or not at all.
+//
+// Edit always opens the whole branch from its Region down, whichever row you
+// clicked: the clicked row is opened and highlighted, and every level can be
+// dropped down and edited. (If a row's parent no longer exists, the tree starts
+// at that row and a "Belongs to" dropdown lets you re-attach it.) Add opens a
+// brand-new entry at the current level, with the same tree for what's under it.
+//
+// Delete: Owner/Admin only. Deleting a row here also removes everything
+// underneath it (the row says how many). Unsaved new rows can be removed by
+// anyone.
+
+const NEW_ORDER_BASE = 1e6; // new rows sort after the existing ones
+
+// Flat draft: key -> node. Existing rows are keyed "e:<id>", new ones "n:<n>".
+function buildDraft(bundle, levelKey, existing) {
+  const nodes = {};
+  if (!existing) {
+    nodes["n:0"] = { key: "n:0", levelKey, id: null, name: "", orig: "", parentKey: null, order: 0, isNew: true, deleted: false };
+    return { nodes, rootKey: "n:0" };
+  }
+  const group = (list, field) => {
+    const m = {};
+    list.forEach((x) => { (m[x[field]] = m[x[field]] || []).push(x); });
+    return m;
+  };
+  const childrenOf = {
+    regions: group(bundle.provinces, "regionID"),
+    provinces: group(bundle.municipalities, "provinceID"),
+    municipalities: group(bundle.barangays, "municipalityID"),
+  };
+  const add = (lk, row, parentKey, order) => {
+    const L = LEVEL[lk];
+    const id = row[L.idField];
+    const key = `e:${id}`;
+    const name = row[L.nameField] || "";
+    nodes[key] = { key, levelKey: lk, id, name, orig: name, parentKey, order, isNew: false, deleted: false };
+    const ck = CHILD_OF[lk];
+    if (ck) (childrenOf[lk][id] || []).forEach((c, i) => add(ck, c, key, i));
+    return key;
+  };
+  return { nodes, rootKey: add(levelKey, existing, null, 0) };
+}
+
+// Walk up from the clicked row to the top-most ancestor that still exists.
+function resolveRoot(bundle, levelKey, row) {
+  let cur = { levelKey, row };
+  const chain = [cur];
+  while (LEVEL[cur.levelKey].parent) {
+    const pl = LEVEL[cur.levelKey].parent;
+    const pRow = bundle[pl.key].find((x) => x[LEVEL[pl.key].idField] === cur.row[pl.field]);
+    if (!pRow) break; // orphan — this row becomes the top of the tree
+    cur = { levelKey: pl.key, row: pRow };
+    chain.unshift(cur);
+  }
+  const keyOf = (c) => `e:${c.row[LEVEL[c.levelKey].idField]}`;
+  return { rootLevelKey: cur.levelKey, rootRow: cur.row, focusKey: keyOf(chain[chain.length - 1]), pathKeys: chain.map(keyOf) };
+}
+
+// Name field that edits in place; commits on Enter / blur, Esc reverts.
+function NameInput({ value, onCommit, invalid }) {
+  const [v, setV] = useState(value);
+  const cancelled = useRef(false);
+  useEffect(() => setV(value), [value]);
+  const commit = () => {
+    if (cancelled.current) { cancelled.current = false; return; }
+    if (v !== value) onCommit(v);
+  };
+  return (
+    <input
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") { cancelled.current = true; setV(value); e.currentTarget.blur(); }
+      }}
+      className={`w-full rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-800 border bg-transparent hover:bg-white focus:bg-white focus:outline-none focus:ring-2 ${
+        invalid ? "border-red-300 focus:ring-red-100" : "border-transparent hover:border-gray-200 focus:border-teal-300 focus:ring-teal-100"
+      }`}
+    />
+  );
+}
+
+// "Add province…" box. Enter adds one; pasting several lines adds them all.
+function AddRow({ noun, onAdd }) {
+  const [v, setV] = useState("");
+  const commit = (text) => {
+    const names = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (names.length) onAdd(names);
+    setV("");
+  };
+  return (
+    <div className="flex items-center gap-2 py-1.5">
+      <span className="w-6" />
+      <input
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(v); } }}
+        onPaste={(e) => {
+          const text = e.clipboardData.getData("text");
+          if (/\r?\n/.test(text.trim())) { e.preventDefault(); commit(text); }
+        }}
+        placeholder={`Add ${noun}… (Enter, or paste a list)`}
+        className="flex-1 min-w-0 border border-dashed border-gray-200 rounded-lg px-2.5 py-1.5 text-sm placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300"
+      />
+      <button onClick={() => commit(v)} disabled={!v.trim()} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-40 transition">
+        Add
+      </button>
+    </div>
+  );
+}
+
+function TreeNode({ nodeKey, isRoot = false, ctx }) {
+  const { nodes, kids, open, problems, canDelete } = ctx;
+  const n = nodes[nodeKey];
+  const rowRef = useRef(null);
+  const isFocus = ctx.focusKey === nodeKey;
+  useEffect(() => {
+    if (isFocus && !isRoot) rowRef.current?.scrollIntoView?.({ block: "center" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const L = LEVEL[n.levelKey];
+  const childKey = CHILD_OF[n.levelKey];
+  const childL = childKey ? LEVEL[childKey] : null;
+  const kidKeys = kids[nodeKey] || [];
+  const isOpen = open.has(nodeKey);
+
+  const chip = (
+    <span className="shrink-0 w-24 text-[10px] font-semibold uppercase tracking-wide text-gray-400">{L.singular}</span>
+  );
+
+  if (n.deleted) {
+    const below = ctx.countBelow(nodeKey);
+    return (
+      <div className="flex items-center gap-2 py-1.5 px-2 my-0.5 rounded-lg bg-red-50/70">
+        <span className="w-6" />
+        {chip}
+        <span className="flex-1 min-w-0 truncate text-sm text-gray-400 line-through">{n.name || "—"}</span>
+        <span className="text-xs text-red-500 whitespace-nowrap">
+          {n.isNew ? "Won't be added" : below > 0 ? `Removes this and ${below.toLocaleString()} below` : "Will be removed"}
+        </span>
+        <button onClick={() => ctx.toggleDelete(nodeKey)} className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
+          Undo
+        </button>
+      </div>
+    );
+  }
+
+  const live = kidKeys.filter((k) => !nodes[k].deleted).length;
+
+  return (
+    <div>
+      <div ref={rowRef} className={`flex items-center gap-2 py-0.5 rounded-lg ${isFocus ? "bg-teal-50/70 ring-1 ring-teal-100" : ""}`}>
+        {childKey ? (
+          <button
+            onClick={() => ctx.toggleOpen(nodeKey)}
+            className="w-6 h-6 shrink-0 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600 text-sm leading-none"
+            aria-label={isOpen ? "Collapse" : "Expand"}
+          >
+            {isOpen ? "▾" : "▸"}
+          </button>
+        ) : (
+          <span className="w-6 shrink-0" />
+        )}
+        {chip}
+        <div className="flex-1 min-w-0">
+          {ctx.readOnly ? (
+            <span className="block truncate px-2.5 py-1.5 text-sm font-medium text-gray-800">{n.name || "—"}</span>
+          ) : (
+            <NameInput value={n.name} invalid={!!problems[nodeKey]} onCommit={(v) => ctx.rename(nodeKey, v)} />
+          )}
+        </div>
+        {n.isNew && (
+          <span className="shrink-0 text-[10px] font-semibold text-teal-700 bg-teal-50 border border-teal-100 rounded-full px-2 py-0.5">NEW</span>
+        )}
+        {childL && (
+          <span className="shrink-0 text-xs text-gray-400 whitespace-nowrap w-28 text-right">
+            {live} {live === 1 ? childL.singular.toLowerCase() : childL.label.toLowerCase()}
+          </span>
+        )}
+        {ctx.readOnly ? null : !isRoot && (canDelete || n.isNew) ? (
+          <button
+            onClick={() => ctx.toggleDelete(nodeKey)}
+            className="shrink-0 px-2.5 py-1 text-xs font-semibold rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition"
+          >
+            {n.isNew ? "Discard" : "Delete"}
+          </button>
+        ) : (
+          !isRoot && <span className="w-[62px] shrink-0" />
+        )}
+      </div>
+      {problems[nodeKey] && <p className="text-xs text-red-500 ml-8 mb-1">{problems[nodeKey]}</p>}
+      {childKey && isOpen && (
+        <div className="ml-3 pl-3 border-l border-gray-100">
+          {kidKeys.map((k) => <TreeNode key={k} nodeKey={k} ctx={ctx} />)}
+          {ctx.readOnly && kidKeys.length === 0 && (
+            <p className="text-xs text-gray-400 py-1.5 pl-8">No {childL.label.toLowerCase()} yet.</p>
+          )}
+          {!ctx.readOnly && <AddRow noun={childL.singular.toLowerCase()} onAdd={(names) => ctx.addChildren(nodeKey, names)} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TreeEditor({ levelKey, existing, bundle, parentOptionsBy, canDelete, api, onClose, onSaved }) {
   const isEditing = !!existing;
-  const parent = level.parent;
-  const [name, setName] = useState(existing?.[level.nameField] || "");
-  const [parentID, setParentID] = useState(existing && parent ? existing[parent.field] : "");
+  const [resolved] = useState(() => (existing ? resolveRoot(bundle, levelKey, existing) : null));
+  const rootLevel = LEVEL[resolved ? resolved.rootLevelKey : levelKey];
+  const rootRow = resolved ? resolved.rootRow : null;
+  const parent = rootLevel.parent;
+  const parentOptions = parentOptionsBy[rootLevel.key] || [];
+
+  const seq = useRef(1);
+  const [{ nodes: initialNodes, rootKey }] = useState(() => buildDraft(bundle, rootLevel.key, rootRow));
+  const [nodes, setNodes] = useState(initialNodes);
+  const [open, setOpen] = useState(() => new Set(resolved ? resolved.pathKeys : [rootKey]));
+  const origParentID = rootRow && parent ? rootRow[parent.field] || "" : "";
+  const [parentID, setParentID] = useState(origParentID);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
-  // Keep the current parent selectable even if it no longer exists.
-  const options = [
-    ...parentOptions,
-    ...(parentID && !parentOptions.some((o) => o.value === parentID)
-      ? [{ value: parentID, label: `(unknown ${parent.singular.toLowerCase()})` }]
-      : []),
-  ];
+  // parent -> ordered children
+  const kids = useMemo(() => {
+    const m = {};
+    Object.values(nodes).forEach((n) => { if (n.parentKey) (m[n.parentKey] = m[n.parentKey] || []).push(n); });
+    Object.keys(m).forEach((k) => { m[k] = m[k].sort((a, b) => a.order - b.order).map((n) => n.key); });
+    return m;
+  }, [nodes]);
+
+  // ── edit actions ──
+  const rename = (key, name) => setNodes((s) => ({ ...s, [key]: { ...s[key], name } }));
+  const toggleDelete = (key) => setNodes((s) => ({ ...s, [key]: { ...s[key], deleted: !s[key].deleted } }));
+  const toggleOpen = (key) => setOpen((s) => { const t = new Set(s); t.has(key) ? t.delete(key) : t.add(key); return t; });
+  const addChildren = (parentKey, names) =>
+    setNodes((s) => {
+      const next = { ...s };
+      const childLevel = CHILD_OF[s[parentKey].levelKey];
+      names.forEach((name) => {
+        const key = `n:${seq.current++}`;
+        next[key] = { key, levelKey: childLevel, id: null, name, orig: "", parentKey, order: NEW_ORDER_BASE + seq.current, isNew: true, deleted: false };
+      });
+      return next;
+    });
+  const countBelow = (key) => {
+    let c = 0;
+    const walk = (k) => (kids[k] || []).forEach((ck) => { if (!nodes[ck].isNew) c++; walk(ck); });
+    walk(key);
+    return c;
+  };
+
+  const root = nodes[rootKey];
+
+  // ── what would be saved ──
+  const { ops, problems, removed, renamed, moved } = useMemo(() => {
+    const ops = [];
+    const problems = {};
+    let removed = 0, renamed = 0, moved = 0;
+    const rLevel = LEVEL[root.levelKey];
+
+    // root
+    const rootName = root.name.trim();
+    if (root.isNew) {
+      ops.push({ op: "create", level: rLevel.key, tempID: root.key, name: rootName, ...(rLevel.parent ? { parentID } : {}) });
+    } else if (rootName !== root.orig.trim() || (rLevel.parent && parentID !== origParentID)) {
+      if (rootName !== root.orig.trim()) renamed++;
+      if (rLevel.parent && parentID !== origParentID) moved++;
+      ops.push({
+        op: "update", level: rLevel.key, id: root.id, name: rootName,
+        ...(rLevel.parent && parentID !== origParentID ? { parentID } : {}),
+      });
+    }
+    if (!rootName && !(root.isNew)) problems[root.key] = "Name is required.";
+
+    const subtreeExisting = (key) => {
+      let c = 0;
+      (kids[key] || []).forEach((ck) => { if (!nodes[ck].isNew) c++; c += subtreeExisting(ck); });
+      return c;
+    };
+
+    const walk = (key) => {
+      const live = [];
+      (kids[key] || []).forEach((ck) => {
+        const c = nodes[ck];
+        if (c.deleted) {
+          if (!c.isNew) { ops.push({ op: "delete", level: c.levelKey, id: c.id }); removed += 1 + subtreeExisting(ck); }
+          return;
+        }
+        live.push(c);
+        const name = c.name.trim();
+        const p = nodes[key];
+        if (c.isNew) {
+          ops.push({ op: "create", level: c.levelKey, tempID: c.key, name, parentID: p.isNew ? p.key : p.id });
+        } else if (name !== c.orig.trim()) {
+          ops.push({ op: "update", level: c.levelKey, id: c.id, name });
+          renamed++;
+        }
+        if (!name) problems[c.key] = "Name is required.";
+        walk(ck);
+      });
+      // duplicate siblings — only complain about rows this save would touch
+      const seen = {};
+      live.forEach((c) => { const k = c.name.trim().toLowerCase(); if (k) (seen[k] = seen[k] || []).push(c); });
+      Object.values(seen).forEach((group) => {
+        if (group.length > 1 && group.some((c) => c.isNew || c.name.trim() !== c.orig.trim())) {
+          group.forEach((c) => { problems[c.key] = `"${c.name.trim()}" is already listed here.`; });
+        }
+      });
+    };
+    walk(root.key);
+    return { ops, problems, removed, renamed, moved };
+  }, [nodes, kids, root, parentID, origParentID]);
+
+  const created = ops.filter((o) => o.op === "create").length;
+  const problemCount = Object.keys(problems).length;
+  const rootNameMissing = root.isNew && !root.name.trim();
+  const parentMissing = !!parent && !parentID;
+
+  const dirty = isEditing ? ops.length > 0 : root.name.trim() !== "" || Object.keys(nodes).length > 1;
+  const canSave = !saving && ops.length > 0 && problemCount === 0 && !rootNameMissing && !parentMissing;
+
+  const summary = [
+    created && `${created} added`,
+    renamed && `${renamed} renamed`,
+    moved && `${moved} moved`,
+    removed && `${removed.toLocaleString()} deleted`,
+  ].filter(Boolean).join(" · ");
+
+  const requestClose = () => (dirty ? setConfirmDiscard(true) : onClose());
 
   const save = async () => {
-    if (!name.trim() || (parent && !parentID)) {
-      return setError(parent
-        ? `${level.singular} name and ${parent.singular.toLowerCase()} are required.`
-        : `${level.singular} name is required.`);
-    }
     setSaving(true);
     setError("");
     try {
-      const body = { name: name.trim(), ...(parent ? { parentID } : {}) };
-      const json = await api(
-        isEditing ? `/api/addresses/${level.key}/${existing[level.idField]}` : `/api/addresses/${level.key}`,
-        { method: isEditing ? "PUT" : "POST", body }
-      );
-      onSaved(json.data, !isEditing);
+      await api("/api/addresses/batch", {
+        method: "POST",
+        body: { ops, context: `${rootLevel.singular} ${root.name.trim() || root.orig}` },
+      });
+      onSaved(`${rootLevel.singular} saved: ${summary}.`);
     } catch (e) {
-      setError(`Failed to ${isEditing ? "save" : "add"} ${level.singular.toLowerCase()}: ${e.message}`);
+      setError(`Failed to save: ${e.message}`);
       setSaving(false);
     }
   };
 
+  // Keep the current parent selectable even if it no longer exists.
+  const options = parent
+    ? [
+        ...parentOptions,
+        ...(parentID && !parentOptions.some((o) => o.value === parentID)
+          ? [{ value: parentID, label: `(unknown ${parent.singular.toLowerCase()})` }]
+          : []),
+      ]
+    : [];
+
+  const ctx = {
+    nodes, kids, open, problems, canDelete, focusKey: resolved?.focusKey,
+    rename, toggleDelete, toggleOpen, addChildren, countBelow,
+  };
+
   return (
-    <Modal
-      title={`${isEditing ? "Edit" : "Add"} ${level.singular.toLowerCase()}`}
-      onClose={onClose}
-      busy={saving}
-      footer={
-        <>
-          <button onClick={onClose} disabled={saving} className={btnGhost}>Cancel</button>
-          <button onClick={save} disabled={saving} className={btnPrimary}>
-            {saving ? "Saving…" : isEditing ? "Save changes" : `Add ${level.singular.toLowerCase()}`}
-          </button>
-        </>
-      }
-    >
-      <div className="space-y-4 pb-2">
-        <Field label={`${level.singular} name`}>
-          <input autoFocus className={inputCls} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
-        </Field>
-        {parent && (
-          <Field label={parent.singular}>
-            <select className={inputCls} value={parentID} onChange={(e) => setParentID(e.target.value)}>
-              <option value="" disabled>Select {parent.singular.toLowerCase()}…</option>
-              {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </Field>
-        )}
-        {error && <p className="text-sm text-red-500">{error}</p>}
-      </div>
-    </Modal>
+    <>
+      <Modal
+        title={isEditing ? `Edit ${LEVEL[levelKey].singular.toLowerCase()}: ${existing[LEVEL[levelKey].nameField] || "—"}` : `Add ${rootLevel.singular.toLowerCase()}`}
+        onClose={requestClose}
+        busy={saving}
+        width="max-w-3xl"
+        footer={
+          <>
+            <span className={`mr-auto self-center text-xs ${problemCount ? "text-red-500" : "text-gray-400"}`}>
+              {problemCount
+                ? `Fix ${problemCount} ${problemCount === 1 ? "name" : "names"} to save`
+                : summary || "No changes yet"}
+            </span>
+            <button onClick={requestClose} disabled={saving} className={btnGhost}>Cancel</button>
+            <button onClick={save} disabled={!canSave} className={btnPrimary}>
+              {saving ? "Saving…" : isEditing ? "Save changes" : `Add ${rootLevel.singular.toLowerCase()}`}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4 pb-2">
+          <p className="text-xs text-gray-400 leading-relaxed">
+            Region → Province → Municipality → Barangay. Open any row with ▸ to see what's under it. Click a name to
+            rename it, and use the box at the bottom of an open row to add more (paste a list, one per line, to add many).
+            Nothing is saved until you press the button below.
+          </p>
+
+          {parent && (
+            <Field label={`Belongs to ${parent.singular.toLowerCase()}`}>
+              <select className={inputCls} value={parentID} onChange={(e) => setParentID(e.target.value)}>
+                <option value="" disabled>Select {parent.singular.toLowerCase()}…</option>
+                {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </Field>
+          )}
+
+          <div className="border border-gray-100 rounded-xl p-2 bg-gray-50/40">
+            <TreeNode nodeKey={rootKey} isRoot ctx={ctx} />
+          </div>
+
+          {error && <p className="text-sm text-red-500">{error}</p>}
+        </div>
+      </Modal>
+
+      {confirmDiscard && (
+        <ConfirmDialog
+          title="Discard changes?"
+          danger
+          confirmLabel="Discard"
+          onConfirm={onClose}
+          onCancel={() => setConfirmDiscard(false)}
+        >
+          You have unsaved changes{summary ? ` (${summary})` : ""}. Close without saving?
+        </ConfirmDialog>
+      )}
+    </>
   );
 }
