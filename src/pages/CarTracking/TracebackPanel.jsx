@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import GeofenceBanner from "../../components/GeofenceBanner";
-import { isGeofenceBreachedAt, isCodingRestrictedAt } from "../../utils/geofenceAlerts";
+import { isGeofenceBreachedAt, isCodingRestrictedAt, activeAlertAt, formatCodingRule } from "../../utils/geofenceAlerts";
 import LogsPanel from "./LogsPanel";
 import TracebackBookingInfoPanel from "./TracebackBookingInfoPanel";
 import TripSummaryPanel from "./TripSummaryPanel";
@@ -414,7 +414,9 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
         entries.push({ id: `breach-${c.id}`, tone: "breach", text: `🚨 ${c.name} is outside its zone` });
       }
       if (isCodingRestrictedAt(za.codingAlerts, currentTimeMs)) {
-        entries.push({ id: `restricted-${c.id}`, tone: "restricted", text: `🚫 ${c.name} is coding-restricted` });
+        // Show the rule that was saved when it fired (when this trip has one).
+        const ruleText = formatCodingRule(activeAlertAt(za.codingAlerts, currentTimeMs, "restricted")?.rule);
+        entries.push({ id: `restricted-${c.id}`, tone: "restricted", text: `🚫 ${c.name} is coding-restricted${ruleText ? ` — ${ruleText}` : ""}` });
       }
       return entries;
     });
@@ -803,6 +805,9 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
                 hasActiveSession: !!zonesAlerts[focusedCar]?.available,
                 geofenceAlerts: zonesAlerts[focusedCar]?.geofenceAlerts || [],
                 codingAlerts:   zonesAlerts[focusedCar]?.codingAlerts   || [],
+                droppedOffAt:   zonesAlerts[focusedCar]?.droppedOffAt   || null,
+                completedAt:    zonesAlerts[focusedCar]?.completedAt    || null,
+                holidays:       zonesAlerts[focusedCar]?.holidays       || [],
               }}
               loading={loading}
               onClose={() => setShowLogs(false)}

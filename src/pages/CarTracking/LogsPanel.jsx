@@ -1,3 +1,5 @@
+import { formatCodingRule } from "../../utils/geofenceAlerts";
+
 function fmtTime(at) {
   if (!at) return "—";
   const d = new Date(at);
@@ -10,6 +12,8 @@ const ENTRY_STYLES = {
   "geofence-cleared":    { icon: "✅", label: "Back inside geofence", color: "text-teal-600 bg-teal-50" },
   "coding-restricted":   { icon: "🚫", label: "Coding restriction",   color: "text-orange-600 bg-orange-50" },
   "coding-cleared":      { icon: "🟢", label: "Coding restriction lifted", color: "text-gray-500 bg-gray-50" },
+  "trip-dropped-off":    { icon: "📍", label: "Marked dropped off",   color: "text-amber-700 bg-amber-50" },
+  "trip-completed":      { icon: "🏁", label: "Booking completed",    color: "text-green-700 bg-green-50" },
 };
 
 /**
@@ -30,10 +34,22 @@ export default function LogsPanel({ sessionInfo, loading, onClose }) {
   const codingEntries = (sessionInfo?.codingAlerts || []).map(a => ({
     ...a,
     kind: `coding-${a.type}`,
-    detail: a.type === "restricted" ? (a.reason || "Plate under coding restriction") : "Restriction window ended",
+    // Newer alerts carry the rule that fired (saved at the time, so it still
+    // reads right after the rules are edited); older ones only have a reason.
+    detail: a.type === "restricted"
+      ? (formatCodingRule(a.rule)
+          ? [formatCodingRule(a.rule), a.city].filter(Boolean).join(" · ")
+          : (a.reason || "Plate under coding restriction"))
+      : "Restriction window ended",
   }));
+  // Trip milestones saved with the trip (history / downloaded review files).
+  const tripEntries = [
+    sessionInfo?.droppedOffAt && { kind: "trip-dropped-off", at: sessionInfo.droppedOffAt, detail: "Vehicle physically dropped off." },
+    sessionInfo?.completedAt  && { kind: "trip-completed",   at: sessionInfo.completedAt,  detail: "Booking marked completed." },
+  ].filter(Boolean);
+  const holidays = Array.isArray(sessionInfo?.holidays) ? sessionInfo.holidays : [];
 
-  const entries = [...geofenceEntries, ...codingEntries].sort((a, b) => new Date(b.at) - new Date(a.at));
+  const entries = [...geofenceEntries, ...codingEntries, ...tripEntries].sort((a, b) => new Date(b.at) - new Date(a.at));
 
   return (
     <div className="absolute top-4 right-4 bottom-4 w-80 z-[1001] bg-white rounded-2xl border border-gray-100 shadow-2xl flex flex-col overflow-hidden">
@@ -73,6 +89,16 @@ export default function LogsPanel({ sessionInfo, loading, onClose }) {
               </div>
             );
           })
+        )}
+
+        {!loading && hasActiveSession && holidays.length > 0 && (
+          <div className="rounded-xl p-3 bg-blue-50 text-blue-700">
+            <p className="text-xs font-semibold">🎌 Holidays during this trip</p>
+            <p className="text-[11px] mt-1 opacity-80">Coding is suspended on holidays.</p>
+            {holidays.map((h, i) => (
+              <p key={i} className="text-[11px] mt-1 font-mono opacity-70">{h.date} · {h.name || "Holiday"}</p>
+            ))}
+          </div>
         )}
       </div>
     </div>

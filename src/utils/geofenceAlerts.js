@@ -47,3 +47,18 @@ export function activeAlertAt(alerts, atMs, activeType) {
 }
 /** Convenience for "right now" — the currently-active coding-restriction alert, if any, so its `city` can be read. */
 export const activeCodingAlertNow = (codingAlerts) => activeAlertAt(codingAlerts, Date.now(), "restricted");
+
+/**
+ * One-line, human text for the coding rule saved on a "restricted" alert
+ * ({ id, city, day, start, end, digits }) — e.g.
+ *   "Monday 7:00 AM–10:00 AM · plates ending 1, 2"
+ * Returns null for older alerts that never saved a rule, so callers can fall
+ * back to the alert's reason text.
+ */
+export function formatCodingRule(rule) {
+  if (!rule || typeof rule !== "object") return null;
+  const when = [rule.day, rule.start && rule.end ? `${rule.start}–${rule.end}` : null].filter(Boolean).join(" ");
+  const digits = Array.isArray(rule.digits) && rule.digits.length ? `plates ending ${rule.digits.join(", ")}` : null;
+  const text = [when, digits].filter(Boolean).join(" · ");
+  return text || null;
+}
