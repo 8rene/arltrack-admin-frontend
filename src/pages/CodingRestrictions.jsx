@@ -12,6 +12,12 @@ const DAY_NAMES = [
   "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
 ];
 
+// Today as a Manila calendar date / weekday (Mon=1 ... Sun=7), independent of
+// the browser's own timezone — the backend stores PHT calendar dates.
+const phtNow = () => new Date(Date.now() + 8 * 60 * 60 * 1000);
+
+const todayWeekdayPHT = () => phtNow().getUTCDay() || 7;
+
 const inputCls =
   "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300";
 
@@ -68,6 +74,7 @@ function useToast() {
   return [toast, showToast];
 }
 
+// z-[70]: above every modal, including dialogs opened on top of another modal.
 function Toast({ toast }) {
   if (!toast) return null;
   return (
@@ -83,6 +90,8 @@ function Toast({ toast }) {
   );
 }
 
+// Modals share z-[60]; one rendered later in the JSX sits on top of an earlier
+// one, which is how the rule / confirm dialogs stack over the city modal.
 function Modal({ title, onClose, children, footer, width = "max-w-md", busy = false }) {
   return (
     <div
@@ -157,6 +166,21 @@ function ErrorBanner({ children, onRetry }) {
   );
 }
 
+function Pill({ children, tone = "teal" }) {
+  const tones = {
+    teal: "bg-teal-50 text-teal-700 border-teal-100",
+    blue: "bg-blue-50 text-blue-700 border-blue-100",
+    gray: "bg-gray-50 text-gray-600 border-gray-200",
+    green: "bg-green-50 text-green-700 border-green-100",
+    amber: "bg-amber-50 text-amber-700 border-amber-100",
+  };
+  return (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${tones[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
 // Full-size buttons (not tiny text links) — same look as Holidays and Addresses.
 const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
 const RowActions = ({ onView, onEdit, onDelete }) => (
@@ -192,10 +216,10 @@ const EmptyRow = ({ cols, children }) => (
 
 // ─── Coding Restrictions ─────────────────────────────────────────────────────
 //
-// City-first, like the original tab: a list of every city that has coding
-// rules, and — once a city is opened — that city's day / time-window /
-// banned-digit rules. A coding-rule "city" is a plain string on the rule
-// (not an address-hierarchy reference).
+// City-first: a list of every city that has coding rules. "View" opens a modal
+// with that city's Monday–Sunday day / time-window / banned-digit rules, so
+// there is no separate screen to go back from. A coding-rule "city" is a plain
+// string on the rule (not an address-hierarchy reference).
 //
 // Backend: routes/codingRules. View/add/edit — Owner, Admin, Supervisor.
 // Delete — Owner and Admin only (mirrored here by `canDelete`).
@@ -252,6 +276,177 @@ const DigitChips = ({ digits }) =>
     </div>
   );
 
+// Tap-to-toggle plate digits (replaces typing "1, 2"). Selected = restricted,
+// shown green. It reads/writes the same "1, 2" string the form already uses, so
+// validation and saving are unchanged. Buttons follow plate order: 1–9, then 0.
+const PLATE_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
+const DigitPicker = ({ value, onChange, size = "md" }) => {
+  const selected = new Set(parseDigits(value));
+  const toggle = (d) => {
+    const next = new Set(selected);
+    if (next.has(d)) next.delete(d); else next.add(d);
+    onChange(PLATE_DIGITS.filter((x) => next.has(x)).join(", "));
+  };
+  const dim = size === "sm" ? "w-8 h-8 text-xs" : "w-10 h-10 text-sm";
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Banned digits">
+      {PLATE_DIGITS.map((d) => {
+        const on = selected.has(d);
+        return (
+          <button
+            key={d} type="button" aria-pressed={on} onClick={() => toggle(d)}
+            className={`${dim} rounded-xl border font-bold transition ${
+              on ? "bg-green-500 border-green-500 text-white shadow-sm"
+                 : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50"
+            }`}
+          >
+            {d}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+// ─── City picker ─────────────────────────────────────────────────────────────
+// Search-as-you-type over OpenStreetMap Nominatim (PH only). The live GPS check
+// matches rules against the name Nominatim returns for a vehicle's position
+// (address.city || town || municipality || county), so we pull the name the
+// same way — a picked city is spelled exactly how the check will compare it.
+//
+// `value` is the committed city ("" until one is picked). Typing clears it, so
+// a half-typed or misspelled name can never be saved by accident. For places
+// that aren't official cities (e.g. "Clark"), "Use '…' as typed" is offered.
+//
+// Nominatim's usage policy allows ~1 request/second; the 600 ms debounce and
+// 3-character minimum keep us well under that.
+const NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search";
+
+const cityNameOf = (r) => {
+  const a = r.address || {};
+  return a.city || a.town || a.municipality || a.county || r.name || null;
+};
+
+function CityPicker({ value, onChange, autoFocus = false, placeholder = "Search a city…" }) {
+  const [query, setQuery] = useState(value || "");
+  const [options, setOptions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 3 || q === value) {
+      setOptions([]);
+      setLoading(false);
+      return undefined;
+    }
+    const ctrl = new AbortController();
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          format: "jsonv2",
+          addressdetails: "1",
+          countrycodes: "ph",
+          featureType: "settlement",
+          limit: "8",
+          "accept-language": "en",
+          q,
+        });
+        const res = await fetch(`${NOMINATIM_SEARCH}?${params}`, { signal: ctrl.signal });
+        if (!res.ok) throw new Error("search failed");
+        const rows = await res.json();
+        const seen = new Set();
+        const out = [];
+        for (const r of rows) {
+          const name = cityNameOf(r);
+          if (!name) continue;
+          const a = r.address || {};
+          const sub = a.province || a.county || a.state || "";
+          const key = `${name}|${sub}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({ name, sub });
+        }
+        setOptions(out);
+        setFailed(false);
+      } catch (e) {
+        if (e.name !== "AbortError") {
+          setOptions([]);
+          setFailed(true);
+        }
+      } finally {
+        if (!ctrl.signal.aborted) setLoading(false);
+      }
+    }, 600);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [query, value]);
+
+  const pick = (name) => {
+    setQuery(name);
+    setOpen(false);
+    onChange(name);
+  };
+
+  const typed = query.trim();
+  const showList = open && typed.length >= 3 && typed !== value;
+
+  return (
+    <div>
+      <input
+        autoFocus={autoFocus}
+        className={`${inputCls} ${value ? "border-green-300 bg-green-50/40" : ""}`}
+        value={query}
+        placeholder={placeholder}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+          if (value) onChange(""); // editing un-selects the previous pick
+        }}
+        onFocus={() => setOpen(true)}
+      />
+
+      {value && <p className="text-xs text-green-600 mt-1">✓ Selected: {value}</p>}
+
+      {showList && (
+        <div className="mt-1 border border-gray-100 rounded-xl overflow-hidden bg-white shadow-sm">
+          {loading && <p className="px-3 py-2 text-xs text-gray-400">Searching…</p>}
+          {!loading && failed && (
+            <p className="px-3 py-2 text-xs text-red-500">Couldn't reach the map search. Try again, or use the name as typed.</p>
+          )}
+          {!loading && !failed && options.length === 0 && (
+            <p className="px-3 py-2 text-xs text-gray-400">No matching city found.</p>
+          )}
+          {options.map((o) => (
+            <button
+              key={`${o.name}|${o.sub}`}
+              type="button"
+              onClick={() => pick(o.name)}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-teal-50 flex items-baseline justify-between gap-3 border-t border-gray-50 first:border-t-0"
+            >
+              <span className="font-medium text-gray-800">{o.name}</span>
+              {o.sub && <span className="text-xs text-gray-400">{o.sub}</span>}
+            </button>
+          ))}
+          {!loading && (
+            <button
+              type="button"
+              onClick={() => pick(typed)}
+              className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 border-t border-gray-100"
+            >
+              Use “{typed}” as typed
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CodingRestrictions() {
   const { effectiveRole } = useAuth();
   const canDelete = effectiveRole === "Owner" || effectiveRole === "Admin";
@@ -262,11 +457,12 @@ export default function CodingRestrictions() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [city, setCity] = useState(null);       // opened city, or null = city list
+  const [city, setCity] = useState(null);       // city whose rules modal is open
   const [search, setSearch] = useState("");
 
-  const [ruleDialog, setRuleDialog] = useState(null); // { rule } — rule null = adding
+  const [ruleDialog, setRuleDialog] = useState(null); // { rule, day } — rule null = adding
   const [cityDialog, setCityDialog] = useState(false);
+  const [cityToRename, setCityToRename] = useState(null); // city name string
   const [toDelete, setToDelete] = useState(null);
   const [cityToDelete, setCityToDelete] = useState(null); // { city, count }
   const [busy, setBusy] = useState(false);
@@ -285,8 +481,8 @@ export default function CodingRestrictions() {
 
   usePolling(load, 60000);
 
-  // If the opened city vanishes (its last rule deleted — here or elsewhere),
-  // fall back to the city list instead of showing an empty ghost city.
+  // If the opened city vanishes (its last rule deleted — here or elsewhere, or
+  // it was renamed elsewhere), close the modal instead of showing an empty one.
   useEffect(() => {
     if (city && !loading && !data.cities.includes(city)) setCity(null);
   }, [city, data.cities, loading]);
@@ -306,6 +502,7 @@ export default function CodingRestrictions() {
     () => (city ? data.rules.filter((r) => r.city === city) : []),
     [data.rules, city]
   );
+  const todayDow = todayWeekdayPHT();
 
   const confirmDelete = async () => {
     setBusy(true);
@@ -335,8 +532,6 @@ export default function CodingRestrictions() {
     }
   };
 
-  const openCity = (c) => setCity(c);
-
   return (
     <div className="w-full px-4">
       <Toast toast={toast} />
@@ -344,38 +539,25 @@ export default function CodingRestrictions() {
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-5">
         <div>
-          {city && (
-            <button onClick={() => setCity(null)} className="text-xs font-semibold text-teal-600 hover:text-teal-700 mb-1">
-              ← All cities
-            </button>
-          )}
-          <h1 className="text-2xl font-bold text-arl-dark">{city ? city : "Coding Restrictions"}</h1>
+          <h1 className="text-2xl font-bold text-arl-dark">Coding Restrictions</h1>
           <p className="text-sm text-gray-400 mt-0.5">
             {loading
               ? "Loading…"
-              : city
-                ? `${cityRules.length} rule${cityRules.length === 1 ? "" : "s"} · plates ending in the banned digits can't be driven in ${city} during the window.`
-                : `${data.cities.length} cit${data.cities.length === 1 ? "y" : "ies"} with coding schedules. Open a city to see its rules.`}
+              : `${data.cities.length} cit${data.cities.length === 1 ? "y" : "ies"} with coding schedules. View a city to see its rules.`}
           </p>
         </div>
-        {city ? (
-          <button onClick={() => setRuleDialog({ rule: null })} className={btnPrimary}>+ Add rule</button>
-        ) : (
-          <button onClick={() => setCityDialog(true)} className={btnPrimary}>+ Add city</button>
-        )}
+        <button onClick={() => setCityDialog(true)} className={btnPrimary}>+ Add city</button>
       </div>
 
       {/* ── Filters ── */}
       <div className="flex flex-wrap gap-3 items-end mb-4">
-        {!city && (
-          <input
-            type="text"
-            placeholder="Search city…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 w-56"
-          />
-        )}
+        <input
+          type="text"
+          placeholder="Search city…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 w-56"
+        />
         <button onClick={load} disabled={loading} className="px-3 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50 ml-auto">
           {loading ? "…" : "Refresh"}
         </button>
@@ -384,87 +566,63 @@ export default function CodingRestrictions() {
       <ErrorBanner onRetry={load}>{error}</ErrorBanner>
 
       {/* ── City list ── */}
-      {!city && (
-        <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
-          <table className="w-full text-sm font-sans min-w-[520px]">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className={thCls}>City</th>
-                <th className={thCls}>Rules</th>
-                <th className={thCls}>Coding days</th>
-                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <SkeletonRows rows={6} cols={4} />
-              ) : cityRows.length === 0 ? (
-                <EmptyRow cols={4}>
-                  {data.cities.length === 0 ? "No coding schedules yet. Add a city to get started." : "No city matches your search."}
-                </EmptyRow>
-              ) : (
-                cityRows.map((r) => (
-                  <tr key={r.city} onClick={() => openCity(r.city)} className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer">
-                    <td className="px-5 py-3 font-semibold text-gray-800">{r.city}</td>
-                    <td className="px-5 py-3 text-gray-600">{r.count === 1 ? "1 rule" : `${r.count} rules`}</td>
-                    <td className="px-5 py-3 text-gray-500">{r.days || "—"}</td>
-                    <td className="px-5 py-3">
-                      <RowActions
-                        onView={() => openCity(r.city)}
-                        onDelete={canDelete ? () => setCityToDelete(r) : null}
-                      />
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
+        <table className="w-full text-sm font-sans min-w-[520px]">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50">
+              <th className={thCls}>City</th>
+              <th className={thCls}>Rules</th>
+              <th className={thCls}>Coding days</th>
+              <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <SkeletonRows rows={6} cols={4} />
+            ) : cityRows.length === 0 ? (
+              <EmptyRow cols={4}>
+                {data.cities.length === 0 ? "No coding schedules yet. Add a city to get started." : "No city matches your search."}
+              </EmptyRow>
+            ) : (
+              cityRows.map((r) => (
+                <tr key={r.city} onClick={() => setCity(r.city)} className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer">
+                  <td className="px-5 py-3 font-semibold text-gray-800">{r.city}</td>
+                  <td className="px-5 py-3 text-gray-600">{r.count === 1 ? "1 rule" : `${r.count} rules`}</td>
+                  <td className="px-5 py-3 text-gray-500">{r.days || "—"}</td>
+                  <td className="px-5 py-3" onClick={(e) => e.stopPropagation()}>
+                    <RowActions
+                      onView={() => setCity(r.city)}
+                      onEdit={() => setCityToRename(r.city)}
+                      onDelete={canDelete ? () => setCityToDelete(r) : null}
+                    />
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
 
-      {/* ── One city's rules ── */}
+      {/* ── One city's rules (modal) ── */}
       {city && (
-        <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
-          <table className="w-full text-sm font-sans min-w-[560px]">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className={thCls}>Day</th>
-                <th className={thCls}>Time window</th>
-                <th className={thCls}>Banned digits</th>
-                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <SkeletonRows rows={5} cols={4} />
-              ) : cityRules.length === 0 ? (
-                <EmptyRow cols={4}>No rules yet.</EmptyRow>
-              ) : (
-                cityRules.map((r) => (
-                  <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50/50">
-                    <td className="px-5 py-3 font-semibold text-gray-800">
-                      {r.dayName || "—"}
-                    </td>
-                    <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{r.startTime} – {r.endTime}</td>
-                    <td className="px-5 py-3"><DigitChips digits={r.bannedDigits} /></td>
-                    <td className="px-5 py-3">
-                      <RowActions
-                        onEdit={() => setRuleDialog({ rule: r })}
-                        onDelete={canDelete ? () => setToDelete(r) : null}
-                      />
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <CityRulesModal
+          city={city}
+          rules={cityRules}
+          canDelete={canDelete}
+          todayDow={todayDow}
+          onClose={() => setCity(null)}
+          onAdd={(day) => setRuleDialog({ rule: null, day })}
+          onEdit={(rule) => setRuleDialog({ rule, day: null })}
+          onDelete={(rule) => setToDelete(rule)}
+        />
       )}
 
+      {/* Dialogs below are rendered after the city modal so they stack on top of it. */}
       {ruleDialog && (
         <RuleDialog
           city={city}
           existing={ruleDialog.rule}
+          defaultDay={ruleDialog.day}
           api={api}
           onClose={() => setRuleDialog(null)}
           onSaved={async (msg) => { setRuleDialog(null); showToast(msg); await load(); }}
@@ -480,7 +638,21 @@ export default function CodingRestrictions() {
             setCityDialog(false);
             showToast(`Added ${name}.`);
             await load();
-            openCity(name);
+            setCity(name);
+          }}
+        />
+      )}
+
+      {cityToRename && (
+        <RenameCityDialog
+          oldName={cityToRename}
+          existingCities={data.cities}
+          api={api}
+          onClose={() => setCityToRename(null)}
+          onSaved={async (newName) => {
+            setCityToRename(null);
+            showToast(`Renamed to ${newName}.`);
+            await load();
           }}
         />
       )}
@@ -516,10 +688,145 @@ export default function CodingRestrictions() {
   );
 }
 
+// ─── A city's Monday–Sunday rules, in a modal ────────────────────────────────
+// Every day of the week gets a row. Days with no rule show "No coding" with an
+// Add button that pre-selects that day.
+function CityRulesModal({ city, rules, canDelete, todayDow, onClose, onAdd, onEdit, onDelete }) {
+  return (
+    <Modal
+      title={city}
+      width="max-w-3xl"
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className={btnGhost}>Close</button>
+          <button onClick={() => onAdd(null)} className={btnPrimary}>+ Add rule</button>
+        </>
+      }
+    >
+      <p className="text-sm text-gray-400 mb-4">
+        Plates ending in the banned digits can't be driven in {city} during the window.
+      </p>
+      <div className="border border-gray-100 rounded-2xl overflow-x-auto mb-2">
+        <table className="w-full text-sm font-sans min-w-[560px]">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50">
+              <th className={thCls}>Day</th>
+              <th className={thCls}>Time window</th>
+              <th className={thCls}>Banned digits</th>
+              <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {DAY_NAMES.flatMap((day, i) => {
+              const isToday = i + 1 === todayDow;
+              const dayCell = (
+                <td className="px-5 py-3 font-semibold text-gray-800 whitespace-nowrap">
+                  {day}
+                  {isToday && <span className="ml-2 align-middle"><Pill tone="green">Today</Pill></span>}
+                </td>
+              );
+              const dayRules = rules.filter((r) => r.dayName === day);
+
+              if (dayRules.length === 0) {
+                return [
+                  <tr key={day} className="border-b border-gray-50">
+                    {dayCell}
+                    <td className="px-5 py-3 text-gray-400" colSpan={2}>No coding</td>
+                    <td className="px-5 py-3">
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => onAdd(day)}
+                          className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}
+                        >
+                          + Add
+                        </button>
+                      </div>
+                    </td>
+                  </tr>,
+                ];
+              }
+
+              return dayRules.map((r) => (
+                <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                  {dayCell}
+                  <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{r.startTime} – {r.endTime}</td>
+                  <td className="px-5 py-3"><DigitChips digits={r.bannedDigits} /></td>
+                  <td className="px-5 py-3">
+                    <RowActions
+                      onEdit={() => onEdit(r)}
+                      onDelete={canDelete ? () => onDelete(r) : null}
+                    />
+                  </td>
+                </tr>
+              ));
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Rename a city ───────────────────────────────────────────────────────────
+// Coding-rule cities are plain strings on each rule, so renaming changes the
+// city on all of that city's rules at once. The new name is picked from a map
+// search (CityPicker) so it can't be misspelled.
+function RenameCityDialog({ oldName, existingCities, api, onClose, onSaved }) {
+  const [name, setName] = useState(oldName); // committed pick; starts as the current city
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    const next = name.trim();
+    setError("");
+    if (!next) return setError("Pick a city from the search results.");
+    if (next === oldName) return onClose();
+    if (existingCities.some((c) => c !== oldName && c.toLowerCase() === next.toLowerCase())) {
+      return setError(`"${next}" already exists.`);
+    }
+    setSaving(true);
+    try {
+      await api(`/api/coding-rules/city/${encodeURIComponent(oldName)}`, {
+        method: "PUT",
+        body: { city: next },
+      });
+      await onSaved(next);
+    } catch (e) {
+      setError(`Failed to rename: ${e.message}`);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Rename city"
+      onClose={onClose}
+      busy={saving}
+      footer={
+        <>
+          <button onClick={onClose} disabled={saving} className={btnGhost}>Cancel</button>
+          <button onClick={save} disabled={saving} className={btnPrimary}>{saving ? "Saving…" : "Save changes"}</button>
+        </>
+      }
+    >
+      <div className="space-y-4 pb-2">
+        <Field label="City">
+          <CityPicker autoFocus value={name} onChange={setName} />
+        </Field>
+        <p className="text-xs text-gray-400">
+          Currently <strong>{oldName}</strong>. Search for the correct city to move all of its coding rules to it.
+        </p>
+        {error && <p className="text-sm text-red-500">{error}</p>}
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Add / edit one rule ─────────────────────────────────────────────────────
-function RuleDialog({ city, existing, api, onClose, onSaved }) {
+function RuleDialog({ city, existing, defaultDay, api, onClose, onSaved }) {
   const isEditing = !!existing;
-  const [dayName, setDayName] = useState(existing?.dayName || DAY_NAMES[0]);
+  const [dayName, setDayName] = useState(existing?.dayName || defaultDay || DAY_NAMES[0]);
   const [startTime, setStartTime] = useState(existing?.startTime || "");
   const [endTime, setEndTime] = useState(existing?.endTime || "");
   const [digits, setDigits] = useState(existing ? existing.bannedDigits.join(", ") : "");
@@ -579,8 +886,8 @@ function RuleDialog({ city, existing, api, onClose, onSaved }) {
           </Field>
         </div>
         <Field label="Banned digits" error={showErrors && errs.digits}>
-          <input className={inputCls} value={digits} onChange={(e) => setDigits(e.target.value)} placeholder="e.g. 1, 2" />
-          <p className="text-xs text-gray-400 mt-1">Last digit of the plate number.</p>
+          <DigitPicker value={digits} onChange={setDigits} />
+          <p className="text-xs text-gray-400 mt-1">Tap the last digits of the plates that can't drive on this day (green = restricted).</p>
         </Field>
         {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
@@ -606,9 +913,9 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
     setShowErrors(true);
     setError("");
     const city = name.trim();
-    if (!city) return setError("Enter a city name.");
+    if (!city) return setError("Pick a city from the search results.");
     if (existingCities.some((c) => c.toLowerCase() === city.toLowerCase())) {
-      return setError(`"${city}" already exists — open it from the city list instead.`);
+      return setError(`"${city}" already exists — view it from the city list instead.`);
     }
     if (rows.length < MIN_RULES) return setError(`A new city needs at least ${MIN_RULES} coding rules.`);
     if (rowErrs.some(hasErrors)) return setError("Fix the highlighted rule fields.");
@@ -651,8 +958,8 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
         <p className="text-xs text-gray-400">
           A new city needs at least {MIN_RULES} coding rules so its week is covered from day one.
         </p>
-        <Field label="City name">
-          <input autoFocus className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Dagupan" />
+        <Field label="City">
+          <CityPicker autoFocus value={name} onChange={setName} placeholder="Search a city, e.g. Dagupan" />
         </Field>
 
         <div className="space-y-3">
@@ -660,7 +967,7 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
             const e = showErrors ? rowErrs[i] : {};
             return (
               <div key={i} className="rounded-xl border border-gray-100 p-3 bg-gray-50/40">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   <Field label="Day">
                     <select className={inputCls} value={r.dayName} onChange={(ev) => setRow(i, { dayName: ev.target.value })}>
                       {DAY_NAMES.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -672,8 +979,10 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
                   <Field label="End" error={e.end}>
                     <input className={inputCls} value={r.endTime} onChange={(ev) => setRow(i, { endTime: ev.target.value })} placeholder="8:00 PM" />
                   </Field>
+                </div>
+                <div className="mt-2">
                   <Field label="Banned digits" error={e.digits}>
-                    <input className={inputCls} value={r.bannedDigits} onChange={(ev) => setRow(i, { bannedDigits: ev.target.value })} placeholder="1, 2" />
+                    <DigitPicker size="sm" value={r.bannedDigits} onChange={(v) => setRow(i, { bannedDigits: v })} />
                   </Field>
                 </div>
                 {rows.length > MIN_RULES && (

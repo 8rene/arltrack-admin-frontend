@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTheme } from "../context/ThemeContext";
 import StoreLocationSettings from "../components/StoreLocationSettings";
+import AreaMap from "../components/AreaMap";
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
@@ -72,10 +73,6 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false); // fields are read-only until "Edit" is clicked
   const [notice, setNotice] = useState(null);    // { type: "success" | "error", msg }
-  const [keywordDraft, setKeywordDraft] = useState(""); // text currently being typed for the next chip
-  const [areaSuggestions, setAreaSuggestions] = useState([]); // [{ id, name, type }]
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
   const card = `rounded-2xl border p-6 ${
     isDark
@@ -118,10 +115,10 @@ export default function Settings() {
   // lower-cases the destination before checking .includes(keyword), so
   // what's shown here is exactly what actually gets matched.
   //
-  // Suggestions come from the real PH province/city dataset (same one the
-  // customer app's address form already uses) so picking from the list is
-  // guaranteed to be a correctly-spelled real place. Free typing + Enter
-  // still works as a fallback for anything not in that dataset.
+  // Keywords are added from the map (AreaMap below): search for a place or click
+  // the map, then press the "+" button for a name it offers. Names come from the
+  // PH location list or from OpenStreetMap — never from free typing — so a
+  // misspelled keyword can't be saved.
   const addKeywordValue = (value) => {
     const clean = value.trim().toLowerCase();
     if (!clean) return;
@@ -129,61 +126,11 @@ export default function Settings() {
       if ((prev.baseAreaKeywords || []).includes(clean)) return prev; // no duplicates
       return { ...prev, baseAreaKeywords: [...(prev.baseAreaKeywords || []), clean] };
     });
-    setKeywordDraft("");
-    setAreaSuggestions([]);
-    setSuggestionsOpen(false);
   };
-
-  const addKeyword = () => addKeywordValue(keywordDraft);
 
   const removeKeyword = (word) => {
     setForm((prev) => ({ ...prev, baseAreaKeywords: (prev.baseAreaKeywords || []).filter((k) => k !== word) }));
   };
-
-  const handleKeywordInputKeyDown = (e) => {
-    // Enter or comma both commit the current typed text as a chip — comma
-    // because that's the muscle-memory habit the old free-text field
-    // trained. Doesn't stop the dropdown suggestions from also being
-    // clickable for a guaranteed-correct spelling.
-    if (e.key === "Enter" || e.key === ",") {
-      e.preventDefault();
-      addKeyword();
-    }
-    if (e.key === "Escape") {
-      setSuggestionsOpen(false);
-    }
-  };
-
-  // Debounced search against /api/settings/pricing/area-options as the
-  // admin types, so the dropdown feels live without hammering the backend
-  // on every keystroke.
-  useEffect(() => {
-    const q = keywordDraft.trim();
-    if (!q) {
-      setAreaSuggestions([]);
-      setSuggestionsOpen(false);
-      return;
-    }
-    setSuggestionsLoading(true);
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `${process.env.REACT_APP_API_URL}/api/settings/pricing/area-options?q=${encodeURIComponent(q)}`,
-          { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }
-        );
-        const json = await res.json();
-        if (json.success) {
-          setAreaSuggestions(json.data || []);
-          setSuggestionsOpen(true);
-        }
-      } catch {
-        // silent — free-typed Enter fallback still works if the lookup fails
-      } finally {
-        setSuggestionsLoading(false);
-      }
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [keywordDraft]);
 
   const arraysEqual = (a = [], b = []) => a.length === b.length && a.every((v, i) => v === b[i]);
 
@@ -247,7 +194,6 @@ export default function Settings() {
   const handleReset = () => {
     if (!saved) return;
     setForm(saved);
-    setKeywordDraft("");
     setNotice(null);
     setEditMode(false);
   };
@@ -371,74 +317,20 @@ export default function Settings() {
                 )}
               </div>
 
-              {/* Add new keyword */}
-              {editMode && (
-              <div className="flex gap-2 relative">
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    value={keywordDraft}
-                    onChange={(e) => setKeywordDraft(e.target.value)}
-                    onKeyDown={handleKeywordInputKeyDown}
-                    onFocus={() => keywordDraft.trim() && setSuggestionsOpen(true)}
-                    onBlur={() => setTimeout(() => setSuggestionsOpen(false), 150)} // delay so a click on a suggestion still registers
-                    placeholder="Search a province or city…"
-                    autoComplete="off"
-                    className={inputCls}
-                  />
-
-                  {suggestionsOpen && (
-                    <div className={`absolute z-10 mt-1 w-full max-h-56 overflow-y-auto rounded-xl border shadow-lg ${
-                      isDark ? "bg-[#212121] border-[#4FC3F7]/20" : "bg-white border-gray-200"
-                    }`}>
-                      {suggestionsLoading ? (
-                        <p className={`px-3 py-2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>Searching…</p>
-                      ) : areaSuggestions.length === 0 ? (
-                        <p className={`px-3 py-2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-                          No match in the PH location list — press Enter to add "{keywordDraft.trim()}" anyway.
-                        </p>
-                      ) : (
-                        areaSuggestions.map((opt) => (
-                          <button
-                            key={`${opt.type}-${opt.id}`}
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()} // keep focus so onBlur doesn't close before onClick fires
-                            onClick={() => addKeywordValue(opt.name)}
-                            className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2 ${
-                              isDark ? "hover:bg-[#4FC3F7]/10 text-[#F5F5F5]" : "hover:bg-gray-50 text-arl-dark"
-                            }`}
-                          >
-                            <span>{opt.name}</span>
-                            <span className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 ${
-                              isDark ? "bg-[#4FC3F7]/15 text-[#4FC3F7]" : "bg-gray-100 text-gray-500"
-                            }`}>
-                              {opt.type === "province" ? "Province" : "City/Municipality"}
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={addKeyword}
-                  disabled={!keywordDraft.trim()}
-                  className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-lg font-medium disabled:opacity-40 transition-all ${
-                    isDark ? "bg-[#4FC3F7] text-[#212121] hover:bg-[#4FC3F7]/90" : "bg-arl-dark text-white hover:opacity-90"
-                  }`}
-                  aria-label="Add keyword"
-                >
-                  +
-                </button>
-              </div>
-              )}
+              {/* Shaded map of every base-area keyword (live preview, incl. unsaved edits) + click-to-add */}
+              <AreaMap
+                areas={form.baseAreaKeywords || []}
+                editable={editMode}
+                onAdd={addKeywordValue}
+                isDark={isDark}
+                addLabel="base area"
+              />
 
               <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>
-                Search picks a real, correctly-spelled province or city from the PH location list. A destination is still
+                Search above the map or click it, then press the + button to add a place — names come from the map or the PH
+                location list, so they can't be misspelled. A destination is still
                 treated as "base area" if it <strong>contains</strong> the saved word as text — so short/common names can
-                still overlap (e.g. "manila" also matches "New Manila," a Quezon City district). Picking from the list
+                still overlap (e.g. "manila" also matches "New Manila," a Quezon City district). Picking a place
                 only prevents typos, it doesn't remove that overlap.
               </p>
             </div>
@@ -460,13 +352,13 @@ export default function Settings() {
                 <div key={key} className="space-y-1">
                   <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>{label}</label>
                   <div className="relative">
-                    <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
+                    <span className={`absolute ${unit === "₱" ? "left-3" : "right-3"} top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
                     <input
                       type="number" min="0" step="1"
                       value={form[key]}
                       onChange={(e) => handleNumberChange(key, e.target.value)}
                       disabled={!editMode}
-                      className={`${inputCls} pl-6`}
+                      className={`${inputCls} ${unit === "₱" ? "pl-6" : "pr-10"}`}
                     />
                   </div>
                   <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>{hint}</p>

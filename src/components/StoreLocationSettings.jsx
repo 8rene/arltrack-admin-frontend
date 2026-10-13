@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-lea
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useTheme } from "../context/ThemeContext";
+import { reversePH, isWaterFeature, REASON_TEXT } from "../utils/phLocation";
 
 // ─────────────────────────────────────────────────────────────────────────
 // StoreLocationSettings.jsx
@@ -76,21 +77,6 @@ const DraggableMarker = ({ position, onDrag }) => {
   return <Marker draggable position={position} ref={markerRef} eventHandlers={eventHandlers} />;
 };
 
-const reverseGeocode = async (lat, lng) => {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`,
-      { headers: { "Accept-Language": "en" } }
-    );
-    if (!res.ok) throw new Error(`Reverse geocode failed: ${res.status}`);
-    const data = await res.json();
-    return { label: data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`, address: data.address || null, error: false };
-  } catch (err) {
-    console.error("[StoreLocationSettings] reverseGeocode failed:", err.message);
-    return { label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, address: null, error: true };
-  }
-};
-
 const searchAddress = async (query) => {
   try {
     const res = await fetch(
@@ -117,6 +103,7 @@ const StoreLocationMapPicker = ({ isOpen, onClose, onConfirm, initialLabel = "",
   const [loading,       setLoading]       = useState(false);
   const [pickError,     setPickError]     = useState("");
   const [hasSelected,   setHasSelected]   = useState(!!initialLabel);
+  const [markerKey,     setMarkerKey]     = useState(0); // bump to remount the pin after a rejected drop
 
   useEffect(() => {
     if (isOpen) {
@@ -135,23 +122,17 @@ const StoreLocationMapPicker = ({ isOpen, onClose, onConfirm, initialLabel = "",
 
   const handleLocationChange = useCallback(async (lat, lng) => {
     setLoading(true);
-    const { label, address, error } = await reverseGeocode(lat, lng);
-    if (error) { setPickError("Couldn't look up that location — check your connection and try again."); setLoading(false); return; }
-
-    const hasLocality = !!(
-      address?.city || address?.town || address?.village ||
-      address?.municipality || address?.suburb || address?.county ||
-      address?.hamlet || address?.neighbourhood
-    );
-    if (!address || address.country_code !== "ph" || !hasLocality) {
-      setPickError("Please pick a location within the Philippines (on land).");
+    // Only spots on land inside the Philippines are accepted (utils/phLocation.js).
+    const r = await reversePH(lat, lng);
+    if (!r.ok) {
+      setPickError(REASON_TEXT[r.reason]);
+      setMarkerKey((k) => k + 1); // snap a dragged pin back to the last valid spot
       setLoading(false);
       return;
     }
-
     setPickError("");
     setMarkerPos([lat, lng]);
-    setAddress(label);
+    setAddress(r.label);
     setHasSelected(true);
     setLoading(false);
   }, []);
@@ -161,7 +142,7 @@ const StoreLocationMapPicker = ({ isOpen, onClose, onConfirm, initialLabel = "",
     setSearching(true);
     setSearchError("");
     const { results, error } = await searchAddress(searchQuery);
-    setSearchResults(results);
+    setSearchResults(results.filter((r) => !isWaterFeature(r))); // no bays / seas / rivers
     if (error) setSearchError("Search failed — check your connection and try again.");
     setHasSearched(true);
     setSearching(false);
@@ -255,7 +236,7 @@ const StoreLocationMapPicker = ({ isOpen, onClose, onConfirm, initialLabel = "",
             <TileLayer attribution='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             <MapClickHandler onLocationChange={handleLocationChange} />
             {flyTarget && <MapFlyTo coords={flyTarget} />}
-            <DraggableMarker position={markerPos} onDrag={handleLocationChange} />
+            <DraggableMarker key={markerKey} position={markerPos} onDrag={handleLocationChange} />
           </MapContainer>
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-white/60 z-[500]">
@@ -284,6 +265,42 @@ const StoreLocationMapPicker = ({ isOpen, onClose, onConfirm, initialLabel = "",
     </div>
   );
 };
+
+// ── Inline preview map (shows the saved / picked store location) ──────────
+// Re-centres whenever the coordinates change, so picking a new spot in the
+// modal updates the preview straight away (before saving).
+const Recenter = ({ pos }) => {
+  const map = useMap();
+  useEffect(() => { map.setView(pos, 16, { animate: true }); }, [pos[0], pos[1], map]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+};
+
+const StorePreviewMap = ({ lat, lng, isDark, unsaved }) => (
+  <div className="space-y-1">
+    {/* relative z-0 keeps Leaflet's internal z-indexes below page modals/toasts */}
+    <div
+      className={`relative z-0 rounded-xl overflow-hidden border ${isDark ? "border-[#4FC3F7]/20" : "border-gray-200"}`}
+      style={{ height: 240 }}
+    >
+      <MapContainer
+        center={[lat, lng]}
+        zoom={16}
+        minZoom={5}
+        maxBounds={PH_BOUNDS}
+        maxBoundsViscosity={1.0}
+        scrollWheelZoom={false} // don't hijack page scrolling; use the +/− buttons or drag
+        style={{ height: "100%", width: "100%" }}
+      >
+        <TileLayer attribution='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <Marker position={[lat, lng]} />
+        <Recenter pos={[lat, lng]} />
+      </MapContainer>
+    </div>
+    {unsaved && (
+      <p className="text-[11px] text-amber-600">Preview of the new location — press Save Changes to make it live.</p>
+    )}
+  </div>
+);
 
 // ── Main card (was StoreLocationCard.jsx) ──────────────────────────────────
 
@@ -480,6 +497,15 @@ export default function StoreLocationSettings() {
                 </div>
               )}
             </div>
+
+            {storeLat !== null && storeLng !== null && (
+              <StorePreviewMap
+                lat={storeLat}
+                lng={storeLng}
+                isDark={isDark}
+                unsaved={storeLat !== saved.storeLat || storeLng !== saved.storeLng}
+              />
+            )}
 
             {!isConfigured && !editMode && (
               <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>
