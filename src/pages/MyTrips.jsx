@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import TripMapModal from "../components/TripMapModal";
-import PaymentStatusModal from "../components/PaymentStatusModal";
-import ReturnChecklistModal from "../components/ReturnChecklistModal";
 import DriverPenaltyModal from "../components/DriverPenaltyModal";
 import TripDetailModal from "../components/TripDetailModal";
 
@@ -29,19 +27,6 @@ const IconPin = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s7-7.75 7-13a7 7 0 10-14 0c0 5.25 7 13 7 13z" />
     <circle cx="12" cy="8" r="2.5" />
-  </svg>
-);
-
-const IconFlag = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-    <line x1="4" y1="22" x2="4" y2="15" strokeLinecap="round" />
-  </svg>
-);
-
-const IconPeso = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M7 20V4h6a4 4 0 010 8H7M4 10h11M4 13h9" />
   </svg>
 );
 
@@ -138,7 +123,7 @@ function InspectionPanel({ inspection, phase, remaining, sending, onRemind }) {
   if (inspection.complete) {
     return (
       <p className="text-[11px] font-medium text-green-600 mb-1">
-        ✓ Vehicle inspection complete — {phase === "before" ? "ready for pickup" : "ready to return"}
+        ✓ Vehicle inspection complete — ready for pickup
       </p>
     );
   }
@@ -153,7 +138,7 @@ function InspectionPanel({ inspection, phase, remaining, sending, onRemind }) {
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <p className="text-xs font-semibold text-amber-800">
-            Waiting for a supervisor to complete the {phase === "before" ? "pickup" : "return"} inspection
+            Waiting for a supervisor to complete the pickup inspection
           </p>
           <div className="text-[11px] space-y-0.5">
             <Row
@@ -179,26 +164,18 @@ function InspectionPanel({ inspection, phase, remaining, sending, onRemind }) {
   );
 }
 
-// ─── ACTIVE TRIPS TAB (upcoming + ongoing, with pickup/dropoff/return actions) ──
+// ─── ACTIVE TRIPS TAB (upcoming + ongoing, with pickup/dropoff actions) ──
 function ActiveTripsTab() {
   const token = localStorage.getItem("token");
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [trips, setTrips]     = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast]     = useState(null);
   const [busyID, setBusyID]   = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
-  const [paymentTrip, setPaymentTrip] = useState(null);
-  const [returnTrip, setReturnTrip] = useState(null);   // Return checklist panel
-  const [depositOnly, setDepositOnly] = useState(false); // true = opened from "Return deposit" (deposit view only)
   const [penaltyTrip, setPenaltyTrip] = useState(null);  // driver "Note a penalty" form
-  const [collectingBalance, setCollectingBalance] = useState(false);
-  const [collectBalanceError, setCollectBalanceError] = useState(null);
-  const [confirmingPayment, setConfirmingPayment] = useState(false);
-  const [confirmPaymentError, setConfirmPaymentError] = useState(null);
-  const [markingRefund, setMarkingRefund] = useState(false);
-  const [refundError, setRefundError] = useState(null);
   // Remind Staff cooldowns: "<tripID>:<phase>" → epoch ms when the button
   // unlocks. Seeded from the server on every fetch (so a page refresh
   // doesn't reset it) and bumped locally right after a reminder is sent.
@@ -222,10 +199,14 @@ function ActiveTripsTab() {
     });
   }, [token]);
 
-  // { silent: true } = background refresh: no loading spinner, no error toast.
+  // { silent: true }   = background refresh: no loading spinner, no error toast.
+  // { keepList: true } = manual refresh: cards stay on screen (no "Loading…"
+  //                      flash) but errors still toast.
   const fetchTrips = useCallback(async (opts) => {
     const silent = opts?.silent === true;
-    if (!silent) setLoading(true);
+    const keepList = opts?.keepList === true;
+    const showSpinner = !silent && !keepList;
+    if (showSpinner) setLoading(true);
     try {
       const res  = await authedFetch("/api/driver-dispatch/my-trips");
       const json = await res.json();
@@ -245,7 +226,7 @@ function ActiveTripsTab() {
     } catch (e) {
       if (!silent) showToast(e.message, "error");
     } finally {
-      if (!silent) setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   }, [authedFetch]);
 
@@ -319,7 +300,7 @@ function ActiveTripsTab() {
   const handlePickup = (trip) => {
     const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
     if (!paymentReady) {
-      showToast("Payment still requires action before pickup.", "error");
+      showToast("Payment isn't settled yet — staff need to settle it before pickup.", "error");
       return;
     }
     if (!trip.beforeDocsComplete) {
@@ -359,7 +340,6 @@ function ActiveTripsTab() {
     }
   };
 
-  // No payment gate on Return — only the inspection requirement.
   const completeTripAction = async (trip, action, successMsg) => {
     setBusyID(trip.id);
     try {
@@ -367,7 +347,7 @@ function ActiveTripsTab() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Action failed.");
       showToast(successMsg);
-      fetchTrips();
+      await fetchTrips({ silent: true });
     } catch (e) {
       showToast(e.message, "error");
     } finally {
@@ -382,50 +362,12 @@ function ActiveTripsTab() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to mark dropped off.");
       showToast("Marked dropped off.");
-      fetchTrips();
+      await fetchTrips({ silent: true });
     } catch (e) {
       showToast(e.message, "error");
     } finally {
       setBusyID(null);
     }
-  };
-
-  // Return is always clickable — it opens the checklist showing what is still
-  // missing (drop-off, inspection, penalties, GPS device check) and only
-  // enables "Confirm Return" once everything is done. No override.
-  const handleReturn = (trip) => { setDepositOnly(false); setReturnTrip(trip); };
-
-  const loadReturnChecklist = useCallback(async () => {
-    if (!returnTrip) return null;
-    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/return-checklist`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.message || "Couldn't load the checklist.");
-    return json.data;
-  }, [returnTrip, authedFetch]);
-
-  const settleDepositNow = async ({ method, referenceNumber }) => {
-    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/settle-deposit`, {
-      method: "PATCH", body: JSON.stringify({ method, referenceNumber }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.message || "Couldn't settle the deposit.");
-    showToast("Deposit settled.");
-    fetchTrips();
-  };
-
-  const confirmReturn = async () => {
-    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/return`, { method: "PATCH" });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.message || "Return failed.");
-    showToast("Car marked returned — trip history saved.");
-    fetchTrips();
-  };
-
-  const dropoffFromChecklist = async () => {
-    const res  = await authedFetch(`/api/driver-dispatch/my-trips/${returnTrip.id}/dropoff`, { method: "PATCH" });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.message || "Couldn't mark dropped off.");
-    fetchTrips();
   };
 
   const loadLateFee = useCallback(async () => {
@@ -442,74 +384,7 @@ function ActiveTripsTab() {
     const json = await res.json();
     if (!res.ok) throw new Error(json.message || "Couldn't charge the penalty.");
     showToast("Penalty charged — the customer was notified and it's deducted from the deposit.");
-    fetchTrips();
-  };
-
-  // Driver confirming a cash/in-person initial payment — right here in My
-  // Trips, no Payments page access needed (drivers can't reach it anyway).
-  const handleConfirmPayment = async (paymentMethod) => {
-    if (!paymentTrip) return;
-    setConfirmingPayment(true);
-    setConfirmPaymentError(null);
-    try {
-      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/confirm-payment`, {
-        method: "PATCH",
-        body: JSON.stringify({ paymentMethod }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Could not confirm payment.");
-      showToast("Payment marked as received.");
-      setPaymentTrip(null);
-      fetchTrips();
-    } catch (e) {
-      setConfirmPaymentError(e.message);
-    } finally {
-      setConfirmingPayment(false);
-    }
-  };
-
-  // Driver receiving cash/in-person payment of the remaining balance —
-  // e.g. right before Start Pickup, same as staff can do on Car Tracking.
-  const handleCollectBalance = async (paymentMethod) => {
-    if (!paymentTrip) return;
-    setCollectingBalance(true);
-    setCollectBalanceError(null);
-    try {
-      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/collect-balance`, {
-        method: "PATCH",
-        body: JSON.stringify({ paymentMethod }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Could not mark balance as received.");
-      showToast("Balance marked as received.");
-      setPaymentTrip(null);
-      fetchTrips();
-    } catch (e) {
-      setCollectBalanceError(e.message);
-    } finally {
-      setCollectingBalance(false);
-    }
-  };
-
-  // Driver confirming they handed a refund-due amount back to the
-  // customer (created when a staff discount overshot the balance) —
-  // they're usually the one physically holding the cash.
-  const handleMarkRefundIssued = async () => {
-    if (!paymentTrip) return;
-    setMarkingRefund(true);
-    setRefundError(null);
-    try {
-      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${paymentTrip.id}/refund-issued`, { method: "PATCH" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Could not mark refund as returned.");
-      showToast("Refund marked as returned.");
-      setPaymentTrip(null);
-      fetchTrips();
-    } catch (e) {
-      setRefundError(e.message);
-    } finally {
-      setMarkingRefund(false);
-    }
+    await fetchTrips({ silent: true });
   };
 
   return (
@@ -521,13 +396,15 @@ function ActiveTripsTab() {
       )}
 
       <div className="flex justify-end">
-        <button onClick={fetchTrips} disabled={loading}
+        <button
+          onClick={async () => { setRefreshing(true); await fetchTrips({ keepList: true }); setRefreshing(false); }}
+          disabled={refreshing}
           className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
-          ↺ Refresh
+          {refreshing ? "Refreshing…" : "↺ Refresh"}
         </button>
       </div>
 
-      {loading ? (
+      {loading && trips.length === 0 ? (
         <p className="text-sm text-gray-400 py-16 text-center">Loading…</p>
       ) : trips.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-soft p-10 text-center">
@@ -556,14 +433,6 @@ function ActiveTripsTab() {
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
                 <span className="flex items-center gap-1"><IconClock /> {fmtDateTime(trip.startDateTime)} → {fmtDateTime(trip.endDateTime)}</span>
                 <span className="flex items-center gap-1"><IconPin /> {trip.location}</span>
-                {isOngoing && tripStops(trip).length > 0 && (
-                  <button
-                    onClick={() => setMapTrip(trip)}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 ml-auto"
-                  >
-                    <IconMap /> Show Map
-                  </button>
-                )}
               </div>
 
               {isOngoing && (
@@ -576,16 +445,19 @@ function ActiveTripsTab() {
               )}
 
               {(() => {
-                const phase = isOngoing ? "after" : "before";
+                // Drivers only do pickup + drop-off now; the after-trip
+                // inspection and completion are staff's job (Car Tracking).
+                if (isOngoing) return null;
+                const phase = "before";
                 const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
                 // Payment is the blocker that matters first for pickup —
                 // no point nudging staff about the inspection until that's
                 // sorted (the server refuses the reminder then too).
                 if (!isOngoing && !paymentReady) {
-                  return <p className="text-[11px] font-medium text-amber-600 mb-1">Payment still requires action</p>;
+                  return <p className="text-[11px] font-medium text-amber-600 mb-1">Waiting for staff to settle payment</p>;
                 }
-                const inspection = (isOngoing ? trip.afterInspection : trip.beforeInspection)
-                  || { photos: false, parts: false, complete: !!(isOngoing ? trip.afterDocsComplete : trip.beforeDocsComplete) };
+                const inspection = trip.beforeInspection
+                  || { photos: false, parts: false, complete: !!trip.beforeDocsComplete };
                 return (
                   <InspectionPanel
                     inspection={inspection}
@@ -606,16 +478,6 @@ function ActiveTripsTab() {
                     >
                       <IconMap className="w-4 h-4" /> Map
                     </button>
-                    <button
-                      onClick={() => setPaymentTrip(trip)}
-                      className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold border transition-all ${
-                        trip.payment?.totalFee > 0 && trip.payment?.balance <= 0
-                          ? "border-green-300 text-green-700 hover:bg-green-50"
-                          : "border-amber-300 text-amber-700 hover:bg-amber-50"
-                      }`}
-                    >
-                      <IconPeso className="w-4 h-4" /> Payment
-                    </button>
                     {(() => {
                       const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
                       // "Not Available Yet" covers both blockers (payment or
@@ -634,24 +496,23 @@ function ActiveTripsTab() {
                   </>
                 ) : (
                   <>
-                    {!droppedOff && (
-                      <button onClick={() => handleDropoff(trip)} disabled={busyID === trip.id}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold border border-amber-300 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all disabled:opacity-50">
-                        <IconPin className="w-3.5 h-3.5" /> Mark Dropped Off
-                      </button>
-                    )}
-                    <button onClick={() => setPaymentTrip(trip)}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold border border-amber-300 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all">
-                      <IconPeso className="w-3.5 h-3.5" /> Payments
+                    <button
+                      onClick={() => setMapTrip(trip)}
+                      disabled={tripStops(trip).length === 0}
+                      className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      <IconMap className="w-4 h-4" /> Map
                     </button>
                     <button onClick={() => setPenaltyTrip(trip)}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50 active:scale-[0.99] transition-all">
                       Penalty
                     </button>
-                    <button onClick={() => handleReturn(trip)} disabled={busyID === trip.id}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50">
-                      <IconFlag className="w-3.5 h-3.5" /> Return
-                    </button>
+                    {!droppedOff && (
+                      <button onClick={() => handleDropoff(trip)} disabled={busyID === trip.id}
+                        className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                        {busyID === trip.id ? "…" : <><IconPin className="w-3.5 h-3.5" /> Mark Dropped Off</>}
+                      </button>
+                    )}
                   </>
                 )}
               </div>
@@ -666,41 +527,12 @@ function ActiveTripsTab() {
         title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
         stops={mapTrip ? tripStops(mapTrip) : []}
       />
-      <ReturnChecklistModal
-        open={!!returnTrip}
-        depositOnly={depositOnly}
-        onClose={() => setReturnTrip(null)}
-        title={returnTrip ? `${returnTrip.customerName} — ${returnTrip.vehicleName}` : ""}
-        driverName="You"
-        loadChecklist={loadReturnChecklist}
-        onSettleDeposit={settleDepositNow}
-        onConfirmReturn={confirmReturn}
-        onMarkDroppedOff={dropoffFromChecklist}
-        onNotePenalty={() => { const t = returnTrip; setReturnTrip(null); setPenaltyTrip(t); }}
-      />
       <DriverPenaltyModal
         open={!!penaltyTrip}
         onClose={() => setPenaltyTrip(null)}
         title={penaltyTrip ? `${penaltyTrip.customerName} — ${penaltyTrip.vehicleName}` : ""}
         loadLateFee={loadLateFee}
         onSubmit={submitPenalty}
-      />
-      <PaymentStatusModal
-        open={!!paymentTrip}
-        onClose={() => { setPaymentTrip(null); setCollectBalanceError(null); setConfirmPaymentError(null); setRefundError(null); }}
-        customerName={paymentTrip?.customerName}
-        payment={paymentTrip?.payment}
-        onConfirmPayment={handleConfirmPayment}
-        confirming={confirmingPayment}
-        confirmError={confirmPaymentError}
-        onCollectBalance={handleCollectBalance}
-        collecting={collectingBalance}
-        collectError={collectBalanceError}
-        onMarkRefundIssued={handleMarkRefundIssued}
-        onReturnDeposit={paymentTrip?.status === "ongoing" ? () => { const t = paymentTrip; setPaymentTrip(null); setDepositOnly(true); setReturnTrip(t); } : undefined}
-        markingRefund={markingRefund}
-        refundError={refundError}
-        pendingApprovalNote="The initial payment hasn't been approved yet — ask an admin or supervisor to approve it before collecting the rest."
       />
     </div>
   );
@@ -740,7 +572,7 @@ function HistoryTab() {
       <div className="flex justify-end">
         <button onClick={fetchHistory} disabled={loading}
           className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
-          ↺ Refresh
+          {loading ? "Refreshing…" : "↺ Refresh"}
         </button>
       </div>
 
@@ -748,7 +580,7 @@ function HistoryTab() {
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-3">{error}</div>
       )}
 
-      {loading ? (
+      {loading && trips.length === 0 ? (
         <p className="text-sm text-gray-400 py-16 text-center">Loading…</p>
       ) : trips.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-soft p-10 text-center">
