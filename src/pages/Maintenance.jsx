@@ -259,6 +259,7 @@ export default function Maintenance() {
   const [showAdd, setShowAdd]             = useState(false);
   const [form, setForm]                   = useState(EMPTY_FORM);
   const [saving, setSaving]               = useState(false);
+  const [viewing, setViewing]             = useState(false); // the open modal is read-only until "Edit" is clicked
   const [toast, setToast]                 = useState(null);
   const [view, setView]                   = useState("table");
   const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
@@ -411,7 +412,7 @@ export default function Maintenance() {
   const computedTotal = servicesTotal + partsTotal;
 
   const modalOpen = showAdd || !!editRecord;
-  const closeModal = useCallback(() => { setEditRecord(null); setShowAdd(false); }, []);
+  const closeModal = useCallback(() => { setEditRecord(null); setShowAdd(false); setViewing(false); }, []);
 
   // Esc closes the modal.
   useEffect(() => {
@@ -532,13 +533,29 @@ export default function Maintenance() {
     });
     setEditRecord(r);
     setShowAdd(false);
+    setViewing(false);
+  };
+
+  // Same modal, read-only. Its "Edit" button unlocks the form (setViewing(false)).
+  const openView = (r) => {
+    openEdit(r);
+    setViewing(true);
   };
 
   const openAdd = () => {
     setForm(EMPTY_FORM);
     setCustomName(""); setCustomPrice("");
     setEditRecord(null);
+    setViewing(false);
     setShowAdd(true);
+  };
+
+  // "Confirm" on a Scheduled row: the same edit modal, with the status already set to Completed.
+  // Nothing is saved until "Update" is clicked, so the date, the parts' After conditions, prices and
+  // the total can be checked (and changed) first.
+  const openConfirm = (r) => {
+    openEdit(r);
+    setForm(f => ({ ...f, status: "Completed" }));
   };
 
   // A flagged part as a row for the modal. The price stays undefined until the
@@ -745,7 +762,7 @@ export default function Maintenance() {
                         <div key={p.id} className="flex items-center gap-1.5 bg-red-100 text-red-700 px-3 py-1.5 rounded-xl text-xs font-medium">
                           <span>{p.carPartName} — {p.carLabel}</span>
                           <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${p.status === "Missing" ? "bg-orange-200 text-orange-800" : "bg-red-200 text-red-800"}`}>{p.status}</span>
-                          <span className="text-red-400 text-[10px]">({p.source === "after_trip" ? "after trip" : "before trip"})</span>
+                          <span className="text-red-400 text-[10px]">({SOURCE_LABEL[p.source] || "before trip"})</span>
                           <button onClick={() => openScheduleForPart(p)}
                             className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
                             🔧 Schedule Fix
@@ -768,7 +785,7 @@ export default function Maintenance() {
                         <div key={p.id} className="flex items-center gap-1.5 bg-purple-100 text-purple-700 px-3 py-1.5 rounded-xl text-xs font-medium">
                           <span>{p.carPartName} — {p.carLabel}</span>
                           <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-200 text-purple-800">Stolen</span>
-                          <span className="text-purple-400 text-[10px]">({p.source === "after_trip" ? "after trip" : "before trip"})</span>
+                          <span className="text-purple-400 text-[10px]">({SOURCE_LABEL[p.source] || "before trip"})</span>
                           <button onClick={() => openScheduleForPart(p)}
                             className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
                             🔧 Schedule Fix
@@ -791,7 +808,7 @@ export default function Maintenance() {
           records={records}
           calMonth={calMonth}
           setCalMonth={setCalMonth}
-          onEditRecord={openEdit}
+          onEditRecord={openView}
         />
       )}
 
@@ -833,7 +850,7 @@ export default function Maintenance() {
                   ? STAT_FILTERS[activeStatFilter].rowClass
                   : i % 2 === 1 ? "bg-gray-50/20" : "";
                 return (
-                <tr key={r.id} onClick={() => openEdit(r)}
+                <tr key={r.id} onClick={() => openView(r)}
                   className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-teal-50/30 transition-colors ${rowClass}`}>
                   <td className="px-4 py-3">
                     <div className="font-semibold text-gray-800 text-xs truncate">{r.carLabel}</div>
@@ -865,10 +882,17 @@ export default function Maintenance() {
                     <MainStatusBadge status={r.status || "—"} />
                   </td>
                   <td className="px-4 py-3">
-                    <button onClick={e => { e.stopPropagation(); openEdit(r); }}
-                      className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors font-medium">
-                      Edit
-                    </button>
+                    {r.status === "Scheduled" ? (
+                      <button onClick={e => { e.stopPropagation(); openConfirm(r); }}
+                        className="text-xs px-2.5 py-1 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition-colors font-semibold">
+                        Confirm
+                      </button>
+                    ) : (
+                      <button onClick={e => { e.stopPropagation(); openView(r); }}
+                        className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors font-medium">
+                        View
+                      </button>
+                    )}
                   </td>
                 </tr>
                 );
@@ -885,6 +909,7 @@ export default function Maintenance() {
         <MaintenanceModal
           form={form} setForm={setForm} config={config} cars={cars}
           editRecord={editRecord} saving={saving}
+          viewing={viewing} onEdit={() => setViewing(false)}
           onClose={closeModal} onSave={handleSave} onCarChange={onCarChange}
           servicesTotal={servicesTotal} partsTotal={partsTotal} computedTotal={computedTotal}
           toggleService={toggleService} updateServicePrice={updateServicePrice}
@@ -945,6 +970,9 @@ function Field({ label, children }) {
 
 // ─── PART BADGE ──────────────────────────────────────────────────────────────
 
+// Where a flagged part came from (see utils/damagedParts.js).
+const SOURCE_LABEL = { after_trip: "after trip", before_trip: "before trip", maintenance: "found in a job" };
+
 const PART_BADGE = {
   Good:     "bg-green-50 text-green-700 border-green-200",
   Damaged:  "bg-red-50 text-red-700 border-red-200",
@@ -988,7 +1016,7 @@ function ModalSection({ n, title, hint, children }) {
 // only — it never changes the catalog price.
 
 function MaintenanceModal({
-  form, setForm, config, cars, editRecord, saving,
+  form, setForm, config, cars, editRecord, saving, viewing, onEdit,
   onClose, onSave, onCarChange,
   servicesTotal, partsTotal, computedTotal,
   toggleService, updateServicePrice,
@@ -1007,17 +1035,17 @@ function MaintenanceModal({
     `${p.carPartName} — ${p.price != null ? peso(p.price) : "no price set"}${flaggedByPart[p.carPartID] ? ` · ${flaggedByPart[p.carPartID].status}` : ""}`;
 
   const effectiveTotal = form.useManualTotal && form.overrideTotal !== "" ? Number(form.overrideTotal) || 0 : computedTotal;
-  const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none";
+  const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none disabled:bg-gray-50 disabled:text-gray-500";
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={editRecord ? "Edit maintenance record" : "Schedule maintenance"}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={viewing ? "Maintenance details" : editRecord ? "Edit maintenance record" : "Schedule maintenance"}>
       <div className="absolute inset-0 bg-black/40" />
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
           <div>
-            <h2 className="font-bold text-gray-800 text-base">{editRecord ? "Edit Maintenance" : "Schedule Maintenance"}</h2>
+            <h2 className="font-bold text-gray-800 text-base">{viewing ? "Maintenance Details" : editRecord ? "Edit Maintenance" : "Schedule Maintenance"}</h2>
             <p className="text-xs text-gray-400 mt-0.5">
               {car ? `${car.label}${car.plateNumber ? ` · ${car.plateNumber}` : ""}` : "Choose a vehicle to begin"}
             </p>
@@ -1028,7 +1056,9 @@ function MaintenanceModal({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-7">
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {/* View mode: the whole form is a disabled fieldset, so nothing can be changed until "Edit". */}
+          <fieldset disabled={viewing} className="space-y-7 min-w-0 border-0 p-0 m-0">
 
           {/* 1 · JOB */}
           <ModalSection n="1" title="Job">
@@ -1291,16 +1321,29 @@ function MaintenanceModal({
               </div>
             </div>
           </ModalSection>
+          </fieldset>
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
-          <button onClick={onClose}
-            className="px-5 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
-          <button onClick={onSave} disabled={saving || catalog.loading}
-            className="px-6 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
-            {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
-          </button>
+          {viewing ? (
+            <>
+              <span className="mr-auto text-xs text-gray-400">Read-only. Click Edit to make changes.</span>
+              <button onClick={onClose}
+                className="px-5 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Close</button>
+              <button onClick={onEdit}
+                className="px-6 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700">Edit</button>
+            </>
+          ) : (
+            <>
+              <button onClick={onClose}
+                className="px-5 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
+              <button onClick={onSave} disabled={saving || catalog.loading}
+                className="px-6 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
+                {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

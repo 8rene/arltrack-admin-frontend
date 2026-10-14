@@ -55,6 +55,9 @@ export const PAGE_ACCESS = {
   "/session-logs": [ADMIN],
   "/transaction-logs": [ADMIN],
   "/settings": [OWNER, ADMIN],
+  // Everyone can READ the Terms; only Owner/Admin can edit (enforced by the
+  // backend — routes/terms — and mirrored by canEdit in pages/TermsPage.jsx).
+  "/terms": [OWNER, ADMIN, SUPERVISOR, DRIVER],
 
   // Setup catalogs. View/add/edit is open to all three staff roles; DELETE is
   // narrower (Owner/Admin) and enforced by the backend (routes/holidays,

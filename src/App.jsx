@@ -24,6 +24,7 @@ import SessionLogs from "./pages/SessionLogs";
 import TransactionLogs from "./pages/TransactionLogs";
 import Settings from "./pages/Settings";
 import Holidays from "./pages/Holidays";
+import TermsPage from "./pages/TermsPage";
 import CodingRestrictions from "./pages/CodingRestrictions";
 import Addresses from "./pages/Addresses";
 import VehicleInspection from "./pages/VechicleInspection";
@@ -196,6 +197,11 @@ function AppRoutes() {
             <Route path="/settings" element={
                 <ProtectedRoute>
                     <DashboardLayout><Settings /></DashboardLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/terms" element={
+                <ProtectedRoute>
+                    <DashboardLayout><TermsPage /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/holidays" element={

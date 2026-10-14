@@ -1,25 +1,33 @@
 // Which car parts still need attention?
 //
 // The before/after-trip inspection records are HISTORY and are never edited,
-// so "is this part still damaged?" is DERIVED here, not stored:
+// so "is this part still damaged?" is DERIVED here, not stored. Two sources,
+// and the more recent event wins:
 //
-//   a part is flagged when the car's latest inspection lists it as
-//   Damaged / Stolen / Missing  AND  no Completed maintenance job has since
-//   covered it.
+//   - the car's latest inspection: a part it lists as Damaged / Stolen / Missing is flagged
+//   - Completed maintenance jobs on that car that cover the part and are not older than that
+//     inspection (linked to the same booking as the inspection, or dated on or after the day
+//     it was recorded — or ANY Completed job when the car has no inspection at all).
+//     If several do, the MOST RECENT one decides: its "After" condition "Good" fixes the
+//     part; "Damaged" leaves it flagged — or flags it, when the job itself found the part
+//     damaged and no inspection had.
 //
-// A Completed job "covers" a part when its partsAddressed lists the part and
-// either it is linked to the same booking as the inspection, or its
-// maintenanceDate is on/after the day the inspection was recorded (day
-// granularity — the date picker has no time, so a same-day fix still counts).
-// A job that leaves the part's "After" condition as "Damaged" has NOT fixed it,
-// so the part stays flagged.
-// A newer inspection that finds the part damaged again therefore flags it
-// again, and reopening/deleting the job un-resolves it.
+// A part the inspection flagged as Stolen / Missing keeps that status while a job leaves it
+// Damaged; a part only the job found is "Damaged". Every other part is fine.
+// A newer inspection that finds the part damaged again flags it again, and
+// reopening/deleting the job un-resolves it.
 //
-// Used by Maintenance.jsx and Dashboard.jsx so the two can never disagree.
-// The backend (maintenance.service.js, getUnresolvedDamage) applies the same rule.
+// Days are compared in Philippine time (UTC+8), exactly like the backend: an inspection is
+// stamped with the real moment while a job's date is just a day.
+//
+// Used by Maintenance.jsx. The backend (services/carParts/carPartConditions.service.js,
+// getUnresolvedDamage) applies the same rule and writes it to carParts.status, which the
+// Dashboard reads — keep the three in step.
 
 export const FLAGGED_STATUSES = ["Damaged", "Stolen", "Missing"];
+
+const PH_OFFSET_MS = 8 * 60 * 60 * 1000;
+const phDay = (ms) => Math.floor((ms + PH_OFFSET_MS) / 86400000);
 
 // Firestore client Timestamp, backend-JSON Timestamp, ISO string or Date -> ms.
 export const toMs = (val) => {
@@ -30,11 +38,6 @@ export const toMs = (val) => {
   if (val._seconds !== undefined) return val._seconds * 1000;
   const t = new Date(val).getTime();
   return Number.isNaN(t) ? 0 : t;
-};
-
-const startOfDay = (ms) => {
-  const d = new Date(ms);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 };
 
 // docs: [{ carID, recordedAt, ... }] -> latest record per carID
@@ -48,43 +51,77 @@ export const pickLatestByCar = (docs) => {
   return byCar;
 };
 
-export const isResolvedByJob = (carID, carPartID, record, jobs) => {
-  const recordedDay = startOfDay(toMs(record.recordedAt));
-  return jobs.some((j) => {
-    if (j.status !== "Completed" || j.carID !== carID) return false;
-    if (!(j.partsAddressed || []).some((p) => p.carPartID === carPartID && p.conditionAfter !== "Damaged")) return false;
-    if (j.bookingID && record.bookingID && j.bookingID === record.bookingID) return true;
+// The most recent Completed job on `carID` that covers `carPartID` and is not older than
+// `record` (the car's latest inspection, or undefined when it has none).
+// Returns { entry, jobMs, updatedMs } or null.
+export const latestJobEntry = (carID, carPartID, record, jobs) => {
+  let latest = null;
+  jobs.forEach((j) => {
+    if (j.status !== "Completed" || j.carID !== carID) return;
+    const entry = (j.partsAddressed || []).find((p) => p?.carPartID === carPartID);
+    if (!entry) return;
     const jobMs = toMs(j.maintenanceDate);
-    return jobMs > 0 && startOfDay(jobMs) >= recordedDay;
+    const sameBooking = record && j.bookingID && record.bookingID && j.bookingID === record.bookingID;
+    if (record && !sameBooking && !(jobMs > 0 && phDay(jobMs) >= phDay(toMs(record.recordedAt)))) return;
+    const updatedMs = toMs(j.updatedAt);
+    if (!latest || jobMs > latest.jobMs || (jobMs === latest.jobMs && updatedMs >= latest.updatedMs)) {
+      latest = { entry, jobMs, updatedMs };
+    }
   });
+  return latest;
 };
 
 // beforeRecords may be [] (the Dashboard only looks at after-trip records).
-// Returns the still-flagged parts: [{ carID, carPartID, status, source, bookingID, carPartName }]
-// plus `latestStatus`, a Map "carID_carPartID" -> inspection status for every
-// part the latest inspection lists (resolved or not), for showing conditions.
+// Returns the still-flagged parts:
+//   [{ id, carID, carPartID, carPartName, status, source, bookingID }]
+// source: "after_trip" | "before_trip" (the inspection that flagged it) or "maintenance"
+// (a job found it damaged and no inspection had). Plus `latestStatus`, a Map
+// "carID_carPartID" -> the part's current flagged status, for showing conditions.
 export const buildFlaggedParts = ({ afterRecords = [], beforeRecords = [], jobs = [] }) => {
   const latestAfter  = pickLatestByCar(afterRecords);
   const latestBefore = pickLatestByCar(beforeRecords);
-  const carIDs = new Set([...Object.keys(latestAfter), ...Object.keys(latestBefore)]);
+  const completedJobs = jobs.filter((j) => j.status === "Completed" && j.carID);
+
+  // Cars with an inspection, plus cars that only have Completed jobs.
+  const carIDs = new Set([
+    ...Object.keys(latestAfter),
+    ...Object.keys(latestBefore),
+    ...completedJobs.map((j) => j.carID),
+  ]);
 
   const flagged = [];
   const latestStatus = new Map();
   carIDs.forEach((carID) => {
-    const record = latestAfter[carID] || latestBefore[carID];
+    const record = latestAfter[carID] || latestBefore[carID] || null; // null: car has no inspection yet
     const source = latestAfter[carID] ? "after_trip" : "before_trip";
-    (record.damageParts || []).forEach((p) => {
-      latestStatus.set(`${carID}_${p.carPartID}`, p.status);
-      if (!FLAGGED_STATUSES.includes(p.status)) return;
-      if (isResolvedByJob(carID, p.carPartID, record, jobs)) return;
+
+    const inspectionStatus = new Map(
+      (record?.damageParts || []).filter((p) => FLAGGED_STATUSES.includes(p.status)).map((p) => [p.carPartID, p])
+    );
+
+    const partIDs = new Set(inspectionStatus.keys());
+    completedJobs.filter((j) => j.carID === carID).forEach((j) => {
+      (j.partsAddressed || []).forEach((e) => { if (e?.carPartID) partIDs.add(e.carPartID); });
+    });
+
+    partIDs.forEach((carPartID) => {
+      const fromInspection = inspectionStatus.get(carPartID) || null;
+      const job = latestJobEntry(carID, carPartID, record, jobs);
+
+      let status;
+      if (job) status = job.entry.conditionAfter === "Damaged" ? fromInspection?.status || "Damaged" : null;
+      else status = fromInspection?.status || null;
+      if (!status) return;
+
+      latestStatus.set(`${carID}_${carPartID}`, status);
       flagged.push({
-        id: `${carID}_${p.carPartID}`,
+        id: `${carID}_${carPartID}`,
         carID,
-        carPartID: p.carPartID,
-        carPartName: p.carPartName || null,
-        status: p.status,
-        source,
-        bookingID: record.bookingID,
+        carPartID,
+        carPartName: fromInspection?.carPartName || null,
+        status,
+        source: fromInspection ? source : "maintenance",
+        bookingID: fromInspection ? record.bookingID : null,
       });
     });
   });

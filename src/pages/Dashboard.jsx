@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
 import usePolling from "../hooks/usePolling";
-import { buildFlaggedParts } from "../utils/damagedParts";
 import {
   collection,
   query,
@@ -200,57 +199,42 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  // REAL-TIME — damaged/stolen/missing parts, sourced from inventoryAfterTrip.
+  // Damaged / stolen / missing parts — read from the parts' LIVE condition.
   //
-  // Previously this watched `carParts.status in ["Damaged","Stolen"]` — but
-  // that field on the standalone parts-catalog collection is never actually
-  // set to those values anywhere in the codebase (it only ever becomes
-  // "Good" or "Replaced"). Damage/theft is recorded per-trip, as entries
-  // inside a `damageParts` array embedded on the inventoryBeforeTrip/
-  // inventoryAfterTrip document — this alert was watching a field that's
-  // never populated, so it never fired. Fixed to read the real source.
+  // `carParts.status` is kept up to date by the backend (services/carParts/carPartConditions.service.js):
+  // it is recomputed whenever an inspection is saved, edited, restored or deleted, or a maintenance job
+  // changes. A part stays flagged until a Completed job fixes it (and doesn't leave it "Damaged") — the same
+  // rule as utils/damagedParts.js, which the Maintenance page still uses. The inspection records themselves
+  // are never edited. So this alert is one small filtered query: no scan of the inspection history, and no
+  // reading of every Completed job.
   //
-  // After-trip only, not before: after-trip is the condition the car was
-  // actually returned in — the most current, most "did this booking cause
-  // damage" signal — matching what the person reviewing this dashboard
-  // actually wants to know. Only the latest after-trip record per car
-  // counts, same as Maintenance.jsx's own derivation, so a car's older
-  // damage history doesn't linger once a newer clean trip supersedes it.
-  // CHANGED: was onSnapshot(collection(db, "inventoryAfterTrip")) — the whole
-  // collection on every dashboard open + on every change, each change then
-  // re-reading cars/brand/model/carParts too. Now one read on open, then every
-  // 5 minutes while the tab is visible. (Better long-term: store a per-car
-  // "latest damage" summary doc so this doesn't scan the history at all.)
+  // Polled every 5 minutes while the tab is visible. (The query is cheap now, so it could go back to a
+  // real-time listener if you want alerts to appear instantly.)
   const loadDamagedParts = async () => {
-      let snap, jobsSnap;
+      let partsSnap;
       try {
-        [snap, jobsSnap] = await Promise.all([
-          getDocs(collection(db, "inventoryAfterTrip")),
-          // Completed jobs are what "resolve" a damaged part — the inspection
-          // record itself is never edited (see utils/damagedParts.js).
-          getDocs(query(collection(db, "maintenance"), where("status", "==", "Completed"))),
-        ]);
+        partsSnap = await getDocs(
+          query(collection(db, "carParts"), where("status", "in", ["Damaged", "Stolen", "Missing"]))
+        );
       } catch { return; }
 
-      // Latest after-trip record per car, minus parts a Completed maintenance
-      // job has since covered. Timestamps are live client-SDK ones (.seconds);
-      // toMs() in the helper handles both that and the backend's JSON form.
-      const { flagged } = buildFlaggedParts({
-        afterRecords: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
-        jobs: jobsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
-      });
-      const parts = flagged.map((p) => ({ ...p, _type: "damaged_part" }));
+      const parts = partsSnap.docs.map((d) => ({
+        id: d.id,
+        carPartID: d.id,
+        carID: d.data().carID,
+        carPartName: d.data().carPartName || "Unknown Part",
+        status: d.data().status,
+        _type: "damaged_part",
+      }));
 
       const carIDs = [...new Set(parts.map(p => p.carID).filter(Boolean))];
       let carNameMap = {};
-      let partNameMap = {};
       if (carIDs.length > 0) {
         try {
-          const [carsSnap, brandsSnap, modelsSnap, partsSnap] = await Promise.all([
+          const [carsSnap, brandsSnap, modelsSnap] = await Promise.all([
             getDocs(query(collection(db, "cars"), where("__name__", "in", carIDs))),
             getDocs(collection(db, "brand")),
             getDocs(collection(db, "model")),
-            getDocs(collection(db, "carParts")), // fallback for part names damageParts didn't already carry
           ]);
           const brandMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data().brandName || ""]));
           const modelMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, { modelName: d.data().modelName || "", brandID: d.data().brandID }]));
@@ -258,15 +242,10 @@ export default function Dashboard() {
             const model = modelMap[d.data().modelID] || {};
             carNameMap[d.id] = `${brandMap[model.brandID] || ""} ${model.modelName || ""}`.trim() || d.id;
           });
-          partNameMap = Object.fromEntries(partsSnap.docs.map(d => [d.id, d.data().carPartName || ""]));
         } catch {}
       }
 
-      setDamagedParts(parts.map(p => ({
-        ...p,
-        carName: carNameMap[p.carID] || p.carID || "—",
-        carPartName: p.carPartName || partNameMap[p.carPartID] || "Unknown Part",
-      })));
+      setDamagedParts(parts.map(p => ({ ...p, carName: carNameMap[p.carID] || p.carID || "—" })));
   };
   usePolling(loadDamagedParts, 5 * 60 * 1000);
 
