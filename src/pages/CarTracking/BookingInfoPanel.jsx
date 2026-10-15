@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import PlaceLabel from "../../components/PlaceLabel";
+import CodingWarningsCard from "../../components/shared/CodingWarningsCard";
 
 const API = process.env.REACT_APP_API_URL;
 
@@ -146,12 +147,22 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
                 <p className="text-xs text-blue-600 mt-0.5">
                   {fmtDateTime(b.startDateTime)} → {fmtDateTime(b.endDateTime)}
                 </p>
+                <CodingWarningsCard warnings={b.codingWarnings} title="Coding restrictions" compact className="mt-1.5" />
               </div>
             ))}
             {upcomingBookings.length > 3 && (
               <p className="text-[11px] text-gray-400 italic px-1">+{upcomingBookings.length - 3} more — see the panel below to pick up.</p>
             )}
           </div>
+        )}
+
+        {/* Number Coding restrictions found when the current trip was booked. The live session
+            carries them; the bookings list is the fallback. (Upcoming bookings show theirs above.) */}
+        {ongoingBooking && (
+          <CodingWarningsCard
+            warnings={sessionInfo?.codingWarnings?.length ? sessionInfo.codingWarnings : ongoingBooking.codingWarnings}
+            compact
+          />
         )}
 
         <p className="text-[11px] font-semibold text-gray-500 pt-1 px-1">

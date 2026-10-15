@@ -1000,10 +1000,10 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   // Only ever non-empty once getAllBookings has resolved a session for
   // this booking (see booking.service.js's resolveHistoryInfo).
   const [mapOpen, setMapOpen] = useState(false);
+  const locationStops = tripStops(booking);
   // Booking-time Number Coding restrictions the customer app saved (booking.codingWarnings) —
   // the list the customer was warned about; empty for bookings made before that existed.
   const codingByCity = warningsByCity(readCodingWarnings(booking.codingWarnings));
-  const locationStops = tripStops(booking);
 
   // Existing penalties already tied to this booking — same "always shown,
   // even when empty" treatment as Linked Maintenance below, so staff can
@@ -1207,6 +1207,24 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
             </div>
           )}
 
+          {/* Number Coding restrictions the customer was warned about when booking
+              (booking.codingWarnings). Shown on both tabs — staff doing pickup on the Steps tab
+              need it as much as someone reading Details. Nothing renders for older bookings. */}
+          {codingByCity.length > 0 && (
+            <div className="mt-2 mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="font-semibold">⚠️ Number Coding restrictions found before booking</p>
+              <ul className="mt-1.5 space-y-0.5">
+                {codingByCity.map((c) => (
+                  <li key={c.city || "city"}>
+                    <span className="font-semibold">{c.city || "City"}</span>
+                    {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
+                    {c.text ? `: ${c.text}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {tab === "steps" ? (
             <>
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
@@ -1316,20 +1334,6 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                     )}
                   </div>
                 </div>
-                {codingByCity.length > 0 && (
-                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                    <p className="font-semibold">⚠️ Number Coding restrictions found before booking</p>
-                    <ul className="mt-1.5 space-y-0.5">
-                      {codingByCity.map((c) => (
-                        <li key={c.city || "city"}>
-                          <span className="font-semibold">{c.city || "City"}</span>
-                          {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
-                          {c.text ? `: ${c.text}` : ""}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
                 {/* T&C this customer ticked "I agree" to. Written once at booking creation, never edited. */}
                 <div className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 text-sm">
                   <span className="text-gray-500 font-medium w-36 shrink-0">Terms &amp; Conditions</span>

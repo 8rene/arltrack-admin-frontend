@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import TripMapModal from "../components/TripMapModal";
 import DriverPenaltyModal from "../components/DriverPenaltyModal";
 import TripDetailModal from "../components/TripDetailModal";
+import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -416,6 +417,8 @@ function ActiveTripsTab() {
         trips.map((trip) => {
           const isOngoing   = trip.status === "ongoing";
           const droppedOff  = fmtTime(trip.droppedOffTime);
+          // Number Coding restrictions the customer was warned about when booking (trip.codingWarnings).
+          const codingByCity = warningsByCity(readCodingWarnings(trip.codingWarnings));
           return (
             <div key={trip.id} id={`trip-${trip.id}`} className="bg-white rounded-2xl shadow-soft p-4 space-y-3 transition-shadow">
               <div className="flex items-start justify-between gap-2">
@@ -434,6 +437,22 @@ function ActiveTripsTab() {
                 <span className="flex items-center gap-1"><IconClock /> {fmtDateTime(trip.startDateTime)} → {fmtDateTime(trip.endDateTime)}</span>
                 <span className="flex items-center gap-1"><IconPin /> {trip.location}</span>
               </div>
+
+              {codingByCity.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <p className="font-semibold">⚠️ Number Coding restrictions on this trip</p>
+                  <ul className="mt-1.5 space-y-0.5">
+                    {codingByCity.map((c) => (
+                      <li key={c.city || "city"}>
+                        <span className="font-semibold">{c.city || "City"}</span>
+                        {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
+                        {c.text ? `: ${c.text}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1.5 opacity-80">Plan the route around these days and times to avoid a coding violation.</p>
+                </div>
+              )}
 
               {isOngoing && (
                 <div className="flex items-center gap-4 text-xs bg-gray-50 rounded-lg px-3 py-2">

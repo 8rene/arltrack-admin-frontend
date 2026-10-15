@@ -1,3 +1,5 @@
+import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
+
 const peso = (n) => `₱${Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
 
 const fmtDateTimeLong = (val) => {
@@ -47,6 +49,7 @@ export default function TripDetailModal({ open, onClose, trip, onShowMap }) {
 
   const p = trip.payment || {};
   const hasStops = !!(trip.pickupLocation || trip.dropoffLocation);
+  const codingByCity = warningsByCity(readCodingWarnings(trip.codingWarnings));
 
   return (
     <div className="fixed inset-0 z-[2000] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -76,6 +79,21 @@ export default function TripDetailModal({ open, onClose, trip, onShowMap }) {
             <Row label="Trip dates" value={`${fmtDateTimeLong(trip.startDateTime)} → ${fmtDateTimeLong(trip.endDateTime)}`} />
             <Row label="Vehicle" value={trip.vehicleName || "—"} />
           </div>
+
+          {codingByCity.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="font-semibold">⚠️ Number Coding restrictions on this trip</p>
+              <ul className="mt-1.5 space-y-0.5">
+                {codingByCity.map((c) => (
+                  <li key={c.city || "city"}>
+                    <span className="font-semibold">{c.city || "City"}</span>
+                    {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
+                    {c.text ? `: ${c.text}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Payment breakdown — same numbers as PaymentStatusModal, plus
               the mode of payment, read-only (no confirm/collect actions

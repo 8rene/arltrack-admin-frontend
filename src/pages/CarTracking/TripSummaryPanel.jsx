@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import CodingWarningsCard from "../../components/shared/CodingWarningsCard";
 
 const API = process.env.REACT_APP_API_URL;
 
@@ -120,6 +121,8 @@ export default function TripSummaryPanel({ bookingID, carLabel, tripLabel, token
                 </>
               )}
             </div>
+
+            <CodingWarningsCard warnings={booking.codingWarnings} compact />
 
             {(booking.totalFee || booking.rentalFee) && (
               <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-1">
