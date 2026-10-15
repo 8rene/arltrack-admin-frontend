@@ -61,7 +61,7 @@ function stopDivIcon(type) {
   const s = STOP_STYLE[type] || STOP_STYLE.pickup;
   return L.divIcon({
     className: "",
-    html: `<div style="width:28px;height:28px;border-radius:${s.shape};background:${s.color};transform:rotate(${s.rotate});border:2px solid white;box-shadow:0 1px 5px rgba(0,0,0,.4)"></div>`,
+    html: `<div style="position:relative;width:28px;height:28px"><div style="width:28px;height:28px;border-radius:${s.shape};background:${s.color};transform:rotate(${s.rotate});border:2px solid white;box-shadow:0 1px 5px rgba(0,0,0,.4)"></div></div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 28],
   });

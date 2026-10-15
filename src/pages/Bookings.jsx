@@ -6,6 +6,7 @@ import { useAuth } from "../context/AuthContext";
 import DeleteBundleModal from "../components/shared/DeleteBundleModal";
 import { ROLES } from "../config/pagePermissions";
 import TripMapModal from "../components/TripMapModal";
+import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
 import StoreLocationMapPicker from "../components/shared/StoreLocationMapPicker";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -193,9 +194,6 @@ const fmtDateTime = (val) => {
     return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   } catch { return "—"; }
 };
-
-// Terms version shown as 1.00 / 1.01 (old whole numbers 1, 2 → 1.00, 2.00).
-const fmtTermsVer = (v) => (v === null || v === undefined || v === "" ? null : `v${Number(v).toFixed(2)}`);
 
 // Same Firestore-Timestamp-or-string-or-seconds handling as fmtDate above,
 // but returns a raw millisecond number (or -Infinity for unparsable/empty
@@ -991,6 +989,9 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   // Only ever non-empty once getAllBookings has resolved a session for
   // this booking (see booking.service.js's resolveHistoryInfo).
   const [mapOpen, setMapOpen] = useState(false);
+  // Booking-time Number Coding restrictions the customer app saved (booking.codingWarnings) —
+  // the list the customer was warned about; empty for bookings made before that existed.
+  const codingByCity = warningsByCity(readCodingWarnings(booking.codingWarnings));
   const locationStops = tripStops(booking);
 
   // Existing penalties already tied to this booking — same "always shown,
@@ -1288,9 +1289,6 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                 {row("Service Type",    booking.serviceTypeName)}
                 {row("Car ID",          booking.carID)}
                 {row("Created",         fmtDateTime(booking.createdAt))}
-                {row("Terms Accepted",  booking.termsVersionID
-                  ? `${fmtTermsVer(booking.termsVersion) || "Version unavailable"} · ${fmtDateTime(booking.termsAcceptedAt)}`
-                  : "Not recorded (booked before terms tracking)")}
                 {row("Start Date",      fmtDate(booking.startDateTime))}
                 {row("End Date",        fmtDate(booking.endDateTime))}
                 {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
@@ -1307,6 +1305,20 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                     )}
                   </div>
                 </div>
+                {codingByCity.length > 0 && (
+                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    <p className="font-semibold">⚠️ Number Coding restrictions found before booking</p>
+                    <ul className="mt-1.5 space-y-0.5">
+                      {codingByCity.map((c) => (
+                        <li key={c.city || "city"}>
+                          <span className="font-semibold">{c.city || "City"}</span>
+                          {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
+                          {c.text ? `: ${c.text}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
 
               <div>

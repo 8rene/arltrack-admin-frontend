@@ -124,6 +124,7 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
             geofenceZones:  parsed.geofenceZones  || [],
             geofenceAlerts: parsed.geofenceAlerts || [],
             codingAlerts:   parsed.codingAlerts   || [],
+            codingWarnings: parsed.codingWarnings || [],
             // Review details saved with newer history files; older files
             // simply don't have them (null / empty -> "not recorded").
             droppedOffAt:   parsed.droppedOffAt || null,

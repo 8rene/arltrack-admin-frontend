@@ -1,4 +1,5 @@
 import { formatCodingRule } from "../../utils/geofenceAlerts";
+import { readCodingWarnings, warningsByCity } from "../../utils/codingWarnings";
 
 function fmtTime(at) {
   if (!at) return "—";
@@ -12,6 +13,7 @@ const ENTRY_STYLES = {
   "geofence-cleared":    { icon: "✅", label: "Back inside geofence", color: "text-teal-600 bg-teal-50" },
   "coding-restricted":   { icon: "🚫", label: "Coding restriction",   color: "text-orange-600 bg-orange-50" },
   "coding-cleared":      { icon: "🟢", label: "Coding restriction lifted", color: "text-gray-500 bg-gray-50" },
+  "coding-warned":       { icon: "⚠️", label: "Coding warning at booking", color: "text-amber-700 bg-amber-50" },
   "trip-dropped-off":    { icon: "📍", label: "Marked dropped off",   color: "text-amber-700 bg-amber-50" },
   "trip-completed":      { icon: "🏁", label: "Booking completed",    color: "text-green-700 bg-green-50" },
 };
@@ -42,6 +44,14 @@ export default function LogsPanel({ sessionInfo, loading, onClose }) {
           : (a.reason || "Plate under coding restriction"))
       : "Restriction window ended",
   }));
+  // Booking-time Number Coding warnings saved by the customer app (codingWarnings): the
+  // restrictions found for the plate before the booking. They have no timestamp of their own
+  // (they predate the trip), so they sort to the bottom. Older trips have none.
+  const warningEntries = warningsByCity(readCodingWarnings(sessionInfo?.codingWarnings)).map(c => ({
+    kind: "coding-warned",
+    at: null,
+    detail: [c.city, c.plateLastDigit != null ? `plate ending ${c.plateLastDigit}` : "", c.text].filter(Boolean).join(" · "),
+  }));
   // Trip milestones saved with the trip (history / downloaded review files).
   const tripEntries = [
     sessionInfo?.droppedOffAt && { kind: "trip-dropped-off", at: sessionInfo.droppedOffAt, detail: "Vehicle physically dropped off." },
@@ -49,14 +59,14 @@ export default function LogsPanel({ sessionInfo, loading, onClose }) {
   ].filter(Boolean);
   const holidays = Array.isArray(sessionInfo?.holidays) ? sessionInfo.holidays : [];
 
-  const entries = [...geofenceEntries, ...codingEntries, ...tripEntries].sort((a, b) => new Date(b.at) - new Date(a.at));
+  const entries = [...geofenceEntries, ...codingEntries, ...warningEntries, ...tripEntries].sort((a, b) => new Date(b.at) - new Date(a.at));
 
   return (
     <div className="absolute top-4 right-4 bottom-4 w-80 z-[1001] bg-white rounded-2xl border border-gray-100 shadow-2xl flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
         <div>
           <p className="font-bold text-arl-dark text-sm">Trip Logs</p>
-          <p className="text-[11px] text-gray-400">Geofence & coding alerts</p>
+          <p className="text-[11px] text-gray-400">Geofence, coding alerts & booking warnings</p>
         </div>
         <button onClick={onClose} className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:bg-gray-50">✕</button>
       </div>

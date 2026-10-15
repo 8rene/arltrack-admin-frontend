@@ -317,6 +317,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
           geofenceZones:  json?.data?.geofenceZones  || [],
           geofenceAlerts: json?.data?.geofenceAlerts || [],
           codingAlerts:   json?.data?.codingAlerts   || [],
+          codingWarnings: json?.data?.codingWarnings || [],
           session:        json?.data?.session || null,
         };
       })
@@ -332,6 +333,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
           geofenceZones:  r.value.geofenceZones,
           geofenceAlerts: r.value.geofenceAlerts,
           codingAlerts:   r.value.codingAlerts,
+          codingWarnings: r.value.codingWarnings,
           available: true,
         };
         sessions[r.value.id] = r.value.session;
@@ -805,6 +807,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
                 hasActiveSession: !!zonesAlerts[focusedCar]?.available,
                 geofenceAlerts: zonesAlerts[focusedCar]?.geofenceAlerts || [],
                 codingAlerts:   zonesAlerts[focusedCar]?.codingAlerts   || [],
+                codingWarnings: zonesAlerts[focusedCar]?.codingWarnings || [],
                 droppedOffAt:   zonesAlerts[focusedCar]?.droppedOffAt   || null,
                 completedAt:    zonesAlerts[focusedCar]?.completedAt    || null,
                 holidays:       zonesAlerts[focusedCar]?.holidays       || [],
