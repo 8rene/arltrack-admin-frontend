@@ -947,6 +947,17 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     navigate(`/payments?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
   };
 
+  // Terms & Conditions page, opened on the exact version this booking agreed to
+  // (termsViewID = the termsVersions doc ID, or the old hash for pre-switch bookings).
+  // bookingID lets the Terms page offer a "Back to booking" button.
+  const goToTerms = () => {
+    const params = new URLSearchParams({
+      version: booking.termsViewID,
+      bookingID: booking.bookingID || booking.id,
+    });
+    navigate(`/terms?${params.toString()}`);
+  };
+
   // Vehicle Inspections page (system inventory: before/after-trip part
   // condition + photos) is keyed by carID first, bookingID second — same
   // deep-link shape it already reads elsewhere (?carID=...&bookingID=...).
@@ -1319,6 +1330,29 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                     </ul>
                   </div>
                 )}
+                {/* T&C this customer ticked "I agree" to. Written once at booking creation, never edited. */}
+                <div className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 text-sm">
+                  <span className="text-gray-500 font-medium w-36 shrink-0">Terms &amp; Conditions</span>
+                  {booking.termsViewID && booking.termsAcceptedAt ? (
+                    <div className="text-right min-w-0">
+                      <button onClick={goToTerms} title="Open the exact Terms & Conditions text the customer agreed to" className="text-indigo-600 hover:underline font-medium">
+                        {booking.termsVersionNumber != null && Number.isFinite(Number(booking.termsVersionNumber))
+                          ? `Version ${Number(booking.termsVersionNumber).toFixed(2)}`
+                          : "View agreed terms"} →
+                      </button>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Agreed {fmtDateTime(booking.termsAcceptedAt)}{booking.termsLegacy ? " · older record" : ""}
+                      </p>
+                    </div>
+                  ) : booking.termsAcceptedAt ? (
+                    <div className="text-right">
+                      <span className="text-gray-800">Agreed {fmtDateTime(booking.termsAcceptedAt)}</span>
+                      <p className="text-xs text-gray-400 mt-0.5">Version not recorded</p>
+                    </div>
+                  ) : (
+                    <span className="text-gray-400 text-right">No agreement recorded</span>
+                  )}
+                </div>
               </div>
 
               <div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -30,6 +31,8 @@ async function api(path, options) {
 
 // Versions look like 1.00 / 1.01 / 2.00 (old whole numbers 1, 2 show as 1.00, 2.00).
 const fmtVer = (v) => Number(v).toFixed(2);
+// Same, but safe for a missing/odd value (old customer-app records can carry a non-numeric version).
+const verLabel = (v) => (v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v)) ? fmtVer(v) : "—");
 const toCents = (v) => Math.round(Number(v) * 100);
 // Quick picks for the editor: small fix = +0.01 (1.00 -> 1.01), major = next whole number (1.05 -> 2.00).
 const minorOf = (v) => (v ? fmtVer((toCents(v) + 1) / 100) : "1.00");
@@ -152,6 +155,12 @@ export default function TermsPage() {
   const { effectiveRole } = useAuth();
   // Everyone can read; only Owner/Admin see edit controls (backend enforces it too).
   const canEdit = effectiveRole === "Owner" || effectiveRole === "Admin";
+
+  // Deep link from a booking: /terms?version=<id>&bookingID=<id> opens that exact version.
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const versionParam = searchParams.get("version");
+  const fromBookingID = searchParams.get("bookingID");
 
   const [current, setCurrent] = useState(null);   // newest published version, or null
   const [versions, setVersions] = useState([]);   // history (no content)
@@ -294,16 +303,32 @@ export default function TermsPage() {
     }
   };
 
-  const openVersion = async (id) => {
+  const openVersion = useCallback(async (id) => {
     setViewLoading(true);
     try {
-      setViewing(await api(`/api/settings/terms/versions/${id}`));
+      setViewing(await api(`/api/settings/terms/versions/${encodeURIComponent(id)}`));
     } catch (err) {
       setNotice({ type: "error", msg: err.message || "Failed to load that version." });
     } finally {
       setViewLoading(false);
     }
+  }, []);
+
+  // Arrived from a booking's "Terms & Conditions" link → open that version straight away.
+  useEffect(() => {
+    if (versionParam) openVersion(versionParam);
+  }, [versionParam, openVersion]);
+
+  // Closing the viewer also drops the deep-link params, so a refresh doesn't reopen it.
+  const closeViewing = () => {
+    setViewing(null);
+    if (searchParams.has("version") || searchParams.has("bookingID")) {
+      setSearchParams((prev) => { prev.delete("version"); prev.delete("bookingID"); return prev; }, { replace: true });
+    }
   };
+
+  // Drivers can't open Bookings, so they don't get the button.
+  const backToBooking = () => navigate(`/bookings?open=${encodeURIComponent(fromBookingID)}`);
 
   // Loads an old version into the editor. Nothing is saved until "Publish" —
   // and that creates a brand-new version; the old one is untouched.
@@ -314,7 +339,7 @@ export default function TermsPage() {
     setBumpKind("minor");
     setShowDiff(false);
     setTab("write");
-    setViewing(null);
+    closeViewing();
     setNotice(null);
     setEditMode(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -664,19 +689,31 @@ export default function TermsPage() {
 
       {/* Older-version viewer */}
       {viewing && (
-        <div className="fixed inset-0 z-[3000] bg-black/60 flex items-center justify-center p-4" onClick={() => setViewing(null)}>
+        <div className="fixed inset-0 z-[3000] bg-black/60 flex items-center justify-center p-4" onClick={closeViewing}>
           <div className={`w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl p-6 ${isDark ? "bg-[#212121] text-[#F5F5F5]" : "bg-white text-gray-700"}`}
             onClick={(e) => e.stopPropagation()}>
             <div className="mb-3">
-              <h3 className="font-bold">Terms &amp; Conditions <span className="text-xs font-normal opacity-60">· v{fmtVer(viewing.version)}</span></h3>
+              <h3 className="font-bold">Terms &amp; Conditions <span className="text-xs font-normal opacity-60">· v{verLabel(viewing.version)}</span></h3>
               <p className="text-[11px] opacity-60">
-                {fmtDate(viewing.createdAt)}{viewing.createdBy?.name ? ` · ${viewing.createdBy.name}` : ""}
+                {viewing.legacy
+                  ? "Older record from before versions were managed here (read-only)"
+                  : <>{fmtDate(viewing.createdAt)}{viewing.createdBy?.name ? ` · ${viewing.createdBy.name}` : ""}</>}
               </p>
             </div>
+            {fromBookingID && (
+              <div className={`mb-3 flex items-center justify-between gap-3 flex-wrap rounded-xl border px-3 py-2 text-xs ${
+                isDark ? "border-[#4FC3F7]/30 bg-[#1A5F7A] text-[#F5F5F5]" : "border-teal-200 bg-teal-50 text-teal-800"
+              }`}>
+                <span>This is the version the customer agreed to for booking <strong>{fromBookingID}</strong>.</span>
+                {effectiveRole !== "Driver" && (
+                  <button type="button" className="underline font-medium" onClick={backToBooking}>Back to booking</button>
+                )}
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto text-sm mb-4 pr-1"><Markdown source={viewing.content} /></div>
             <div className="flex gap-3 justify-end">
-              <button className={ghostBtn} onClick={() => setViewing(null)}>Close</button>
-              {canEdit && viewing.version !== current?.version && (
+              <button className={ghostBtn} onClick={closeViewing}>Close</button>
+              {canEdit && (viewing.legacy || viewing.version !== current?.version) && (
                 <button className={primaryBtn} onClick={() => restoreVersion(viewing)}>Restore as new version</button>
               )}
             </div>
