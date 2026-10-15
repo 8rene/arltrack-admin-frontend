@@ -126,7 +126,6 @@ export default function TermsPage() {
 
   const [editMode, setEditMode] = useState(false);
   const [tab, setTab] = useState("write");        // write | preview
-  const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [changeNote, setChangeNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -176,15 +175,13 @@ export default function TermsPage() {
     if (marks.length) marks[0].scrollIntoView({ block: "center", behavior: "smooth" });
   }, [q, current, editMode]);
 
-  const baseTitle = current?.title || "";
   const baseContent = current?.content || "";
-  const isDirty = title !== baseTitle || content !== baseContent;
+  const isDirty = content !== baseContent;
   const bytes = byteLength(content);
   const nextVersion = (current?.version || 0) + 1;
 
   const startEdit = () => {
     setQuery("");
-    setTitle(baseTitle);
     setContent(baseContent);
     setChangeNote("");
     setTab("write");
@@ -210,7 +207,7 @@ export default function TermsPage() {
     try {
       const saved = await api("/api/settings/terms", {
         method: "POST",
-        body: JSON.stringify({ title, content, changeNote }),
+        body: JSON.stringify({ content, changeNote }), // no title: it is always "Terms & Conditions"
       });
       setEditMode(false);
       setNotice({ type: "success", msg: `Version ${saved.version} published.` });
@@ -236,7 +233,6 @@ export default function TermsPage() {
   // Loads an old version into the editor. Nothing is saved until "Publish" —
   // and that creates a brand-new version; the old one is untouched.
   const restoreVersion = (v) => {
-    setTitle(v.title);
     setContent(v.content);
     setChangeNote(`Restored from version ${v.version}`);
     setTab("write");
@@ -245,6 +241,122 @@ export default function TermsPage() {
     setEditMode(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+
+  // ── Formatting toolbar ────────────────────────────────────────────────
+  // The admin never has to type Markdown symbols: these buttons add them around the
+  // selected text (or at the cursor), and pressing a button again on the same text removes them.
+  const taRef = useRef(null);
+
+  const applyEdit = (fn) => {
+    const ta = taRef.current;
+    if (!ta || saving) return;
+    const r = fn({ value: ta.value, s: ta.selectionStart, e: ta.selectionEnd });
+    setContent(r.value);
+    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(r.s, r.e); });
+  };
+
+  // **bold** / *italic* around the selection (or a placeholder word); again = remove.
+  const wrap = (mark, placeholder, openOverride) => applyEdit(({ value, s, e }) => {
+    const sel = value.slice(s, e);
+    // The text is already wrapped by markers just outside the selection (what the button leaves selected) → remove them.
+    const soloStar = mark === "*" && (value[s - 2] === "*" || value[e + 1] === "*");
+    if (sel && !soloStar && value.slice(s - mark.length, s) === mark && value.slice(e, e + mark.length) === mark) {
+      return { value: value.slice(0, s - mark.length) + sel + value.slice(e + mark.length), s: s - mark.length, e: e - mark.length };
+    }
+    const plainItalic = mark === "*" && sel.startsWith("**");
+    if (!plainItalic && sel.length > mark.length * 2 && sel.startsWith(mark) && sel.endsWith(mark)) {
+      const inner = sel.slice(mark.length, -mark.length);
+      return { value: value.slice(0, s) + inner + value.slice(e), s, e: s + inner.length };
+    }
+    const inner = sel || placeholder;
+    const open = openOverride ?? mark;
+    const close = mark;
+    const out = value.slice(0, s) + open + inner + close + value.slice(e);
+    return { value: out, s: s + open.length, e: s + open.length + inner.length };
+  });
+
+  const LINE_RX = /^(#{1,3}\s+|[-*]\s+|\d+[.)]\s+)/;
+  // "Section heading", "• bullet list", "1. numbered list" on the line(s) the cursor is in.
+  const prefixLines = (kind) => applyEdit(({ value, s, e }) => {
+    const start = value.lastIndexOf("\n", s - 1) + 1;
+    let end = value.indexOf("\n", e);
+    if (end === -1) end = value.length;
+    const lines = value.slice(start, end).split("\n");
+    const has = { h: /^##\s+/, ul: /^[-*]\s+/, ol: /^\d+[.)]\s+/ }[kind];
+    const nonEmpty = lines.filter((l) => l.trim());
+    const remove = nonEmpty.length > 0 && nonEmpty.every((l) => has.test(l));
+    let n = 0;
+    const out = lines.map((l) => {
+      if (!l.trim()) return l;
+      const bare = l.replace(LINE_RX, "");
+      if (remove) return bare;
+      n += 1;
+      return (kind === "h" ? "## " : kind === "ul" ? "- " : `${n}. `) + bare;
+    });
+    if (!nonEmpty.length) out[0] = kind === "h" ? "## " : kind === "ul" ? "- " : "1. ";
+    const block = out.join("\n");
+    const pos = nonEmpty.length ? start + block.length : start + block.length;
+    return { value: value.slice(0, start) + block + value.slice(end), s: nonEmpty.length ? start : pos, e: pos };
+  });
+
+  // Whole line in bold = the highlighted pill customers see (e.g. "₱100.00 per hour …").
+  const highlightLine = () => applyEdit(({ value, s, e }) => {
+    const start = value.lastIndexOf("\n", s - 1) + 1;
+    let end = value.indexOf("\n", e);
+    if (end === -1) end = value.length;
+    const lines = value.slice(start, end).split("\n");
+    const isPill = (l) => /^\*\*[^*]+\*\*$/.test(l.trim());
+    const nonEmpty = lines.filter((l) => l.trim());
+    const remove = nonEmpty.length > 0 && nonEmpty.every(isPill);
+    const out = lines.map((l) => {
+      if (!l.trim()) return l;
+      const bare = l.trim().replace(/^\*\*|\*\*$/g, "").replace(/\*/g, "");
+      return remove ? bare : `**${bare}**`;
+    });
+    const block = out.join("\n");
+    return { value: value.slice(0, start) + block + value.slice(end), s: start, e: start + block.length };
+  });
+
+  // New "Label — value" line (shown to customers as a label/value row, like the refund table).
+  const insertRow = () => applyEdit(({ value, s, e }) => {
+    const lineStart = value.lastIndexOf("\n", s - 1) + 1;
+    const lineEnd0 = value.indexOf("\n", e);
+    const lineEnd = lineEnd0 === -1 ? value.length : lineEnd0;
+    const onBlank = !value.slice(lineStart, lineEnd).trim();
+    const at = onBlank ? lineStart : lineEnd;
+    const row = "- **Label** — Value";
+    const ins = (onBlank ? "" : "\n") + row;
+    const from = at + (onBlank ? 0 : 1) + 4; // inside **Label**
+    return { value: value.slice(0, at) + ins + value.slice(onBlank ? lineEnd : at), s: from, e: from + 5 };
+  });
+
+  const insertLink = () => {
+    const url = window.prompt("Link address (must start with https:// or mailto:)", "https://");
+    if (!url) return;
+    if (!/^(https?:\/\/|mailto:)/i.test(url.trim())) { setNotice({ type: "error", msg: "A link must start with https:// or mailto:" }); return; }
+    applyEdit(({ value, s, e }) => {
+      const label = value.slice(s, e) || "link text";
+      const md = `[${label}](${url.trim()})`;
+      return { value: value.slice(0, s) + md + value.slice(e), s: s + 1, e: s + 1 + label.length };
+    });
+  };
+
+  // {{…}} = a number from Settings that customers always see up to date.
+  const insertLive = (token) => applyEdit(({ value, s, e }) => ({
+    value: value.slice(0, s) + token + value.slice(e), s: s + token.length, e: s + token.length,
+  }));
+
+  const onEditorKey = (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey)) return;
+    const k = ev.key.toLowerCase();
+    if (k === "b") { ev.preventDefault(); wrap("**", "bold text"); }
+    if (k === "i") { ev.preventDefault(); wrap("*", "italic text"); }
+  };
+
+  const tbBtn = `px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors disabled:opacity-50 ${
+    isDark ? "border-[#4FC3F7]/20 text-[#F5F5F5]/80 hover:bg-[#4FC3F7]/10" : "border-gray-200 text-gray-600 hover:bg-gray-50"
+  }`;
 
   return (
     <div className={`w-full px-4 space-y-5 ${isDark ? "dark" : ""}`}>
@@ -278,12 +390,6 @@ export default function TermsPage() {
         ) : editMode ? (
           <div className="space-y-3">
             <div className="space-y-1">
-              <label className={`text-xs font-medium ${text}`}>Title</label>
-              <input className={inputCls} value={title} maxLength={150} disabled={saving}
-                placeholder="Terms & Conditions" onChange={(e) => setTitle(e.target.value)} />
-            </div>
-
-            <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <label className={`text-xs font-medium ${text}`}>Content</label>
                 <div className="flex gap-1">
@@ -297,16 +403,36 @@ export default function TermsPage() {
                   ))}
                 </div>
               </div>
+              {tab === "write" && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button type="button" className={tbBtn} disabled={saving} onClick={() => prefixLines("h")} title="Turn the line into a section heading (numbered automatically for customers)">Section heading</button>
+                  <button type="button" className={`${tbBtn} font-bold`} disabled={saving} onClick={() => wrap("**", "bold text")} title="Bold (Ctrl+B)">B</button>
+                  <button type="button" className={`${tbBtn} italic`} disabled={saving} onClick={() => wrap("*", "italic text")} title="Italic (Ctrl+I)">I</button>
+                  <button type="button" className={tbBtn} disabled={saving} onClick={() => prefixLines("ul")} title="Bullet list">• List</button>
+                  <button type="button" className={tbBtn} disabled={saving} onClick={() => prefixLines("ol")} title="Numbered list">1. List</button>
+                  <button type="button" className={tbBtn} disabled={saving} onClick={insertLink} title="Add a link">Link</button>
+                  <button type="button" className={tbBtn} disabled={saving} onClick={highlightLine} title="Show this whole line as a highlighted badge (e.g. a fee or penalty amount)">Highlight line</button>
+                  <button type="button" className={tbBtn} disabled={saving} onClick={insertRow} title="Add a Label / Value row (like the refund table)">Label — Value</button>
+                  <select className={tbBtn} disabled={saving} value="" onChange={(ev) => { if (ev.target.value) insertLive(ev.target.value); }}
+                    title="Insert a number from Settings that stays up to date">
+                    <option value="">Insert live value…</option>
+                    <option value="{{depositText}}">Deposit amount</option>
+                    <option value="{{serviceFeePercent}}">Service fee %</option>
+                    <option value="{{gatewayFeePercent}}">Gateway fee %</option>
+                    <option value="{{fullRefundHours}}">Full-refund window (hours)</option>
+                  </select>
+                </div>
+              )}
               {tab === "write" ? (
-                <textarea className={`${inputCls} font-mono min-h-[400px] leading-relaxed`} value={content}
-                  onChange={(e) => setContent(e.target.value)} disabled={saving} spellCheck />
+                <textarea ref={taRef} className={`${inputCls} font-mono min-h-[400px] leading-relaxed`} value={content}
+                  onChange={(e) => setContent(e.target.value)} onKeyDown={onEditorKey} disabled={saving} spellCheck />
               ) : (
                 <div className={`${inputCls} min-h-[400px] max-h-[600px] overflow-y-auto ${text}`}>
                   <Markdown source={content} />
                 </div>
               )}
               <p className={`text-[11px] ${bytes > MAX_BYTES ? "text-[#D32F2F]" : muted}`}>
-                {bytes.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes · Markdown: # Heading, **bold**, *italic*, - bullet, 1. numbered, [link](https://…)
+                {bytes.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes · Select text and use the buttons above. Section numbers are added automatically for customers. Use Preview to check it.
               </p>
             </div>
 
@@ -342,7 +468,6 @@ export default function TermsPage() {
                   )}
                 </div>
                 <div ref={viewRef} className={`rounded-xl border p-5 text-sm ${text} ${isDark ? "border-[#4FC3F7]/20 bg-[#212121]/40" : "border-gray-100 bg-gray-50"}`}>
-                  <p className="font-semibold text-base mb-3">{highlight(current.title, q, "title")}</p>
                   <Markdown source={current.content} query={q} />
                 </div>
                 <p className={`text-[11px] ${muted}`}>
@@ -390,7 +515,7 @@ export default function TermsPage() {
           <div className={`w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl p-6 ${isDark ? "bg-[#212121] text-[#F5F5F5]" : "bg-white text-gray-700"}`}
             onClick={(e) => e.stopPropagation()}>
             <div className="mb-3">
-              <h3 className="font-bold">{viewing.title} <span className="text-xs font-normal opacity-60">· v{viewing.version}</span></h3>
+              <h3 className="font-bold">Terms &amp; Conditions <span className="text-xs font-normal opacity-60">· v{viewing.version}</span></h3>
               <p className="text-[11px] opacity-60">
                 {fmtDate(viewing.createdAt)}{viewing.createdBy?.name ? ` · ${viewing.createdBy.name}` : ""}
               </p>
