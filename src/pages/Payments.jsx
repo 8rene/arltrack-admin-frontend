@@ -7,17 +7,6 @@ import { ROLES } from "../config/pagePermissions";
 import DeleteBundleModal from "../components/shared/DeleteBundleModal";
 import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 
-// Fire-and-forget audit log write — same pattern as Fleet.jsx's status
-// changes. Never blocks or fails the action it's logging.
-const logAuditEvent = (action, description) => {
-  const token = localStorage.getItem("token");
-  fetch(`${process.env.REACT_APP_API_URL}/api/audit-logs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ action, description }),
-  }).catch((e) => console.error("Audit log write failed:", e));
-};
-
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
 const IconMoney = ({ className = "w-5 h-5" }) => (
@@ -268,24 +257,24 @@ export default function Payments() {
   const [deleteTarget, setDeleteTarget]   = useState(null);   // the payment being deleted (Owner / Admin only)
   const { effectiveRole } = useAuth();
   const canDelete = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);   // Supervisors can only delete bookings
+  const canRecordInStore = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
   const [detailLoading, setDetailLoading] = useState(false);
   const [toast, setToast]                 = useState(null);
   const [updating, setUpdating]           = useState(false);
   const [applyingDiscount, setApplyingDiscount] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
   const [discountReasonInput, setDiscountReasonInput] = useState("");
-  const [confirmEditDiscount, setConfirmEditDiscount] = useState(false);
-  // Once a discount already exists on a booking, the amount/reason fields
-  // start locked (read-only) behind a "Re-edit Discount" button, instead of
-  // sitting open and editable — makes it much harder to bump an existing
-  // discount by accident. Clicking it unlocks the fields for this viewing
-  // session; re-opening the booking (openDetail) locks it again.
-  const [discountUnlocked, setDiscountUnlocked] = useState(false);
+  // The discount is given ONCE and can't be edited afterwards, so it goes through an "are you sure?" first.
+  const [confirmDiscount, setConfirmDiscount] = useState(false);
+  const [notifying, setNotifying] = useState(false);
+  // In-store receipts (Supervisor / Admin / Owner): payment mode + reference number on record.
+  const [inStoreOpen, setInStoreOpen] = useState(false);
+  const [inStoreMethod, setInStoreMethod] = useState("Cash");
+  const [inStoreRef, setInStoreRef] = useState("");
+  const [savingInStore, setSavingInStore] = useState(false);
+  const [refundMethod, setRefundMethod] = useState("Cash");
+  const [refundRef, setRefundRef] = useState("");
   const [markingRefund, setMarkingRefund] = useState(false);
-  const [correctingDiscount, setCorrectingDiscount] = useState(false);
-  const [correctionInput, setCorrectionInput] = useState("");
-  const [correctionReasonInput, setCorrectionReasonInput] = useState("");
-  const [confirmCorrection, setConfirmCorrection] = useState(false);
   const [sortKey, setSortKey]             = useState(null); // null = default/unsorted (API order)
   const [sortDir, setSortDir]             = useState("asc");
   const [searchParams] = useSearchParams();
@@ -304,7 +293,7 @@ export default function Payments() {
   const currentUser = (() => {
     try { return JSON.parse(localStorage.getItem("user")); } catch { return null; }
   })();
-  const isAdmin = currentUser?.role === "Admin";
+  const receivedBy = currentUser?.name || currentUser?.username || currentUser?.email || "You";
   const { fmt: fmtCurrency } = useCurrency();
 
   const showToast = (msg, type = "success") => {
@@ -364,11 +353,10 @@ export default function Payments() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       setSelected(data.data);
-      setDiscountInput(data.data.discountAmount ? String(data.data.discountAmount) : "");
+      setDiscountInput("");
       setDiscountReasonInput("");
-      setCorrectionInput(data.data.discountAmount ? String(data.data.discountAmount) : "");
-      setCorrectionReasonInput("");
-      setDiscountUnlocked(false);
+      setInStoreOpen(false); setInStoreMethod("Cash"); setInStoreRef("");
+      setRefundMethod("Cash"); setRefundRef("");
     } catch (e) { showToast(e.message, "error"); }
     finally { setDetailLoading(false); }
   };
@@ -390,16 +378,17 @@ export default function Payments() {
     finally { setUpdating(false); }
   };
 
-  // Flat-peso discount — keeps the drawer open afterward (rather than
-  // closing it) so the recalculated Amount Paid/Balance are visible right
-  // away. Re-opens the same payment via openDetail() so amountPaid/balance
-  // come back freshly recomputed server-side by computeAmounts(), instead
-  // of trying to replicate that spillover math here in the frontend.
+  // How much a discount can be at most: the remaining balance while the payment is partial,
+  // otherwise what the customer has paid (capped at the total fee). The server enforces the same rule.
+  const discountMax = (p) => (p.balance > 0 ? p.balance : Math.min(p.totalFee || 0, p.amountPaid || 0));
+
+  // One discount per booking: no editing, no re-sending. Partial payment -> comes off the remaining
+  // balance. Fully paid -> PayMongo refunds it. The drawer re-opens afterwards so the new balance and
+  // the refund line show straight away.
   const submitDiscount = async () => {
     if (!selected) return;
     const amount = Number(discountInput);
-    if (!Number.isFinite(amount) || amount < 0) return;
-    const previousAmount = selected.discountAmount || 0;
+    if (!Number.isFinite(amount) || amount <= 0) return;
     setApplyingDiscount(true);
     try {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount`, {
@@ -409,101 +398,95 @@ export default function Payments() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("Discount applied.");
-      logAuditEvent(
-        "update",
-        previousAmount > 0
-          ? `Discount on booking ${selected.bookingID} updated from ₱${previousAmount.toLocaleString()} to ₱${amount.toLocaleString()}.${discountReasonInput.trim() ? ` Reason: ${discountReasonInput.trim()}` : ""}`
-          : `Discount of ₱${amount.toLocaleString()} applied to booking ${selected.bookingID}.${discountReasonInput.trim() ? ` Reason: ${discountReasonInput.trim()}` : ""}`
+      const how = data.data?.refundedVia;
+      showToast(
+        how === "paymongo" ? "Discount given — the refund was sent through PayMongo."
+        : how === "in_store" ? "Discount given — return the amount in store, then record it here."
+        : "Discount given — deducted from the remaining balance."
       );
       await openDetail(selected.id);
-      await fetchPayments();
+      await fetchPayments(true);
     } catch (e) { showToast(e.message, "error"); }
-    finally { setApplyingDiscount(false); setConfirmEditDiscount(false); }
+    finally { setApplyingDiscount(false); setConfirmDiscount(false); }
   };
 
-  // Gate in front of submitDiscount() — a discount already exists on this
-  // booking, so this click is an *edit*, not the first time it's being
-  // given. Route through a confirmation step instead of writing straight
-  // away, since staff may not realize the customer could've already been
-  // told/charged the original amount. First-time discounts skip this and
-  // submit immediately.
+  // Checks first, then asks "are you sure?" -- the discount can't be changed once it's given.
   const handleApplyDiscount = () => {
     if (!selected) return;
     const amount = Number(discountInput);
-    if (!Number.isFinite(amount) || amount < 0) return;
-    if (amount > (selected.totalFee || 0)) {
-      showToast(`Discount can't exceed the total fee of ${peso(selected.totalFee, fmtCurrency)}.`, "error");
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const max = discountMax(selected);
+    if (amount > max) {
+      showToast(`The discount can't be more than ${peso(max, fmtCurrency)}.`, "error");
       return;
     }
-    if (selected.discountAmount > 0) {
-      setConfirmEditDiscount(true);
-      return;
-    }
-    submitDiscount();
+    setConfirmDiscount(true);
   };
 
-  // Confirm a refund-due amount (created by a discount that overshot the
-  // balance) was actually handed back to the customer. Same re-open
-  // pattern as handleApplyDiscount — refundDue recomputes server-side.
-  const handleMarkRefundIssued = async () => {
+  // "Notify customer to pay": a bell notification asking them to pay the remaining balance online.
+  // The server allows one reminder per booking every 6 hours.
+  const handleNotifyBalance = async () => {
     if (!selected) return;
-    setMarkingRefund(true);
+    setNotifying(true);
     try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/refund-issued`, {
-        method: "PATCH",
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/notify-balance`, {
+        method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("Refund marked as returned.");
-      logAuditEvent("update", `Refund of ₱${selected.refundDue.toLocaleString()} on booking ${selected.bookingID} marked as returned to customer.`);
+      showToast("Customer notified to pay the remaining balance.");
       await openDetail(selected.id);
-      await fetchPayments();
     } catch (e) { showToast(e.message, "error"); }
-    finally { setMarkingRefund(false); }
+    finally { setNotifying(false); }
   };
 
-  // Admin-only backdoor: corrects an already-issued discount's recorded
-  // amount for the books — no notification, no reopening. Mirrors
-  // submitDiscount()'s re-open-and-refresh pattern, but hits the
-  // /discount/correct route instead.
-  const submitCorrection = async () => {
+  // The exception: the customer pays the remaining balance IN STORE. Supervisor / Admin / Owner only,
+  // with the payment mode and (for anything but cash) the reference number on record.
+  const submitInStorePayment = async () => {
     if (!selected) return;
-    const amount = Number(correctionInput);
-    if (!Number.isFinite(amount) || amount < 0) return;
-    if (!correctionReasonInput.trim()) { showToast("A reason is required for a correction.", "error"); return; }
-    const previousAmount = selected.discountAmount || 0;
-    setCorrectingDiscount(true);
+    if (inStoreMethod !== "Cash" && !inStoreRef.trim()) {
+      showToast(`Enter the ${inStoreMethod} reference number.`, "error");
+      return;
+    }
+    setSavingInStore(true);
     try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount/correct`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/collect-balance`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ amount, reason: correctionReasonInput.trim() }),
+        body: JSON.stringify({ paymentMethod: inStoreMethod, referenceNumber: inStoreRef.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("Discount record corrected.");
-      logAuditEvent(
-        "update",
-        `[Admin correction] Discount record on booking ${selected.bookingID} corrected from ₱${previousAmount.toLocaleString()} to ₱${amount.toLocaleString()} (refund already returned — documentation only, no notification sent). Reason: ${correctionReasonInput.trim()}`
-      );
+      showToast("In-store payment recorded.");
       await openDetail(selected.id);
-      await fetchPayments();
+      await fetchPayments(true);
     } catch (e) { showToast(e.message, "error"); }
-    finally { setCorrectingDiscount(false); setConfirmCorrection(false); }
+    finally { setSavingInStore(false); }
   };
 
-  const handleSubmitCorrection = () => {
+  // Only for a refund that could NOT go through PayMongo (the money was received in store): record how it
+  // was handed back. Supervisor / Admin / Owner only, same details as an in-store payment.
+  const handleMarkRefundIssued = async () => {
     if (!selected) return;
-    const amount = Number(correctionInput);
-    if (!Number.isFinite(amount) || amount < 0) return;
-    if (amount > (selected.totalFee || 0)) {
-      showToast(`Discount can't exceed the total fee of ${peso(selected.totalFee, fmtCurrency)}.`, "error");
+    if (refundMethod !== "Cash" && !refundRef.trim()) {
+      showToast(`Enter the ${refundMethod} reference number.`, "error");
       return;
     }
-    if (!correctionReasonInput.trim()) { showToast("A reason is required for a correction.", "error"); return; }
-    setConfirmCorrection(true);
+    setMarkingRefund(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/refund-issued`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentMethod: refundMethod, referenceNumber: refundRef.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast("Refund recorded as returned.");
+      await openDetail(selected.id);
+      await fetchPayments(true);
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setMarkingRefund(false); }
   };
 
   // ── filter ──
@@ -591,19 +574,16 @@ export default function Payments() {
                   {/* Status + Actions */}
                   <div className="flex items-center gap-3 flex-wrap">
                     <StatusBadge status={stageOf(selected)} />
-                    {!["Cancelled","Approved","Refunded"].includes(selected.status) && (
-                      <>
-                        <button disabled={updating} onClick={() => updateStatus(selected.id, "Approved")}
-                          className="px-3 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50">
-                          Approve
-                        </button>
-                        <button disabled={updating} onClick={() => updateStatus(selected.id, "Rejected")}
-                          className="px-3 py-1.5 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50">
-                          Reject
-                        </button>
-                      </>
+                    {selected.status === "Pending" && (
+                      <button disabled={updating} onClick={() => updateStatus(selected.id, "Rejected")}
+                        className="px-3 py-1.5 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50">
+                        Reject
+                      </button>
                     )}
                   </div>
+                  {selected.status === "Pending" && (
+                    <p className="text-xs text-gray-400 -mt-2">Waiting for the customer to pay through PayMongo — it's marked as paid automatically the moment they do.</p>
+                  )}
 
                   <Section title="Customer">
                     <Row label="Name" value={selected.customerName} />
@@ -677,17 +657,56 @@ export default function Payments() {
                   {selected.payType !== "Full" && (
                     <Section title="Balance">
                       <Row label="Status" value={
-                        selected.balanceCollected ? "Collected in person"
+                        selected.balanceCollected ? "Received in store"
                         : selected.balanceStatus === "paid" ? "Paid online (PayMongo)"
+                        : selected.balanceStatus === "pending" ? "Payment in progress (PayMongo)"
                         : selected.balance > 0 ? "Outstanding" : "—"} />
                       {selected.balanceCollected && (
                         <>
-                          <Row label="Method" value={selected.balanceMethod || "—"} />
-                          <Row label="Collected by" value={selected.balanceCollectedBy} />
-                          <Row label="Collected at" value={fmtDate(selected.balanceCollectedAt)} />
+                          <Row label="Payment mode" value={selected.balanceMethod || "—"} />
+                          <Row label="Reference no." value={selected.balanceReferenceNumber || "—"} mono />
+                          <Row label="Received by" value={selected.balanceCollectedBy} />
+                          <Row label="Received at" value={fmtDate(selected.balanceCollectedAt)} />
                         </>
                       )}
                       {selected.balanceStatus === "paid" && <Row label="Paid at" value={fmtDate(selected.balancePaidAt)} />}
+
+                      {/* Still owed: the customer pays it online; this nudges them. In store is the exception. */}
+                      {selected.balance > 0 && selected.status === "Approved" && !selected.refundRequestID && selected.balanceStatus !== "pending" && (
+                        <div className="pt-2 space-y-2.5">
+                          <p className="text-xs text-gray-500">
+                            The remaining {peso(selected.balance, fmtCurrency)} is paid online through PayMongo from the customer's booking.
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <button onClick={handleNotifyBalance} disabled={notifying}
+                              className="px-4 py-2 text-sm font-semibold rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition disabled:opacity-50">
+                              {notifying ? "Sending…" : "Notify customer to pay"}
+                            </button>
+                            {canRecordInStore && !inStoreOpen && (
+                              <button onClick={() => setInStoreOpen(true)}
+                                className="px-4 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
+                                Record in-store payment
+                              </button>
+                            )}
+                          </div>
+                          {selected.balanceReminderAt && (
+                            <p className="text-[11px] text-gray-400">Last reminded {fmtDate(selected.balanceReminderAt)}.</p>
+                          )}
+                          {inStoreOpen && canRecordInStore && (
+                            <InStoreForm
+                              amountLabel={peso(selected.balance, fmtCurrency)}
+                              method={inStoreMethod} setMethod={setInStoreMethod}
+                              reference={inStoreRef} setReference={setInStoreRef}
+                              receivedByLabel="Received by" receivedBy={receivedBy}
+                              onSubmit={submitInStorePayment} onCancel={() => setInStoreOpen(false)}
+                              saving={savingInStore} submitLabel="Record payment"
+                            />
+                          )}
+                        </div>
+                      )}
+                      {selected.balanceStatus === "pending" && selected.balance > 0 && (
+                        <p className="text-xs text-amber-600 pt-1">The customer has a balance payment in progress on PayMongo — it will show as paid once it clears.</p>
+                      )}
                     </Section>
                   )}
 
@@ -717,115 +736,86 @@ export default function Payments() {
                   </Section>
 
                   {selected.refundDue > 0 && (
-                    <Section title="Refund Due to Customer">
-                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-2">
+                    <Section title="Refund Due to Customer (in store)">
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
                         <div className="flex items-center justify-between text-sm">
                           <span className="font-semibold text-red-700">Amount owed back</span>
                           <span className="font-bold text-red-700">{peso(selected.refundDue, fmtCurrency)}</span>
                         </div>
                         <p className="text-xs text-red-600">
-                          A discount was applied after this booking was already fully paid — the driver or whoever holds the cash needs to return this amount.
+                          A discount was given on money the customer paid in store, so it can't go back through PayMongo.
+                          Return it in store, then record how it was returned.
                         </p>
-                        <button
-                          onClick={handleMarkRefundIssued}
-                          disabled={markingRefund}
-                          className="w-full py-2 rounded-xl text-sm font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-                        >
-                          {markingRefund ? "Marking…" : `Mark ${peso(selected.refundDue, fmtCurrency)} as Returned`}
-                        </button>
+                        {canRecordInStore ? (
+                          <InStoreForm
+                            amountLabel={peso(selected.refundDue, fmtCurrency)}
+                            method={refundMethod} setMethod={setRefundMethod}
+                            reference={refundRef} setReference={setRefundRef}
+                            receivedByLabel="Returned by" receivedBy={receivedBy}
+                            onSubmit={handleMarkRefundIssued}
+                            saving={markingRefund} submitLabel={`Record ${peso(selected.refundDue, fmtCurrency)} as returned`}
+                          />
+                        ) : (
+                          <p className="text-xs text-gray-500">Only a Supervisor, Admin or Owner can record this.</p>
+                        )}
                       </div>
                     </Section>
                   )}
 
-                  <Section title="Apply Discount">
-                    {selected.refundIssued ? (
-                      isAdmin ? (
-                        <div className="space-y-2.5">
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
-                            This booking's refund has already been marked as returned. Editing here only corrects the number on record — it will <span className="font-semibold">not</span> reopen the refund or notify anyone.
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="relative flex-1">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
-                              <input
-                                type="number" min="0" max={selected.totalFee} step="1" placeholder="0"
-                                value={correctionInput}
-                                onChange={(e) => setCorrectionInput(e.target.value)}
-                                className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
-                              />
-                            </div>
-                            <input
-                              type="text" placeholder="Reason (required)"
-                              value={correctionReasonInput}
-                              onChange={(e) => setCorrectionReasonInput(e.target.value)}
-                              className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
-                            />
-                          </div>
-                          {Number(correctionInput) > (selected.totalFee || 0) && (
-                            <p className="text-xs text-red-500">Discount can't exceed the total fee of {peso(selected.totalFee, fmtCurrency)}.</p>
-                          )}
-                          <button
-                            onClick={handleSubmitCorrection}
-                            disabled={correctingDiscount || correctionInput === "" || !correctionReasonInput.trim() || Number(correctionInput) > (selected.totalFee || 0)}
-                            className="w-full py-2 rounded-xl text-sm font-semibold border border-amber-500 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all disabled:opacity-50"
-                          >
-                            {correctingDiscount ? "Correcting…" : "Correct Discount Record"}
-                          </button>
-                          <p className="text-[11px] text-gray-400">Admin-only. Logged to the Audit Log. Does not send a notification.</p>
-                        </div>
-                      ) : (
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
-                          This booking's refund has already been marked as returned, so the discount can no longer be edited here. Only an Admin can correct the recorded amount now.
-                        </div>
-                      )
-                    ) : selected.discountAmount > 0 && !discountUnlocked ? (
-                      <div className="space-y-2.5">
+                  <Section title="Give Discount">
+                    {selected.discountAmount > 0 ? (
+                      <div className="space-y-2">
                         <div className="flex items-center justify-between text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                          <span className="text-gray-500">Current discount</span>
+                          <span className="text-gray-500">Discount given</span>
                           <span className="font-semibold text-red-500">−{peso(selected.discountAmount, fmtCurrency)}</span>
                         </div>
-                        <button
-                          onClick={() => setDiscountUnlocked(true)}
-                          className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-white active:scale-[0.99] transition-all"
-                        >
-                          Re-edit Discount
-                        </button>
-                        <p className="text-[11px] text-gray-400">Locked to avoid accidental changes. Click above to unlock and edit it.</p>
+                        {selected.discountReason && <Row label="Reason" value={selected.discountReason} />}
+                        {selected.discountAt && <Row label="Given" value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
+                        <p className="text-[11px] text-gray-400">
+                          One discount per booking — it can't be changed or given again.
+                          {selected.balance <= 0 && selected.refundDue <= 0 && " Any refund shows in All money movements above."}
+                        </p>
+                      </div>
+                    ) : selected.status !== "Approved" || selected.refundRequestID ? (
+                      <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
+                        A discount can be given once the customer's first payment has been received through PayMongo{selected.refundRequestID ? ", and no refund request is open" : ""}.
                       </div>
                     ) : (
-                    <div className="space-y-2.5">
-                      <div className="flex items-center gap-2">
-                        <div className="relative flex-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
+                            <input
+                              type="number" min="1" max={discountMax(selected)} step="1" placeholder="0"
+                              value={discountInput}
+                              onChange={(e) => setDiscountInput(e.target.value)}
+                              className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+                            />
+                          </div>
                           <input
-                            type="number" min="0" max={selected.totalFee} step="1" placeholder="0"
-                            value={discountInput}
-                            onChange={(e) => setDiscountInput(e.target.value)}
-                            className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+                            type="text" placeholder="Reason (optional)"
+                            value={discountReasonInput}
+                            onChange={(e) => setDiscountReasonInput(e.target.value)}
+                            className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
                           />
                         </div>
-                        <input
-                          type="text" placeholder="Reason (optional)"
-                          value={discountReasonInput}
-                          onChange={(e) => setDiscountReasonInput(e.target.value)}
-                          className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
-                        />
+                        {Number(discountInput) > discountMax(selected) && (
+                          <p className="text-xs text-red-500">The discount can't be more than {peso(discountMax(selected), fmtCurrency)}.</p>
+                        )}
+                        <button
+                          onClick={handleApplyDiscount}
+                          disabled={applyingDiscount || !(Number(discountInput) > 0) || Number(discountInput) > discountMax(selected)}
+                          className="px-4 py-2 text-sm font-semibold rounded-xl border border-arl-dark text-arl-dark hover:bg-gray-50 transition disabled:opacity-50"
+                        >
+                          Give discount
+                        </button>
+                        <p className="text-[11px] text-gray-400">
+                          {selected.balance > 0
+                            ? `The payment is still partial, so the discount comes off the remaining balance (up to ${peso(selected.balance, fmtCurrency)}).`
+                            : `The payment is complete, so PayMongo refunds the discount to the customer (up to ${peso(discountMax(selected), fmtCurrency)}).`}
+                          {" "}You'll be asked to confirm first — it can't be changed afterwards.
+                        </p>
                       </div>
-                      {Number(discountInput) > (selected.totalFee || 0) && (
-                        <p className="text-xs text-red-500">Discount can't exceed the total fee of {peso(selected.totalFee, fmtCurrency)}.</p>
-                      )}
-                      <button
-                        onClick={handleApplyDiscount}
-                        disabled={applyingDiscount || discountInput === "" || Number(discountInput) > (selected.totalFee || 0)}
-                        className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-white active:scale-[0.99] transition-all disabled:opacity-50"
-                      >
-                        {applyingDiscount ? "Applying…" : selected.discountAmount > 0 ? "Edit Discount" : "Apply Discount"}
-                      </button>
-                      {selected.discountAmount > 0 && (
-                        <p className="text-[11px] text-amber-600">A discount is already on this booking — changing it will ask you to confirm first.</p>
-                      )}
-                      <p className="text-[11px] text-gray-400">Sets the total discount on this booking — entering a new amount replaces the old one, it doesn't add to it.</p>
-                    </div>
                     )}
                   </Section>
 
@@ -843,59 +833,35 @@ export default function Payments() {
         </div>
       )}
 
-      {/* Confirm Edit Discount — only shown when changing a discount that's
-          already on the booking (first-time discounts skip straight to
-          submitDiscount). Staff may not realize the customer could've
-          already been told/charged the original amount, so this is a
-          speed bump for corrections, not a hard lock. */}
-      {confirmEditDiscount && selected && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+      {/* Confirm the one-time discount. There is no editing or re-sending afterwards, and on a fully paid
+          booking the refund goes out through PayMongo straight away, so this restates exactly what will happen. */}
+      {confirmDiscount && selected && (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
             <div>
-              <h3 className="font-bold text-arl-dark text-lg">Update existing discount?</h3>
-              <p className="text-sm text-gray-500 mt-1">
-                A discount of <span className="font-semibold text-gray-700">{peso(selected.discountAmount, fmtCurrency)}</span> was already given on this booking.
-                Changing it to <span className="font-semibold text-gray-700">{peso(Number(discountInput) || 0, fmtCurrency)}</span> will replace that amount.
-                Only proceed if this is a correction to the original discount.
+              <h3 className="font-bold text-arl-dark text-lg">Give this discount?</h3>
+              <p className="text-sm text-gray-600 mt-2">
+                {selected.balance > 0 ? (
+                  <>
+                    <span className="font-semibold">{peso(Number(discountInput) || 0, fmtCurrency)}</span> will be deducted from the remaining balance
+                    ({peso(selected.balance, fmtCurrency)} → {peso(Math.max(0, selected.balance - (Number(discountInput) || 0)), fmtCurrency)}).
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold">{peso(Number(discountInput) || 0, fmtCurrency)}</span> will be refunded to the customer through PayMongo.
+                  </>
+                )}
               </p>
+              <p className="text-xs text-red-500 mt-2">A discount can only be given once. After you confirm, it can't be edited, corrected or given again.</p>
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setConfirmEditDiscount(false)} disabled={applyingDiscount}
+              <button onClick={() => setConfirmDiscount(false)} disabled={applyingDiscount}
                 className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                 Cancel
               </button>
               <button onClick={submitDiscount} disabled={applyingDiscount}
                 className="flex-1 px-4 py-2 bg-arl-dark text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50">
-                {applyingDiscount ? "Saving…" : "Yes, this is a correction"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Confirm Correction — Admin-only backdoor edit for a discount whose
-          refund has already been marked as returned. Extra confirm step
-          since this bypasses the normal notify-and-reopen flow entirely. */}
-      {confirmCorrection && selected && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
-            <div>
-              <h3 className="font-bold text-arl-dark text-lg">Correct discount record?</h3>
-              <p className="text-sm text-gray-500 mt-1">
-                This booking's refund was already marked as returned. This will only update the recorded discount from{" "}
-                <span className="font-semibold text-gray-700">{peso(selected.discountAmount, fmtCurrency)}</span> to{" "}
-                <span className="font-semibold text-gray-700">{peso(Number(correctionInput) || 0, fmtCurrency)}</span>{" "}
-                for the books — <span className="font-semibold">no one will be notified</span> and the refund will stay marked as returned.
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => setConfirmCorrection(false)} disabled={correctingDiscount}
-                className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                Cancel
-              </button>
-              <button onClick={submitCorrection} disabled={correctingDiscount}
-                className="flex-1 px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50">
-                {correctingDiscount ? "Saving…" : "Yes, correct the record"}
+                {applyingDiscount ? "Saving…" : `Yes, give ${peso(Number(discountInput) || 0, fmtCurrency)}`}
               </button>
             </div>
           </div>
@@ -1122,6 +1088,53 @@ function Row({ label, value, mono, bold, color }) {
       <span className={`text-sm text-right break-all ${mono ? "font-mono" : ""} ${bold ? "font-semibold" : ""} ${color || "text-gray-800"}`}>
         {value ?? "—"}
       </span>
+    </div>
+  );
+}
+
+// ─── In-store record form ────────────────────────────────────────────────────
+// Used for an in-store payment and for returning a refund in store: payment mode,
+// reference number (required for anything but cash) and who handled it.
+const IN_STORE_METHODS = ["Cash", "GCash", "Bank Transfer"];
+
+function InStoreForm({ amountLabel, method, setMethod, reference, setReference, receivedByLabel, receivedBy, onSubmit, onCancel, saving, submitLabel }) {
+  const needsRef = method !== "Cash";
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+      <Row label="Amount" value={amountLabel} bold />
+      <label className="block">
+        <span className="text-xs font-semibold text-gray-500">Payment mode</span>
+        <select
+          value={method}
+          onChange={(e) => setMethod(e.target.value)}
+          className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+        >
+          {IN_STORE_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </label>
+      <label className="block">
+        <span className="text-xs font-semibold text-gray-500">{needsRef ? "Reference number (required)" : "Official receipt no. (optional)"}</span>
+        <input
+          type="text" maxLength={64}
+          value={reference}
+          onChange={(e) => setReference(e.target.value)}
+          placeholder={needsRef ? `${method} reference number` : "Receipt number"}
+          className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+        />
+      </label>
+      <Row label={receivedByLabel} value={receivedBy} />
+      <div className="flex gap-2">
+        {onCancel && (
+          <button onClick={onCancel} disabled={saving}
+            className="flex-1 px-4 py-2 border border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-white disabled:opacity-50">
+            Cancel
+          </button>
+        )}
+        <button onClick={onSubmit} disabled={saving || (needsRef && !reference.trim())}
+          className="flex-1 px-4 py-2 rounded-xl text-sm font-semibold bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+          {saving ? "Saving…" : submitLabel}
+        </button>
+      </div>
     </div>
   );
 }

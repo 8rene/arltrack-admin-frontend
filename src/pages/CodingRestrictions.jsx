@@ -12,12 +12,6 @@ const DAY_NAMES = [
   "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
 ];
 
-// Today as a Manila calendar date / weekday (Mon=1 ... Sun=7), independent of
-// the browser's own timezone — the backend stores PHT calendar dates.
-const phtNow = () => new Date(Date.now() + 8 * 60 * 60 * 1000);
-
-const todayWeekdayPHT = () => phtNow().getUTCDay() || 7;
-
 const inputCls =
   "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300";
 
@@ -163,21 +157,6 @@ function ErrorBanner({ children, onRetry }) {
         <button onClick={onRetry} className="underline font-medium whitespace-nowrap">Retry</button>
       )}
     </div>
-  );
-}
-
-function Pill({ children, tone = "teal" }) {
-  const tones = {
-    teal: "bg-teal-50 text-teal-700 border-teal-100",
-    blue: "bg-blue-50 text-blue-700 border-blue-100",
-    gray: "bg-gray-50 text-gray-600 border-gray-200",
-    green: "bg-green-50 text-green-700 border-green-100",
-    amber: "bg-amber-50 text-amber-700 border-amber-100",
-  };
-  return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${tones[tone]}`}>
-      {children}
-    </span>
   );
 }
 
@@ -502,8 +481,6 @@ export default function CodingRestrictions() {
     () => (city ? data.rules.filter((r) => r.city === city) : []),
     [data.rules, city]
   );
-  const todayDow = todayWeekdayPHT();
-
   const confirmDelete = async () => {
     setBusy(true);
     try {
@@ -609,7 +586,6 @@ export default function CodingRestrictions() {
           city={city}
           rules={cityRules}
           canDelete={canDelete}
-          todayDow={todayDow}
           onClose={() => setCity(null)}
           onAdd={(day) => setRuleDialog({ rule: null, day })}
           onEdit={(rule) => setRuleDialog({ rule, day: null })}
@@ -691,7 +667,7 @@ export default function CodingRestrictions() {
 // ─── A city's Monday–Sunday rules, in a modal ────────────────────────────────
 // Every day of the week gets a row. Days with no rule show "No coding" with an
 // Add button that pre-selects that day.
-function CityRulesModal({ city, rules, canDelete, todayDow, onClose, onAdd, onEdit, onDelete }) {
+function CityRulesModal({ city, rules, canDelete, onClose, onAdd, onEdit, onDelete }) {
   return (
     <Modal
       title={city}
@@ -718,12 +694,10 @@ function CityRulesModal({ city, rules, canDelete, todayDow, onClose, onAdd, onEd
             </tr>
           </thead>
           <tbody>
-            {DAY_NAMES.flatMap((day, i) => {
-              const isToday = i + 1 === todayDow;
+            {DAY_NAMES.flatMap((day) => {
               const dayCell = (
                 <td className="px-5 py-3 font-semibold text-gray-800 whitespace-nowrap">
                   {day}
-                  {isToday && <span className="ml-2 align-middle"><Pill tone="green">Today</Pill></span>}
                 </td>
               );
               const dayRules = rules.filter((r) => r.dayName === day);

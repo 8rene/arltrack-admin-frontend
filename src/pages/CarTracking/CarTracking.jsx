@@ -284,14 +284,6 @@ export default function CarTracking() {
   const [returnModalBooking, setReturnModalBooking] = useState(null); // Return checklist panel
   const [returnDepositOnly, setReturnDepositOnly] = useState(false);   // true = opened from the payment modal's "Return deposit"
   const [penaltyBooking, setPenaltyBooking] = useState(null);         // in-place "Note a penalty" form
-  const [collectingBalance,   setCollectingBalance]   = useState(false);
-  const [collectBalanceError, setCollectBalanceError] = useState(null);
-  const [confirmingPayment,   setConfirmingPayment]   = useState(false);
-  const [confirmPaymentError, setConfirmPaymentError] = useState(null);
-  const [applyingDiscount,    setApplyingDiscount]    = useState(false);
-  const [discountError,       setDiscountError]       = useState(null);
-  const [markingRefund,       setMarkingRefund]       = useState(false);
-  const [refundError,         setRefundError]         = useState(null);
   // Deep-link from Bookings' "Trip History" button — { tab: "history", carID, bookingID }.
   // Only consumed once; switching tabs away and back won't re-trigger it since
   // React Router keeps the same location.state for the life of this page visit,
@@ -965,126 +957,6 @@ export default function CarTracking() {
     }
   };
 
-  // Owner/Admin/Supervisor confirming a cash/in-person initial payment —
-  // right here on Car Tracking, no detour to the Payments page. Keyed by
-  // bookingID (not the booking doc id), matching the backend route.
-  const handleConfirmPayment = async (paymentMethod) => {
-    if (!paymentModalBooking) return;
-    setConfirmingPayment(true);
-    setConfirmPaymentError(null);
-    try {
-      const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
-      const res  = await fetch(`${API}/api/payments/booking/${bID}/confirm`, {
-        method:  "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body:    JSON.stringify({ paymentMethod }),
-      });
-      const json = await res.json();
-      if (json.success) {
-        setNotice({ type: "ok", msg: "Payment marked as received." });
-        setPaymentModalBooking(null);
-        await fetchBookings();
-      } else {
-        setConfirmPaymentError(json.message || "Could not confirm payment.");
-      }
-    } catch (e) {
-      setConfirmPaymentError("Action failed — check your connection.");
-    } finally {
-      setConfirmingPayment(false);
-    }
-  };
-
-  // Owner/Admin/Supervisor collecting cash/in-person payment of the
-  // remaining balance — e.g. right before Pickup. Keyed by bookingID
-  // (not the booking doc id), matching the backend route.
-  const handleCollectBalance = async (paymentMethod) => {
-    if (!paymentModalBooking) return;
-    setCollectingBalance(true);
-    setCollectBalanceError(null);
-    try {
-      const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
-      const res  = await fetch(`${API}/api/payments/booking/${bID}/collect-balance`, {
-        method:  "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body:    JSON.stringify({ paymentMethod }),
-      });
-      const json = await res.json();
-      if (json.success) {
-        setNotice({ type: "ok", msg: "Balance marked as received." });
-        setPaymentModalBooking(null);
-        await fetchBookings();
-      } else {
-        setCollectBalanceError(json.message || "Could not mark balance as received.");
-      }
-    } catch (e) {
-      setCollectBalanceError("Action failed — check your connection.");
-    } finally {
-      setCollectingBalance(false);
-    }
-  };
-
-  // Owner/Admin/Supervisor applying a flat-peso discount — from the
-  // payment modal right here on Car Tracking. Unlike confirm/collect, this
-  // deliberately keeps the modal open afterward (rather than closing it)
-  // so staff can see the recalculated balance immediately; it re-syncs
-  // paymentModalBooking to the freshly-fetched booking once fetchBookings()
-  // resolves, since that piece of state is a snapshot, not a live reference.
-  const handleApplyDiscount = async (amount, reason) => {
-    if (!paymentModalBooking) return;
-    setApplyingDiscount(true);
-    setDiscountError(null);
-    try {
-      const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
-      const res  = await fetch(`${API}/api/payments/booking/${bID}/discount`, {
-        method:  "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body:    JSON.stringify({ amount, reason }),
-      });
-      const json = await res.json();
-      if (json.success) {
-        setNotice({ type: "ok", msg: "Discount applied." });
-        const fresh = await fetchBookings();
-        const updated = (fresh || []).find((b) => (b.bookingID || b.id) === bID);
-        if (updated) setPaymentModalBooking(updated);
-      } else {
-        setDiscountError(json.message || "Could not apply discount.");
-      }
-    } catch (e) {
-      setDiscountError("Action failed — check your connection.");
-    } finally {
-      setApplyingDiscount(false);
-    }
-  };
-
-  // Owner/Admin/Supervisor confirming a refund-due amount (created when a
-  // discount overshot the balance) was handed back to the customer. Same
-  // re-sync pattern as handleApplyDiscount above.
-  const handleMarkRefundIssued = async () => {
-    if (!paymentModalBooking) return;
-    setMarkingRefund(true);
-    setRefundError(null);
-    try {
-      const bID = paymentModalBooking.bookingID || paymentModalBooking.id;
-      const res  = await fetch(`${API}/api/payments/booking/${bID}/refund-issued`, {
-        method:  "PATCH",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await res.json();
-      if (json.success) {
-        setNotice({ type: "ok", msg: "Refund marked as returned." });
-        const fresh = await fetchBookings();
-        const updated = (fresh || []).find((b) => (b.bookingID || b.id) === bID);
-        if (updated) setPaymentModalBooking(updated);
-      } else {
-        setRefundError(json.message || "Could not mark refund as returned.");
-      }
-    } catch (e) {
-      setRefundError("Action failed — check your connection.");
-    } finally {
-      setMarkingRefund(false);
-    }
-  };
-
   const handleStolen  = (b) => {
     if (!window.confirm("Flag this car as stolen? This is logged permanently and the booking will be locked.")) return;
     runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
@@ -1744,7 +1616,7 @@ export default function CarTracking() {
     <PaymentStatusModal
       bookingID={paymentModalBooking?.bookingID || paymentModalBooking?.id}
       open={!!paymentModalBooking}
-      onClose={() => { setPaymentModalBooking(null); setCollectBalanceError(null); setConfirmPaymentError(null); setDiscountError(null); setRefundError(null); }}
+      onClose={() => setPaymentModalBooking(null)}
       customerName={paymentModalBooking?.customerName}
       payment={paymentModalBooking ? {
         totalFee:       paymentModalBooking.totalFee,
@@ -1752,6 +1624,7 @@ export default function CarTracking() {
         balance:        paymentModalBooking.balance,
         payType:        paymentModalBooking.payType,
         paymentStatus:  paymentModalBooking.paymentStatus,
+        paymentStage:   paymentModalBooking.paymentStage,
         discountAmount: paymentModalBooking.discountAmount,
         refundDue:      paymentModalBooking.refundDue,
         refundIssued:   paymentModalBooking.refundIssued,
@@ -1762,19 +1635,9 @@ export default function CarTracking() {
         depositSettled:        paymentModalBooking.depositSettled,
         depositDeducted:       paymentModalBooking.depositDeducted,
       } : null}
-      onConfirmPayment={handleConfirmPayment}
-      confirming={confirmingPayment}
-      confirmError={confirmPaymentError}
-      onCollectBalance={handleCollectBalance}
-      collecting={collectingBalance}
-      collectError={collectBalanceError}
-      onApplyDiscount={handleApplyDiscount}
-      applyingDiscount={applyingDiscount}
-      discountError={discountError}
-      onMarkRefundIssued={handleMarkRefundIssued}
-      markingRefund={markingRefund}
-      refundError={refundError}
+      // Nothing is settled on this screen: payments and penalties are handled on their own pages.
       onGoToPayments={() => navigate(`/payments?bookingID=${paymentModalBooking?.bookingID || paymentModalBooking?.id || ""}`)}
+      onGoToPenalties={() => navigate(`/penalties?bookingID=${paymentModalBooking?.bookingID || paymentModalBooking?.id || ""}`)}
       onNotePenalty={String(paymentModalBooking?.status || "").toLowerCase() === "ongoing"
         ? () => { const b = paymentModalBooking; setPaymentModalBooking(null); setPenaltyBooking(b); }
         : undefined}

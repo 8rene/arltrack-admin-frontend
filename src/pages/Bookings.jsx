@@ -4,7 +4,6 @@ import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 import DeleteBundleModal from "../components/shared/DeleteBundleModal";
-import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 import { ROLES } from "../config/pagePermissions";
 import TripMapModal from "../components/TripMapModal";
 import StoreLocationMapPicker from "../components/shared/StoreLocationMapPicker";
@@ -890,6 +889,7 @@ const STEP_STYLE = {
   todo:    { dot: "bg-white text-gray-400 border-gray-300",                        text: "text-gray-500" },
   skipped: { dot: "bg-gray-100 text-gray-400 border-gray-200",                     text: "text-gray-400" },
   missing: { dot: "bg-amber-50 text-amber-600 border-amber-300",                   text: "text-gray-700" },
+  partial: { dot: "bg-orange-100 text-orange-600 border-orange-400",               text: "text-orange-700" },
   stopped: { dot: "bg-red-500 text-white border-red-500",                          text: "text-red-700" },
 };
 
@@ -1031,6 +1031,9 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   const depStatus     = booking.deposit?.status || (booking.paymentStatus === "Refunded" ? "Refunded" : null);
   const depositClosed = ["Settled", "Refunded", "Forfeited", "Waived"].includes(depStatus);
   const paid          = ["upcoming", "ongoing", "completed", "cancellation_request"].includes(status) || !!booking.deposit;
+  // Paid but not in full yet (the balance is still owed) -> shown orange, "in the middle".
+  const partial       = paid && !dead && status !== "completed" && (String(booking.paymentStage || "").toLowerCase() === "partial" || Number(booking.balance) > 0);
+  const discountGiven = Number(booking.discountAmount) > 0;
   const started       = !!booking.startedAt || status === "ongoing" || status === "completed";
   const droppedOff    = !!booking.droppedOffTime || status === "completed";
   const invLabel      = (rec) => (rec.inventoryOverallStatus === "has damage" ? `Has damage (${rec.damageParts?.length || 0})` : "Good");
@@ -1044,7 +1047,15 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
 
   const stepDefs = [
     { key: "booked", title: "Booked", done: true, sub: fmtDateTime(booking.createdAt) },
-    { key: "paid", title: "Paid", done: paid, sub: paid ? (booking.paymentMethod || "Paid") : "Awaiting deposit" },
+    {
+      // Payment AND the one-time discount. Orange while only part of the fee has come in.
+      key: "paid", title: "Paid | Give discount", done: paid && !partial, partial,
+      sub: !paid ? "Awaiting payment"
+        : [
+            partial ? `Partial · ${fmt(booking.balance)} still to pay` : (booking.paymentMethod || "Paid"),
+            discountGiven ? `Discount −${fmt(booking.discountAmount)}` : null,
+          ].filter(Boolean).join(" · "),
+    },
     {
       key: "driver", title: "Driver assigned", done: !isChauffeur || !!booking.driverID,
       sub: !isChauffeur ? "Self-drive — no driver needed" : booking.driverID ? (booking.driverName || "Assigned") : "No driver yet",
@@ -1097,6 +1108,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   const steps = stepDefs.map((d, i) => {
     let state;
     if (d.done) state = "done";
+    else if (d.partial) state = "partial";   // in the middle: orange, and it doesn't hold up the steps after it
     else if (d.skipped) state = "skipped";
     else if (status === "completed") state = "missing";
     else if (!currentSeen) { state = dead ? "stopped" : "current"; currentSeen = true; }
@@ -1112,7 +1124,11 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   });
   const stepActions = {
     booked:      [{ label: "Details", onClick: () => setTab("details") }],
-    paid:        [{ label: "Payments", onClick: goToPayments }],
+    paid:        [
+      { label: "Payments", onClick: goToPayments },
+      // One discount per booking, given on the Payments page.
+      ...(paid && !discountGiven && !dead && status !== "completed" ? [{ label: "Give discount", onClick: goToPayments }] : []),
+    ],
     driver:      isChauffeur ? [{ label: "Driver Dispatch", onClick: goToDispatch }] : [],
     before:      [{ label: "Vehicle Inspections", onClick: goToInventory }],
     after:       [{ label: "Vehicle Inspections", onClick: goToInventory }],

@@ -467,47 +467,53 @@ function ReasonModal({ action, onClose, onSubmit, submitting }) {
   );
 }
 
-// ─── MARK PAID MODAL ─────────────────────────────────────────────────────
+// ─── IN-STORE PAYMENT MODAL ───────────────────────────────────────────────
 //
-// Records a payment against a Confirmed penalty's remaining balance — for
-// money collected outside the automatic deposit deduction at Return (e.g.
-// staff took cash in store, or the customer paid online for an "owed by
-// customer" negative-deposit balance). Wired to recordShortfallPayment(),
-// which applies the amount across the customer's unpaid Confirmed
-// penalties oldest-first — not just this one row — so a partial amount
-// can end up settling an older penalty before this one if there's more
-// than one outstanding.
-// In-person only: nothing in the customer app pays a penalty online, so there is no PayMongo option here.
-const SHORTFALL_METHODS = ["InStore", "GCash", "Maya", "BankTransfer"];
+// Penalties are meant to be paid ONLINE by the customer. This is the exception: the customer chose to
+// pay at the store, and a Supervisor / Admin / Owner records it here (the server enforces that role too).
+// A proper record is required: payment mode, the reference number (for anything but cash; cash may carry
+// an official-receipt number), who received it and when.
+//
+// Wired to recordShortfallPayment(), which applies the amount across the customer's unpaid Confirmed
+// penalties oldest-first -- not just this one row -- so a partial amount can end up settling an older
+// penalty before this one if there's more than one outstanding.
+const SHORTFALL_METHODS = [
+  { value: "InStore",      label: "Cash" },
+  { value: "GCash",        label: "GCash" },
+  { value: "Maya",         label: "Maya" },
+  { value: "BankTransfer", label: "Bank Transfer" },
+];
 
 function MarkPaidModal({ penalty, maxAmount = 0, onClose, onSubmit, submitting }) {
   const owed = Math.max(0, (penalty.amount || 0) - (penalty.paidAmount || 0));
   // The most that can be recorded: everything this customer still owes in
   // penalties (this one is paid first, the rest spills onto their others).
   // Typing is clamped to it and the button is disabled above it; the server
-  // rejects anything higher too (recordShortfallPayment), so nothing typed
-  // here can ever exceed what is actually needed.
+  // rejects anything higher too (recordShortfallPayment).
   const limit = Math.max(owed, maxAmount || 0);
-  // Deliberately NOT pre-filled with the full owed amount. This form
-  // records what staff actually took from the customer — if it defaulted
-  // to the full balance, clicking Record Payment without looking would
-  // silently mark the whole thing Paid even on a partial in-store
-  // payment. Left blank (with the owed amount only shown as a
-  // placeholder/hint) so staff always has to consciously enter or
-  // confirm the real amount received; "Full amount" below is a shortcut
-  // for the common case, not a default.
+  // Deliberately NOT pre-filled with the full owed amount: this form records what staff actually took, so
+  // they always have to consciously enter or confirm the real amount. "Full amount" is a shortcut only.
   const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState(SHORTFALL_METHODS[0]);
+  const [method, setMethod] = useState(SHORTFALL_METHODS[0].value);
   const [referenceNumber, setReferenceNumber] = useState("");
+  const isCash = method === "InStore";
+  const modeLabel = SHORTFALL_METHODS.find((m) => m.value === method)?.label || method;
+  const receivedBy = (() => {
+    try { const u = JSON.parse(localStorage.getItem("user")); return u?.name || u?.username || u?.email || "You"; } catch { return "You"; }
+  })();
+  const missingRef = !isCash && !referenceNumber.trim();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-bold text-arl-dark">Mark Paid</h3>
+          <h3 className="font-bold text-arl-dark">Record In-Store Payment</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
         </div>
+        <p className="text-xs text-gray-500">
+          Penalties are normally paid online by the customer. Use this only because they chose to pay at the store.
+        </p>
         <p className="text-xs text-gray-400">
           {penalty.customerName || "This customer"} still owes {peso(owed)} on this penalty.
           This penalty is paid first; anything extra goes to their other unpaid penalties, oldest first.
@@ -534,16 +540,23 @@ function MarkPaidModal({ penalty, maxAmount = 0, onClose, onSubmit, submitting }
           <p className="text-[11px] text-gray-400 mt-1">Maximum {peso(limit)}.</p>
         </div>
         <div>
-          <label className="text-xs font-semibold text-gray-500">Method</label>
+          <label className="text-xs font-semibold text-gray-500">Payment mode</label>
           <select value={method} onChange={(e) => setMethod(e.target.value)}
             className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light">
-            {SHORTFALL_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+            {SHORTFALL_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
         </div>
         <div>
-          <label className="text-xs font-semibold text-gray-500">Reference number (optional)</label>
-          <input type="text" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)}
+          <label className="text-xs font-semibold text-gray-500">
+            {isCash ? "Official receipt no. (optional)" : "Reference number (required)"}
+          </label>
+          <input type="text" maxLength={64} value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)}
+            placeholder={isCash ? "Receipt number" : `${modeLabel} reference number`}
             className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+        </div>
+        <div className="flex justify-between text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
+          <span>Received by</span>
+          <span className="font-semibold text-gray-700">{receivedBy}</span>
         </div>
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
@@ -551,7 +564,7 @@ function MarkPaidModal({ penalty, maxAmount = 0, onClose, onSubmit, submitting }
           </button>
           <button
             onClick={() => onSubmit({ amount: Number(amount), method, referenceNumber: referenceNumber.trim() })}
-            disabled={submitting || !(Number(amount) > 0) || Number(amount) > limit}
+            disabled={submitting || !(Number(amount) > 0) || Number(amount) > limit || missingRef}
             className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
           >
             {submitting ? "Recording…" : "Record Payment"}
@@ -633,7 +646,7 @@ function PenaltyDetailsModal({ penalty: p, onClose, onViewBooking, onDelete }) {
           {owed > 0 && p.status === "Confirmed" && (
             <DetailRow label="Still owed" value={<span className="text-red-600 font-semibold">{peso(owed)}</span>} />
           )}
-          <DetailRow label="Payment method" value={p.paymentMethod || null} />
+          <DetailRow label="Payment mode" value={p.paymentMethod || null} />
           <DetailRow label="Reference #" value={p.referenceNumber || null} />
           <DetailRow label="Paid at" value={fmtDate(p.paidAt)} />
         </div>
@@ -705,6 +718,7 @@ export default function Penalties() {
   const [deleteTarget, setDeleteTarget] = useState(null);   // the penalty being deleted (Owner / Admin only)
   const { effectiveRole } = useAuth();
   const canDelete = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);   // Supervisors can only delete bookings
+  const canRecordInStore = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
 
   // Deep-link from Bookings.jsx's "Note a Penalty" button: opens the
   // create-penalty modal straight away with the bookingID already filled in
@@ -1008,15 +1022,15 @@ export default function Penalties() {
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {p.status === "Confirmed" && (
                         <>
-                          {p.settlementStatus !== "Paid" && (
+                          {p.settlementStatus !== "Paid" && canRecordInStore && (
                             <button onClick={() => setMarkPaidModal(p)} disabled={busyId === p.id}
                               className="text-xs px-2.5 py-1 rounded-lg bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-40 font-medium">
-                              Mark Paid
+                              In-store payment
                             </button>
                           )}
                           {/* Void/Waive both refuse once anything's been paid against a
                               penalty (see voidOrWaivePenalty) — once partially or fully
-                              paid, only Mark Paid stays available; reversing money needs
+                              paid, only the in-store payment stays available; reversing money needs
                               its own flow, not a status flip. */}
                           {!(p.paidAmount > 0) && (
                             <>

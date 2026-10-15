@@ -10,6 +10,10 @@ const EMPTY_FORM = { carPartName: "", carPartTypeID: "", serialNumber: "", price
 const formatPeso = (n) =>
   `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// Table header cell + full-size row buttons — same look as Holidays / Addresses.
+const thCls = "text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider";
+const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
+
 // Price text box -> { value } where value is:
 //   a number      → set the price
 //   null          → box was empty
@@ -294,48 +298,72 @@ export default function Inventory() {
             {partsLoading ? (
               <div className="h-32 rounded-xl bg-gray-100 animate-pulse" />
             ) : (
-              <div className="space-y-2">
-                {isAdding && (
-                  <PartFormRow
-                    formState={formState} setFormState={setFormState} partTypes={partTypes}
-                    onSave={saveNew} onCancel={cancelForm} saving={saving} inputCls={inputCls}
-                  />
-                )}
+              <div className="border border-gray-100 rounded-xl overflow-x-auto">
+                <table className="w-full text-sm font-sans min-w-[640px]">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className={thCls}>Part</th>
+                      <th className={thCls}>Type</th>
+                      <th className={thCls}>Serial No.</th>
+                      <th className={thCls}>Price</th>
+                      <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isAdding && (
+                      <tr className="border-b border-gray-50">
+                        <td colSpan={5} className="p-3">
+                          <PartFormRow
+                            formState={formState} setFormState={setFormState} partTypes={partTypes}
+                            onSave={saveNew} onCancel={cancelForm} saving={saving} inputCls={inputCls}
+                          />
+                        </td>
+                      </tr>
+                    )}
 
-                {parts.length === 0 && !isAdding && (
-                  <p className="text-sm text-center py-8 text-gray-400">
-                    No parts in the catalog for this vehicle yet.
-                  </p>
-                )}
+                    {parts.length === 0 && !isAdding && (
+                      <tr>
+                        <td colSpan={5} className="px-5 py-10 text-center text-sm text-gray-400">
+                          No parts in the catalog for this vehicle yet.
+                        </td>
+                      </tr>
+                    )}
 
-                {parts.map(part => (
-                  editingID === part.id ? (
-                    <PartFormRow
-                      key={part.id}
-                      formState={formState} setFormState={setFormState} partTypes={partTypes}
-                      onSave={saveEdit} onCancel={cancelForm} saving={saving} inputCls={inputCls}
-                    />
-                  ) : (
-                    <div key={part.id} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 px-3 py-2.5">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold truncate text-gray-800">{part.carPartName || "—"}</p>
-                        <p className="text-xs truncate text-gray-400">
-                          {partTypes.find(t => t.id === part.carPartTypeID)?.carPartName || "No type"}
-                          {part.serialNumber ? ` · ${part.serialNumber}` : ""}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-4 shrink-0">
-                        {part.price != null ? (
-                          <span className="text-sm font-semibold text-gray-700">{formatPeso(part.price)}</span>
-                        ) : (
-                          <span className="text-xs text-gray-300 italic">No price</span>
-                        )}
-                        <button onClick={() => startEdit(part)} className="text-xs font-semibold text-teal-600 hover:text-teal-700">Edit</button>
-                        <button onClick={() => removePart(part)} className="text-xs font-semibold text-red-500 hover:text-red-600">Remove</button>
-                      </div>
-                    </div>
-                  )
-                ))}
+                    {parts.map(part => (
+                      editingID === part.id ? (
+                        <tr key={part.id} className="border-b border-gray-50">
+                          <td colSpan={5} className="p-3">
+                            <PartFormRow
+                              formState={formState} setFormState={setFormState} partTypes={partTypes}
+                              onSave={saveEdit} onCancel={cancelForm} saving={saving} inputCls={inputCls}
+                            />
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={part.id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                          <td className="px-5 py-3 font-semibold text-gray-800">{part.carPartName || "—"}</td>
+                          <td className="px-5 py-3 text-gray-600">
+                            {partTypes.find(t => t.id === part.carPartTypeID)?.carPartName || <span className="text-gray-400">No type</span>}
+                          </td>
+                          <td className="px-5 py-3 text-gray-500 whitespace-nowrap">{part.serialNumber || "—"}</td>
+                          <td className="px-5 py-3 whitespace-nowrap">
+                            {part.price != null ? (
+                              <span className="font-semibold text-gray-700">{formatPeso(part.price)}</span>
+                            ) : (
+                              <span className="text-xs text-gray-300 italic">No price</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-2 justify-end">
+                              <button onClick={() => startEdit(part)} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
+                              <button onClick={() => removePart(part)} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>Remove</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>

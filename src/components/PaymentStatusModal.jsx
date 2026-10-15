@@ -1,19 +1,16 @@
-import { useState, useEffect } from "react";
 import PaymentEntriesPanel from "./shared/PaymentEntriesPanel";
 
 const STATUS_STYLE = {
   approved: "bg-green-50 text-green-700 border border-green-200",
   paid:     "bg-green-50 text-green-700 border border-green-200",
+  completed:"bg-green-50 text-green-700 border border-green-200",
+  partial:  "bg-orange-50 text-orange-700 border border-orange-200",
   pending:  "bg-amber-50 text-amber-700 border border-amber-200",
   rejected: "bg-red-50 text-red-600 border border-red-200",
   cancelled:"bg-gray-100 text-gray-500 border border-gray-200",
 };
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
-
-// The only modes staff/drivers can pick when confirming a cash/in-person
-// payment here — must match PAYMENT_METHODS in payments.service.js.
-const PAYMENT_METHODS = ["Cash", "GCash", "Bank Transfer"];
 
 const IconX = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -29,101 +26,42 @@ const IconArrowRight = ({ className = "w-3.5 h-3.5" }) => (
 
 const IconTag = ({ className = "w-3.5 h-3.5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M20.59 13.41L11 3.83A2 2 0 009.58 3.24H4a1 1 0 00-1 1v5.58a2 2 0 00.59 1.42l9.58 9.58a2 2 0 002.83 0l4.59-4.59a2 2 0 000-2.82z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M20.59 13.41L11 3.83A2 2 0 009.58 3.24H4a1 1 0 00-1 1v5.58a2 2 0 00.59 1.42l9.58 9.58a2 2 0 002.83 0l4.59-4.59a2 2 0 000-2.83z" />
     <circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" />
   </svg>
 );
 
 /**
- * "How much is paid / how much is still owed" breakdown, with optional
- * "Confirm Payment Received", "Mark Balance Received", and "Apply
- * Discount" actions — same shape everywhere it's used: Car Tracking, and
- * the driver's My Trips — all backed by the same computeAmounts() logic
- * on the server, so the numbers can never drift between screens. PayMongo
- * (GCash/Maya/QRPH) payments never need the confirm/collect buttons — the
- * customer-side webhook already confirms those the moment they settle, so
- * paymentStatus arrives here already approved/paid.
+ * Read-only "how much is paid / how much is still owed" view, used on Car Tracking and the driver's My Trips.
+ *
+ * It only SHOWS information. Nothing is settled here any more: every payment goes through PayMongo,
+ * and the few things staff do by hand (remind the customer, record an in-store payment, give the one-time
+ * discount, receive a penalty) all live on the Payments and Penalties pages. This screen just points there.
  *
  * @param {boolean} open
  * @param {() => void} onClose
  * @param {string} customerName
- * @param {{ totalFee: number, amountPaid: number, balance: number, payType: string, paymentStatus: string, discountAmount?: number, depositAmount?: number, depositStatus?: string, confirmedPenaltyTotal?: number, amountToReturn?: number }} payment
- * @param {(paymentMethod: string) => void} [onConfirmPayment] - confirm a cash initial payment as received, right here. Called with the picked Cash/GCash/Bank Transfer value. Omit to hide the button (e.g. read-only views).
- * @param {boolean} [confirming] - shows a busy state on the confirm button while the request is in flight
- * @param {string} [confirmError] - shown under the confirm button if the last attempt failed
- * @param {(paymentMethod: string) => void} [onCollectBalance] - called with the picked Cash/GCash/Bank Transfer value. Omit to hide the button entirely (read-only view)
- * @param {boolean} [collecting] - shows a busy state on the button while the request is in flight
- * @param {string} [collectError] - shown under the button if the last attempt failed
- * @param {(amount: number, reason: string) => void} [onApplyDiscount] - staff-only. Omit entirely for driver-facing screens (My Trips) — they can see payment.discountAmount reflected in the breakdown, but never get the control to set it.
- * @param {boolean} [applyingDiscount] - shows a busy state on the discount button while the request is in flight
- * @param {string} [discountError] - shown under the discount control if the last attempt failed
- * @param {() => void} [onMarkRefundIssued] - both staff AND drivers can call this (unlike onApplyDiscount) — whoever's physically holding the cash confirms it was handed back. Shown only when payment.refundDue > 0.
- * @param {boolean} [markingRefund] - shows a busy state on the button while the request is in flight
- * @param {string} [refundError] - shown under the button if the last attempt failed
- * @param {() => void} [onGoToPayments] - fallback link shown only if onConfirmPayment isn't provided. Omit for roles that can't reach the Payments page (e.g. drivers).
- * @param {string} [pendingApprovalNote] - override the default "must be approved" wording, used only in the onGoToPayments fallback case
+ * @param {{ totalFee: number, amountPaid: number, balance: number, payType: string, paymentStatus: string, paymentStage?: string, discountAmount?: number, refundDue?: number, depositAmount?: number, depositStatus?: string, confirmedPenaltyTotal?: number, amountToReturn?: number, depositSettled?: boolean }} payment
+ * @param {() => void} [onGoToPayments]  opens this booking on the Payments page. Omit for roles that can't reach it (drivers).
+ * @param {() => void} [onGoToPenalties] opens the Penalties page for this booking. Omit for drivers.
+ * @param {() => void} [onNotePenalty]   records a penalty against the trip (the return checklist); recording one is not the same as paying it.
+ * @param {() => void} [onReturnDeposit] opens the return checklist where the security deposit is settled.
+ * @param {string} [bookingID]           staff screens pass this to list every money movement; the driver screen leaves it out.
  */
 export default function PaymentStatusModal({
-  open, onClose, customerName, payment,
-  onConfirmPayment, confirming, confirmError,
-  onCollectBalance, collecting, collectError,
-  onApplyDiscount, applyingDiscount, discountError,
-  onMarkRefundIssued, markingRefund, refundError, onReturnDeposit,
-  onGoToPayments, pendingApprovalNote, onNotePenalty,
-  bookingID,   // staff screens pass this to show every money movement; the driver screen leaves it out (drivers can't read entries)
+  open, onClose, customerName, payment, bookingID,
+  onGoToPayments, onGoToPenalties, onNotePenalty, onReturnDeposit,
 }) {
-  const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0, refundDue: 0, depositAmount: 0, depositStatus: "—", confirmedPenaltyTotal: 0, amountToReturn: 0 };
-
-  // Pre-fill with whatever discount is already on the booking — the field
-  // sets the total discount, not an incremental add-on-top, so editing it
-  // needs to start from the current value rather than blank.
-  const [discountInput, setDiscountInput] = useState("");
-  const [reasonInput, setReasonInput]     = useState("");
-  // Once a discount already exists, the fields open locked (read-only)
-  // behind a "Re-edit Discount" button instead of sitting open and
-  // editable — makes it much harder to bump an existing discount by
-  // accident. Re-locks every time the modal is (re)opened.
-  const [discountUnlocked, setDiscountUnlocked] = useState(false);
-  // Mode of payment for whichever cash/in-person action is available
-  // (Confirm or Collect Balance — never both at once, see canConfirm/
-  // canCollect below). Reset every time the modal opens so a leftover
-  // pick from a previous booking never silently carries over.
-  const [methodInput, setMethodInput] = useState("");
-  useEffect(() => {
-    if (open) {
-      setDiscountInput(p.discountAmount ? String(p.discountAmount) : "");
-      setReasonInput("");
-      setDiscountUnlocked(false);
-      setMethodInput("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, p.discountAmount]);
+  const p = payment || { totalFee: 0, amountPaid: 0, balance: 0, payType: "—", paymentStatus: "—", discountAmount: 0, refundDue: 0, depositAmount: 0, depositStatus: "—", confirmedPenaltyTotal: 0, amountToReturn: 0, depositSettled: false };
 
   if (!open) return null;
-
-  const hasDiscount = p.discountAmount > 0;
-  const discountLocked = hasDiscount && !discountUnlocked;
 
   const isFullyPaid = p.balance <= 0 && p.totalFee > 0;
   const statusKey = (p.paymentStatus || "").toLowerCase();
   const isConfirmed = statusKey === "approved" || statusKey === "paid";
-  // Collecting cash before/at pickup only makes sense once the initial
-  // portion is actually confirmed — mirrors the same gate the backend
-  // enforces in collectRemainingBalance().
-  const canCollect = !!onCollectBalance && !isFullyPaid && p.totalFee > 0 && isConfirmed;
-  const needsApprovalFirst = !isFullyPaid && p.totalFee > 0 && !isConfirmed;
-  // Cash/in-person initial payment waiting to be confirmed — offer the
-  // button right here instead of sending anyone to the Payments page.
-  const canConfirm = !!onConfirmPayment && needsApprovalFirst && statusKey !== "rejected" && statusKey !== "cancelled";
-
-  const handleDiscountSubmit = () => {
-    const amount = Number(discountInput);
-    if (!Number.isFinite(amount) || amount < 0) return;
-    if (amount > (p.totalFee || 0)) return;
-    onApplyDiscount(amount, reasonInput.trim());
-  };
-
-  const discountTooHigh = discountInput !== "" && Number(discountInput) > (p.totalFee || 0);
+  // Orange = the first payment is in but part of the fee is still owed.
+  const stage = p.paymentStage && p.paymentStage !== "—" ? p.paymentStage : p.paymentStatus;
+  const stageKey = String(stage || "").toLowerCase();
 
   return (
     <div className="fixed inset-0 z-[2000] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -144,8 +82,8 @@ export default function PaymentStatusModal({
         <div className="p-6 space-y-5 overflow-y-auto">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">{p.payType}</span>
-            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_STYLE[statusKey] || "bg-gray-50 text-gray-500 border border-gray-200"}`}>
-              {p.paymentStatus}
+            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_STYLE[stageKey] || "bg-gray-50 text-gray-500 border border-gray-200"}`}>
+              {stage}
             </span>
           </div>
 
@@ -167,25 +105,37 @@ export default function PaymentStatusModal({
             <div className="h-px bg-gray-200" />
             <div className="flex items-center justify-between text-sm">
               <span className="font-semibold text-arl-dark">Remaining Balance</span>
-              <span className={`font-bold ${isFullyPaid ? "text-green-600" : "text-amber-600"}`}>
+              <span className={`font-bold ${isFullyPaid ? "text-green-600" : "text-orange-600"}`}>
                 {isFullyPaid ? "Fully Paid" : peso(p.balance)}
               </span>
             </div>
           </div>
 
+          {/* What to do about it -- always "go to Payments", never settled here. */}
           {!isFullyPaid && p.totalFee > 0 && (
-            <p className="text-xs text-gray-400">
-              Collect the remaining {peso(p.balance)} before or upon completion of the trip, per your team's policy.
+            <p className="text-xs text-gray-500">
+              {isConfirmed
+                ? `The remaining ${peso(p.balance)} is paid online through PayMongo from the customer's booking. To remind the customer, or to record an in-store payment, use the Payments page.`
+                : "The first payment hasn't come in yet. It is marked as paid automatically when the customer pays through PayMongo."}
             </p>
           )}
 
-          {/* Security deposit vs. confirmed penalties — the same math
-              settleBooking() runs automatically at Return, shown here as a
-              live preview beforehand. Lets whoever is about to hand back
-              (or collect) the deposit see the rightful amount up front,
-              instead of only finding out once Return actually settles it.
-              Hidden entirely if no deposit has been recorded on this
-              booking yet. */}
+          {p.refundDue > 0 && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-1.5">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-red-700 flex items-center gap-1.5">
+                  <IconTag className="w-3.5 h-3.5" /> Refund Due to Customer
+                </span>
+                <span className="font-bold text-red-700">{peso(p.refundDue)}</span>
+              </div>
+              <p className="text-xs text-red-600">
+                This was paid in store, so it is returned in store. A Supervisor, Admin or Owner records it on the Payments page.
+              </p>
+            </div>
+          )}
+
+          {/* Security deposit vs. confirmed penalties — the same math settleBooking() runs at Return,
+              shown as a live preview. */}
           {p.depositStatus && p.depositStatus !== "—" && (
             <div className="space-y-2.5 bg-blue-50/60 border border-blue-100 rounded-xl p-4">
               <div className="flex items-center justify-between text-sm">
@@ -207,13 +157,6 @@ export default function PaymentStatusModal({
                   {peso(Math.abs(p.amountToReturn))}
                 </span>
               </div>
-              {p.confirmedPenaltyTotal > 0 && (
-                <p className="text-[11px] text-gray-400">
-                  Already accounts for confirmed penalties on this booking — this is the actual amount to hand back{p.amountToReturn < 0 ? " (or still collect)" : ""}, not the full deposit.
-                </p>
-              )}
-              {/* Driver shortcut: opens the Drop-off & return checklist, where the
-                  deposit is actually settled (deduct penalties + confirm handback). */}
               {onNotePenalty && !p.depositSettled && (
                 <button
                   onClick={onNotePenalty}
@@ -236,147 +179,30 @@ export default function PaymentStatusModal({
             </div>
           )}
 
-          {/* A discount was applied after this booking was already paid past
-              what it could absorb — the spillover is cash owed BACK to the
-              customer. Shown to whoever's holding the cash (staff or the
-              driver), not just staff — see onMarkRefundIssued's JSDoc. */}
-          {p.refundDue > 0 && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-semibold text-red-700 flex items-center gap-1.5">
-                  <IconTag className="w-3.5 h-3.5" /> Refund Due to Customer
-                </span>
-                <span className="font-bold text-red-700">{peso(p.refundDue)}</span>
-              </div>
-              <p className="text-xs text-red-600">
-                A discount was applied after this booking was already fully paid. Return {peso(p.refundDue)} to the customer.
-              </p>
-              {onMarkRefundIssued && (
-                <>
-                  <button
-                    onClick={onMarkRefundIssued}
-                    disabled={markingRefund}
-                    className="w-full py-2 rounded-xl text-sm font-semibold bg-red-600 text-white hover:bg-red-700 active:scale-[0.99] transition-all disabled:opacity-50"
-                  >
-                    {markingRefund ? "Marking…" : `Mark ${peso(p.refundDue)} as Returned`}
-                  </button>
-                  {refundError && <p className="text-xs text-red-500">{refundError}</p>}
-                </>
-              )}
-            </div>
-          )}
-
-          {(canCollect || canConfirm) && (
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Mode of Payment</label>
-              <select
-                value={methodInput}
-                onChange={(e) => setMethodInput(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
-              >
-                <option value="" disabled>Select mode of payment</option>
-                {PAYMENT_METHODS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {canCollect && (
-            <>
-              <button
-                onClick={() => onCollectBalance(methodInput)}
-                disabled={collecting || !methodInput}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50"
-              >
-                {collecting ? "Marking as paid…" : `Mark ${peso(p.balance)} as Received`}
-              </button>
-              {collectError && <p className="text-xs text-red-500">{collectError}</p>}
-            </>
-          )}
-
-          {canConfirm && (
-            <>
-              <button
-                onClick={() => onConfirmPayment(methodInput)}
-                disabled={confirming || !methodInput}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold bg-arl-dark text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
-              >
-                {confirming ? "Confirming…" : `Confirm Payment Received`}
-              </button>
-              {confirmError && <p className="text-xs text-red-500">{confirmError}</p>}
-            </>
-          )}
-
-          {!canConfirm && !!onCollectBalance && needsApprovalFirst && (
-            <div className="space-y-1.5">
-              <p className="text-xs text-amber-600">{pendingApprovalNote || "The initial payment must be approved on the Payments page before the remaining balance can be collected."}</p>
+          {/* The only way forward: the pages where payments and penalties are actually handled. */}
+          {(onGoToPayments || onGoToPenalties) ? (
+            <div className="flex flex-wrap gap-2">
               {onGoToPayments && (
                 <button
                   onClick={onGoToPayments}
-                  className="flex items-center gap-1 text-xs font-semibold text-arl-dark hover:underline"
+                  className="flex-1 min-w-[9rem] inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-semibold rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition"
                 >
-                  Go to Payments page <IconArrowRight />
+                  Open in Payments <IconArrowRight />
+                </button>
+              )}
+              {onGoToPenalties && (
+                <button
+                  onClick={onGoToPenalties}
+                  className="flex-1 min-w-[9rem] inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition"
+                >
+                  Open in Penalties <IconArrowRight />
                 </button>
               )}
             </div>
-          )}
-
-          {/* Staff-only — never passed in for drivers (My Trips), who see
-              discountAmount reflected above but can't set it themselves. */}
-          {onApplyDiscount && (
-            <div className="border-t border-gray-100 pt-4 space-y-2.5">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                <IconTag /> {hasDiscount ? "Edit Discount" : "Apply Discount"}
-              </p>
-              {discountLocked ? (
-                <>
-                  <div className="flex items-center justify-between text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                    <span className="text-gray-500">Current discount</span>
-                    <span className="font-semibold text-red-500">−{peso(p.discountAmount)}</span>
-                  </div>
-                  <button
-                    onClick={() => setDiscountUnlocked(true)}
-                    className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-arl-light/30 active:scale-[0.99] transition-all"
-                  >
-                    Re-edit Discount
-                  </button>
-                  <p className="text-[11px] text-gray-400">Locked to avoid accidental changes. Click above to unlock and edit it.</p>
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
-                      <input
-                        type="number" min="0" max={p.totalFee} step="1" placeholder="0"
-                        value={discountInput}
-                        onChange={(e) => setDiscountInput(e.target.value)}
-                        className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
-                      />
-                    </div>
-                    <input
-                      type="text" placeholder="Reason (optional)"
-                      value={reasonInput}
-                      onChange={(e) => setReasonInput(e.target.value)}
-                      className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
-                    />
-                  </div>
-                  {discountTooHigh && (
-                    <p className="text-xs text-red-500">Discount can't exceed the total fee ({peso(p.totalFee)}).</p>
-                  )}
-                  <button
-                    onClick={handleDiscountSubmit}
-                    disabled={applyingDiscount || discountInput === "" || discountTooHigh}
-                    className="w-full py-2 rounded-xl text-sm font-semibold border border-arl-dark text-arl-dark hover:bg-arl-light/30 active:scale-[0.99] transition-all disabled:opacity-50"
-                  >
-                    {applyingDiscount ? "Applying…" : hasDiscount ? "Edit Discount" : "Apply Discount"}
-                  </button>
-                  {discountError && <p className="text-xs text-red-500">{discountError}</p>}
-                  <p className="text-[11px] text-gray-400">Sets the total discount on this booking — entering a new amount replaces the old one, it doesn't add to it.</p>
-                </>
-              )}
-            </div>
+          ) : (
+            <p className="text-[11px] text-gray-400">
+              Payments are made online through PayMongo. Anything paid at the store is recorded by a Supervisor, Admin or Owner.
+            </p>
           )}
 
           {bookingID && (
