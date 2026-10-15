@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -8,7 +8,7 @@ import { useAuth } from "../context/AuthContext";
 //
 // Self-contained: the Markdown renderer, editor, viewer and version history
 // all live in this one file. Backed by the append-only `termsVersions`
-// collection — every save publishes a NEW version (v1, v2, v3 …) and old
+// collection — every save publishes a NEW version (v1.00, v1.01, v2.00 …) and old
 // versions are kept. There is no built-in/default text: until someone
 // publishes version 1, the page just says nothing is published yet.
 // ─────────────────────────────────────────────────────────────────────────
@@ -28,6 +28,40 @@ async function api(path, options) {
   return json.data;
 }
 
+// Versions look like 1.00 / 1.01 / 2.00 (old whole numbers 1, 2 show as 1.00, 2.00).
+const fmtVer = (v) => Number(v).toFixed(2);
+const toCents = (v) => Math.round(Number(v) * 100);
+// Quick picks for the editor: small fix = +0.01 (1.00 -> 1.01), major = next whole number (1.05 -> 2.00).
+const minorOf = (v) => (v ? fmtVer((toCents(v) + 1) / 100) : "1.00");
+const majorOf = (v) => (v ? fmtVer(Math.floor(toCents(v) / 100) + 1) : "1.00");
+
+// Line-by-line comparison (what was added / removed) so the editor can review before publishing.
+// Returns null when the texts are too big to compare quickly.
+const diffLines = (oldText, newText) => {
+  const a = String(oldText || "").replace(/\r\n/g, "\n").split("\n");
+  const b = String(newText || "").replace(/\r\n/g, "\n").split("\n");
+  let st = 0;
+  while (st < a.length && st < b.length && a[st] === b[st]) st++;
+  let ea = a.length, eb = b.length;
+  while (ea > st && eb > st && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+  const A = a.slice(st, ea), B = b.slice(st, eb);
+  const n = A.length, m = B.length;
+  if ((n + 1) * (m + 1) > 3000000) return null;
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) out.push({ t: "-", l: A[i++] });
+    else out.push({ t: "+", l: B[j++] });
+  }
+  while (i < n) out.push({ t: "-", l: A[i++] });
+  while (j < m) out.push({ t: "+", l: B[j++] });
+  return out;
+};
 const byteLength = (s) => new TextEncoder().encode(s || "").length;
 const fmtDate = (iso) =>
   iso ? new Date(iso).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—";
@@ -128,6 +162,9 @@ export default function TermsPage() {
   const [tab, setTab] = useState("write");        // write | preview
   const [content, setContent] = useState("");
   const [changeNote, setChangeNote] = useState("");
+  const [versionInput, setVersionInput] = useState("1.00"); // version the editor will publish as
+  const [bumpKind, setBumpKind] = useState("minor");        // minor | major | custom
+  const [showDiff, setShowDiff] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [query, setQuery] = useState("");         // search box (view mode)
@@ -178,12 +215,48 @@ export default function TermsPage() {
   const baseContent = current?.content || "";
   const isDirty = content !== baseContent;
   const bytes = byteLength(content);
-  const nextVersion = (current?.version || 0) + 1;
+  const currentCents = current ? toCents(current.version) : 0;
+  const versionOk = /^\d+\.\d{2}$/.test(versionInput.trim()) &&
+    toCents(versionInput) >= 100 && toCents(versionInput) > currentCents;
+  const versionError = versionOk ? "" : current
+    ? `Must be 2 decimals and higher than the current version (${fmtVer(current.version)}).`
+    : "Must be 2 decimals, at least 1.00.";
+  // A major update (whole number goes up) must explain itself, because customers and staff read this in the history.
+  const isMajor = !!current && versionOk && Math.floor(toCents(versionInput) / 100) > Math.floor(currentCents / 100);
+  const noteOk = !isMajor || changeNote.trim().length > 0;
+  const tooBig = bytes > MAX_BYTES;
+  // Why the Publish button is disabled (shown next to it so nobody has to guess).
+  const publishBlock = !isDirty ? "Change the text first."
+    : !versionOk ? versionError
+    : !noteOk ? "Describe what changed — required for a major update."
+    : tooBig ? "The text is too long."
+    : "";
+  const diff = useMemo(
+    () => (editMode && showDiff && current ? diffLines(baseContent, content) : undefined),
+    [editMode, showDiff, current, baseContent, content]
+  );
+
+  const pickBump = (kind) => {
+    setBumpKind(kind);
+    if (kind === "minor") setVersionInput(minorOf(current?.version));
+    else if (kind === "major") setVersionInput(majorOf(current?.version));
+  };
+
+  // Browser warning if the tab is closed or refreshed with unpublished changes.
+  useEffect(() => {
+    if (!(editMode && isDirty && !saving)) return undefined;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [editMode, isDirty, saving]);
 
   const startEdit = () => {
     setQuery("");
     setContent(baseContent);
     setChangeNote("");
+    setVersionInput(minorOf(current?.version));
+    setBumpKind("minor");
+    setShowDiff(false);
     setTab("write");
     setNotice(null);
     setViewing(null);
@@ -200,17 +273,19 @@ export default function TermsPage() {
     if (!content.trim()) return setNotice({ type: "error", msg: "Terms content cannot be empty." });
     if (!isDirty) return setNotice({ type: "error", msg: "No changes to save." });
     if (bytes > MAX_BYTES) return setNotice({ type: "error", msg: "Terms are too long." });
-    if (!window.confirm(`Publish this as version ${nextVersion}?\n\nIt goes live immediately. Previous versions are kept in the history.`)) return;
+    if (!versionOk) return setNotice({ type: "error", msg: versionError });
+    if (!noteOk) return setNotice({ type: "error", msg: "Describe what changed — required for a major update." });
+    if (!window.confirm(`Publish this as version ${versionInput.trim()}?\n\nIt goes live immediately. Previous versions are kept in the history.`)) return;
 
     setSaving(true);
     setNotice(null);
     try {
       const saved = await api("/api/settings/terms", {
         method: "POST",
-        body: JSON.stringify({ content, changeNote }), // no title: it is always "Terms & Conditions"
+        body: JSON.stringify({ content, changeNote, version: versionInput.trim(), baseVersion: current ? current.version : 0 }), // no title: it is always "Terms & Conditions"
       });
       setEditMode(false);
-      setNotice({ type: "success", msg: `Version ${saved.version} published.` });
+      setNotice({ type: "success", msg: `Version ${fmtVer(saved.version)} published.` });
       await load();
     } catch (err) {
       setNotice({ type: "error", msg: err.message || "Failed to save Terms." });
@@ -234,7 +309,10 @@ export default function TermsPage() {
   // and that creates a brand-new version; the old one is untouched.
   const restoreVersion = (v) => {
     setContent(v.content);
-    setChangeNote(`Restored from version ${v.version}`);
+    setChangeNote(`Restored from version ${fmtVer(v.version)}`);
+    setVersionInput(minorOf(current?.version));
+    setBumpKind("minor");
+    setShowDiff(false);
     setTab("write");
     setViewing(null);
     setNotice(null);
@@ -365,12 +443,12 @@ export default function TermsPage() {
         <div>
           <h1 className={`text-xl font-bold ${isDark ? "text-[#F5F5F5]" : "text-arl-dark"}`}>Terms &amp; Conditions</h1>
           <p className={`text-xs mt-0.5 ${muted}`}>
-            Shown to customers at signup. Every save publishes a new version; old versions are kept.
+            Shown to customers. Every save publishes a new version and old versions are kept, so you can always look back at what customers agreed to.
           </p>
         </div>
         {current && (
           <span className={`text-xs px-2.5 py-1 rounded-full border ${isDark ? "border-[#4FC3F7]/30 text-[#4FC3F7]" : "border-gray-200 text-gray-600"}`}>
-            Current: v{current.version}
+            Current: v{fmtVer(current.version)}
           </span>
         )}
       </div>
@@ -391,8 +469,8 @@ export default function TermsPage() {
           <div className="space-y-3">
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className={`text-xs font-medium ${text}`}>Content</label>
-                <div className="flex gap-1">
+                <label className={`block text-xs font-medium ${text}`}>1. Edit the text</label>
+                <div className="flex gap-1 lg:hidden">
                   {["write", "preview"].map((t) => (
                     <button key={t} type="button" onClick={() => setTab(t)}
                       className={`text-xs px-3 py-1 rounded-lg capitalize ${
@@ -403,8 +481,8 @@ export default function TermsPage() {
                   ))}
                 </div>
               </div>
-              {tab === "write" && (
-                <div className="flex flex-wrap items-center gap-1.5">
+              {(
+                <div className={`${tab === "write" ? "flex" : "hidden lg:flex"} flex-wrap items-center gap-1.5`}>
                   <button type="button" className={tbBtn} disabled={saving} onClick={() => prefixLines("h")} title="Turn the line into a section heading (numbered automatically for customers)">Section heading</button>
                   <button type="button" className={`${tbBtn} font-bold`} disabled={saving} onClick={() => wrap("**", "bold text")} title="Bold (Ctrl+B)">B</button>
                   <button type="button" className={`${tbBtn} italic`} disabled={saving} onClick={() => wrap("*", "italic text")} title="Italic (Ctrl+I)">I</button>
@@ -423,30 +501,105 @@ export default function TermsPage() {
                   </select>
                 </div>
               )}
-              {tab === "write" ? (
-                <textarea ref={taRef} className={`${inputCls} font-mono min-h-[400px] leading-relaxed`} value={content}
-                  onChange={(e) => setContent(e.target.value)} onKeyDown={onEditorKey} disabled={saving} spellCheck />
-              ) : (
-                <div className={`${inputCls} min-h-[400px] max-h-[600px] overflow-y-auto ${text}`}>
-                  <Markdown source={content} />
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div className={tab === "write" ? "" : "hidden lg:block"}>
+                  <p className={`hidden lg:block text-[11px] mb-1 ${muted}`}>What you type</p>
+                  <textarea ref={taRef} className={`${inputCls} font-mono min-h-[400px] leading-relaxed`} value={content}
+                    onChange={(e) => setContent(e.target.value)} onKeyDown={onEditorKey} disabled={saving} spellCheck />
                 </div>
-              )}
+                <div className={tab === "preview" ? "" : "hidden lg:block"}>
+                  <p className={`hidden lg:block text-[11px] mb-1 ${muted}`}>Live preview</p>
+                  <div className={`${inputCls} min-h-[400px] max-h-[600px] overflow-y-auto ${text}`}>
+                    {content.trim() ? <Markdown source={content} /> : <p className={muted}>Nothing to preview yet.</p>}
+                  </div>
+                </div>
+              </div>
               <p className={`text-[11px] ${bytes > MAX_BYTES ? "text-[#D32F2F]" : muted}`}>
-                {bytes.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes · Select text and use the buttons above. Section numbers are added automatically for customers. Use Preview to check it.
+                {bytes.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes · Select text and use the buttons above. Section numbers and live values are filled in for customers, so the preview shows the plain text.
               </p>
             </div>
 
+            <div className="space-y-2">
+              <label className={`block text-xs font-medium ${text}`}>
+                2. What kind of change is this?{current ? ` (current version is v${fmtVer(current.version)})` : ""}
+              </label>
+              {current ? (
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {[
+                    { k: "minor", title: "Small fix", desc: "Typos, wording, formatting", ver: minorOf(current.version) },
+                    { k: "major", title: "Major update", desc: "Policy, fee or rule changes", ver: majorOf(current.version) },
+                    { k: "custom", title: "Custom number", desc: "Pick the number yourself", ver: null },
+                  ].map((o) => (
+                    <button key={o.k} type="button" disabled={saving} onClick={() => pickBump(o.k)}
+                      className={`text-left rounded-xl border px-3 py-2 transition-colors ${text} ${
+                        bumpKind === o.k
+                          ? isDark ? "border-[#4FC3F7] bg-[#212121]" : "border-arl-dark bg-gray-50"
+                          : isDark ? "border-[#4FC3F7]/20" : "border-gray-200"
+                      }`}>
+                      <div className="text-sm font-semibold">
+                        {o.title}{o.ver && <span className="font-normal opacity-60"> · v{o.ver}</span>}
+                      </div>
+                      <div className={`text-[11px] ${muted}`}>{o.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className={`text-xs ${muted}`}>This will be the first published version: v1.00.</p>
+              )}
+              {current && bumpKind === "custom" && (
+                <div className="space-y-1">
+                  <input className={`${inputCls} !w-28`} value={versionInput} inputMode="decimal" disabled={saving}
+                    placeholder="e.g. 1.05" onChange={(e) => setVersionInput(e.target.value)} />
+                  <p className={`text-[11px] ${muted}`}>Two decimals, higher than v{fmtVer(current.version)}. Example: 1.05 or 2.00.</p>
+                </div>
+              )}
+              {!versionOk && bumpKind === "custom" && <p className="text-[11px] text-[#D32F2F]">{versionError}</p>}
+            </div>
+
             <div className="space-y-1">
-              <label className={`text-xs font-medium ${text}`}>What changed? (optional)</label>
+              <label className={`block text-xs font-medium ${text}`}>
+                3. Describe the change{isMajor ? " (required for a major update)" : " (optional)"}
+              </label>
               <input className={inputCls} value={changeNote} maxLength={500} disabled={saving}
                 placeholder="e.g. Updated cancellation policy" onChange={(e) => setChangeNote(e.target.value)} />
             </div>
 
+            {current && (
+              <div className="space-y-2">
+                <button type="button" className={`text-xs underline ${text}`} onClick={() => setShowDiff((v) => !v)}>
+                  {showDiff ? "Hide changes" : "Review changes compared to the current version"}
+                </button>
+                {showDiff && (diff === null ? (
+                  <p className={`text-xs ${muted}`}>Too long to compare line by line. Use the live preview instead.</p>
+                ) : (() => {
+                  const shown = (diff || []).filter((d) => d.l.trim() !== "");
+                  const added = shown.filter((d) => d.t === "+").length;
+                  const removed = shown.length - added;
+                  if (!shown.length) return <p className={`text-xs ${muted}`}>No visible changes yet.</p>;
+                  return (
+                    <div className="space-y-1">
+                      <p className={`text-[11px] ${muted}`}>{added} line{added === 1 ? "" : "s"} added · {removed} removed</p>
+                      <div className={`max-h-64 overflow-y-auto rounded-xl border text-xs font-mono ${isDark ? "border-[#4FC3F7]/20" : "border-gray-200"}`}>
+                        {shown.map((d, i) => (
+                          <div key={i} className={`px-3 py-1 whitespace-pre-wrap break-words ${
+                            d.t === "+"
+                              ? isDark ? "bg-green-500/15 text-green-200" : "bg-green-50 text-green-800"
+                              : isDark ? "bg-[#D32F2F]/15 text-red-200" : "bg-red-50 text-red-700"
+                          }`}>{d.t === "+" ? "+ " : "− "}{d.l}</div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })())}
+              </div>
+            )}
+
             <div className="flex gap-3 flex-wrap items-center">
-              <button className={primaryBtn} onClick={save} disabled={saving || !isDirty || bytes > MAX_BYTES}>
-                {saving ? "Publishing…" : `Publish as v${nextVersion}`}
+              <button className={primaryBtn} onClick={save} disabled={saving || !!publishBlock}>
+                {saving ? "Publishing…" : `Publish as v${versionInput.trim() || "?"}`}
               </button>
               <button className={ghostBtn} onClick={cancelEdit} disabled={saving}>Cancel</button>
+              {publishBlock && !saving && <span className={`text-xs ${muted}`}>{publishBlock}</span>}
             </div>
           </div>
         ) : (
@@ -477,7 +630,7 @@ export default function TermsPage() {
               </>
             ) : (
               <p className={`text-sm ${muted}`}>
-                No Terms &amp; Conditions published yet.{canEdit ? " Click Create Terms to publish version 1." : ""}
+                No Terms &amp; Conditions published yet.{canEdit ? " Click Create Terms to publish version 1.00." : ""}
               </p>
             )}
             {canEdit && <button className={primaryBtn} onClick={startEdit}>{current ? "Edit Terms" : "Create Terms"}</button>}
@@ -494,7 +647,7 @@ export default function TermsPage() {
               <div key={v.termsVersionID} className="flex items-center justify-between gap-3 px-4 py-2.5 flex-wrap">
                 <div className="min-w-0">
                   <p className={`text-sm font-medium ${text}`}>
-                    v{v.version}
+                    v{fmtVer(v.version)}
                     {v.version === current?.version && <span className={`ml-2 text-[10px] ${isDark ? "text-[#4FC3F7]" : "text-green-600"}`}>CURRENT</span>}
                   </p>
                   <p className={`text-[11px] ${muted}`}>
@@ -515,7 +668,7 @@ export default function TermsPage() {
           <div className={`w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl p-6 ${isDark ? "bg-[#212121] text-[#F5F5F5]" : "bg-white text-gray-700"}`}
             onClick={(e) => e.stopPropagation()}>
             <div className="mb-3">
-              <h3 className="font-bold">Terms &amp; Conditions <span className="text-xs font-normal opacity-60">· v{viewing.version}</span></h3>
+              <h3 className="font-bold">Terms &amp; Conditions <span className="text-xs font-normal opacity-60">· v{fmtVer(viewing.version)}</span></h3>
               <p className="text-[11px] opacity-60">
                 {fmtDate(viewing.createdAt)}{viewing.createdBy?.name ? ` · ${viewing.createdBy.name}` : ""}
               </p>

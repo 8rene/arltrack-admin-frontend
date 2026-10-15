@@ -194,6 +194,9 @@ const fmtDateTime = (val) => {
   } catch { return "—"; }
 };
 
+// Terms version shown as 1.00 / 1.01 (old whole numbers 1, 2 → 1.00, 2.00).
+const fmtTermsVer = (v) => (v === null || v === undefined || v === "" ? null : `v${Number(v).toFixed(2)}`);
+
 // Same Firestore-Timestamp-or-string-or-seconds handling as fmtDate above,
 // but returns a raw millisecond number (or -Infinity for unparsable/empty
 // values) so sort() has something numeric to compare rather than strings.
@@ -1285,6 +1288,9 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                 {row("Service Type",    booking.serviceTypeName)}
                 {row("Car ID",          booking.carID)}
                 {row("Created",         fmtDateTime(booking.createdAt))}
+                {row("Terms Accepted",  booking.termsVersionID
+                  ? `${fmtTermsVer(booking.termsVersion) || "Version unavailable"} · ${fmtDateTime(booking.termsAcceptedAt)}`
+                  : "Not recorded (booked before terms tracking)")}
                 {row("Start Date",      fmtDate(booking.startDateTime))}
                 {row("End Date",        fmtDate(booking.endDateTime))}
                 {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
