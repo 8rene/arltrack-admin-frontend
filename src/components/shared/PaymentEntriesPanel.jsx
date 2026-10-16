@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useCurrency } from "../../context/CurrencyContext";
 import ReceiptModal from "./ReceiptModal";
+import StatementModal from "./StatementModal";
 
 // "Where did the money go?" for ONE payment, penalty, refund request or booking.
 // Reads GET /api/payment-entries and lists every movement (money in AND out), who handled it, and the totals.
@@ -10,6 +11,9 @@ import ReceiptModal from "./ReceiptModal";
 //   <PaymentEntriesPanel query={{ penaltyID }} />          one penalty's instalments
 //   <PaymentEntriesPanel query={{ refundRequestID }} />    one refund's online / in-person / unrefundable rows
 //   <PaymentEntriesPanel query={{ bookingID }} />          everything for a booking
+//
+// Whenever the rows belong to a booking, a "Booking statement" button opens ONE overall printable document for that
+// booking (all payments, all penalties, totals). The booking comes from the query, or from the first row.
 
 const fmtDate = (iso) => {
   if (!iso) return null;
@@ -55,6 +59,7 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
   const [state, setState] = useState({ loading: true, error: null, data: null });
   const [qKey, qVal] = Object.entries(query || {}).find(([, v]) => v) || [];
   const [receiptFor, setReceiptFor] = useState(null);   // entry id whose receipt is open
+  const [statementOpen, setStatementOpen] = useState(false);   // the booking statement is open
 
   useEffect(() => {
     if (!qKey) { setState({ loading: false, error: null, data: { entries: [], summary: null } }); return undefined; }
@@ -73,10 +78,18 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
   const entries = data?.entries || [];
   const s = data?.summary;
   const groupSize = (g) => entries.filter((x) => x.groupID === g).length;
+  const statementBookingID = (qKey === "bookingID" ? qVal : null) || entries.find((x) => x.bookingID)?.bookingID || null;
 
   return (
     <div className="space-y-3" data-testid="payment-entries-panel">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</p>
+        {!loading && !error && statementBookingID && entries.length > 0 && (
+          <button type="button" onClick={() => setStatementOpen(true)} className="text-xs font-semibold text-blue-800 hover:underline whitespace-nowrap">
+            Booking statement
+          </button>
+        )}
+      </div>
 
       {loading && <p className="text-sm text-gray-400 py-3">Loading money movements…</p>}
       {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">{error}</p>}
@@ -137,6 +150,7 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
         );
       })}
       {receiptFor && <ReceiptModal entryID={receiptFor} onClose={() => setReceiptFor(null)} />}
+      {statementOpen && statementBookingID && <StatementModal bookingID={statementBookingID} onClose={() => setStatementOpen(false)} />}
     </div>
   );
 }
