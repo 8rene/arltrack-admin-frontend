@@ -57,10 +57,12 @@ export default function ReceiptModal({ entryID, onClose }) {
     return () => { alive = false; };
   }, [entryID]);
 
+  // Escape closes ONLY the receipt. Some screens that embed the panel (the archive detail modal) also close
+  // themselves on Escape; listening in the capture phase and stopping the event keeps them open underneath.
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const onKey = (e) => { if (e.key === "Escape") { e.stopImmediatePropagation(); onClose?.(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
   const sendEmail = async () => {
@@ -80,10 +82,18 @@ export default function ReceiptModal({ entryID, onClose }) {
   const { loading, error, data: r } = state;
   const out = r?.direction === "out";
 
+  // z-[2100]: above the Car Tracking payment popup (z-[2000]) and the map, so the receipt is never hidden behind them.
+  // The click handlers stop the event here: React sends events from a portal up through the component that opened
+  // it, and the screens underneath (payment popup, archive modal) close themselves on a backdrop click.
   return createPortal(
-    <div id="receipt-print-root" className="fixed inset-0 z-[70] bg-black/50 overflow-auto p-4" onClick={onClose}>
+    <div
+      id="receipt-print-root"
+      className="fixed inset-0 z-[2100] bg-black/50 overflow-auto p-4"
+      onClick={(e) => { e.stopPropagation(); onClose?.(); }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       <style>{PRINT_CSS}</style>
-      <div className="receipt-sheet relative mx-auto max-w-md bg-white rounded-2xl shadow-xl border border-gray-200 p-6" onClick={(e) => e.stopPropagation()}>
+      <div className="receipt-sheet relative mx-auto max-w-md bg-white rounded-2xl shadow-xl border border-gray-200 p-6" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
         {loading && <p className="text-sm text-gray-400 py-10 text-center">Preparing receipt…</p>}
         {error && (
           <div className="space-y-3">
@@ -126,6 +136,44 @@ export default function ReceiptModal({ entryID, onClose }) {
                 <span className="text-base font-bold text-gray-900">{fmt(r.total)}</span>
               </div>
             </div>
+
+            {r.note && <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2">{r.note}</p>}
+
+            {r.penalties?.length > 0 && (
+              <div className="border-t border-dashed border-gray-300 pt-3 space-y-3">
+                {r.penalties.map((p, i) => (
+                  <div key={p.penaltyID || i} className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{r.penalties.length > 1 ? `Penalty ${i + 1}` : "Penalty charges"}</p>
+                    {p.items.map((it, j) => (
+                      <div key={j} className="flex justify-between gap-4 text-sm">
+                        <span className="text-gray-700">{it.description}</span>
+                        <span className="text-gray-900 whitespace-nowrap">{fmt(it.amount)}</span>
+                      </div>
+                    ))}
+                    {p.total != null && (
+                      <div className="border-t border-gray-200 mt-1 pt-1">
+                        <Row label="Penalty total">{fmt(p.total)}</Row>
+                        {p.paidBefore > 0 && <Row label="Paid before">{fmt(p.paidBefore)}</Row>}
+                        {p.coveredByDeposit > 0 && <Row label="Covered by security deposit">{fmt(p.coveredByDeposit)}</Row>}
+                        <Row label="This payment">{fmt(p.thisPayment)}</Row>
+                        <div className="flex justify-between gap-4 text-sm py-0.5 font-semibold">
+                          <span className="text-gray-800">Remaining</span>
+                          <span className="text-gray-900">{fmt(p.remaining)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {r.depositSummary && (
+              <div className="border-t border-dashed border-gray-300 pt-3">
+                <Row label="Security deposit held">{fmt(r.depositSummary.held)}</Row>
+                <Row label="Used for penalties">{fmt(r.depositSummary.usedForPenalties)}</Row>
+                <Row label="Returned to customer">{fmt(r.depositSummary.returned)}</Row>
+              </div>
+            )}
 
             <div className="border-t border-dashed border-gray-300 pt-3">
               <Row label="Method">{METHOD[r.method] || r.method}</Row>

@@ -277,7 +277,7 @@ export default function Payments() {
   const [markingRefund, setMarkingRefund] = useState(false);
   const [sortKey, setSortKey]             = useState(null); // null = default/unsorted (API order)
   const [sortDir, setSortDir]             = useState("asc");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const handleSort = (key) => {
@@ -343,6 +343,15 @@ export default function Payments() {
       ? payments.filter((p) => p.paymentID === paymentID || p.id === paymentID)
       : payments.filter((p) => p.bookingID === bookingID);
     if (matches.length === 1) openDetail(matches[0].id);
+    // The link has been used, so take it out of the URL (same as Bookings.jsx does with ?open=). Without this the
+    // effect runs again every time `payments` changes -- the 45-second refresh, a status change, recording a payment
+    // -- and re-opened the details no matter how the user closed them.
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("paymentID");
+      next.delete("bookingID");
+      return next;
+    }, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payments, searchParams]);
 
