@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import usePolling from "../hooks/usePolling";
+import CityMap from "../components/shared/CityMap";
 
 // ─── Local helpers ───────────────────────────────────────────────────────────
 // API helper, toast, modal/confirm dialog and shared styles — kept in this
@@ -287,145 +288,6 @@ const DigitPicker = ({ value, onChange, size = "md" }) => {
   );
 };
 
-// ─── City picker ─────────────────────────────────────────────────────────────
-// Search-as-you-type over OpenStreetMap Nominatim (PH only). The live GPS check
-// matches rules against the name Nominatim returns for a vehicle's position
-// (address.city || town || municipality || county), so we pull the name the
-// same way — a picked city is spelled exactly how the check will compare it.
-//
-// `value` is the committed city ("" until one is picked). Typing clears it, so
-// a half-typed or misspelled name can never be saved by accident. For places
-// that aren't official cities (e.g. "Clark"), "Use '…' as typed" is offered.
-//
-// Nominatim's usage policy allows ~1 request/second; the 600 ms debounce and
-// 3-character minimum keep us well under that.
-const NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search";
-
-const cityNameOf = (r) => {
-  const a = r.address || {};
-  return a.city || a.town || a.municipality || a.county || r.name || null;
-};
-
-function CityPicker({ value, onChange, autoFocus = false, placeholder = "Search a city…" }) {
-  const [query, setQuery] = useState(value || "");
-  const [options, setOptions] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 3 || q === value) {
-      setOptions([]);
-      setLoading(false);
-      return undefined;
-    }
-    const ctrl = new AbortController();
-    setLoading(true);
-    const t = setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          format: "jsonv2",
-          addressdetails: "1",
-          countrycodes: "ph",
-          featureType: "settlement",
-          limit: "8",
-          "accept-language": "en",
-          q,
-        });
-        const res = await fetch(`${NOMINATIM_SEARCH}?${params}`, { signal: ctrl.signal });
-        if (!res.ok) throw new Error("search failed");
-        const rows = await res.json();
-        const seen = new Set();
-        const out = [];
-        for (const r of rows) {
-          const name = cityNameOf(r);
-          if (!name) continue;
-          const a = r.address || {};
-          const sub = a.province || a.county || a.state || "";
-          const key = `${name}|${sub}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          out.push({ name, sub });
-        }
-        setOptions(out);
-        setFailed(false);
-      } catch (e) {
-        if (e.name !== "AbortError") {
-          setOptions([]);
-          setFailed(true);
-        }
-      } finally {
-        if (!ctrl.signal.aborted) setLoading(false);
-      }
-    }, 600);
-    return () => {
-      clearTimeout(t);
-      ctrl.abort();
-    };
-  }, [query, value]);
-
-  const pick = (name) => {
-    setQuery(name);
-    setOpen(false);
-    onChange(name);
-  };
-
-  const typed = query.trim();
-  const showList = open && typed.length >= 3 && typed !== value;
-
-  return (
-    <div>
-      <input
-        autoFocus={autoFocus}
-        className={`${inputCls} ${value ? "border-green-300 bg-green-50/40" : ""}`}
-        value={query}
-        placeholder={placeholder}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-          if (value) onChange(""); // editing un-selects the previous pick
-        }}
-        onFocus={() => setOpen(true)}
-      />
-
-      {value && <p className="text-xs text-green-600 mt-1">✓ Selected: {value}</p>}
-
-      {showList && (
-        <div className="mt-1 border border-gray-100 rounded-xl overflow-hidden bg-white shadow-sm">
-          {loading && <p className="px-3 py-2 text-xs text-gray-400">Searching…</p>}
-          {!loading && failed && (
-            <p className="px-3 py-2 text-xs text-red-500">Couldn't reach the map search. Try again, or use the name as typed.</p>
-          )}
-          {!loading && !failed && options.length === 0 && (
-            <p className="px-3 py-2 text-xs text-gray-400">No matching city found.</p>
-          )}
-          {options.map((o) => (
-            <button
-              key={`${o.name}|${o.sub}`}
-              type="button"
-              onClick={() => pick(o.name)}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-teal-50 flex items-baseline justify-between gap-3 border-t border-gray-50 first:border-t-0"
-            >
-              <span className="font-medium text-gray-800">{o.name}</span>
-              {o.sub && <span className="text-xs text-gray-400">{o.sub}</span>}
-            </button>
-          ))}
-          {!loading && (
-            <button
-              type="button"
-              onClick={() => pick(typed)}
-              className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 border-t border-gray-100"
-            >
-              Use “{typed}” as typed
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function CodingRestrictions() {
   const { effectiveRole } = useAuth();
   const canDelete = effectiveRole === "Owner" || effectiveRole === "Admin";
@@ -683,6 +545,9 @@ function CityRulesModal({ city, rules, canDelete, onClose, onAdd, onEdit, onDele
       <p className="text-sm text-gray-400 mb-4">
         Plates ending in the banned digits can't be driven in {city} during the window.
       </p>
+      <div className="mb-4">
+        <CityMap readOnly value={city} />
+      </div>
       <div className="border border-gray-100 rounded-2xl overflow-x-auto mb-2">
         <table className="w-full text-sm font-sans min-w-[560px]">
           <thead>
@@ -744,8 +609,8 @@ function CityRulesModal({ city, rules, canDelete, onClose, onAdd, onEdit, onDele
 
 // ─── Rename a city ───────────────────────────────────────────────────────────
 // Coding-rule cities are plain strings on each rule, so renaming changes the
-// city on all of that city's rules at once. The new name is picked from a map
-// search (CityPicker) so it can't be misspelled.
+// city on all of that city's rules at once. The new name is picked on the map
+// (CityMap) so it is exactly what the live GPS check will compare against.
 function RenameCityDialog({ oldName, existingCities, api, onClose, onSaved }) {
   const [name, setName] = useState(oldName); // committed pick; starts as the current city
   const [saving, setSaving] = useState(false);
@@ -754,7 +619,7 @@ function RenameCityDialog({ oldName, existingCities, api, onClose, onSaved }) {
   const save = async () => {
     const next = name.trim();
     setError("");
-    if (!next) return setError("Pick a city from the search results.");
+    if (!next) return setError("Pick a city on the map.");
     if (next === oldName) return onClose();
     if (existingCities.some((c) => c !== oldName && c.toLowerCase() === next.toLowerCase())) {
       return setError(`"${next}" already exists.`);
@@ -775,6 +640,7 @@ function RenameCityDialog({ oldName, existingCities, api, onClose, onSaved }) {
   return (
     <Modal
       title="Rename city"
+      width="max-w-xl"
       onClose={onClose}
       busy={saving}
       footer={
@@ -786,10 +652,15 @@ function RenameCityDialog({ oldName, existingCities, api, onClose, onSaved }) {
     >
       <div className="space-y-4 pb-2">
         <Field label="City">
-          <CityPicker autoFocus value={name} onChange={setName} />
+          <CityMap
+            autoFocus
+            value={name}
+            onChange={setName}
+            takenCities={existingCities.filter((c) => c !== oldName)}
+          />
         </Field>
         <p className="text-xs text-gray-400">
-          Currently <strong>{oldName}</strong>. Search for the correct city to move all of its coding rules to it.
+          Currently <strong>{oldName}</strong>. Pick the correct city on the map to move all of its coding rules to it.
         </p>
         {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
@@ -887,7 +758,7 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
     setShowErrors(true);
     setError("");
     const city = name.trim();
-    if (!city) return setError("Pick a city from the search results.");
+    if (!city) return setError("Pick a city on the map.");
     if (existingCities.some((c) => c.toLowerCase() === city.toLowerCase())) {
       return setError(`"${city}" already exists — view it from the city list instead.`);
     }
@@ -933,7 +804,13 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
           A new city needs at least {MIN_RULES} coding rules so its week is covered from day one.
         </p>
         <Field label="City">
-          <CityPicker autoFocus value={name} onChange={setName} placeholder="Search a city, e.g. Dagupan" />
+          <CityMap
+            autoFocus
+            value={name}
+            onChange={setName}
+            takenCities={existingCities}
+            placeholder="Search a city, e.g. Dagupan — then confirm it on the map"
+          />
         </Field>
 
         <div className="space-y-3">

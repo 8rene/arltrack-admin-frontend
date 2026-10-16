@@ -1038,6 +1038,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
 
   const status        = (booking.status || "").toLowerCase();
   const dead          = status === "cancelled" || status === "stolen";
+  const isStolen      = status === "stolen";
   const isChauffeur   = (booking.modeOfDriving || "").toLowerCase().includes("chauffeur");
   const before        = inventoryCheck?.before || null;
   const after         = inventoryCheck?.after || null;
@@ -1045,7 +1046,16 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   const maintAllDone  = maint.length > 0 && maint.every((m) => m.status === "Completed");
   const depStatus     = booking.deposit?.status || (booking.paymentStatus === "Refunded" ? "Refunded" : null);
   const depositClosed = ["Settled", "Refunded", "Forfeited", "Waived"].includes(depStatus);
-  const paid          = ["upcoming", "ongoing", "completed", "cancellation_request"].includes(status) || !!booking.deposit;
+  // A cancelled booking that was refunded may have lost its deposit record, so money that came in
+  // (or went back out) still counts as paid.
+  const paid          = ["upcoming", "ongoing", "completed", "cancellation_request"].includes(status) || !!booking.deposit
+    || (dead && (booking.paymentStatus === "Refunded" || booking.paymentStage === "Refunded" || Number(booking.amountPaid) > 0));
+  // What happened to the money on a cancelled booking (shown under "Paid" and in the red banner).
+  const refundNote    = status !== "cancelled" || !paid ? null
+    : (booking.paymentStatus === "Refunded" || booking.paymentStage === "Refunded") ? "Refunded"
+    : booking.paymentStage === "For Refund" ? "Refund pending"
+    : depStatus === "Forfeited" ? "Deposit kept"
+    : "No refund";
   // Paid but not in full yet (the balance is still owed) -> shown orange, "in the middle".
   const partial       = paid && !dead && status !== "completed" && (String(booking.paymentStage || "").toLowerCase() === "partial" || Number(booking.balance) > 0);
   const discountGiven = Number(booking.discountAmount) > 0;
@@ -1056,6 +1066,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   const penaltyCount  = (linkedPenalties || []).length;
 
   const monitorText = !started ? "Not started"
+    : isStolen ? `Flagged stolen${booking.hasHistory ? " · GPS trail saved" : ""}`
     : !droppedOff ? "Trip in progress — track it live"
     : booking.hasHistory ? "GPS trail saved" : "No GPS trail saved";
   const penaltiesDone = penaltyCount > 0;
@@ -1068,6 +1079,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
       sub: !paid ? "Awaiting payment"
         : [
             partial ? `Partial · ${fmt(booking.balance)} still to pay` : (booking.paymentMethod || "Paid"),
+            refundNote,
             discountGiven ? `Discount −${fmt(booking.discountAmount)}` : null,
           ].filter(Boolean).join(" · "),
     },
@@ -1083,13 +1095,14 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
       parts: [
         { key: "pickup", label: "Pickup", done: started, text: booking.startedAt ? fmtDateTime(booking.startedAt) : started ? "Trip started" : "Not picked up yet" },
         {
-          key: "monitor", label: "Monitor", done: droppedOff, text: monitorText,
+          key: "monitor", label: "Monitor", done: droppedOff || isStolen, text: monitorText,
           actions: [
             { label: "Car Tracking", onClick: goToCarTracking },
             ...(booking.hasHistory ? [{ label: "Trip History", onClick: goToHistory }] : []),
           ],
         },
-        { key: "dropoff", label: "Drop-off", done: droppedOff, text: booking.droppedOffTime ? fmtDateTime(booking.droppedOffTime) : droppedOff ? "Dropped off" : "Not dropped off yet" },
+        { key: "dropoff", label: "Drop-off", done: droppedOff, bad: isStolen && !droppedOff,
+          text: booking.droppedOffTime ? fmtDateTime(booking.droppedOffTime) : droppedOff ? "Dropped off" : isStolen ? "Never dropped off — flagged stolen" : "Not dropped off yet" },
       ],
     },
     {
@@ -1117,12 +1130,13 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     },
   ];
 
-  // done / skipped as computed; the first one not done is "current" (or "stopped" on a
-  // cancelled booking); on a finished booking, gaps show as "missing".
+  // done as computed; on a cancelled or stolen booking every step that never happened is red
+  // ("stopped"); otherwise the first one not done is "current", and on a finished booking gaps show as "missing".
   let currentSeen = false;
   const steps = stepDefs.map((d, i) => {
     let state;
     if (d.done) state = "done";
+    else if (dead) state = "stopped";        // cancelled / stolen: everything that didn't happen is red
     else if (d.partial) state = "partial";   // in the middle: orange, and it doesn't hold up the steps after it
     else if (d.skipped) state = "skipped";
     else if (status === "completed") state = "missing";
@@ -1207,6 +1221,19 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
             </div>
           )}
 
+          {/* Cancelled / stolen: one clear red banner on both tabs. */}
+          {dead && (
+            <div className="mt-2 mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+              <p className="text-xs font-bold uppercase tracking-wide text-red-700">
+                {isStolen ? "Stolen — car flagged stolen" : "Cancelled"}
+              </p>
+              {!isStolen && booking.cancellationReason && (
+                <p className="text-xs text-red-700 mt-0.5">Reason: {booking.cancellationReason}</p>
+              )}
+              {refundNote && <p className="text-xs text-red-700 mt-0.5">Payment: {refundNote}</p>}
+            </div>
+          )}
+
           {/* Number Coding restrictions the customer was warned about when booking
               (booking.codingWarnings). Shown on both tabs — staff doing pickup on the Steps tab
               need it as much as someone reading Details. Nothing renders for older bookings. */}
@@ -1237,7 +1264,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                   return (
                     <li
                       key={st.key}
-                      className={`rounded-xl border ${st.state === "current" ? "border-teal-200 bg-teal-50/40" : "border-gray-100 bg-white"}`}
+                      className={`rounded-xl border ${st.state === "current" ? "border-teal-200 bg-teal-50/40" : st.state === "stopped" ? "border-red-200 bg-red-50/40" : "border-gray-100 bg-white"}`}
                     >
                       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
                         <span className={`w-8 h-8 shrink-0 rounded-full border-2 flex items-center justify-center text-xs font-bold ${sty.dot}`}>
@@ -1250,7 +1277,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                         <div className="min-w-0 flex-1 basis-40">
                           <p className={`text-sm font-semibold leading-snug ${sty.text}`}>{st.n}. {st.title}</p>
                           <p className={`text-xs mt-0.5 ${st.warn ? "text-red-600 font-semibold" : "text-gray-400"}`}>
-                            {st.state === "stopped" ? `Stopped here — booking ${status}` : st.sub}
+                            {st.state === "stopped" ? (isStolen ? "Not completed — car flagged stolen" : "Cancelled — did not happen") : st.sub}
                           </p>
                         </div>
                         {actions.length > 0 && (
@@ -1267,15 +1294,16 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                           {st.parts.map((p) => (
                             <li key={p.key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                               <span className={`w-5 h-5 shrink-0 rounded-full border flex items-center justify-center text-[10px] font-bold ${
-                                p.done === undefined ? "bg-gray-100 text-gray-400 border-gray-200"
+                                p.bad ? "bg-red-500 text-white border-red-500"
+                                : p.done === undefined ? "bg-gray-100 text-gray-400 border-gray-200"
                                 : p.done ? "bg-green-500 text-white border-green-500"
                                 : "bg-white text-gray-300 border-gray-300"
                               }`}>
-                                {p.done ? <IconCheck className="w-3 h-3" /> : p.done === undefined ? "•" : ""}
+                                {p.bad ? <IconX className="w-3 h-3" /> : p.done ? <IconCheck className="w-3 h-3" /> : p.done === undefined ? "•" : ""}
                               </span>
                               <div className="min-w-0 flex-1 basis-40">
                                 <span className="text-sm font-medium text-gray-700">{p.label}</span>
-                                <span className={`text-xs ml-2 ${p.warn ? "text-red-600 font-semibold" : "text-gray-400"}`}>{p.text}</span>
+                                <span className={`text-xs ml-2 ${p.warn || p.bad ? "text-red-600 font-semibold" : "text-gray-400"}`}>{p.text}</span>
                               </div>
                               {p.actions && (
                                 <div className="flex items-center gap-2 shrink-0 ml-auto">
@@ -1375,7 +1403,16 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                       ? `${fmt(booking.securityDeposit)} · Awaiting payment`
                       : "Not collected")}
                 {row("Total Fee",   fmt(booking.totalFee))}
-                {row("Payment",     booking.paymentMethod)}
+                {row("Payment", (
+                  <button
+                    type="button"
+                    onClick={goToPayments}
+                    className="text-teal-700 font-semibold hover:underline"
+                    title="Open this booking's payment on the Payments page"
+                  >
+                    {booking.paymentMethod || "Payment"} · View in Payments →
+                  </button>
+                ))}
                 {row("Driving",     booking.modeOfDriving)}
                 <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
                   <span className="text-gray-500 font-medium w-36 shrink-0">Driver</span>

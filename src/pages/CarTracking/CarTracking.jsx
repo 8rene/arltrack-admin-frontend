@@ -958,6 +958,8 @@ export default function CarTracking() {
   };
 
   const handleStolen  = (b) => {
+    // Once the car is marked dropped off it is physically back — it can't be flagged stolen any more.
+    if (b.droppedOffTime) return;
     if (!window.confirm("Flag this car as stolen? This is logged permanently and the booking will be locked.")) return;
     runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
   };
@@ -1384,7 +1386,8 @@ export default function CarTracking() {
                     </button>
                     <button
                       onClick={() => handleStolen(ongoing)}
-                      disabled={actionBusyId === ongoing.id}
+                      disabled={actionBusyId === ongoing.id || !!ongoing.droppedOffTime}
+                      title={ongoing.droppedOffTime ? "Already dropped off — can't be flagged stolen" : undefined}
                       className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-xl text-xs font-semibold hover:bg-red-700 active:scale-95 transition-all disabled:opacity-50"
                     >
                       <Icons.Siren className="w-3.5 h-3.5" />
