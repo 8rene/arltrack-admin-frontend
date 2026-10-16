@@ -1211,7 +1211,7 @@ export default function VehicleDocs() {
                     )}
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
-                      <p className="text-xs text-gray-400 truncate">{car.plateNumber || car.platenumber || "—"}</p>
+                      <p className="text-xs text-gray-400 truncate">{car.plateNumber || "—"}</p>
                       <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium text-black ${STATUS_STYLE[car.status] || "bg-gray-50 border border-gray-200"}`}><span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_STYLE[car.status]?.includes("green") ? "bg-green-500" : "bg-gray-400"}`} />
                         {car.status}
                       </span>
@@ -1240,7 +1240,7 @@ export default function VehicleDocs() {
                 <div>
                   <h2 className="font-bold text-arl-dark text-base">{selectedCar.label}</h2>
                   <p className="text-xs text-gray-400">
-                    {selectedCar.plateNumber || selectedCar.platenumber || "—"}
+                    {selectedCar.plateNumber || "—"}
                     {" · "}{selectedCar.year || "—"}
                     {" · "}{selectedCar.bodyType || "—"}
                   </p>

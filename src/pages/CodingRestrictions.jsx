@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "../context/AuthContext";
 import usePolling from "../hooks/usePolling";
 import CityMap from "../components/shared/CityMap";
@@ -221,10 +222,10 @@ const parseDigits = (text) =>
 const validateRule = ({ startTime, endTime, bannedDigits }) => {
   const errs = { start: null, end: null, digits: null };
   if (!startTime.trim()) errs.start = "Required";
-  else if (!TIME_RE.test(startTime.trim())) errs.start = "Use h:mm AM/PM (e.g. 7:00 AM)";
+  else if (!TIME_RE.test(startTime.trim())) errs.start = "Pick a time on the clock";
 
   if (!endTime.trim()) errs.end = "Required";
-  else if (!TIME_RE.test(endTime.trim())) errs.end = "Use h:mm AM/PM (e.g. 8:00 PM)";
+  else if (!TIME_RE.test(endTime.trim())) errs.end = "Pick a time on the clock";
   else if (!errs.start && toMinutes(endTime) <= toMinutes(startTime)) errs.end = "Must be after start time";
 
   const parts = parseDigits(bannedDigits);
@@ -668,6 +669,242 @@ function RenameCityDialog({ oldName, existingCities, api, onClose, onSaved }) {
   );
 }
 
+// ─── ClockTimePicker ─────────────────────────────────────────────────────────
+// Pick a time on a clock face instead of typing it.
+//
+//   <ClockTimePicker value={startTime} onChange={setStartTime} placeholder="7:00 AM" defaultValue="7:00 AM" />
+//
+// `value` / `onChange` use the same "h:mm AM/PM" text the page already
+// validates and sends to the backend (e.g. "7:00 AM"), so nothing else changes.
+// `value` may be "" (nothing picked yet).
+//
+// How it works: tap the field → a clock opens. Pick the HOUR (tap or drag on the
+// dial), the dial then switches to MINUTES (tap or drag for any minute), choose
+// AM / PM, press OK. Nothing is applied until OK. The clock is drawn in a portal
+// so it is never clipped by a scrolling modal.
+
+const CLOCK_PARSE = /^(\d{1,2}):(\d{2})\s?([AaPp][Mm])$/;
+const CLOCK_POP_W = 272;
+const CLOCK_POP_H = 392; // approximate, used only to decide whether to open upward
+
+function parseClock(value, fallback) {
+  const m = CLOCK_PARSE.exec(String(value || "").trim()) || CLOCK_PARSE.exec(fallback || "7:00 AM");
+  const h = Number(m[1]);
+  return { h: h >= 1 && h <= 12 ? h : 12, m: Math.min(59, Number(m[2])), ap: m[3].toUpperCase() };
+}
+const formatClock = ({ h, m, ap }) => `${h}:${String(m).padStart(2, "0")} ${ap}`;
+
+// ── The dial ────────────────────────────────────────────────────────────────
+const CLOCK_SIZE = 232;
+const CK = CLOCK_SIZE / 2;
+const CLOCK_R_LABEL = 84;
+const CLOCK_R_HAND = 76;
+const clockPolar = (deg, r) => {
+  const a = (deg * Math.PI) / 180;
+  return [CK + r * Math.sin(a), CK - r * Math.cos(a)];
+};
+
+function ClockDial({ mode, h, m, onHour, onMinute, onDone }) {
+  const svg = useRef(null);
+  const dragging = useRef(false);
+
+  const fromPointer = (e) => {
+    const rect = svg.current.getBoundingClientRect();
+    const x = e.clientX - (rect.left + rect.width / 2);
+    const y = e.clientY - (rect.top + rect.height / 2);
+    const deg = ((Math.atan2(x, -y) * 180) / Math.PI + 360) % 360;
+    if (mode === "hour") onHour(Math.round(deg / 30) % 12 || 12);
+    else onMinute(Math.round(deg / 6) % 60);
+  };
+
+  const down = (e) => {
+    dragging.current = true;
+    svg.current.setPointerCapture?.(e.pointerId);
+    fromPointer(e);
+  };
+  const move = (e) => { if (dragging.current) fromPointer(e); };
+  const up = () => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    onDone(); // hour → jump to minutes
+  };
+
+  const deg = mode === "hour" ? (h % 12) * 30 : m * 6;
+  const [hx, hy] = clockPolar(deg, CLOCK_R_HAND);
+  const onFive = mode === "minute" && m % 5 !== 0; // minute between the labelled marks
+
+  const marks = mode === "hour"
+    ? Array.from({ length: 12 }, (_, i) => ({ label: String(i === 0 ? 12 : i), deg: i * 30, on: (i === 0 ? 12 : i) === h }))
+    : Array.from({ length: 12 }, (_, i) => ({ label: String(i * 5).padStart(2, "0"), deg: i * 30, on: i * 5 === m }));
+
+  return (
+    <svg
+      ref={svg}
+      width={CLOCK_SIZE}
+      height={CLOCK_SIZE}
+      viewBox={`0 0 ${CLOCK_SIZE} ${CLOCK_SIZE}`}
+      className="touch-none select-none cursor-pointer mx-auto block"
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+      role="group"
+      aria-label={mode === "hour" ? "Choose the hour" : "Choose the minutes"}
+    >
+      <circle cx={CK} cy={CK} r={CK - 2} fill="#f3f4f6" />
+      <line x1={CK} y1={CK} x2={hx} y2={hy} stroke="#0d9488" strokeWidth="2" />
+      <circle cx={CK} cy={CK} r="4" fill="#0d9488" />
+      <circle cx={hx} cy={hy} r={onFive ? 5 : 18} fill="#0d9488" />
+      {marks.map((k) => {
+        const [x, y] = clockPolar(k.deg, CLOCK_R_LABEL);
+        return (
+          <text
+            key={k.label}
+            x={x}
+            y={y}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize="14"
+            fontWeight={k.on ? 700 : 500}
+            fill={k.on ? "#ffffff" : "#374151"}
+            pointerEvents="none"
+          >
+            {k.label}
+          </text>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── The popover ─────────────────────────────────────────────────────────────
+function ClockPopover({ anchor, initial, onApply, onClose }) {
+  const [draft, setDraft] = useState(initial);
+  const [mode, setMode] = useState("hour");
+  const [pos, setPos] = useState({ top: -9999, left: -9999 });
+  const ref = useRef(null);
+
+  const place = () => {
+    const r = anchor.getBoundingClientRect();
+    const h = ref.current?.offsetHeight || CLOCK_POP_H;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - CLOCK_POP_W - 8));
+    let top = r.bottom + 6;
+    if (top + h > window.innerHeight - 8 && r.top - h - 6 >= 8) top = r.top - h - 6; // open upward
+    setPos({ top: Math.max(8, top), left });
+  };
+  useLayoutEffect(place, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    const onDown = (e) => {
+      if (ref.current?.contains(e.target) || anchor.contains(e.target)) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true); // follow the field when the modal scrolls
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const seg = (active) =>
+    `px-2 py-1 rounded-lg text-3xl font-semibold tabular-nums transition ${active ? "bg-teal-50 text-teal-700" : "text-gray-500 hover:bg-gray-50"}`;
+  const apBtn = (on) =>
+    `px-2.5 py-1.5 text-xs font-bold transition ${on ? "bg-teal-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`;
+
+  return createPortal(
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label="Pick a time"
+      className="fixed z-[200] bg-white rounded-2xl shadow-xl border border-gray-100 p-4"
+      style={{ top: pos.top, left: pos.left, width: CLOCK_POP_W }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-center gap-2 mb-3">
+        <button type="button" className={seg(mode === "hour")} onClick={() => setMode("hour")}>{draft.h}</button>
+        <span className="text-3xl font-semibold text-gray-400">:</span>
+        <button type="button" className={seg(mode === "minute")} onClick={() => setMode("minute")}>
+          {String(draft.m).padStart(2, "0")}
+        </button>
+        <div className="ml-2 flex flex-col rounded-lg overflow-hidden border border-gray-200">
+          {["AM", "PM"].map((a) => (
+            <button key={a} type="button" className={apBtn(draft.ap === a)} onClick={() => setDraft((d) => ({ ...d, ap: a }))}>
+              {a}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <ClockDial
+        mode={mode}
+        h={draft.h}
+        m={draft.m}
+        onHour={(h) => setDraft((d) => ({ ...d, h }))}
+        onMinute={(m) => setDraft((d) => ({ ...d, m }))}
+        onDone={() => setMode((x) => (x === "hour" ? "minute" : x))}
+      />
+
+      <p className="text-[11px] text-gray-400 text-center mt-2">
+        {mode === "hour" ? "Pick the hour" : "Pick the minutes — drag for any minute"}
+      </p>
+
+      <div className="flex justify-end gap-2 mt-3">
+        <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50">
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => onApply(formatClock(draft))}
+          className="px-3 py-1.5 text-sm font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700"
+        >
+          OK
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ── The field ───────────────────────────────────────────────────────────────
+function ClockTimePicker({ value, onChange, placeholder = "Pick a time", defaultValue = "7:00 AM", className = "" }) {
+  const [open, setOpen] = useState(false);
+  const btn = useRef(null);
+
+  return (
+    <>
+      <button
+        ref={btn}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className={`w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white text-left focus:outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300 ${className}`}
+      >
+        <span className={value ? "text-gray-800" : "text-gray-400"}>{value || placeholder}</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </svg>
+      </button>
+      {open && (
+        <ClockPopover
+          anchor={btn.current}
+          initial={parseClock(value, defaultValue)}
+          onApply={(v) => { onChange(v); setOpen(false); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 // ─── Add / edit one rule ─────────────────────────────────────────────────────
 function RuleDialog({ city, existing, defaultDay, api, onClose, onSaved }) {
   const isEditing = !!existing;
@@ -724,10 +961,10 @@ function RuleDialog({ city, existing, defaultDay, api, onClose, onSaved }) {
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start time" error={showErrors && errs.start}>
-            <input className={inputCls} value={startTime} onChange={(e) => setStartTime(e.target.value)} placeholder="e.g. 7:00 AM" />
+            <ClockTimePicker value={startTime} onChange={setStartTime} placeholder="Pick a time" defaultValue="7:00 AM" />
           </Field>
           <Field label="End time" error={showErrors && errs.end}>
-            <input className={inputCls} value={endTime} onChange={(e) => setEndTime(e.target.value)} placeholder="e.g. 8:00 PM" />
+            <ClockTimePicker value={endTime} onChange={setEndTime} placeholder="Pick a time" defaultValue="8:00 PM" />
           </Field>
         </div>
         <Field label="Banned digits" error={showErrors && errs.digits}>
@@ -825,10 +1062,10 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
                     </select>
                   </Field>
                   <Field label="Start" error={e.start}>
-                    <input className={inputCls} value={r.startTime} onChange={(ev) => setRow(i, { startTime: ev.target.value })} placeholder="7:00 AM" />
+                    <ClockTimePicker value={r.startTime} onChange={(v) => setRow(i, { startTime: v })} placeholder="Pick a time" defaultValue="7:00 AM" />
                   </Field>
                   <Field label="End" error={e.end}>
-                    <input className={inputCls} value={r.endTime} onChange={(ev) => setRow(i, { endTime: ev.target.value })} placeholder="8:00 PM" />
+                    <ClockTimePicker value={r.endTime} onChange={(v) => setRow(i, { endTime: v })} placeholder="Pick a time" defaultValue="8:00 PM" />
                   </Field>
                 </div>
                 <div className="mt-2">

@@ -227,7 +227,7 @@ export default function Reviews() {
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
-                        <p className="text-xs text-gray-400 truncate">{car.plateNumber || car.platenumber || "—"}</p>
+                        <p className="text-xs text-gray-400 truncate">{car.plateNumber || "—"}</p>
                       </div>
                       {reviewCounts[car.id] > 0 && (
                         <span

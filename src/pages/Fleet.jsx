@@ -226,10 +226,11 @@ function fmtDuration(start, end) {
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Fleet() {
   const { effectiveRole } = useAuth();
-  // Owner can still view/add/delete/change status — just not edit an
-  // existing vehicle's details. Uses effectiveRole so an Admin previewing
-  // "as Owner" sees the same restriction a real Owner would.
-  const canEdit = effectiveRole !== ROLES.OWNER;
+  // Owner, Admin and Supervisor can all edit an existing vehicle's details —
+  // the same three roles the backend's /api/fleet routes allow
+  // (routes/fleet/fleet.routes.js). Uses effectiveRole so an Admin previewing
+  // as another role sees exactly what that role would.
+  const canEdit = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
   const [cars, setCars]           = useState([]);
   const [brands, setBrands]       = useState([]);
   const [models, setModels]       = useState([]);
@@ -289,7 +290,7 @@ export default function Fleet() {
     const matchSearch = !search ||
       (c.brandName || "").toLowerCase().includes(q) ||
       (c.modelName || "").toLowerCase().includes(q) ||
-      (c.platenumber || c.plateNumber || "").toLowerCase().includes(q) ||
+      (c.plateNumber || "").toLowerCase().includes(q) ||
       (c.shortDescription || "").toLowerCase().includes(q);
     const matchStatus = filterStatus === "All" || c.status === filterStatus;
     return matchSearch && matchStatus;
@@ -514,7 +515,7 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
           </h3>
           <p className="text-xs text-gray-400 mt-0.5">{car.bodyType || "—"} · {car.year || "—"}</p>
           <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-md mt-1 inline-block text-gray-600">
-            {car.platenumber || car.plateNumber || "—"}
+            {car.plateNumber || "—"}
           </span>
         </div>
 
@@ -1339,7 +1340,7 @@ function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
         <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
           <div>
             <h2 className="font-bold text-xl text-gray-800">{car.brandName} {car.modelName}</h2>
-            <p className="text-sm text-gray-400">{car.bodyType} · {car.platenumber || car.plateNumber}</p>
+            <p className="text-sm text-gray-400">{car.bodyType} · {car.plateNumber}</p>
           </div>
           <div className="flex gap-2 items-center">
             {canEdit && (
@@ -1539,7 +1540,7 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
 
       {/* Other fields */}
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Plate Number"   name="platenumber" />
+        <Field label="Plate Number"   name="plateNumber" />
         <Field label="Color"          name="color" />
         <Field label="Body Type"      name="bodyType" />
         <Field label="Year"           name="year" type="number" />
@@ -1796,7 +1797,7 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
     year:             car.year             || "",
     bodyType:         car.bodyType         || "",
     status:           car.status           || "Active",
-    platenumber:      car.platenumber || car.plateNumber || "",
+    plateNumber:      car.plateNumber || "",
     brandID:          car.brandID          || "",
     modelID:          car.modelID          || "",
   });
@@ -1816,7 +1817,7 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
   // triggered from this modal's Status dropdown instead of the quick badge.
   const [statusChangeTarget, setStatusChangeTarget] = useState(null);
 
-  const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.platenumber || car.plateNumber || car.id;
+  const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.plateNumber || car.id;
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -1904,7 +1905,7 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
         <div className="flex justify-between items-center p-5 border-b">
           <div>
             <h2 className="font-bold text-lg text-gray-800">Edit Vehicle</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{car.brandName} {car.modelName} · {car.platenumber || car.plateNumber}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{car.brandName} {car.modelName} · {car.plateNumber}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
             <Icons.Close className="w-5 h-5" />

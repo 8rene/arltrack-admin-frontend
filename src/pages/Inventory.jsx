@@ -268,7 +268,7 @@ export default function Inventory() {
                     }`}
                   >
                     <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
-                    <p className="text-xs text-gray-400 truncate">{car.plateNumber || car.platenumber || "—"}</p>
+                    <p className="text-xs text-gray-400 truncate">{car.plateNumber || "—"}</p>
                   </button>
                 );
               })}
