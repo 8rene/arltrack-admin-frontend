@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useCurrency } from "../../context/CurrencyContext";
+import ReceiptModal from "./ReceiptModal";
 
 // "Where did the money go?" for ONE payment, penalty, refund request or booking.
 // Reads GET /api/payment-entries and lists every movement (money in AND out), who handled it, and the totals.
@@ -53,6 +54,7 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
   const { fmt } = useCurrency();
   const [state, setState] = useState({ loading: true, error: null, data: null });
   const [qKey, qVal] = Object.entries(query || {}).find(([, v]) => v) || [];
+  const [receiptFor, setReceiptFor] = useState(null);   // entry id whose receipt is open
 
   useEffect(() => {
     if (!qKey) { setState({ loading: false, error: null, data: { entries: [], summary: null } }); return undefined; }
@@ -126,9 +128,15 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
               <p className="text-xs text-teal-700">One payment covered {groupSize(e.groupID)} penalties — each gets its own line here.</p>
             )}
             {e.errorNote && <p className="text-xs text-red-600">{e.errorNote}</p>}
+            {e.status === "success" && (
+              <button type="button" onClick={() => setReceiptFor(e.id)} className="text-xs font-semibold text-blue-800 hover:underline">
+                {out ? "Print slip" : "Print receipt"}
+              </button>
+            )}
           </div>
         );
       })}
+      {receiptFor && <ReceiptModal entryID={receiptFor} onClose={() => setReceiptFor(null)} />}
     </div>
   );
 }
