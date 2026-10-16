@@ -18,9 +18,27 @@ const COUNT_LABEL = {
   inspection: ["vehicle inspection record", "vehicle inspection records"],
 };
 
+// Reads a response as JSON without ever throwing on a non-JSON body (an HTML 404 page from a missing route, a Vercel
+// gateway / timeout page ...). Returns { res, json, notJson }.
+const readJson = async (res) => {
+  const text = await res.text();
+  try { return { res, json: JSON.parse(text), notJson: false }; }
+  catch { return { res, json: {}, notJson: true }; }
+};
+
+// A message a person can act on, whatever came back.
+const failMessage = ({ res, json, notJson }, fallback) => {
+  if (json?.message) return json.message;
+  if (notJson && res.status === 404) return "The server doesn't have this delete action yet (404). The backend may need to be redeployed.";
+  if (notJson && res.status >= 500) return `The server had a problem (${res.status}). Please try again in a moment.`;
+  if (notJson) return `The server sent an unexpected response (${res.status}).`;
+  return fallback;
+};
+
 export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) {
   const [preview, setPreview] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [gone, setGone] = useState(false);          // the record itself no longer exists: nothing to delete
   const [blocked, setBlocked] = useState(null);   // fresh blockers returned by the server on a 409
   const [force, setForce] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -31,26 +49,34 @@ export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) 
   useEffect(() => {
     let alive = true;
     fetch(`${base}/delete-preview`, { headers })
-      .then(async (res) => { const json = await res.json(); if (!res.ok) throw new Error(json.message || "Could not check what this delete affects."); return json.data; })
+      .then(readJson)
+      .then((r) => {
+        if (r.res.status === 404 && r.json.code === "NOT_FOUND") { const e = new Error(r.json.message); e.gone = true; throw e; }
+        if (!r.res.ok) throw new Error(failMessage(r, "Could not check what this delete affects."));
+        return r.json.data;
+      })
       .then((d) => alive && setPreview(d))
-      .catch((e) => alive && setLoadError(e.message));
+      .catch((e) => { if (!alive) return; if (e.gone) setGone(true); setLoadError(e.message || "Could not check what this delete affects."); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
+
+  // A record that no longer exists cannot be deleted; closing the dialog refreshes the list so the stale row disappears.
+  const close = () => (gone ? onDone({ message: `This ${NOUN[kind]} no longer exists. The list was refreshed.` }) : onClose());
 
   const blockers = blocked?.blockers ?? preview?.blockers ?? [];
   const warnings = blocked?.warnings ?? preview?.warnings ?? [];
   const canForce = blocked?.canForce ?? preview?.canForce ?? false;
   const mustForce = blockers.length > 0;
-  const canSubmit = !!preview && !busy && (!mustForce || (canForce && force));
+  const canSubmit = !!preview && !gone && !busy && (!mustForce || (canForce && force));
 
   const confirm = async () => {
     setBusy(true); setError(null);
     try {
-      const res = await fetch(`${base}${mustForce && force ? "?force=true" : ""}`, { method: "DELETE", headers });
-      const json = await res.json();
+      const r = await readJson(await fetch(`${base}${mustForce && force ? "?force=true" : ""}`, { method: "DELETE", headers }));
+      const { res, json } = r;
       if (res.status === 409 && json.code === "BLOCKED") { setBlocked(json); setForce(false); throw new Error("Something changed — please review the items below."); }
-      if (!res.ok) throw new Error(json.message || "Delete failed.");
+      if (!res.ok) throw new Error(failMessage(r, "Delete failed."));
       onDone(json);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
@@ -93,6 +119,10 @@ export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) 
           </ul>
         )}
 
+        {preview && preview.mode === "bundle" && preview.missing?.length > 0 && (
+          <p className="text-xs text-gray-500">None found (already gone or never existed): {preview.missing.join(", ")}.</p>
+        )}
+
         {mustForce && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2">
             <p className="text-sm font-semibold text-red-700">This can't be deleted yet:</p>
@@ -111,7 +141,7 @@ export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <div className="flex gap-3 justify-end pt-1">
-          <button onClick={onClose} disabled={busy} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Cancel</button>
+          <button onClick={close} disabled={busy} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Cancel</button>
           <button onClick={confirm} disabled={!canSubmit}
             className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors">
             {busy ? "Archiving…" : mustForce ? "Delete anyway" : "Yes, delete"}
