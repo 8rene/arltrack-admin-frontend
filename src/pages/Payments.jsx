@@ -432,7 +432,7 @@ export default function Payments() {
     setConfirmDiscount(true);
   };
 
-  // "Notify customer to pay": a bell notification asking them to pay the remaining balance online.
+  // "Notify customer to pay": a bell notification AND an email asking them to pay the remaining balance online.
   // The server allows one reminder per booking every 6 hours.
   const handleNotifyBalance = async () => {
     if (!selected) return;
@@ -444,7 +444,9 @@ export default function Payments() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("Customer notified to pay the remaining balance.");
+      showToast(data?.data?.emailed
+        ? "Customer notified by app and email."
+        : `Customer notified in the app. ${data?.data?.emailNote || "The email was not sent."}`);
       await openDetail(selected.id);
     } catch (e) { showToast(e.message, "error"); }
     finally { setNotifying(false); }
