@@ -210,6 +210,17 @@ function MainStatusBadge({ status }) {
   );
 }
 
+// Damage enlisted on a maintenance record: parts on the job that were listed as Damaged / Stolen / Missing when it
+// was set up (conditionBefore), plus parts a finished job still left Damaged (conditionAfter). Returns null when none.
+const DAMAGE_BEFORE = ["Damaged", "Stolen", "Missing"];
+const damageOf = (r) => {
+  const parts = Array.isArray(r?.partsAddressed) ? r.partsAddressed : [];
+  const listed = parts.filter((p) => DAMAGE_BEFORE.includes(p.conditionBefore) || p.conditionAfter === "Damaged");
+  if (listed.length === 0) return null;
+  const stillDamaged = parts.filter((p) => p.conditionAfter === "Damaged").length;
+  return { count: listed.length, stillDamaged };
+};
+
 // Emoji shown next to each basis option — purely cosmetic, not stored.
 const BASIS_ICON = {
   "Post-Rental":      "🔄",
@@ -817,13 +828,14 @@ export default function Maintenance() {
         <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
           <table className="w-full text-sm table-fixed">
             <colgroup>
-              <col style={{width:"22%"}} /><col style={{width:"20%"}} /><col style={{width:"15%"}} />
-              <col style={{width:"12%"}} /><col style={{width:"15%"}} /><col style={{width:"16%"}} />
+              <col style={{width:"20%"}} /><col style={{width:"15%"}} /><col style={{width:"13%"}} /><col style={{width:"13%"}} />
+              <col style={{width:"10%"}} /><col style={{width:"14%"}} /><col style={{width:"15%"}} />
             </colgroup>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
                 <SortableTh label="Vehicle" sortKey="vehicle" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left font-semibold">Basis</th>
+                <th className="px-4 py-3 text-left font-semibold">Damage</th>
                 <SortableTh label="Date" sortKey="date" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Cost" sortKey="cost" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left font-semibold">Status</th>
@@ -834,13 +846,13 @@ export default function Maintenance() {
               {loading ? (
                 Array.from({length:5}).map((_,i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    {Array.from({length:6}).map((_,j) => (
+                    {Array.from({length:7}).map((_,j) => (
                       <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4"/></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-16 text-gray-400 text-sm">No maintenance records found.</td></tr>
+                <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">No maintenance records found.</td></tr>
               ) : paginated.map((r, i) => {
                 const isEditing = editRecord?.id === r.id;
                 const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(r);
@@ -858,14 +870,20 @@ export default function Maintenance() {
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700 truncate">
                     {r.basis ? `${BASIS_ICON[r.basis] || ""} ${r.basis}` : "—"}
-                    {(r.services?.length > 0 || r.partsAddressed?.length > 0) && (
-                      <div className="text-[10px] text-gray-400">
-                        {[
-                          r.services?.length > 0 && `${r.services.length} service${r.services.length > 1 ? "s" : ""}`,
-                          r.partsAddressed?.length > 0 && `${r.partsAddressed.length} part${r.partsAddressed.length > 1 ? "s" : ""}`,
-                        ].filter(Boolean).join(" · ")}
-                      </div>
-                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const dmg = damageOf(r);
+                      if (!dmg) return <span className="text-xs text-gray-300">—</span>;
+                      return (
+                        <span
+                          title={`${dmg.count} part${dmg.count > 1 ? "s" : ""} listed as damaged, stolen or missing${dmg.stillDamaged ? ` — ${dmg.stillDamaged} still damaged after the job` : ""}`}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 whitespace-nowrap">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                          {dmg.count} part{dmg.count > 1 ? "s" : ""}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className={`px-4 py-3 text-xs whitespace-nowrap ${isOverdueJob(r) ? "text-red-500 font-semibold" : "text-gray-500"}`}>
                     <span className="inline-flex items-center gap-1">
