@@ -87,8 +87,6 @@ const fmtWaiting = (r) => {
   const hours = Math.max(0, (Date.now() - t) / 3600000);
   return { text: hours < 48 ? `${Math.max(1, Math.floor(hours))}h` : `${Math.floor(hours / 24)}d`, late: hours >= 72 };
 };
-// Queue order inside the Active tab: needs-review first, waiting-on-money below.
-const groupOf = (r) => (r.status === "Pending" ? 0 : 1);
 
 // "Active" = still an open queue item admin needs to act on or is waiting
 // on PayMongo for. "History" = resolved, permanent record — money already
@@ -149,10 +147,105 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
   );
 }
 
+// Three tabs, split by WHO has to act:
+//   Request Pending  a customer asked; staff must approve or reject
+//   Under Process    money is on its way back (PayMongo confirming / cash to hand back), or something failed and needs
+//                    a person. Refund requests AND discount refunds both live here: both wait on PayMongo.
+//   History          finished: refunded or rejected
+const DISCOUNT_STATES = { processing: "paymongo", awaiting_handback: "handback", failed: "failed", refunded: "done" };
+const isDiscount = (r) => !!r && r.kind === "discount";
+// Which tab an item belongs to.
+const tabOf = (r) => {
+  if (isDiscount(r)) return r.refund.state === "refunded" ? "history" : "processing";
+  if (r.status === "Pending") return "pending";
+  if (r.status === "Approved" || r.status === "Failed") return "processing";   // a Failed request needs manual follow-up: not history
+  return "history";
+};
+// What an item is waiting on: the sub-filter inside Under Process.
+const waitKeyOf = (r) => {
+  if (isDiscount(r)) return DISCOUNT_STATES[r.refund.state];
+  if (r.status === "Failed") return "failed";
+  if (r.status === "Approved") return stageOf(r);
+  return null;
+};
 const TABS = [
-  { key: "active",  label: "Active Queue", statuses: ["Pending", "Approved"] },
-  { key: "history", label: "History",      statuses: ["Refunded", "Rejected", "Failed"] },
+  { key: "pending",    label: "Request Pending", chips: [] },
+  { key: "processing", label: "Under Process",   chips: [
+    { key: "paymongo", label: "Waiting for PayMongo" }, { key: "handback", label: "Waiting for hand-back" }, { key: "failed", label: "Failed" } ] },
+  { key: "history",    label: "History",         chips: [
+    { key: "Refunded", label: "Refunded" }, { key: "Rejected", label: "Rejected" } ] },
 ];
+const chipMatches = (tab, chip, r) => {
+  if (chip === "All") return true;
+  if (tab === "processing") return waitKeyOf(r) === chip;
+  if (tab === "history") return (isDiscount(r) ? "Refunded" : r.status) === chip;
+  return true;
+};
+// A discount refund shaped like a request row, so the table, search, sort and tabs treat both the same way.
+const toDiscountItem = (d) => ({ ...d, kind: "discount", refundRequestID: `discount_${d.paymentID}`, amount: d.refund.amount, createdAt: d.discountAt, updatedAt: d.refund.at, status: d.refund.state });
+
+// A discount that sent money back, as a row. Same columns and the same stages as a refund request, so the two read alike.
+const DISCOUNT_BADGE = {
+  processing:        { label: "Waiting for PayMongo",  dot: "bg-blue-500",   bg: "bg-blue-50 border border-blue-200" },
+  awaiting_handback: { label: "Waiting for hand-back", dot: "bg-orange-500", bg: "bg-orange-50 border border-orange-200" },
+  failed:            { label: "Refund failed",         dot: "bg-red-500",    bg: "bg-red-50 border border-red-200" },
+  refunded:          { label: "Refunded",              dot: "bg-green-500",  bg: "bg-green-50 border border-green-200" },
+};
+function DiscountRow({ r, fmt, navigate, showActions, onRetry, retrying, entriesOpen, onToggleEntries }) {
+  const st = r.refund.state;
+  const b = DISCOUNT_BADGE[st];
+  const w = st === "refunded" ? null : fmtWaiting(r);
+  return (
+    <tr className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
+      <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
+      <td className="px-5 py-4">
+        {r.bookingID ? (
+          <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)} className="font-medium text-teal-600 hover:text-teal-700 hover:underline" title="Open this booking">{r.bookingID}</button>
+        ) : "—"}
+      </td>
+      <td className="px-5 py-4">
+        <span className="inline-block rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[11px] font-semibold text-purple-700">Discount</span>
+        <p className="text-gray-700 mt-0.5">{r.discountReason || "Staff discount"}</p>
+        <p className="text-xs text-gray-400">{fmt(r.discountAmount)} discount{r.refund.amount !== r.discountAmount ? ` · ${fmt(r.refund.amount)} went back` : ""}</p>
+      </td>
+      <td className="px-5 py-4">
+        <p className="font-semibold text-arl-dark">{fmt(r.refund.amount)}</p>
+        <p className="text-[11px] text-gray-500">{st === "awaiting_handback" || r.refund.via === "in_store" ? "in store" : "via PayMongo"}</p>
+      </td>
+      <td className="px-5 py-4"><span className="text-gray-300">—</span></td>
+      <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.discountAt)} /></td>
+      <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.refund.at)} /></td>
+      <td className="px-5 py-4">
+        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${b.bg}`}>
+          <span className={`w-2 h-2 rounded-full shrink-0 ${b.dot}`} />{b.label}
+        </span>
+        <button type="button" onClick={onToggleEntries} className="mt-1 block text-[11px] font-medium text-teal-700 hover:underline">
+          {entriesOpen ? "Hide money movements" : "Money movements"}
+        </button>
+        {w && <p className={`mt-1 text-[11px] ${w.late ? "font-semibold text-amber-600" : "text-gray-400"}`}>Waiting {w.text}{w.late ? " — worth checking" : ""}</p>}
+        {st === "failed" && r.refund.errorNote && <p className="mt-1 text-[11px] text-red-500 max-w-[200px]">{r.refund.errorNote}</p>}
+      </td>
+      {showActions && (
+        <td className="px-5 py-4 text-right">
+          {st === "failed" ? (
+            <button onClick={onRetry} disabled={retrying}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
+              {retrying ? "…" : `Retry ${fmt(r.refund.amount)}`}
+            </button>
+          ) : st === "awaiting_handback" ? (
+            <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-orange-500 hover:bg-orange-600"
+              title="The hand-back form is on the payment">
+              Record hand-back →
+            </button>
+          ) : (
+            <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>
+          )}
+        </td>
+      )}
+    </tr>
+  );
+}
 
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
 
@@ -234,7 +327,9 @@ export default function RefundRequests() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
-  const [tab, setTab]           = useState("active");
+  const [tab, setTab]           = useState(null);          // null until the list loads, then the most useful tab (see below)
+  const [discounts, setDiscounts] = useState([]);           // discount refunds (money a staff discount sent back)
+  const [retryingId, setRetryingId] = useState(null);
   const [openEntries, setOpenEntries] = useState(null);   // refundRequestID whose money movements are expanded
   const [statusF, setStatusF]   = useState("All");
   const [search, setSearch]     = useState("");
@@ -252,6 +347,7 @@ export default function RefundRequests() {
   const [handbackMethod, setHandbackMethod] = useState({});
   const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
   const [sortDir, setSortDir] = useState("asc");
+  const items = [...requests, ...discounts.map(toDiscountItem)];
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -274,13 +370,14 @@ export default function RefundRequests() {
     const q = searchParams.get("search");
     if (!q) return;
     setSearch(q);
-    const hit = requests.find((r) => r.refundRequestID === q || r.paymentID === q || r.bookingID === q);
-    if (hit) { const t = TABS.find((x) => x.statuses.includes(hit.status)); if (t) setTab(t.key); }
+    const hit = items.find((r) => r.refundRequestID === q || r.paymentID === q || r.bookingID === q);
+    if (hit) setTab(tabOf(hit));
     else if (loading) return;
     setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete("search"); return n; }, { replace: true });
-  }, [searchParams, requests, loading, setSearchParams]);
+  }, [searchParams, items, loading, setSearchParams]);
 
   const activeTab = TABS.find((t) => t.key === tab) || TABS[0];
+  const tabKey = activeTab.key;
 
   const switchTab = (key) => {
     setTab(key);
@@ -301,6 +398,12 @@ export default function RefundRequests() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to load refund requests.");
       setRequests(data.data || []);
+      // Discount refunds ride along; if this part fails the requests still show.
+      try {
+        const dres = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/discount-refunds`, { headers: { Authorization: `Bearer ${token}` } });
+        const ddata = await dres.json();
+        setDiscounts(dres.ok ? (ddata.data || []) : []);
+      } catch { setDiscounts([]); }
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }, [token]);
@@ -354,6 +457,21 @@ export default function RefundRequests() {
     finally { setBusyId(null); }
   };
 
+  // A discount's PayMongo refund failed: send it again (the failed attempt stays on record).
+  const retryDiscount = async (r) => {
+    setRetryingId(r.refundRequestID);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${encodeURIComponent(r.bookingID)}/discount-refund/retry`, {
+        method: "PATCH", headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Could not retry the refund.");
+      showToast("Refund sent to PayMongo again.");
+      fetchRequests();
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setRetryingId(null); }
+  };
+
   const submitReject = async () => {
     if (!rejectTarget) return;
     const id = rejectTarget.refundRequestID;
@@ -373,15 +491,15 @@ export default function RefundRequests() {
     finally { setBusyId(null); }
   };
 
-  const filtered = requests.filter((r) => {
+  const filtered = items.filter((r) => {
     const q = search.toLowerCase();
     const matchQ = !q
       || (r.refundRequestID || "").toLowerCase().includes(q)
       || (r.customerName || "").toLowerCase().includes(q)
       || (r.bookingID || "").toLowerCase().includes(q)
       || (r.paymentID || "").toLowerCase().includes(q);
-    const matchTab = activeTab.statuses.includes(r.status);
-    const matchS = statusF === "All" || r.status === statusF;
+    const matchTab = tabOf(r) === tabKey;
+    const matchS = chipMatches(tabKey, statusF, r);
     return matchQ && matchTab && matchS;
   });
 
@@ -390,15 +508,9 @@ export default function RefundRequests() {
   // Sort after search/tab/status filtering, before pagination, so Page 1 is the
   // top of whatever sort is active.
   const sorted = [...filtered].sort((a, b) => {
-    // Active tab: Pending (needs a decision) always above the ones waiting on money,
-    // whatever column is sorted — the chosen sort then applies inside each group.
-    if (tab === "active") {
-      const g = groupOf(a) - groupOf(b);
-      if (g) return g;
-    }
     if (!sortKey) {
-      // default inside the waiting group: longest-waiting first, so stuck ones are on top
-      if (tab === "active" && groupOf(a) === 1) return waitStartMs(a) - waitStartMs(b);
+      // Under Process: longest-waiting first, so stuck ones are on top
+      if (tabKey === "processing") return waitStartMs(a) - waitStartMs(b);
       return 0;
     }
     if (sortKey === "customer") {
@@ -414,17 +526,21 @@ export default function RefundRequests() {
   });
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, statusF, tab, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, statusF, tabKey, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // History is a closed record — nothing left to approve/reject — so no Actions column there.
-  const showActions = tab !== "history";
+  const showActions = tabKey !== "history";
 
-  const pendingCount = requests.filter((r) => r.status === "Pending").length;
-  const waitingCount = requests.filter((r) => r.status === "Approved").length;
-  // Section headers inside the Active tab (only when both groups are on screen / any waiting exists)
-  const nPendingShown = filtered.filter((r) => r.status === "Pending").length;
-  const nWaitingShown = filtered.filter((r) => r.status === "Approved").length;
-  const showSections  = tab === "active" && statusF === "All" && nWaitingShown > 0;
+  const pendingCount    = items.filter((r) => tabOf(r) === "pending").length;
+  const processingItems = items.filter((r) => tabOf(r) === "processing");
+  const processingCount = processingItems.length;
+  const failedCount     = processingItems.filter((r) => waitKeyOf(r) === "failed").length;
+  const onItsWay        = processingItems.filter((r) => waitKeyOf(r) !== "failed").reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+
+  // Open on the tab that needs someone: requests to review first, otherwise what is still in flight.
+  useEffect(() => {
+    if (tab === null && !loading) setTab(pendingCount > 0 ? "pending" : processingCount > 0 ? "processing" : "pending");
+  }, [tab, loading, pendingCount, processingCount]);
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -524,41 +640,45 @@ export default function RefundRequests() {
       {/* Header */}
       <div className="flex items-center justify-between pt-2">
         <div>
-          <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">
-            Refunds
-          </h1>
+          <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">Refunds</h1>
           <p className="text-sm text-gray-500">
-            {pendingCount > 0 ? `${pendingCount} pending review` : "No pending requests"}
+            {pendingCount > 0 ? `${pendingCount} request${pendingCount > 1 ? "s" : ""} to review` : "No requests to review"}
+            {processingCount > 0 && <> · {processingCount} under process{onItsWay > 0 && <> · {fmt(onItsWay)} on its way back to customers</>}</>}
+            {failedCount > 0 && <span className="text-red-600 font-semibold"> · {failedCount} failed — needs you</span>}
           </p>
         </div>
       </div>
 
-      {/* Active / History tabs */}
+      {/* Request Pending / Under Process / History */}
       <div className="flex gap-1 border-b border-gray-100">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => switchTab(t.key)}
             className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
-              tab === t.key
-                ? "border-arl-dark text-arl-dark"
-                : "border-transparent text-gray-400 hover:text-gray-600"
+              tabKey === t.key ? "border-arl-dark text-arl-dark" : "border-transparent text-gray-400 hover:text-gray-600"
             }`}
           >
             {t.label}
-            {t.key === "active" && pendingCount > 0 && (
-              <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-yellow-100 text-yellow-700 text-[11px] font-bold" title="Needs review">
-                {pendingCount}
-              </span>
+            {t.key === "pending" && pendingCount > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-yellow-100 text-yellow-700 text-[11px] font-bold" title="Needs review">{pendingCount}</span>
             )}
-            {t.key === "active" && waitingCount > 0 && (
-              <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-gray-100 text-gray-500 text-[11px] font-bold" title="Approved, waiting for the money to go back">
-                {waitingCount}
-              </span>
+            {t.key === "processing" && processingCount > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-blue-100 text-blue-700 text-[11px] font-bold" title="Money on its way back, or needing follow-up">{processingCount}</span>
+            )}
+            {t.key === "processing" && failedCount > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-red-100 text-red-600 text-[11px] font-bold" title="Failed — needs follow-up">{failedCount}!</span>
             )}
           </button>
         ))}
       </div>
+
+      {/* What this tab means, in one line */}
+      <p className="text-xs text-gray-400 -mt-2">
+        {tabKey === "pending" && "Customers asking for a refund. Approve or reject each one."}
+        {tabKey === "processing" && "Approved refunds and discount refunds whose money isn't back with the customer yet. PayMongo can take up to 24 hours; anything marked Failed needs a person."}
+        {tabKey === "history" && "Finished: the money went back, or the request was rejected."}
+      </p>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
@@ -568,19 +688,21 @@ export default function RefundRequests() {
           placeholder="Search by customer, booking, or payment ID…"
           className="flex-1 min-w-[220px] rounded-xl border border-gray-200 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
         />
-        <div className="flex gap-2 flex-wrap">
-          {["All", ...activeTab.statuses].map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusF(s)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                statusF === s ? "bg-arl-dark text-white border-arl-dark" : "bg-white text-gray-600 border-gray-200 hover:border-arl-dark"
-              }`}
-            >
-              {s === "Approved" ? "Waiting" : s}
-            </button>
-          ))}
-        </div>
+        {activeTab.chips.length > 0 && (
+          <div className="flex gap-2 flex-wrap">
+            {[{ key: "All", label: "All" }, ...activeTab.chips].map((c) => (
+              <button
+                key={c.key}
+                onClick={() => setStatusF(c.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  statusF === c.key ? "bg-arl-dark text-white border-arl-dark" : "bg-white text-gray-600 border-gray-200 hover:border-arl-dark"
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -592,7 +714,7 @@ export default function RefundRequests() {
             <div className="p-10 text-center text-sm text-red-500">{error}</div>
           ) : filtered.length === 0 ? (
             <div className="p-10 text-center text-sm text-gray-400">
-              {tab === "history" ? "No resolved refunds yet." : "No refund requests found."}
+              {tabKey === "history" ? "No finished refunds yet." : tabKey === "processing" ? "Nothing is waiting on PayMongo or on a hand-back." : "No requests waiting for review."}
             </div>
           ) : (
             <table className="w-full text-sm">
@@ -610,22 +732,26 @@ export default function RefundRequests() {
                 </tr>
               </thead>
               <tbody>
-                {paginated.map((r, idx) => {
-                  const g = groupOf(r);
-                  const firstOfGroup = idx === 0 || groupOf(paginated[idx - 1]) !== g;
-                  const header = showSections && firstOfGroup && (g === 1 || nPendingShown > 0);
+                {paginated.map((r) => {
+                  if (isDiscount(r)) {
+                    return (
+                      <Fragment key={r.refundRequestID}>
+                        <DiscountRow r={r} fmt={fmt} navigate={navigate} showActions={showActions}
+                          onRetry={() => retryDiscount(r)} retrying={retryingId === r.refundRequestID}
+                          entriesOpen={openEntries === r.refundRequestID}
+                          onToggleEntries={() => setOpenEntries((v) => (v === r.refundRequestID ? null : r.refundRequestID))} />
+                        {openEntries === r.refundRequestID && (
+                          <tr className="border-b border-gray-50 bg-gray-50/40">
+                            <td colSpan={showActions ? 9 : 8} className="px-5 py-4">
+                              <PaymentEntriesPanel key={`${r.refundRequestID}-${r.refund.state}`} query={{ paymentID: r.paymentID }} title="Money movements for this payment" />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  }
                   return (
                   <Fragment key={r.refundRequestID}>
-                    {header && (
-                      <tr className="bg-gray-50/80">
-                        <td colSpan={showActions ? 9 : 8} className="px-5 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">
-                          {g === 0
-                            ? `Needs review · ${nPendingShown}`
-                            : `Waiting for the money to go back · ${nWaitingShown}`}
-                          {g === 1 && <span className="ml-2 font-medium normal-case tracking-normal text-gray-400">approved and booking cancelled — longest waiting first</span>}
-                        </td>
-                      </tr>
-                    )}
                   <tr className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                     <td className="px-5 py-4">
                       <p className="font-semibold text-arl-dark">{r.customerName || "—"}</p>
