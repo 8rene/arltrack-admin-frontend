@@ -1563,6 +1563,16 @@ export default function Bookings() {
     setSearchParams((prev) => { prev.delete("tab"); return prev; }, { replace: true });
   }, [searchParams, setSearchParams]);
 
+  // Linked in with ?search=<bookingID> (e.g. Payments' "View booking"): fills the search bar, on the All tab so the
+  // booking can't be hidden by a status tab, then strips the param. The list is filtered right away, no loading wait.
+  useEffect(() => {
+    const q = searchParams.get("search");
+    if (!q) return;
+    setSearch(q);
+    setActiveTab("All");
+    setSearchParams((prev) => { prev.delete("search"); return prev; }, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   // Opens the exact booking a notification click pointed to (?open=<refID>,
   // set by Header.jsx). Runs once bookings are loaded so the record is
   // actually there to find; strips the param afterward so refreshing/

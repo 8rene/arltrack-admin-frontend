@@ -642,6 +642,10 @@ function PenaltyDetailsModal({ penalty: p, onClose, onViewBooking }) {
           <DetailRow label="Amount charged" value={peso(p.amount)} />
           {isOverridden && <DetailRow label="Override reason" value={p.overrideReason || "—"} />}
           <DetailRow label="Paid so far" value={peso(p.paidAmount)} />
+          {p.gatewayFeeRate != null && p.gatewayFeeRate > 0 && (
+            <DetailRow label="Online payment fee" value={`${p.gatewayFeeRate}% on top, only if paid online`} />
+          )}
+          {p.gatewayFeePaid > 0 && <DetailRow label="Online fee paid" value={peso(p.gatewayFeePaid)} />}
           {owed > 0 && p.status === "Confirmed" && (
             <DetailRow label="Still owed" value={<span className="text-red-600 font-semibold">{peso(owed)}</span>} />
           )}

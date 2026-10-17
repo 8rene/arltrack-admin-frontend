@@ -21,7 +21,7 @@ import StatementModal from "./StatementModal";
 //       Print slip   See more ▾
 //   3   Balance paid                 ● Done                       ₱2,000.00
 //       Print receipt   See less ▴
-//       re_abc123 / GCash / Online (PayMongo) / fee / who / when   (only after "See more")
+//       Payment ref / Method / Source / PayMongo fee / Handled by / Settled   (labelled lines, only after "See more")
 //   ...
 //
 // The number on the left is the movement's place in time (1 = the first one that happened), so the newest carries
@@ -35,7 +35,7 @@ const fmtDate = (iso) => {
 
 const METHOD = { gcash: "GCash", maya: "Maya", qrph: "QR Ph", cash: "Cash", bank_transfer: "Bank transfer" };
 const PHASE_IN = { deposit: "Deposit paid", balance: "Balance paid", penalty: "Penalty payment" };
-const PHASE_OUT = { deposit: "Refund of deposit", balance: "Refund of balance", penalty: "Refund of penalty", deposit_return: "Security deposit returned" };
+const PHASE_OUT = { deposit: "Refund of deposit", balance: "Refund of balance", penalty: "Refund of penalty", discount: "Discount refund", deposit_return: "Security deposit returned" };
 
 // A small dot + plain text (same dot colours as the status badges on the Payments page), not a coloured pill.
 const STATUS_DOT = {
@@ -56,6 +56,13 @@ const titleOf = (e) => {
   return PHASE_IN[e.phase] || "Payment";
 };
 
+// A "no cash moved" line (a discount, or a penalty covered by the held deposit). Shown in the same list for the full
+// story of the booking, but it is plain text: no sign, no colour, no number, and it is never part of the totals above.
+const ADJ_NOTE = {
+  discount: "No money moved. The amount owed was reduced.",
+  deposit_offset: "No money moved. Taken from the held security deposit.",
+};
+
 const TONE = { green: "text-green-700", purple: "text-purple-700", amber: "text-amber-700", red: "text-red-600", gray: "text-gray-800" };
 
 // One total in the optional summary line: small label, bold value, no box.
@@ -64,6 +71,16 @@ function Stat({ label, value, tone = "gray" }) {
     <span className="text-xs text-gray-500">
       {label} <span className={`font-semibold ${TONE[tone]}`}>{value}</span>
     </span>
+  );
+}
+
+// One labelled line inside "See more": label on the left, value on the right.
+function Detail({ label, value, mono = false }) {
+  return (
+    <div className="flex justify-between items-start gap-6 py-1.5">
+      <dt className="text-sm text-gray-500 shrink-0">{label}</dt>
+      <dd className={`text-sm text-gray-800 text-right break-all ${mono ? "font-mono" : ""}`}>{value}</dd>
+    </div>
   );
 }
 
@@ -95,6 +112,7 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
 
   const { loading, error, data } = state;
   const entries = data?.entries || [];   // the server sends them oldest first
+  const adjustments = data?.adjustments || [];   // discounts / deposit offsets: no cash moved
   const s = data?.summary;
   useEffect(() => { if (onLoaded && data) onLoaded(data.summary || null); }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   const groupSize = (g) => entries.filter((x) => x.groupID === g).length;
@@ -102,7 +120,13 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
 
   // Number each movement by when it happened (1 = first), then flip for newest-first.
   const numbered = entries.map((e, i) => ({ e, n: i + 1 }));
-  const rows = newestFirst ? [...numbered].reverse() : numbered;
+  // The no-cash lines sit in the same list, in date order. Only real movements get a number.
+  const stamp = (e) => e.settledAt || e.processedAt || e.createdAt || "";
+  const items = [
+    ...numbered.map(({ e, n }, i) => ({ type: "entry", e, n, t: stamp(e), i })),
+    ...adjustments.map((a, i) => ({ type: "adj", a, t: a.date || "", i: entries.length + i })),
+  ].sort((x, y) => x.t.localeCompare(y.t) || x.i - y.i);
+  const rows = newestFirst ? [...items].reverse() : items;
 
   return (
     <div className="space-y-3" data-testid="payment-entries-panel">
@@ -119,7 +143,7 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
 
       {loading && <p className="text-sm text-gray-400 py-3">Loading money movements…</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}
-      {!loading && !error && entries.length === 0 && (
+      {!loading && !error && entries.length === 0 && adjustments.length === 0 && (
         <p className="text-sm text-gray-400 py-3">No money movements are recorded for this yet.</p>
       )}
 
@@ -138,7 +162,27 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
 
       {!loading && !error && rows.length > 0 && (
         <ol className="border-t border-gray-100 divide-y divide-gray-100">
-          {rows.map(({ e, n }) => {
+          {rows.map((item) => {
+            if (item.type === "adj") {
+              const a = item.a;
+              const adjDate = fmtDate(a.date);
+              return (
+                <li key={a.id} className="flex items-start gap-3 py-3">
+                  <span className="w-5 shrink-0 pt-0.5 text-xs text-gray-300 text-right" title="No money moved">•</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-sm font-semibold text-gray-600">{a.label}</span>
+                    <p className="text-xs text-gray-500 mt-0.5">{ADJ_NOTE[a.kind] || "No money moved."}</p>
+                    {(a.reason || a.byName || adjDate) && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {[a.reason && `Reason: ${a.reason}`, a.byName && `By ${a.byName}`, adjDate].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                  <p className="shrink-0 text-sm font-semibold whitespace-nowrap text-right text-gray-500" title="No money moved">{fmt(a.amount)}</p>
+                </li>
+              );
+            }
+            const { e, n } = item;
             const out = e.direction === "out";
             const when = fmtDate(e.settledAt || e.processedAt || e.createdAt);
             const open = !!openRows[e.id];
@@ -177,23 +221,19 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
                     </button>
                   </div>
 
-                  {/* Description: hidden until "See more" */}
+                  {/* Details: hidden until "See more", one labelled line per field */}
                   {open && (
-                    <div className="mt-2 space-y-0.5">
-                      <p className={`text-xs break-all ${e.referenceNumber ? "font-mono text-gray-700" : "text-gray-400"}`}>
-                        {e.referenceNumber || (e.source === "in_person" ? "No reference — handled in person" : "No reference yet")}
-                      </p>
-                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500">
-                        {e.method && <span>{METHOD[e.method] || e.method}</span>}
-                        {e.source && <span>{e.source === "in_person" ? "In person" : "Online (PayMongo)"}</span>}
-                        {e.transactionFee != null && <span>PayMongo fee {fmt(e.transactionFee)}</span>}
-                        {e.processedByName && <span>by {e.processedByName}</span>}
-                        {when && <span>{when}</span>}
-                      </div>
+                    <dl className="mt-2 w-full divide-y divide-gray-100">
+                      <Detail label="Payment ref" value={e.referenceNumber || (e.source === "in_person" ? "Handled in person" : "No reference yet")} mono={!!e.referenceNumber} />
+                      {e.method && <Detail label="Method" value={METHOD[e.method] || e.method} />}
+                      {e.source && <Detail label="Source" value={e.source === "in_person" ? "In person" : "Online (PayMongo)"} />}
+                      {e.transactionFee != null && <Detail label="PayMongo fee" value={fmt(e.transactionFee)} />}
+                      {e.processedByName && <Detail label="Handled by" value={e.processedByName} />}
+                      {when && <Detail label={e.status === "success" ? "Settled" : "Date"} value={when} />}
                       {e.groupID && groupSize(e.groupID) > 1 && (
-                        <p className="text-xs text-teal-700">One payment covered {groupSize(e.groupID)} penalties — each gets its own line here.</p>
+                        <Detail label="Covers" value={`${groupSize(e.groupID)} penalties (one payment, one line each)`} />
                       )}
-                    </div>
+                    </dl>
                   )}
                   {/* A problem is always shown, not tucked away */}
                   {e.errorNote && <p className="text-xs text-red-600 mt-1">{e.errorNote}</p>}

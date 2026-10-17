@@ -670,7 +670,7 @@ export default function Payments() {
                         action={selected.bookingID && selected.bookingID !== "—" ? (
                           <button
                             type="button"
-                            onClick={() => navigate(`/bookings?open=${encodeURIComponent(selected.bookingID)}`)}
+                            onClick={() => navigate(`/bookings?search=${encodeURIComponent(selected.bookingID)}`)}
                             className="text-xs font-semibold text-teal-700 hover:underline"
                           >
                             View booking →
@@ -680,11 +680,6 @@ export default function Payments() {
                         <Row label="Name" value={selected.customerName} />
                         <Row label="Booking ID" value={selected.bookingID} mono />
                         <Row label="Vehicle" value={selected.vehicleName} />
-                      </Section>
-
-                      {/* Discount + what still has to be collected. (The balance itself is in the figures above; payments
-                          can have several movements, so there is no single "paid at" — see Money movements.) */}
-                      <Section title="Balance & discount">
                         <Row
                           label="Balance"
                           hint="What the customer still has to pay. A discount on a partial payment comes off this amount."
@@ -692,15 +687,6 @@ export default function Payments() {
                           bold
                           color={selected.balance > 0 ? "text-red-500" : "text-green-600"}
                         />
-                        {selected.discountAmount > 0 ? (
-                          <>
-                            <Row label="Discount given" value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
-                            {selected.discountReason && <Row label="Reason" value={selected.discountReason} />}
-                            {selected.discountAt && <Row label="Given" value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
-                          </>
-                        ) : (
-                          <Row label="Discount given" value={peso(0, fmtCurrency)} color="text-gray-400" />
-                        )}
 
                         {/* Still owed: the customer pays it online; this nudges them. In store is the exception. */}
                         {selected.balance > 0 && selected.status === "Approved" && !selected.refundRequestID && selected.balanceStatus !== "pending" && (
@@ -751,7 +737,11 @@ export default function Payments() {
                         <div className="border-t border-gray-100 mt-2 pt-2">
                           <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
                           {selected.discountAmount > 0 ? (
-                            <Row label="Discount Given" value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
+                            <>
+                              <Row label="Discount Given" value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
+                              {selected.discountReason && <Row label="Discount Reason" value={selected.discountReason} />}
+                              {selected.discountAt && <Row label="Discount Given On" value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
+                            </>
                           ) : (
                             <Row label="Discount Given" value={peso(0, fmtCurrency)} color="text-gray-400" />
                           )}
@@ -772,6 +762,10 @@ export default function Payments() {
 
                       {/* The gateway fee the customer paid us vs. what PayMongo kept, one line per online charge. */}
                       <GatewayBreakdown payment={selected} fmt={fmtCurrency} />
+
+                      {/* Every penalty charged on this booking: charged, paid, waived. Waived / voided ones are listed
+                          but never counted toward what is owed, and never touch the booking's balance or discount. */}
+                      <PenaltyBreakdown penalties={selected.penalties} payment={selected} fmt={fmtCurrency} />
 
                       {selected.refundDue > 0 && (
                         <Section title="Refund Due to Customer (in store)">
@@ -829,7 +823,7 @@ export default function Payments() {
                           </p>
                           <button
                             type="button"
-                            onClick={() => navigate("/refund-requests")}
+                            onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(selected.refundRequestID || selected.paymentID)}`)}
                             className="shrink-0 px-3 py-1.5 text-xs font-semibold text-amber-800 bg-white border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors whitespace-nowrap"
                           >
                             View refund request →
@@ -997,7 +991,6 @@ export default function Payments() {
               <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Type</th>
               <SortableTh label="Discount" sortKey="discount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Refund</th>
               <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Balance" sortKey="balance" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Method</th>
@@ -1009,13 +1002,13 @@ export default function Payments() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 11 }).map((_, j) => (
+                  {Array.from({ length: 10 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={11} className="text-center py-16 text-gray-400 text-sm">
+              <tr><td colSpan={10} className="text-center py-16 text-gray-400 text-sm">
                 {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
               </td></tr>
             ) : paginated.map((p, i) => (
@@ -1042,13 +1035,6 @@ export default function Payments() {
                 <td className="px-4 py-3 text-xs font-semibold">
                   {p.discountAmount > 0
                     ? <span className="text-red-500">−{peso(p.discountAmount, fmtCurrency)}</span>
-                    : <span className="text-gray-300">—</span>}
-                </td>
-                <td className="px-4 py-3 text-xs font-semibold">
-                  {p.refundDue > 0
-                    ? <span className="text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">Due {peso(p.refundDue, fmtCurrency)}</span>
-                    : p.refundIssued
-                    ? <span className="text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">Returned</span>
                     : <span className="text-gray-300">—</span>}
                 </td>
                 <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.amountPaid, fmtCurrency)}</td>
@@ -1141,7 +1127,7 @@ function Row({ label, hint, value, mono, bold, color }) {
               type="button"
               onClick={() => setShowHint((v) => !v)}
               aria-expanded={showHint}
-              aria-label={`What is ${label}?`}
+              aria-label="What is this?"
               title={showHint ? "Hide description" : "What is this?"}
               className={`w-4 h-4 shrink-0 rounded-full border text-[10px] leading-none font-semibold flex items-center justify-center transition-colors ${
                 showHint ? "border-teal-600 bg-teal-50 text-teal-700" : "border-gray-300 text-gray-400 hover:border-gray-500 hover:text-gray-600"
@@ -1179,16 +1165,33 @@ function KeyFigure({ label, value, note, color }) {
 //   total     = all PayMongo fees added up
 //   sale      = received − total: what is left of the gateway fee after PayMongo took its cut
 //               (negative = the business absorbed the difference)
-const PHASE_NAME = { deposit: "Deposit", balance: "Balance" };
+// Penalties paid online count too (p.penaltyGateway): the customer pays the same gateway % on top of the penalty, so
+// that fee is part of "received", and what PayMongo kept on those charges is one more line in the box.
+const PHASE_NAME = { deposit: "Deposit", balance: "Balance", penalty: "Penalties" };
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const signed = (n, fmtFn) => (n < 0 ? `−${peso(Math.abs(n), fmtFn)}` : peso(n, fmtFn));
 
 function buildGatewayBreakdown(p) {
-  const received = Number(p.gatewayFee) || 0;
+  const pg = p.penaltyGateway || null;
+  const bookingReceived = Number(p.gatewayFee) || 0;
+  const penaltyReceived = pg ? Number(pg.received) || 0 : 0;
+  const received = round2(bookingReceived + penaltyReceived);
   const tx = Array.isArray(p.paymongoTransactions) ? p.paymongoTransactions : [];
   const fees = [];
   ["deposit", "balance"].forEach((phase) => {
+    // A charge paid IN STORE never goes through PayMongo, so PayMongo kept nothing: listed at ₱0.00 so it is
+    // visible here (with its method and reference) instead of looking like a missing record.
+    const inStoreTx = tx.find((x) => x.phase === phase && x.source === "in_person" && x.status === "Paid");
+    if (inStoreTx) {
+      fees.push({
+        phase, inStore: true, amount: 0,
+        channel: inStoreTx.channel || null,
+        charged: inStoreTx.amount != null ? Number(inStoreTx.amount) : null,
+        ref: inStoreTx.ref || null,
+      });
+      return;
+    }
     const raw = p.paymongoFee ? p.paymongoFee[phase] : null;
     if (raw === null || raw === undefined) return;          // no fee recorded for this charge
     const t = tx.find((x) => x.phase === phase && x.source === "online") || {};
@@ -1200,18 +1203,31 @@ function buildGatewayBreakdown(p) {
       charged: t.amount != null ? Number(t.amount) : null,   // what that online charge was for
     });
   });
+  // The total only counts PayMongo's real fees (in-store rows are ₱0 and must not make "no fee recorded" look like ₱0).
+  const onlineFees = fees.filter((f) => !f.inStore);
   const storedTotal = p.paymongoFee ? p.paymongoFee.total : null;
-  const total = storedTotal !== null && storedTotal !== undefined
+  const bookingTotal = storedTotal !== null && storedTotal !== undefined
     ? Number(storedTotal) || 0
-    : fees.length ? round2(fees.reduce((s, f) => s + f.amount, 0)) : null;
+    : onlineFees.length ? round2(onlineFees.reduce((s, f) => s + f.amount, 0)) : null;
+
+  // Penalties paid online: what PayMongo kept on them is its own line, and it is added to the total.
+  // (null = PayMongo's fee wasn't recorded for them, so no line and nothing added.)
+  const penaltyFee = pg && pg.paymongoFee !== null && pg.paymongoFee !== undefined ? Number(pg.paymongoFee) || 0 : null;
+  if (penaltyFee !== null) {
+    fees.push({ phase: "penalty", amount: penaltyFee, channel: null, charged: pg.charged != null ? Number(pg.charged) : null });
+  }
+  const total = penaltyFee === null ? bookingTotal : round2((bookingTotal || 0) + penaltyFee);
+
   return {
     received,
+    bookingReceived,
+    penaltyReceived,
     rate: Number(p.gatewayFeeRate) || 0,
     base: Number(p.gatewayFeeBase) || 0,
     fees,
     total,
     sale: total === null ? null : round2(received - total),
-    show: received > 0 || total !== null,
+    show: received > 0 || total !== null || fees.length > 0,
   };
 }
 
@@ -1221,29 +1237,119 @@ function GatewayBreakdown({ payment, fmt }) {
   const saleColor = g.sale === null ? "" : g.sale >= 0 ? "text-green-600" : "text-red-500";
   return (
     <Section title="Gateway Breakdown">
+      {/* What the customer paid us for the gateway (green: money in). */}
       <Row
         label="Gateway received"
-        hint={g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid"}
+        hint={[
+          g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid",
+          g.penaltyReceived > 0 ? `includes ${peso(g.penaltyReceived, fmt)} paid on penalties` : null,
+        ].filter(Boolean).join(" · ")}
         value={peso(g.received, fmt)}
+        bold
+        color="text-green-600"
       />
-      {g.fees.map((f, i) => (
-        <Row
-          key={f.phase}
-          label={`PayMongo fee ${i + 1} · ${PHASE_NAME[f.phase]}`}
-          hint={[f.channel, f.charged != null ? `charged ${peso(f.charged, fmt)}` : null].filter(Boolean).join(" · ") || null}
-          value={peso(f.amount, fmt)}
-        />
-      ))}
-      {g.total !== null ? (
-        <div className="border-t border-gray-100 mt-2 pt-2">
-          <Row label="Gateway total" hint="All PayMongo fees added up" value={peso(g.total, fmt)} bold />
-          <Row label="Gateway sale" hint="Gateway received minus gateway total" value={signed(g.sale, fmt)} bold color={saleColor} />
+
+      {/* What PayMongo kept, grouped in one box: one line per payment, then the total (reddish: money out). */}
+      {(g.fees.length > 0 || g.total !== null) && (
+        <div className="my-2 rounded-xl border border-red-100 bg-red-50/40 px-4 py-1.5">
+          {g.fees.map((f, i) => (
+            <Row
+              key={f.phase}
+              label={`Payment ${i + 1} · ${PHASE_NAME[f.phase]}${f.inStore ? " (in store)" : ""}`}
+              hint={f.inStore
+                ? ["Paid in store, so PayMongo charged no fee", f.channel, f.charged != null ? `received ${peso(f.charged, fmt)}` : null, f.ref ? `ref ${f.ref}` : null].filter(Boolean).join(" · ")
+                : ([f.channel, f.charged != null ? `charged ${peso(f.charged, fmt)}` : null].filter(Boolean).join(" · ") || null)}
+              value={peso(f.amount, fmt)}
+              color={f.inStore ? "text-gray-400" : "text-red-400"}
+            />
+          ))}
+          {g.total !== null && (
+            <div className={g.fees.length > 0 ? "border-t border-red-100 mt-1 pt-1" : ""}>
+              <Row label="Gateway total" hint="All PayMongo fees added up" value={peso(g.total, fmt)} bold color="text-red-600" />
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Outside the box: what is left of the gateway fee after PayMongo's cut (green; red if PayMongo cost more). */}
+      {g.total !== null ? (
+        <Row label="Gateway sale" hint="Gateway received minus gateway total" value={signed(g.sale, fmt)} bold color={saleColor} />
       ) : (
         <p className="text-xs text-gray-400 pt-2">
           PayMongo's own fee isn't recorded for this payment (cash payment, or paid before fee tracking started).
         </p>
       )}
+    </Section>
+  );
+}
+
+// ─── Penalty breakdown ───────────────────────────────────────────────────────
+//   charged     = confirmed penalties only (waived / voided ones were never owed)
+//   paid        = what has been paid toward them (deposit offset, in store or online)
+//   outstanding = charged − paid
+//   waived      = forgiven penalties, shown for the record; separate from "Discount Given" on purpose, because a
+//                 waived penalty never touched this payment's balance (a discount does)
+function penaltyState(p) {
+  if (p.status === "Waived") return { label: "Waived", color: "text-amber-600" };
+  if (p.status === "Voided") return { label: "Voided", color: "text-gray-400" };
+  if (p.paidAmount >= p.amount && p.amount > 0) return { label: "Paid", color: "text-green-600" };
+  if (p.paidAmount > 0) return { label: "Partially paid", color: "text-orange-500" };
+  return { label: "Unpaid", color: "text-red-500" };
+}
+
+function PenaltyBreakdown({ penalties, payment, fmt }) {
+  const list = Array.isArray(penalties) ? penalties : [];
+  const hasDeposit = Number(payment?.securityDeposit) > 0;
+  const live = list.filter((p) => p.status === "Confirmed");
+  const charged = round2(live.reduce((n, p) => n + p.amount, 0));
+  const paid = round2(live.reduce((n, p) => n + Math.min(p.paidAmount, p.amount), 0));
+  const outstanding = round2(Math.max(0, charged - paid));
+  const waived = round2(list.filter((p) => p.status === "Waived").reduce((n, p) => n + p.amount, 0));
+  const voided = round2(list.filter((p) => p.status === "Voided").reduce((n, p) => n + p.amount, 0));
+  return (
+    <Section title="Penalty Breakdown">
+      {list.length === 0 && <p className="text-xs text-gray-400 py-1.5">No penalties have been charged on this booking.</p>}
+      {list.map((p, i) => {
+        const st = penaltyState(p);
+        const gone = p.status !== "Confirmed";
+        return (
+          <Row
+            key={p.penaltyID}
+            label={<><span className="text-gray-400 mr-1.5">{i + 1}</span>{p.description} · <span className={st.color}>{st.label}</span></>}
+            hint={gone
+              ? `${p.status} on ${fmtDate(p.createdAt)}${p.statusReason ? ` — ${p.statusReason}` : ""}. Not counted as owed.`
+              : `Charged ${fmtDate(p.createdAt)}${p.paidAmount > 0 ? ` · ${peso(Math.min(p.paidAmount, p.amount), fmt)} paid so far` : ""}`}
+            value={peso(p.amount, fmt)}
+            color={gone ? "text-gray-400 line-through" : undefined}
+          />
+        );
+      })}
+      <div className="border-t border-gray-100 mt-2 pt-2">
+        <Row label="Total charged" hint="Confirmed penalties only. Waived and voided ones are not included." value={peso(charged, fmt)} bold />
+        <Row label="Paid" hint="Covered by the held deposit, paid in store, or paid online." value={peso(paid, fmt)} />
+        <Row label="Outstanding" hint="Total charged minus paid: what the customer still owes for penalties." value={peso(outstanding, fmt)} bold color={outstanding > 0 ? "text-red-500" : "text-green-600"} />
+        <Row
+          label="Penalties waived"
+          hint="Forgiven by staff. Shown for the record; it does not change the booking's balance or discount."
+          value={waived > 0 ? `−${peso(waived, fmt)}` : peso(0, fmt)}
+          color={waived > 0 ? "text-amber-600" : "text-gray-400"}
+        />
+        {voided > 0 && <Row label="Penalties voided" hint="Removed as a mistake. Not counted as owed." value={`−${peso(voided, fmt)}`} color="text-gray-400" />}
+        {hasDeposit && (
+          <>
+            <Row
+              label="Deposit settled"
+              hint="Part of the security deposit used to pay penalties when the booking was settled."
+              value={peso(Number(payment.depositSettled) || 0, fmt)}
+              bold={Number(payment.depositSettled) > 0}
+              color={Number(payment.depositSettled) > 0 ? undefined : "text-gray-400"}
+            />
+            {(Number(payment.depositReturned) > 0 || payment.depositStatus === "Settled") && (
+              <Row label="Deposit returned" hint="What was left of the deposit and went back to the customer." value={peso(Number(payment.depositReturned) || 0, fmt)} />
+            )}
+          </>
+        )}
+      </div>
     </Section>
   );
 }

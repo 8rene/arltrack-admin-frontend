@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, Fragment } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 
@@ -255,6 +255,20 @@ export default function RefundRequests() {
   const token = localStorage.getItem("token");
   const { fmt } = useCurrency();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Linked in with ?search=<refundRequestID | paymentID | bookingID> (e.g. Payments' "View refund request"): fills the
+  // search bar and opens the tab the request is in (Active Queue or History), then strips the param. It waits for the
+  // list to load so the right tab can be picked.
+  useEffect(() => {
+    const q = searchParams.get("search");
+    if (!q) return;
+    setSearch(q);
+    const hit = requests.find((r) => r.refundRequestID === q || r.paymentID === q || r.bookingID === q);
+    if (hit) { const t = TABS.find((x) => x.statuses.includes(hit.status)); if (t) setTab(t.key); }
+    else if (loading) return;
+    setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete("search"); return n; }, { replace: true });
+  }, [searchParams, requests, loading, setSearchParams]);
 
   const activeTab = TABS.find((t) => t.key === tab) || TABS[0];
 
