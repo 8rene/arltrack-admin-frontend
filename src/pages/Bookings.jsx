@@ -36,16 +36,6 @@ function tripStops(booking) {
   return stops;
 }
 
-// The booking's destination stop: bookings.location is the destination text the
-// customer picked, and the matching geofence zone (labelled with that same text)
-// holds its coordinates. null when there is no such zone (older bookings, or the
-// destination sits on top of the pickup/dropoff pin).
-function destinationStop(booking) {
-  const label = (booking.location || "").trim().toLowerCase();
-  if (!label) return null;
-  return tripStops(booking).find((s) => s.type === "stop" && (s.address || "").trim().toLowerCase() === label) || null;
-}
-
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
 const IconWarning = ({ className = "w-5 h-5" }) => (
@@ -330,10 +320,9 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
 
 // ─── INLINE LOCATION MAP ──────────────────────────────────────────────────────
 // Small read-only Leaflet map used inside the Edit modal: plots pickup, dropoff
-// and any extra stops. "Expand" opens the full TripMapModal. It's a preview —
-// the coordinates come from the booking's trip session; picking a new location
-// with the Map button moves the destination pin here right away, but typing
-// into the text field alone does not.
+// and every extra stop. "Expand" opens the full TripMapModal. It's a preview —
+// the coordinates come from the booking's trip session; moving a stop with its
+// Map button shifts that stop's pin here right away.
 const MAP_PIN_COLOR = { pickup: "#4f46e5", dropoff: "#f59e0b", stop: "#0d9488" };
 
 function LocationMapPreview({ stops, title }) {
@@ -401,15 +390,14 @@ function LocationMapPreview({ stops, title }) {
 function EditModal({ booking, onClose, onSave }) {
   const currentStatus     = booking.status?.toLowerCase() || "";
   const [form, setForm] = useState({
-    location:   booking.location || "",
     notesAdmin: booking.notesAdmin || "",
     status:     "", // "" = no status change; staff must pick a transition on purpose
   });
-  // { address, lat, lng } once a location was picked on the map this session.
-  // Cleared again if the text is typed over, so we never save coordinates that
-  // don't belong to the address text next to them.
-  const [locCoords, setLocCoords]           = useState(null);
-  const [mapOpen, setMapOpen]               = useState(false);
+  // Stop names are never typed — a stop's name only ever comes from a map pick, so the
+  // text and its pin can't drift apart. edits = { [stopKey]: { address, lat, lng } }
+  // for every stop moved this session; pickingKey is the stop the picker is open for.
+  const [edits, setEdits]                 = useState({});
+  const [pickingKey, setPickingKey]       = useState(null);
   const [saving, setSaving]                 = useState(false);
   const [error, setError]                   = useState(null);
   const [paymentStatus, setPaymentStatus]   = useState(null);
@@ -433,23 +421,38 @@ function EditModal({ booking, onClose, onSave }) {
       .finally(() => setPaymentLoading(false));
   }, [booking, currentStatus, getToken]);
 
-  // Where the picker opens: the pin picked this session, else the saved destination.
-  const pickerCoords = useMemo(() => {
-    if (locCoords) return { lat: locCoords.lat, lng: locCoords.lng };
-    const cur = destinationStop(booking);
-    return cur ? { lat: cur.lat, lng: cur.lng } : null;
-  }, [locCoords, booking]);
+  // Every editable location on the booking. A booking can carry several (the destination
+  // plus any extra stops); pickup/dropoff are fixed and not listed. zoneIndex is the stop's
+  // slot in the session's geofenceZones — what the backend uses to move the right one.
+  const stopRows = useMemo(() => {
+    const norm = (t) => (t || "").trim().toLowerCase();
+    const dest = norm(booking.location);
+    const rows = tripStops(booking)
+      .filter((st) => st.type === "stop")
+      .map((st) => ({
+        key: st.key, zoneIndex: Number(st.key.split("-")[1]), label: st.address,
+        lat: st.lat, lng: st.lng, isDestination: !!dest && norm(st.address) === dest,
+      }));
+    // Older bookings: a destination text with no zone of its own.
+    if (booking.location && !rows.some((r) => r.isDestination)) {
+      rows.unshift({ key: "destination", zoneIndex: null, label: booking.location, lat: null, lng: null, isDestination: true });
+    }
+    return rows;
+  }, [booking]);
 
-  // Preview pins: swap the saved destination pin for the newly picked one.
+  // Preview pins: every stop, with the ones moved this session shown at their new spot.
   const previewStops = useMemo(() => {
-    const base = tripStops(booking);
-    if (!locCoords) return base;
-    const cur = destinationStop(booking);
-    return [
-      ...base.filter((s) => s !== cur),
-      { key: "destination", type: "stop", address: locCoords.address, lat: locCoords.lat, lng: locCoords.lng },
-    ];
-  }, [booking, locCoords]);
+    const moved = (st) => (edits[st.key] ? { ...st, ...edits[st.key] } : st);
+    const base = tripStops(booking).map(moved);
+    if (edits.destination) base.push({ key: "destination", type: "stop", ...edits.destination });
+    return base;
+  }, [booking, edits]);
+
+  const pickingRow    = stopRows.find((r) => r.key === pickingKey) || null;
+  const pickerCoords  = pickingRow
+    ? (edits[pickingRow.key] || (pickingRow.lat != null ? pickingRow : null))
+    : null;
+  const editedCount   = Object.keys(edits).length;
 
   const approvedStatuses = ["approved", "paid"];
   const isApprovingWithUnpaidPayment =
@@ -463,7 +466,11 @@ function EditModal({ booking, onClose, onSave }) {
     try {
       const payload = { ...form };
       if (!payload.status) delete payload.status; // no status change
-      if (locCoords) payload.locationCoords = locCoords;
+      if (editedCount) {
+        payload.stopEdits = stopRows
+          .filter((r) => edits[r.key])
+          .map((r) => ({ zoneIndex: r.zoneIndex, oldLabel: r.label, ...edits[r.key] }));
+      }
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
@@ -513,34 +520,57 @@ function EditModal({ booking, onClose, onSave }) {
         )}
         <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Location</label>
-            <div className="mt-1 flex gap-2">
-              <input
-                className="flex-1 min-w-0 border rounded-xl px-3 py-2 text-sm outline-none"
-                value={form.location}
-                onChange={(e) => { setForm({ ...form, location: e.target.value }); setLocCoords(null); }}
-              />
-              <button
-                type="button"
-                onClick={() => setMapOpen(true)}
-                className="px-3 py-2 rounded-xl border border-teal-500 text-teal-700 hover:bg-teal-50 transition-colors text-sm font-semibold whitespace-nowrap"
-              >📍 Map</button>
-            </div>
-            {locCoords && (
-              <p className="mt-1 text-xs text-teal-700">Pin set from the map — the trip's destination zone moves here when you save.</p>
+            <p className="block text-sm font-medium text-gray-700">
+              Locations{stopRows.length > 1 && <span className="ml-1 text-xs font-normal text-gray-400">({stopRows.length} stops)</span>}
+            </p>
+            {stopRows.length === 0 ? (
+              <p className="mt-1 text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-xl p-3">
+                This booking has no destination or extra stops to edit. Pickup and dropoff can't be changed here.
+              </p>
+            ) : (
+              <ul className="mt-1 space-y-2">
+                {stopRows.map((r) => {
+                  const e = edits[r.key];
+                  return (
+                    <li key={r.key} className={`flex items-start gap-2 border rounded-xl px-3 py-2 ${e ? "border-teal-300 bg-teal-50/50" : "border-gray-200 bg-gray-50"}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                          {r.isDestination ? "Destination" : "Stop"}
+                        </p>
+                        <p className="text-sm text-gray-800 break-words">{e ? e.address : (r.label || "—")}</p>
+                        {e && <p className="text-xs text-gray-400 break-words">was: {r.label || "—"}</p>}
+                      </div>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <button type="button" onClick={() => setPickingKey(r.key)}
+                          className="px-3 py-1.5 rounded-xl border border-teal-500 text-teal-700 hover:bg-teal-50 transition-colors text-xs font-semibold whitespace-nowrap">
+                          📍 {e ? "Change" : "Move on map"}
+                        </button>
+                        {e && (
+                          <button type="button" onClick={() => setEdits(({ [r.key]: _, ...rest }) => rest)}
+                            className="text-xs text-gray-500 hover:underline">Undo</button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {editedCount > 0 && (
+              <p className="mt-1 text-xs text-teal-700">
+                {editedCount === 1 ? "1 stop" : `${editedCount} stops`} moved — the trip's geofence zone{editedCount === 1 ? "" : "s"} update when you save.
+              </p>
             )}
           </div>
           <StoreLocationMapPicker
-            isOpen={mapOpen}
-            onClose={() => setMapOpen(false)}
+            isOpen={!!pickingRow}
+            onClose={() => setPickingKey(null)}
             onConfirm={({ address, lat, lng }) => {
-              setForm((f) => ({ ...f, location: address }));
-              setLocCoords({ address, lat, lng });
-              setMapOpen(false);
+              setEdits((prev) => ({ ...prev, [pickingKey]: { address, lat, lng } }));
+              setPickingKey(null);
             }}
-            initialLabel={form.location}
-            initialCoords={pickerCoords}
-            title="📍 Pick Location"
+            initialLabel={pickingRow ? (edits[pickingRow.key]?.address || pickingRow.label || "") : ""}
+            initialCoords={pickerCoords ? { lat: pickerCoords.lat, lng: pickerCoords.lng } : null}
+            title={pickingRow?.isDestination ? "📍 Move Destination" : "📍 Move Stop"}
             subtitle="Search, click the map, or drag the pin"
           />
           <LocationMapPreview stops={previewStops} title={`${booking.customerName || "Booking"} — ${booking.vehicleName || ""}`} />
