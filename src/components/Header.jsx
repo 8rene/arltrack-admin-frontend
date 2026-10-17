@@ -12,6 +12,19 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 
+const API_URL = process.env.REACT_APP_API_URL;
+
+// Mark-read / delete go through the backend (admin SDK, scoped to the caller's own
+// notifications) so they don't depend on the Firestore client rules. Reads stay on the
+// live Firestore listener below.
+async function notifApi(method, path, token) {
+  const res = await fetch(`${API_URL}/api/notifications${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
 /* ── Icons ── */
 const BellIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-arl-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -94,27 +107,34 @@ const META_BY_TYPE = {
 /* ── Notification Row ── */
 function NotifRow({ n, onOpen, onDelete }) {
   const meta = META_BY_TYPE[n.type] || { bg: "bg-gray-100", emoji: "🔔", title: n.title || "Notification" };
+  const unread = !n.isRead;
 
   return (
-    <div className="flex items-start gap-3 px-5 py-3.5 hover:bg-teal-50 transition-colors group">
+    <div className={`flex items-start gap-2 pl-3 pr-4 py-3.5 hover:bg-teal-50 transition-colors ${unread ? "bg-teal-50/60" : "bg-white"}`}>
+      {/* unread dot (blank spacer when read so rows stay aligned) */}
+      <span
+        className={`w-2 h-2 rounded-full shrink-0 mt-4 ${unread ? "bg-teal-500" : "bg-transparent"}`}
+        title={unread ? "Unread" : "Read"}
+      />
       <button
         onClick={() => onOpen(n)}
         className="flex items-start gap-3 flex-1 min-w-0 text-left"
       >
-        <div className={`w-9 h-9 rounded-full ${meta.bg} flex items-center justify-center shrink-0 mt-0.5 text-base`}>
+        <div className={`w-9 h-9 rounded-full ${meta.bg} flex items-center justify-center shrink-0 mt-0.5 text-base ${unread ? "" : "opacity-60"}`}>
           {meta.emoji}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-gray-800 leading-snug">{meta.title}</p>
-          <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{n.message}</p>
+          <p className={`text-sm leading-snug ${unread ? "font-semibold text-gray-800" : "font-medium text-gray-500"}`}>{meta.title}</p>
+          <p className={`text-xs mt-0.5 leading-relaxed ${unread ? "text-gray-600" : "text-gray-400"}`}>{n.message}</p>
           <p className="text-xs text-gray-400 mt-1">{timeAgo(n.createdAt)}</p>
         </div>
       </button>
 
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(n.id); }}
-        className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 p-1 shrink-0"
-        title="Dismiss"
+        className="text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full p-1.5 shrink-0 transition-colors"
+        title="Delete notification"
+        aria-label="Delete notification"
       >
         <XIcon />
       </button>
@@ -123,21 +143,66 @@ function NotifRow({ n, onOpen, onDelete }) {
 }
 
 /* ── Notification Dropdown ── */
-function NotificationDropdown({ notifications, onOpen, onDelete }) {
+const EMPTY_TEXT = { all: "No notifications", unread: "No unread notifications", read: "No read notifications" };
+
+function NotificationDropdown({ notifications, tab, onTab, error, onOpen, onDelete, onMarkAllRead, onClear }) {
+  const unread = notifications.filter((n) => !n.isRead);
+  const read   = notifications.filter((n) => n.isRead);
+  const shown  = tab === "unread" ? unread : tab === "read" ? read : notifications;
+
+  const tabs = [
+    { key: "all",    label: "All",    count: notifications.length },
+    { key: "unread", label: "Unread", count: unread.length },
+    { key: "read",   label: "Read",   count: read.length },
+  ];
+
   return (
     <div className="absolute right-0 top-full mt-2 w-96 bg-white rounded-2xl shadow-card border z-50 overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
-        <span className="font-semibold text-gray-800 text-sm">Notifications</span>
+      <div className="px-5 pt-3 border-b bg-gray-50">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-gray-800 text-sm flex items-center gap-2">
+            Notifications
+            <span className="text-[11px] font-semibold text-gray-500 bg-gray-200 rounded-full px-2 py-0.5">{notifications.length}</span>
+          </span>
+          <div className="flex items-center gap-3">
+            {unread.length > 0 && (
+              <button onClick={onMarkAllRead} className="text-xs font-semibold text-teal-600 hover:text-teal-700">
+                Mark all read
+              </button>
+            )}
+            {tab !== "unread" && shown.length > 0 && (
+              <button onClick={() => onClear(tab === "read" ? "read" : "all")} className="text-xs font-semibold text-red-500 hover:text-red-600">
+                {tab === "read" ? "Clear read" : "Clear all"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-1 mt-2">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => onTab(t.key)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors ${
+                tab === t.key ? "text-teal-700 border-teal-500" : "text-gray-400 border-transparent hover:text-gray-600"
+              }`}
+            >
+              {t.label} <span className="ml-0.5">{t.count}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
+      {error && <p className="px-5 py-2 text-xs text-red-600 bg-red-50 border-b border-red-100">{error}</p>}
+
       <div className="max-h-96 overflow-y-auto divide-y divide-gray-50">
-        {notifications.length === 0 ? (
+        {shown.length === 0 ? (
           <div className="py-10 flex flex-col items-center gap-2 text-gray-400">
             <BellIcon />
-            <p className="text-sm">No new notifications</p>
+            <p className="text-sm">{EMPTY_TEXT[tab]}</p>
           </div>
         ) : (
-          notifications.map((n) => (
+          shown.map((n) => (
             <NotifRow key={n.id} n={n} onOpen={onOpen} onDelete={onDelete} />
           ))
         )}
@@ -157,12 +222,14 @@ export default function Header({ title = "Dashboard" }) {
   const navigate = useNavigate();
   const [notifOpen, setNotifOpen]         = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [notifTab, setNotifTab]             = useState("all"); // "all" | "unread" | "read"
+  const [notifError, setNotifError]         = useState("");
   // Sourced from AuthContext (backed by localStorage under the hood) rather
   // than reading localStorage directly here — that used to be a one-time
   // read on mount, so a username/profile edit never showed up until the
   // next full login. AuthContext's `user` updates live via updateUser(),
   // so this now re-renders immediately when a profile edit changes it.
-  const { user } = useAuth();
+  const { user, getToken } = useAuth();
 
   const notifRef = useRef(null);
 
@@ -215,18 +282,31 @@ export default function Header({ title = "Dashboard" }) {
   const unreadCount = notifications.filter((n) => !n.isRead).length;
   const hasNew      = unreadCount > 0;
 
-  const handleBellClick = () => {
-    const opening = !notifOpen;
-    setNotifOpen(opening);
-    if (opening) {
-      // Mark all currently loaded notifications as read IN FIRESTORE, not
-      // localStorage — so the badge state is the same on every device/
-      // browser this admin logs into, not just this one.
-      notifications.forEach((n) => {
-        if (!n.isRead) {
-          updateDoc(doc(db, "notifications", n.id), { isRead: true }).catch(() => {});
-        }
-      });
+  // Opening the bell no longer marks everything read — that made every
+  // notification look "read" the instant it was opened, so there was no way to
+  // tell new from old. A notification is marked read when it's clicked (see
+  // handleOpen), or all at once with "Mark all read". Read state lives in
+  // Firestore, so it's the same on every device this account logs into.
+  const handleBellClick = () => setNotifOpen((v) => !v);
+
+  const showNotifError = (msg) => {
+    setNotifError(msg);
+    setTimeout(() => setNotifError(""), 4000);
+  };
+
+  // Backend first; if it can't be reached, fall back to writing Firestore directly
+  // from the browser. Only if both fail does the person see an error.
+  const markRead = async (n) => {
+    if (n.isRead) return;
+    try { await notifApi("PATCH", `/${n.id}/read`, getToken()); }
+    catch { updateDoc(doc(db, "notifications", n.id), { isRead: true }).catch(() => {}); }
+  };
+
+  const handleMarkAllRead = async () => {
+    try { await notifApi("POST", "/read-all", getToken()); }
+    catch {
+      try { await Promise.all(notifications.filter((n) => !n.isRead).map((n) => updateDoc(doc(db, "notifications", n.id), { isRead: true }))); }
+      catch { showNotifError("Couldn't mark notifications as read. Try again."); }
     }
   };
 
@@ -236,6 +316,7 @@ export default function Header({ title = "Dashboard" }) {
   // router state (location.state.selectCarId) — reuse that instead of
   // adding a second, redundant way to do the same thing.
   const handleOpen = (n) => {
+    markRead(n);
     setNotifOpen(false);
     // Drivers can't open /bookings, /users, /refund-requests etc., so those
     // links bounced them to the Dashboard. Send them where they can act:
@@ -273,8 +354,25 @@ export default function Header({ title = "Dashboard" }) {
     }
   };
 
-  const handleDelete = (notifID) => {
-    deleteDoc(doc(db, "notifications", notifID)).catch(() => {});
+  const handleDelete = async (notifID) => {
+    try { await notifApi("DELETE", `/${notifID}`, getToken()); }
+    catch {
+      try { await deleteDoc(doc(db, "notifications", notifID)); }
+      catch { showNotifError("Couldn't delete that notification. Try again."); }
+    }
+  };
+
+  // scope "all" clears every notification of this account; "read" only the ones already read.
+  const handleClear = async (scope) => {
+    const targets = scope === "read" ? notifications.filter((n) => n.isRead) : notifications;
+    if (targets.length === 0) return;
+    const what = scope === "read" ? "read notification" : "notification";
+    if (!window.confirm(`Delete ${targets.length} ${what}${targets.length === 1 ? "" : "s"}? This can't be undone.`)) return;
+    try { await notifApi("DELETE", `?scope=${scope}`, getToken()); }
+    catch {
+      try { await Promise.all(targets.map((n) => deleteDoc(doc(db, "notifications", n.id)))); }
+      catch { showNotifError("Couldn't clear notifications. Try again."); }
+    }
   };
 
   return (
@@ -299,13 +397,10 @@ export default function Header({ title = "Dashboard" }) {
               <BellIcon />
               {hasNew && (
                 <>
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full animate-ping" />
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
-                  {unreadCount > 1 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
-                      {unreadCount > 9 ? "9+" : unreadCount}
-                    </span>
-                  )}
+                  <span className="absolute -top-1 -right-1 min-w-[1rem] h-4 rounded-full bg-red-500 animate-ping opacity-60" />
+                  <span className="absolute -top-1 -right-1 min-w-[1rem] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
                 </>
               )}
             </button>
@@ -313,8 +408,13 @@ export default function Header({ title = "Dashboard" }) {
             {notifOpen && (
               <NotificationDropdown
                 notifications={notifications}
+                tab={notifTab}
+                onTab={setNotifTab}
+                error={notifError}
                 onOpen={handleOpen}
                 onDelete={handleDelete}
+                onMarkAllRead={handleMarkAllRead}
+                onClear={handleClear}
               />
             )}
           </div>

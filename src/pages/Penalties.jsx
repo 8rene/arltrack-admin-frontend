@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
 import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
+import { useCurrency } from "../context/CurrencyContext";
 
 const API_URL = process.env.REACT_APP_API_URL;
 const PAGE_SIZE = 15;
@@ -114,10 +115,10 @@ const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
 function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
   const active = sortKeyState === key;
   return (
-    <th className={`px-4 py-3 text-left font-semibold select-none ${className}`}>
+    <th className={`px-4 py-3 text-left select-none ${className}`}>
       <button
         onClick={() => onSort(key)}
-        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs px-1.5 py-1 -mx-1.5 rounded-lg transition-colors ${
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
           active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
         }`}
       >
@@ -149,47 +150,49 @@ const STAT_FILTERS = {
 };
 
 // Badge for the computed `settlementStatus` field (Pending / Partially
-// Paid / Paid / Voided / Waived) — this is what every row displays now.
-// The raw lifecycle status (Confirmed/Voided/Waived) still drives which
-// action buttons show (see the Actions column below), it's just not
-// shown as its own badge.
-const SETTLEMENT_BADGE = {
-  Pending:          "bg-red-50 text-red-600 border border-red-200",
-  "Partially Paid": "bg-amber-50 text-amber-700 border border-amber-200",
-  Paid:             "bg-green-50 text-green-700 border border-green-200",
-  Voided:           "bg-gray-100 text-gray-500 border border-gray-200",
-  Waived:           "bg-purple-50 text-purple-600 border border-purple-200",
+// Paid / Paid / Voided / Waived) — same dot + pill look as Payments.jsx's
+// StatusBadge. The raw lifecycle status (Confirmed/Voided/Waived) still
+// drives which actions the View modal offers; it just isn't its own badge.
+const SETTLEMENT_DOT = {
+  Pending:          "bg-red-500",
+  "Partially Paid": "bg-orange-400",
+  Paid:             "bg-green-500",
+  Voided:           "bg-gray-400",
+  Waived:           "bg-purple-500",
+};
+const SETTLEMENT_BG = {
+  Pending:          "bg-red-50 border border-red-200",
+  "Partially Paid": "bg-orange-50 border border-orange-200",
+  Paid:             "bg-green-50 border border-green-200",
+  Voided:           "bg-gray-100 border border-gray-200",
+  Waived:           "bg-purple-50 border border-purple-200",
 };
 
 function SettlementBadge({ status }) {
+  const dot = SETTLEMENT_DOT[status] || "bg-gray-400";
+  const bg  = SETTLEMENT_BG[status]  || "bg-gray-50 border border-gray-200";
   return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${SETTLEMENT_BADGE[status] || "bg-gray-100 text-gray-600"}`}>
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black whitespace-nowrap ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
       {status || "—"}
     </span>
   );
 }
 
+// Same card as Payments.jsx's StatCard (clickable filter shortcut).
 function StatCard({ icon, value, label, color, onClick, active }) {
-  const colors = { gray: "text-gray-600", red: "text-red-500", green: "text-green-600", purple: "text-purple-600" };
   const bgColors = { gray: "bg-gray-100 text-gray-600", red: "bg-red-50 text-red-500", green: "bg-green-50 text-green-600", purple: "bg-purple-50 text-purple-600" };
-  const activeRing = {
-    gray: "border-gray-300 ring-2 ring-gray-100",
-    red: "border-red-300 ring-2 ring-red-100",
-    green: "border-green-300 ring-2 ring-green-100",
-    purple: "border-purple-300 ring-2 ring-purple-100",
-  };
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={!!active}
-      className={`w-full text-left bg-white rounded-2xl border shadow-soft p-4 flex items-center gap-3 transition-all cursor-pointer hover:border-gray-200 hover:shadow-md ${
-        active ? activeRing[color] : "border-gray-100"
-      }`}
+      title={active ? "Click to clear this filter" : `Filter by ${label}`}
+      className={`bg-white rounded-2xl shadow-soft p-4 flex items-center gap-4 text-left w-full transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-arl-light ${active ? "ring-2 ring-arl-light" : ""}`}
     >
-      <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${bgColors[color]}`}>{icon}</div>
+      <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>{icon}</div>
       <div>
-        <div className={`text-2xl font-bold ${colors[color]}`}>{value}</div>
+        <div className="text-xl font-bold text-arl-dark">{value}</div>
         <div className="text-xs text-gray-500">{label}</div>
       </div>
     </button>
@@ -592,7 +595,124 @@ function DetailRow({ label, value }) {
   );
 }
 
-function PenaltyDetailsModal({ penalty: p, onClose, onViewBooking }) {
+// ─── BOOKING SIDE PANEL ──────────────────────────────────────────────────
+//
+// Read-only summary of the penalty's booking, shown beside the penalty
+// details so staff don't have to leave this page. There is no single-booking
+// endpoint, so it reads the same list Bookings.jsx does (/api/bookings?status=all)
+// and picks the booking out of it; the list is cached for 30s so toggling the
+// panel on several penalties in a row doesn't re-download everything.
+let bookingsCache = { at: 0, data: null };
+
+const fmtBookingDate = (val) => {
+  const d = toDate(val);
+  return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : null;
+};
+const BOOKING_DOT = { "to pay": "bg-orange-400", upcoming: "bg-yellow-400", ongoing: "bg-blue-500", completed: "bg-green-500", cancelled: "bg-red-500", stolen: "bg-red-700" };
+const BOOKING_BG  = { "to pay": "bg-orange-50 border border-orange-200", upcoming: "bg-yellow-50 border border-yellow-200", ongoing: "bg-blue-50 border border-blue-200", completed: "bg-green-50 border border-green-200", cancelled: "bg-red-50 border border-red-200", stolen: "bg-red-100 border border-red-300" };
+
+function BookingSidePanel({ bookingID, token, fmt, onClose, onOpenFull }) {
+  const [booking, setBooking] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setError(""); setBooking(null);
+      try {
+        if (!bookingsCache.data || Date.now() - bookingsCache.at > 30000) {
+          const res = await fetch(`${API_URL}/api/bookings?status=all`, { headers: { Authorization: `Bearer ${token}` } });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.message || "Failed to load booking.");
+          bookingsCache = { at: Date.now(), data: json.data || [] };
+        }
+        const found = bookingsCache.data.find((b) => (b.bookingID || b.id) === bookingID || b.id === bookingID);
+        if (cancelled) return;
+        if (found) setBooking(found);
+        else setError("Booking not found — it may have been archived or deleted.");
+      } catch (e) {
+        if (!cancelled) setError(e.message || "Failed to load booking.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bookingID, token]);
+
+  const b = booking;
+  const st = (b?.status || "").toLowerCase();
+  const deposit = !b ? null
+    : b.paymentStatus === "Refunded" && b.securityDeposit > 0 ? `${fmt(b.securityDeposit)} · Refunded`
+    : b.deposit ? (b.deposit.status === "Waived" ? "Waived" : `${fmt(b.deposit.amount)} · ${b.deposit.status || "Held"}`)
+    : Number(b.securityDeposit) > 0 ? `${fmt(b.securityDeposit)} · Awaiting payment`
+    : "Not collected";
+
+  return (
+    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-bold text-arl-dark">Booking</h3>
+          <p className="text-xs text-gray-400 font-mono">{bookingID}</p>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600" title="Hide booking"><IconX /></button>
+      </div>
+
+      {loading && (
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />)}
+        </div>
+      )}
+      {!loading && error && <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>}
+
+      {b && (
+        <>
+          <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_BG[st] || "bg-gray-50 border border-gray-200"}`}>
+            <span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_DOT[st] || "bg-gray-400"}`} />
+            {(b.status || "—").replace("_", " ")}
+          </span>
+
+          <div className="rounded-xl border border-gray-100 p-3 space-y-0.5">
+            <DetailRow label="Customer" value={b.customerName} />
+            <DetailRow label="Phone" value={b.phone} />
+            <DetailRow label="Vehicle" value={b.vehicleName} />
+            <DetailRow label="Service type" value={b.serviceTypeName} />
+            <DetailRow label="Driving" value={b.modeOfDriving} />
+            <DetailRow label="Location" value={b.location} />
+          </div>
+
+          <div className="rounded-xl border border-gray-100 p-3 space-y-0.5">
+            <DetailRow label="Start" value={fmtBookingDate(b.startDateTime)} />
+            <DetailRow label="End" value={fmtBookingDate(b.endDateTime)} />
+            <DetailRow label="Duration" value={b.totalDays != null ? `${b.totalDays} day${b.totalDays > 1 ? "s" : ""}` : null} />
+            <DetailRow label="Created" value={fmtBookingDate(b.createdAt)} />
+          </div>
+
+          <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 space-y-0.5">
+            <DetailRow label="Rental fee" value={fmt(b.rentalFee)} />
+            <DetailRow label="Service fee" value={fmt(b.serviceFee)} />
+            {Number(b.gatewayFee) > 0 && <DetailRow label="Gateway fee" value={fmt(b.gatewayFee)} />}
+            <DetailRow label="Extra fee" value={fmt(b.extraFee)} />
+            {Number(b.driversFee) > 0 && <DetailRow label="Driver's fee" value={fmt(b.driversFee)} />}
+            <DetailRow label="Security deposit" value={deposit} />
+            <DetailRow label="Total fee" value={<span className="font-semibold">{fmt(b.totalFee)}</span>} />
+            <DetailRow label="Payment" value={b.paymentMethod} />
+          </div>
+        </>
+      )}
+
+      <div className="flex justify-end">
+        <button onClick={onOpenFull} className="text-xs font-semibold text-teal-600 hover:text-teal-700">
+          Open in Bookings page →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClose, onViewBookingPage, onMarkPaid, onWaive, onVoid }) {
+  const { fmt } = useCurrency();
+  const [showBooking, setShowBooking] = useState(false);
   const fmtDate = (v) => {
     const d = toDate(v);
     return d ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : null;
@@ -601,88 +721,139 @@ function PenaltyDetailsModal({ penalty: p, onClose, onViewBooking }) {
   const isLateFee = p.lateMinutes !== null && p.lateMinutes !== undefined;
   const isOverridden = p.amount !== p.computedAmount;
 
+  // Same rules the table's Actions column used to apply:
+  //  - in-store payment: Confirmed, not fully paid, and a Supervisor/Admin/Owner
+  //  - Waive / Void: Confirmed and nothing paid yet (the server refuses both once
+  //    money has been paid — reversing money needs its own flow, not a status flip)
+  const isConfirmed  = p.status === "Confirmed";
+  const canPayInStore = isConfirmed && p.settlementStatus !== "Paid" && canRecordInStore;
+  const canWaiveVoid  = isConfirmed && !(p.paidAmount > 0);
+  const hasActions    = canPayInStore || canWaiveVoid;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
+      <div className="relative flex flex-col md:flex-row items-stretch justify-center gap-3 w-full max-h-[90vh] overflow-y-auto md:overflow-visible">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-arl-dark">Penalty Details</h3>
+              <p className="text-xs text-gray-400">Booking {p.bookingID || "—"}</p>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <SettlementBadge status={p.settlementStatus} />
+            <span className="text-[11px] text-gray-400">Lifecycle: {p.status}</span>
+          </div>
+
+          {/* Charges */}
           <div>
-            <h3 className="font-bold text-arl-dark">Penalty Details</h3>
-            <p className="text-xs text-gray-400">Booking {p.bookingID || "—"}</p>
+            <p className="text-xs font-semibold text-gray-500 mb-1.5">Charges</p>
+            <div className="rounded-xl border border-gray-100 divide-y divide-gray-50">
+              {(p.lineItems || []).map((li, i) => (
+                <div key={i} className="flex justify-between px-3 py-2 text-xs">
+                  <span className="text-gray-600">{li.description}</span>
+                  <span className="text-gray-700 font-medium">{fmt(li.amount)}</span>
+                </div>
+              ))}
+            </div>
+            {isLateFee && (
+              <p className="text-[11px] text-gray-400 mt-1.5">
+                Late fee: {p.lateMinutes} min late (after {p.graceMinutes}-min grace) at {fmt(p.rateAtCreation)}/hr.
+              </p>
+            )}
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <SettlementBadge status={p.settlementStatus} />
-          <span className="text-[11px] text-gray-400">Lifecycle: {p.status}</span>
-        </div>
+          {/* Amount + payment status */}
+          <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 space-y-0.5">
+            <DetailRow label="Computed total" value={fmt(p.computedAmount)} />
+            <DetailRow label="Amount charged" value={fmt(p.amount)} />
+            {isOverridden && <DetailRow label="Override reason" value={p.overrideReason || "—"} />}
+            <DetailRow label="Paid so far" value={fmt(p.paidAmount)} />
+            {p.gatewayFeeRate != null && p.gatewayFeeRate > 0 && (
+              <DetailRow label="Online payment fee" value={`${p.gatewayFeeRate}% on top, only if paid online`} />
+            )}
+            {p.gatewayFeePaid > 0 && <DetailRow label="Online fee paid" value={fmt(p.gatewayFeePaid)} />}
+            {owed > 0 && p.status === "Confirmed" && (
+              <DetailRow label="Still owed" value={<span className="text-red-600 font-semibold">{fmt(owed)}</span>} />
+            )}
+            <DetailRow label="Payment mode" value={p.paymentMethod || null} />
+            <DetailRow label="Reference #" value={p.referenceNumber || null} />
+            <DetailRow label="Paid at" value={fmtDate(p.paidAt)} />
+          </div>
 
-        {/* Charges */}
-        <div>
-          <p className="text-xs font-semibold text-gray-500 mb-1.5">Charges</p>
-          <div className="rounded-xl border border-gray-100 divide-y divide-gray-50">
-            {(p.lineItems || []).map((li, i) => (
-              <div key={i} className="flex justify-between px-3 py-2 text-xs">
-                <span className="text-gray-600">{li.description}</span>
-                <span className="text-gray-700 font-medium">{peso(li.amount)}</span>
+          {/* Every payment made on this penalty (each instalment: how, ref, who) — the penalty itself only keeps the running total. */}
+          <PaymentEntriesPanel query={{ penaltyID: p.penaltyID }} title="Payments on this penalty" />
+
+          {(p.status === "Voided" || p.status === "Waived") && p.statusReason && (
+            <div className="rounded-xl bg-purple-50 border border-purple-100 p-3">
+              <p className="text-xs font-semibold text-purple-700">{p.status} — reason</p>
+              <p className="text-xs text-purple-600 mt-0.5">{p.statusReason}</p>
+            </div>
+          )}
+
+          {/* Who / when */}
+          <div className="rounded-xl border border-gray-100 p-3 space-y-0.5">
+            <DetailRow label="Customer" value={p.customerName} />
+            <DetailRow label="Car" value={p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName} (${p.plateNumber})` : p.plateNumber} />
+            <DetailRow label="Created" value={fmtDate(p.createdAt)} />
+            <DetailRow label="Confirmed" value={fmtDate(p.confirmedAt)} />
+          </div>
+
+          {/* Actions — moved here from the table. */}
+          {hasActions && (
+            <div className="rounded-xl border border-gray-100 p-3 space-y-2">
+              <p className="text-xs font-semibold text-gray-500">Actions</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {canPayInStore && (
+                  <button onClick={onMarkPaid} disabled={busy}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-40 font-medium">
+                    In-store payment
+                  </button>
+                )}
+                {canWaiveVoid && (
+                  <>
+                    <button onClick={onWaive} disabled={busy}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-purple-300 hover:text-purple-600 disabled:opacity-40 font-medium">
+                      Waive
+                    </button>
+                    <button onClick={onVoid} disabled={busy}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-red-300 hover:text-red-600 disabled:opacity-40 font-medium">
+                      Void
+                    </button>
+                  </>
+                )}
               </div>
-            ))}
-          </div>
-          {isLateFee && (
-            <p className="text-[11px] text-gray-400 mt-1.5">
-              Late fee: {p.lateMinutes} min late (after {p.graceMinutes}-min grace) at ₱{p.rateAtCreation}/hr.
-            </p>
+              {isConfirmed && p.paidAmount > 0 && (
+                <p className="text-[11px] text-gray-400">Waive and Void aren't available once a payment has been recorded.</p>
+              )}
+            </div>
           )}
-        </div>
 
-        {/* Amount + payment status */}
-        <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 space-y-0.5">
-          <DetailRow label="Computed total" value={peso(p.computedAmount)} />
-          <DetailRow label="Amount charged" value={peso(p.amount)} />
-          {isOverridden && <DetailRow label="Override reason" value={p.overrideReason || "—"} />}
-          <DetailRow label="Paid so far" value={peso(p.paidAmount)} />
-          {p.gatewayFeeRate != null && p.gatewayFeeRate > 0 && (
-            <DetailRow label="Online payment fee" value={`${p.gatewayFeeRate}% on top, only if paid online`} />
-          )}
-          {p.gatewayFeePaid > 0 && <DetailRow label="Online fee paid" value={peso(p.gatewayFeePaid)} />}
-          {owed > 0 && p.status === "Confirmed" && (
-            <DetailRow label="Still owed" value={<span className="text-red-600 font-semibold">{peso(owed)}</span>} />
-          )}
-          <DetailRow label="Payment mode" value={p.paymentMethod || null} />
-          <DetailRow label="Reference #" value={p.referenceNumber || null} />
-          <DetailRow label="Paid at" value={fmtDate(p.paidAt)} />
-        </div>
-
-        {/* Every payment made on this penalty (each instalment: how, ref, who) — the penalty itself only keeps the running total. */}
-        <PaymentEntriesPanel query={{ penaltyID: p.penaltyID }} title="Payments on this penalty" />
-
-        {(p.status === "Voided" || p.status === "Waived") && p.statusReason && (
-          <div className="rounded-xl bg-purple-50 border border-purple-100 p-3">
-            <p className="text-xs font-semibold text-purple-700">{p.status} — reason</p>
-            <p className="text-xs text-purple-600 mt-0.5">{p.statusReason}</p>
-          </div>
-        )}
-
-        {/* Who / when */}
-        <div className="rounded-xl border border-gray-100 p-3 space-y-0.5">
-          <DetailRow label="Customer" value={p.customerName} />
-          <DetailRow label="Car" value={p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName} (${p.plateNumber})` : p.plateNumber} />
-          <DetailRow label="Created" value={fmtDate(p.createdAt)} />
-          <DetailRow label="Confirmed" value={fmtDate(p.confirmedAt)} />
-        </div>
-
-        <div className="flex justify-end gap-2 pt-1">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
-            Close
-          </button>
-          {p.bookingID && (
-            <button onClick={onViewBooking}
-              className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700">
-              View Booking →
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
+              Close
             </button>
-          )}
+            {p.bookingID && (
+              <button onClick={() => setShowBooking((v) => !v)}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700">
+                {showBooking ? "Hide Booking" : "View Booking"}
+              </button>
+            )}
+          </div>
         </div>
+
+        {showBooking && p.bookingID && (
+          <BookingSidePanel
+            bookingID={p.bookingID}
+            token={token}
+            fmt={fmt}
+            onClose={() => setShowBooking(false)}
+            onOpenFull={onViewBookingPage}
+          />
+        )}
       </div>
     </div>
   );
@@ -714,6 +885,7 @@ export default function Penalties() {
   const [markPaidModal, setMarkPaidModal] = useState(null); // the penalty record being paid off
   const [detailsModal, setDetailsModal] = useState(null); // the penalty record being viewed in detail
   const { effectiveRole } = useAuth();
+  const { fmt } = useCurrency();
   const canRecordInStore = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
 
   // Deep-link from Bookings.jsx's "Note a Penalty" button: opens the
@@ -826,7 +998,7 @@ export default function Penalties() {
         case "charges":  return text((a.lineItems || []).map((i) => i.description).join(", "), (b.lineItems || []).map((i) => i.description).join(", "));
         case "booking":  return text(a.bookingID, b.bookingID);
         case "customer": return text(a.customerName, b.customerName);
-        case "car":      return text(`${a.brandName} ${a.modelName} ${a.plateNumber}`, `${b.brandName} ${b.modelName} ${b.plateNumber}`);
+        case "car":      return text(`${a.brandName} ${a.modelName}`, `${b.brandName} ${b.modelName}`);
         case "amount":   return ((a.amount || 0) - (b.amount || 0)) * dir;
         case "paid":     return ((a.paidAmount || 0) - (b.paidAmount || 0)) * dir;
         case "status":   return ((SETTLEMENT_RANK[a.settlementStatus] ?? 99) - (SETTLEMENT_RANK[b.settlementStatus] ?? 99)) * dir;
@@ -903,8 +1075,14 @@ export default function Penalties() {
       {detailsModal && (
         <PenaltyDetailsModal
           penalty={detailsModal}
+          token={token}
+          canRecordInStore={canRecordInStore}
+          busy={busyId === detailsModal.id}
           onClose={() => setDetailsModal(null)}
-          onViewBooking={() => { setDetailsModal(null); viewBooking(detailsModal.bookingID); }}
+          onViewBookingPage={() => { setDetailsModal(null); viewBooking(detailsModal.bookingID); }}
+          onMarkPaid={() => { setMarkPaidModal(detailsModal); setDetailsModal(null); }}
+          onWaive={() => { setReasonModal({ penaltyID: detailsModal.id, action: "Waived" }); setDetailsModal(null); }}
+          onVoid={() => { setReasonModal({ penaltyID: detailsModal.id, action: "Voided" }); setDetailsModal(null); }}
         />
       )}
 
@@ -914,19 +1092,10 @@ export default function Penalties() {
           <h1 className="text-xl font-bold text-arl-dark">Penalties</h1>
           <p className="text-xs text-gray-400 mt-0.5">{loading ? "Loading…" : `${records.length} penalties`}</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <input type="text" placeholder="Search customer, plate, booking, type…"
-            value={search} onChange={(e) => setSearch(e.target.value)}
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light w-64" />
-          <button onClick={fetchAll} disabled={loading}
-            className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
-            ↺
-          </button>
-          <button onClick={() => setShowCreate(true)}
-            className="px-3 py-2 text-sm rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700 flex items-center gap-1.5">
-            <IconPlus className="w-4 h-4" /> New Penalty
-          </button>
-        </div>
+        <button onClick={() => setShowCreate(true)}
+          className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700 flex items-center gap-1.5 self-start sm:self-auto">
+          <IconPlus className="w-4 h-4" /> New Penalty
+        </button>
       </div>
 
       {/* Stat Cards */}
@@ -944,19 +1113,31 @@ export default function Penalties() {
         </p>
       )}
 
+      {/* Filter Bar */}
+      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-center">
+        <input type="text" placeholder="Search by customer, booking, charges…"
+          value={search} onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+        <button onClick={fetchAll} disabled={loading}
+          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+          {loading ? "…" : "Refresh"}
+        </button>
+      </div>
+
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
-        <table className="w-full text-sm table-fixed">
-          <colgroup>
-            <col style={{ width: "8%" }} /><col style={{ width: "6%" }} /><col style={{ width: "14%" }} />
-            <col style={{ width: "11%" }} /><col style={{ width: "11%" }} /><col style={{ width: "11%" }} />
-            <col style={{ width: "8%" }} /><col style={{ width: "8%" }} /><col style={{ width: "8%" }} />
-            <col style={{ width: "15%" }} />
-          </colgroup>
+      <div className="bg-white rounded-2xl shadow-soft border border-gray-100">
+        <div className="flex justify-between items-center px-5 py-4 border-b border-gray-100">
+          <h2 className="font-bold text-arl-dark">
+            All Penalty Records{" "}
+            <span className="text-gray-400 text-sm font-normal">({filtered.length} results)</span>
+          </h2>
+        </div>
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[900px]">
           <thead>
-            <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
+            <tr className="bg-gray-50 border-b border-gray-100">
               <SortableTh label="Date"       sortKey="date"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left font-semibold">Time</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Time</th>
               <SortableTh label="Charges"    sortKey="charges"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Booking ID" sortKey="booking"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Customer"   sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -964,12 +1145,12 @@ export default function Penalties() {
               <SortableTh label="Amount"     sortKey="amount"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Paid"       sortKey="paid"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Status"     sortKey="status"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left font-semibold">Actions</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              Array.from({ length: 5 }).map((_, i) => (
+              Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
                   {Array.from({ length: 10 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
@@ -977,71 +1158,44 @@ export default function Penalties() {
                 </tr>
               ))
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={10} className="text-center py-16 text-gray-400 text-sm">No penalties found.</td></tr>
+              <tr><td colSpan={10} className="text-center py-16 text-gray-400 text-sm">
+                {search || activeStatFilter ? "No penalties match your filters." : "No penalties found."}
+              </td></tr>
             ) : paginated.map((p, i) => {
               const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(p);
-              const rowClass = statMatch ? "bg-red-50/40 ring-1 ring-inset ring-red-100" : i % 2 === 1 ? "bg-gray-50/20" : "";
+              const rowClass = statMatch ? "bg-red-50/40 ring-1 ring-inset ring-red-100" : i % 2 === 1 ? "bg-gray-50/30" : "";
+              const chargesText = (p.lineItems || []).map((li) => li.description).join(", ");
               return (
-                <tr key={p.id} className={`border-b border-gray-50 last:border-0 ${rowClass}`}>
+                <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${rowClass}`}>
+                  <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">
+                    {toDate(p.createdAt)?.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                    {toDate(p.createdAt)?.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }) || "—"}
+                  </td>
                   <td className="px-4 py-3 text-xs text-gray-700">
-                    {toDate(p.createdAt)?.toLocaleDateString(undefined, { dateStyle: "medium" }) || "—"}
+                    <div className="max-w-[220px] truncate" title={(p.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>
+                      {chargesText || "—"}
+                    </div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-500">
-                    {toDate(p.createdAt)?.toLocaleTimeString(undefined, { timeStyle: "short" }) || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-700 truncate" title={(p.lineItems || []).map((i) => `${i.description}: ${peso(i.amount)}`).join(", ")}>
-                    {(p.lineItems || []).map((i) => i.description).join(", ") || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-500 font-mono truncate" title={p.bookingID || ""}>
-                    {p.bookingID || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-700 truncate">{p.customerName || "—"}</td>
-                  <td className="px-4 py-3 text-xs text-gray-500 truncate">
+                  <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap">{p.bookingID || "—"}</td>
+                  <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-xs">{p.customerName || "—"}</div></td>
+                  <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
                     {p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName}` : "—"}
-                    <div className="text-[10px] text-gray-400">{p.plateNumber}</div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-700">{peso(p.amount)}</td>
-                  <td className="px-4 py-3 text-xs text-gray-700">{peso(p.paidAmount)}</td>
+                  <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(p.amount)}</td>
+                  <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(p.paidAmount)}</td>
                   <td className="px-4 py-3"><SettlementBadge status={p.settlementStatus} /></td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {p.status === "Confirmed" && (
-                        <>
-                          {p.settlementStatus !== "Paid" && canRecordInStore && (
-                            <button onClick={() => setMarkPaidModal(p)} disabled={busyId === p.id}
-                              className="text-xs px-2.5 py-1 rounded-lg bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-40 font-medium">
-                              In-store payment
-                            </button>
-                          )}
-                          {/* Void/Waive both refuse once anything's been paid against a
-                              penalty (see voidOrWaivePenalty) — once partially or fully
-                              paid, only the in-store payment stays available; reversing money needs
-                              its own flow, not a status flip. */}
-                          {!(p.paidAmount > 0) && (
-                            <>
-                              <button onClick={() => setReasonModal({ penaltyID: p.id, action: "Waived" })} disabled={busyId === p.id}
-                                className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-purple-300 hover:text-purple-600 disabled:opacity-40 font-medium">
-                                {busyId === p.id ? "…" : "Waive"}
-                              </button>
-                              <button onClick={() => setReasonModal({ penaltyID: p.id, action: "Voided" })} disabled={busyId === p.id}
-                                className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-red-300 hover:text-red-600 disabled:opacity-40 font-medium">
-                                {busyId === p.id ? "…" : "Void"}
-                              </button>
-                            </>
-                          )}
-                        </>
-                      )}
-                      <button onClick={() => setDetailsModal(p)}
-                        className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors font-medium">
-                        View
-                      </button>
-                    </div>
+                    <button onClick={() => setDetailsModal(p)}
+                      className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        </div>
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
     </div>
