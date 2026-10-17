@@ -191,59 +191,208 @@ const DISCOUNT_BADGE = {
   failed:            { label: "Refund failed",         dot: "bg-red-500",    bg: "bg-red-50 border border-red-200" },
   refunded:          { label: "Refunded",              dot: "bg-green-500",  bg: "bg-green-50 border border-green-200" },
 };
-function DiscountRow({ r, fmt, navigate, showActions, onRetry, retrying, entriesOpen, onToggleEntries }) {
-  const st = r.refund.state;
-  const b = DISCOUNT_BADGE[st];
-  const w = st === "refunded" ? null : fmtWaiting(r);
+const DiscountBadge = ({ state }) => {
+  const b = DISCOUNT_BADGE[state] || DISCOUNT_BADGE.processing;
   return (
-    <tr className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
-      <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
-      <td className="px-5 py-4">
-        {r.bookingID ? (
-          <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)} className="font-medium text-teal-600 hover:text-teal-700 hover:underline" title="Open this booking">{r.bookingID}</button>
-        ) : "—"}
-      </td>
-      <td className="px-5 py-4">
-        <span className="inline-block rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[11px] font-semibold text-purple-700">Discount</span>
-        <p className="text-gray-700 mt-0.5">{r.discountReason || "Staff discount"}</p>
-        <p className="text-xs text-gray-400">{fmt(r.discountAmount)} discount{r.refund.amount !== r.discountAmount ? ` · ${fmt(r.refund.amount)} went back` : ""}</p>
-      </td>
-      <td className="px-5 py-4">
-        <p className="font-semibold text-arl-dark">{fmt(r.refund.amount)}</p>
-        <p className="text-[11px] text-gray-500">{st === "awaiting_handback" || r.refund.via === "in_store" ? "in store" : "via PayMongo"}</p>
-      </td>
-      <td className="px-5 py-4"><span className="text-gray-300">—</span></td>
-      <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.discountAt)} /></td>
-      <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.refund.at)} /></td>
-      <td className="px-5 py-4">
-        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${b.bg}`}>
-          <span className={`w-2 h-2 rounded-full shrink-0 ${b.dot}`} />{b.label}
-        </span>
-        <button type="button" onClick={onToggleEntries} className="mt-1 block text-[11px] font-medium text-teal-700 hover:underline">
-          {entriesOpen ? "Hide money movements" : "Money movements"}
-        </button>
-        {w && <p className={`mt-1 text-[11px] ${w.late ? "font-semibold text-amber-600" : "text-gray-400"}`}>Waiting {w.text}{w.late ? " — worth checking" : ""}</p>}
-        {st === "failed" && r.refund.errorNote && <p className="mt-1 text-[11px] text-red-500 max-w-[200px]">{r.refund.errorNote}</p>}
-      </td>
-      {showActions && (
-        <td className="px-5 py-4 text-right">
-          {st === "failed" ? (
-            <button onClick={onRetry} disabled={retrying}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
-              {retrying ? "…" : `Retry ${fmt(r.refund.amount)}`}
-            </button>
-          ) : st === "awaiting_handback" ? (
-            <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-orange-500 hover:bg-orange-600"
-              title="The hand-back form is on the payment">
-              Record hand-back →
-            </button>
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${b.bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${b.dot}`} />{b.label}
+    </span>
+  );
+};
+
+// ── what the table and the View modal both read ──
+const updatedOf = (r) => (isDiscount(r) ? toDate(r.refund.at) : updatedDate(r));
+// 48-hour policy outcome. Pending: the live preview. Otherwise: what was saved when the request was made.
+const policyOf = (r) => {
+  const pv = r.status === "Pending" ? r.planPreview : null;
+  const tier = pv ? pv.tier : (r.policyTier || (typeof r.returnDeposit === "boolean" ? (r.returnDeposit ? "full" : "late") : null));
+  return { tier, kept: pv ? Number(pv.forfeit) || 0 : Number(r.depositForfeited) || 0, hours: pv ? pv.hoursBeforePickup : null };
+};
+const TIER_LABEL = { full: "Full refund", late: "Under 48h", no_show: "No-show" };
+
+function TypeBadge({ r }) {
+  if (isDiscount(r)) return <span className="inline-block rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">Discount</span>;
+  const { tier } = policyOf(r);
+  if (!tier) return <span className="inline-block rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-semibold text-gray-600">{r.source === "staff" ? "Staff cancel" : "Refund"}</span>;
+  const cls = tier === "full" ? "bg-green-100 text-green-700 border-green-200" : "bg-amber-100 text-amber-700 border-amber-200";
+  return <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${cls}`}>{TIER_LABEL[tier] || "Under 48h"}</span>;
+}
+
+const DateOnly = ({ date }) => { const p = stampParts(date); return p ? <span className="text-sm text-gray-700 whitespace-nowrap">{p.date}</span> : <span className="text-gray-300">—</span>; };
+const TimeOnly = ({ date }) => { const p = stampParts(date); return p ? <span className="text-xs text-gray-500 whitespace-nowrap">{p.time}</span> : <span className="text-gray-300">—</span>; };
+
+// One labelled line in the View modal.
+const Line = ({ label, children }) => (
+  <div className="flex items-start justify-between gap-4 py-1.5 text-sm">
+    <span className="text-gray-500 shrink-0">{label}</span>
+    <span className="text-right text-gray-800 min-w-0 break-words">{children}</span>
+  </div>
+);
+const Block = ({ title, children }) => (
+  <div className="rounded-xl border border-gray-100 p-4">
+    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">{title}</p>
+    {children}
+  </div>
+);
+
+// Everything about one refund / discount refund. The table stays simple; the detail, the money movements and the
+// actions (approve, reject, hand back, retry) all live here.
+function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, busy, onRetry, retrying }) {
+  const disc = isDiscount(r);
+  const pv = !disc && r.status === "Pending" ? r.planPreview : null;
+  const { tier, kept, hours } = disc ? {} : policyOf(r);
+  const w = (disc ? r.refund.state !== "refunded" : r.status === "Approved") ? fmtWaiting(r) : null;
+  const due = disc ? 0 : handbackDue(r);
+  const blocked = !disc && discountBlocksApproval(r);
+  const when = hours !== null && hours !== undefined ? `${Math.max(0, Math.round(hours * 10) / 10)} hours before pickup` : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4 border-b border-gray-100">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{disc ? "Discount refund" : "Refund request"}</p>
+            <h3 className="font-bold text-arl-dark text-lg truncate">{r.customerName || "—"}</h3>
+            <div className="mt-1.5">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+          <Block title="Summary">
+            <Line label="Booking">
+              {r.bookingID ? <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)} className="font-medium text-teal-600 hover:underline">{r.bookingID}</button> : "—"}
+            </Line>
+            <Line label="Type"><TypeBadge r={r} /></Line>
+            <Line label="Amount"><span className="font-semibold">{fmt(pv ? pv.total : disc ? r.refund.amount : r.amount)}</span></Line>
+            <Line label="Requested">{stampParts(toDate(r.createdAt)) ? `${stampParts(toDate(r.createdAt)).date} · ${stampParts(toDate(r.createdAt)).time}` : "—"}</Line>
+            <Line label="Updated">{stampParts(updatedOf(r)) ? `${stampParts(updatedOf(r)).date} · ${stampParts(updatedOf(r)).time}` : "—"}</Line>
+            {w && <Line label="Waiting"><span className={w.late ? "font-semibold text-amber-600" : ""}>{w.text}{w.late ? " — worth checking" : ""}</span></Line>}
+            <Line label={disc ? "Discount reason" : "Reason"}>{disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
+            {!disc && r.notes && <Line label="Notes">{r.notes}</Line>}
+            {!disc && r.status === "Rejected" && r.rejectReason && <Line label="Rejected because"><span className="text-red-600">{r.rejectReason}</span></Line>}
+          </Block>
+
+          {disc ? (
+            <Block title="Discount">
+              <Line label="Discount given">{fmt(r.discountAmount)}</Line>
+              <Line label="Sent back to customer">{fmt(r.refund.amount)} {r.refund.via === "in_store" ? "in store" : "via PayMongo"}</Line>
+              {r.refund.referenceNumber && r.refund.via === "paymongo" && <Line label="PayMongo ref"><span className="font-mono text-xs">{r.refund.referenceNumber}</span></Line>}
+              {r.refund.state === "failed" && <p className="text-xs text-red-600 mt-2">PayMongo could not complete this refund, so the customer has not received it.{r.refund.errorNote ? ` (${r.refund.errorNote})` : ""}</p>}
+              {r.refund.state === "processing" && <p className="text-xs text-blue-700 mt-2">PayMongo is processing this refund. It can take up to 24 hours.</p>}
+              {r.refund.state === "awaiting_handback" && <p className="text-xs text-orange-700 mt-2">Paid in store, so it can't go through PayMongo. Return it in store, then record it on the payment.</p>}
+            </Block>
           ) : (
-            <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>
+            <>
+              {(tier || kept > 0) && (
+                <Block title="Deposit">
+                  {tier && <Line label="Policy"><TypeBadge r={r} /></Line>}
+                  {when && <Line label="Requested">{when}</Line>}
+                  <Line label="Deposit">
+                    {kept > 0
+                      ? <span className="font-semibold text-amber-700">{fmt(kept)} kept (48-hour policy)</span>
+                      : <span className="text-green-700 font-semibold">Not kept{r.forfeitWaived ? " — forfeit waived" : ""}</span>}
+                  </Line>
+                  {r.forfeitWaived && r.forfeitWaivedReason && <Line label="Waived because">{r.forfeitWaivedReason}</Line>}
+                </Block>
+              )}
+
+              {(pv || (Array.isArray(r.parts) && r.parts.length > 0) || r.manualRefund || Number(r.unrefundableAmount) > 0) && (
+                <Block title="Where the money goes">
+                  {pv && (
+                    <>
+                      <Line label="Customer paid">{fmt(pv.bookingPaid ?? pv.grossPaid)}</Line>
+                      {pv.forfeit > 0 && <Line label="Deposit kept"><span className="text-amber-700">−{fmt(pv.forfeit)}</span></Line>}
+                      <Line label="Via PayMongo">{fmt(pv.onlineAmount)}</Line>
+                      {pv.manualAmount > 0 && <Line label="Hand back in person"><span className="text-orange-600 font-semibold">{fmt(pv.manualAmount)}</span></Line>}
+                      {pv.unrefundableAmount > 0 && <Line label="Not refundable"><span className="text-red-600 font-semibold">{fmt(pv.unrefundableAmount)} — Payment ID does not exist</span></Line>}
+                      {pv.total !== r.amount && <p className="text-[11px] text-gray-400 mt-1">Was {fmt(r.amount)} when requested.</p>}
+                    </>
+                  )}
+                  {Array.isArray(r.parts) && r.parts.map((pt, i) => (
+                    <Line key={i} label={`${pt.kind === "balance" ? "Balance" : "Deposit"} ${fmt(pt.amount)}`}>
+                      <span className={pt.status === "succeeded" ? "text-green-600" : pt.status === "failed" ? "text-red-600" : "text-blue-600"}>
+                        {pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed" : "processing at PayMongo"}
+                      </span>
+                    </Line>
+                  ))}
+                  {r.manualRefund && (
+                    <Line label={`In person ${fmt(r.manualRefund.amount)}`}>
+                      <span className={r.manualRefund.issued ? "text-green-600" : "text-orange-600 font-semibold"}>
+                        {r.manualRefund.issued ? `handed back${r.manualRefund.method ? ` (${r.manualRefund.method})` : ""}` : "not yet handed back"}
+                      </span>
+                    </Line>
+                  )}
+                  {!pv && Number(r.unrefundableAmount) > 0 && <Line label="Not refunded"><span className="text-red-600 font-semibold">{fmt(r.unrefundableAmount)} — Payment ID does not exist</span></Line>}
+                </Block>
+              )}
+
+              {r.discount && DISCOUNT_WAIT[r.discount.refund.state] && (
+                <Block title="Discount on this payment">
+                  <Line label="Discount given">{fmt(r.discount.amount)}</Line>
+                  <Line label="Its refund">
+                    <button type="button" onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)} className={`hover:underline ${DISCOUNT_WAIT[r.discount.refund.state].cls}`}>
+                      {DISCOUNT_WAIT[r.discount.refund.state].label}
+                    </button>
+                  </Line>
+                </Block>
+              )}
+            </>
           )}
-        </td>
-      )}
-    </tr>
+
+          <Block title="Money movements">
+            <PaymentEntriesPanel
+              key={`${r.refundRequestID}-${disc ? r.refund.state : r.status}`}
+              query={disc ? { paymentID: r.paymentID } : { refundRequestID: r.refundRequestID }}
+              title=""
+            />
+          </Block>
+        </div>
+
+        <div className="shrink-0 border-t border-gray-100 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            {!disc && r.status === "Pending" && (
+              <>
+                <button onClick={onApprove} disabled={busy || blocked}
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50">
+                  <IconCheck /> {busy ? "…" : "Approve"}
+                </button>
+                <button onClick={onReject} disabled={busy}
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50">
+                  <IconX /> Reject
+                </button>
+                {blocked && <span className="text-xs text-blue-700 max-w-[260px]">Approving is on hold until the discount refund is confirmed by PayMongo (or retried on Payments).</span>}
+              </>
+            )}
+            {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
+            {!disc && due > 0 && (
+              <>
+                <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm">
+                  <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
+                </select>
+                <button onClick={onHandback} disabled={busy} title="Confirm you handed this amount back to the customer in person"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
+                  <IconCheck /> {busy ? "…" : `Handed back ${fmt(due)}`}
+                </button>
+              </>
+            )}
+            {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">Needs manual follow-up</span>}
+            {disc && r.refund.state === "failed" && (
+              <button onClick={onRetry} disabled={retrying} className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
+                {retrying ? "…" : `Retry ${fmt(r.refund.amount)} refund`}
+              </button>
+            )}
+            {disc && r.refund.state === "awaiting_handback" && (
+              <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)} className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600">
+                Record hand-back →
+              </button>
+            )}
+          </div>
+          <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50">Close</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -312,17 +461,6 @@ const stampParts = (d) => d && ({
   time: d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }),
 });
 
-const DateCell = ({ date }) => {
-  const p = stampParts(date);
-  if (!p) return <span className="text-gray-300">—</span>;
-  return (
-    <>
-      <p className="text-sm text-gray-700">{p.date}</p>
-      <p className="text-xs text-gray-400">{p.time}</p>
-    </>
-  );
-};
-
 export default function RefundRequests() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -330,7 +468,7 @@ export default function RefundRequests() {
   const [tab, setTab]           = useState(null);          // null until the list loads, then the most useful tab (see below)
   const [discounts, setDiscounts] = useState([]);           // discount refunds (money a staff discount sent back)
   const [retryingId, setRetryingId] = useState(null);
-  const [openEntries, setOpenEntries] = useState(null);   // refundRequestID whose money movements are expanded
+  const [viewId, setViewId]   = useState(null);   // refundRequestID of the item open in the View modal
   const [statusF, setStatusF]   = useState("All");
   const [search, setSearch]     = useState("");
   const [toast, setToast]       = useState(null);
@@ -434,6 +572,7 @@ export default function RefundRequests() {
       // actually paid), split it into PayMongo refunds + a manual part, and cancel the
       // booking — so take the server's version of the request rather than guessing.
       setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, ...(data.data || {}), status: "Approved", planPreview: undefined } : r));
+      setViewId(null);
     } catch (e) { showToast(e.message, "error"); fetchRequests(); }
     finally { setBusyId(null); setApproveTarget(null); }
   };
@@ -452,6 +591,7 @@ export default function RefundRequests() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to mark the refund as handed back.");
       showToast(data.message || "Marked as handed back.");
+      setViewId(null);
       fetchRequests(); // status may have moved to Refunded (history) — take the server's version
     } catch (e) { showToast(e.message, "error"); }
     finally { setBusyId(null); }
@@ -467,6 +607,7 @@ export default function RefundRequests() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Could not retry the refund.");
       showToast("Refund sent to PayMongo again.");
+      setViewId(null);
       fetchRequests();
     } catch (e) { showToast(e.message, "error"); }
     finally { setRetryingId(null); }
@@ -486,7 +627,7 @@ export default function RefundRequests() {
       if (!res.ok) throw new Error(data.message || "Failed to reject refund.");
       showToast("Refund request rejected.");
       setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, status: "Rejected", rejectReason } : r));
-      setRejectTarget(null); setRejectReason("");
+      setRejectTarget(null); setRejectReason(""); setViewId(null);
     } catch (e) { showToast(e.message, "error"); }
     finally { setBusyId(null); }
   };
@@ -520,7 +661,7 @@ export default function RefundRequests() {
     let av, bv;
     if (sortKey === "amount")         { av = Number(a.amount) || 0;             bv = Number(b.amount) || 0; }
     else if (sortKey === "requested") { av = toMillis(toDate(a.createdAt));     bv = toMillis(toDate(b.createdAt)); }
-    else if (sortKey === "updated")   { av = toMillis(updatedDate(a));          bv = toMillis(updatedDate(b)); }
+    else if (sortKey === "updated")   { av = toMillis(updatedOf(a));            bv = toMillis(updatedOf(b)); }
     else return 0;
     return sortDir === "asc" ? av - bv : bv - av;
   });
@@ -528,8 +669,6 @@ export default function RefundRequests() {
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
   useEffect(() => { setPage(1); }, [search, statusF, tabKey, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // History is a closed record — nothing left to approve/reject — so no Actions column there.
-  const showActions = tabKey !== "history";
 
   const pendingCount    = items.filter((r) => tabOf(r) === "pending").length;
   const processingItems = items.filter((r) => tabOf(r) === "processing");
@@ -551,6 +690,25 @@ export default function RefundRequests() {
           toast.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
         }`}>{toast.msg}</div>
       )}
+
+      {/* View: everything about one refund. Approve / reject / hand back / retry happen here. The approve and reject
+          dialogs below open on top of it. */}
+      {(() => {
+        const v = viewId && items.find((x) => x.refundRequestID === viewId);
+        if (!v) return null;
+        return (
+          <RefundViewModal
+            r={v} fmt={fmt} navigate={navigate} onClose={() => setViewId(null)}
+            onApprove={() => startApprove(v)}
+            onReject={() => { setRejectTarget(v); setRejectReason(""); }}
+            onHandback={() => markHandedBack(v)}
+            handbackMethod={handbackMethod[v.refundRequestID]}
+            setHandbackMethod={(m) => setHandbackMethod((x) => ({ ...x, [v.refundRequestID]: m }))}
+            busy={busyId === v.refundRequestID}
+            onRetry={() => retryDiscount(v)} retrying={retryingId === v.refundRequestID}
+          />
+        );
+      })()}
 
       {/* Approve confirmation: shows the 48-hour policy outcome + the staff override */}
       {approveTarget && approveTarget.planPreview && (() => {
@@ -720,219 +878,50 @@ export default function RefundRequests() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
+                  <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th className="px-5 py-3 font-semibold">Time</th>
                   <SortableTh label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Booking</th>
                   <th className="px-5 py-3 font-semibold">Reason</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <th className="px-5 py-3 font-semibold">Deposit</th>
-                  <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th className="px-5 py-3 font-semibold">Type</th>
                   <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th className="px-5 py-3 font-semibold">Time</th>
                   <th className="px-5 py-3 font-semibold">Status</th>
-                  {showActions && <th className="px-5 py-3 font-semibold text-right">Actions</th>}
+                  <th className="px-5 py-3 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {paginated.map((r) => {
-                  if (isDiscount(r)) {
-                    return (
-                      <Fragment key={r.refundRequestID}>
-                        <DiscountRow r={r} fmt={fmt} navigate={navigate} showActions={showActions}
-                          onRetry={() => retryDiscount(r)} retrying={retryingId === r.refundRequestID}
-                          entriesOpen={openEntries === r.refundRequestID}
-                          onToggleEntries={() => setOpenEntries((v) => (v === r.refundRequestID ? null : r.refundRequestID))} />
-                        {openEntries === r.refundRequestID && (
-                          <tr className="border-b border-gray-50 bg-gray-50/40">
-                            <td colSpan={showActions ? 9 : 8} className="px-5 py-4">
-                              <PaymentEntriesPanel key={`${r.refundRequestID}-${r.refund.state}`} query={{ paymentID: r.paymentID }} title="Money movements for this payment" />
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  }
+                  const disc = isDiscount(r);
                   return (
-                  <Fragment key={r.refundRequestID}>
-                  <tr className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
-                    <td className="px-5 py-4">
-                      <p className="font-semibold text-arl-dark">{r.customerName || "—"}</p>
-                    </td>
-                    <td className="px-5 py-4">
-                      {r.bookingID ? (
-                        <button
-                          onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
-                          className="font-medium text-teal-600 hover:text-teal-700 hover:underline"
-                          title="Open this booking"
-                        >
-                          {r.bookingID}
-                        </button>
-                      ) : "—"}
-                    </td>
-                    <td className="px-5 py-4">
-                      <p className="text-gray-700">{r.customerReason !== undefined ? r.customerReason : r.reason}</p>
-                      {r.notes && <p className="text-xs text-gray-400 max-w-[220px] truncate" title={r.notes}>{r.notes}</p>}
-                      {r.status === "Rejected" && r.rejectReason && (
-                        <p className="text-xs text-red-500 max-w-[220px] truncate" title={r.rejectReason}>Reason: {r.rejectReason}</p>
-                      )}
-                    </td>
-                    <td className="px-5 py-4">
-                      <p className="font-semibold text-arl-dark">{fmt(r.planPreview ? r.planPreview.total : r.amount)}</p>
-                      {r.status === "Pending" && r.planPreview && (
-                        <p className="text-[11px] text-gray-500 max-w-[220px]">
-                          {fmt(r.planPreview.onlineAmount)} via PayMongo
-                          {r.planPreview.manualAmount > 0 && <> · <span className="text-orange-600 font-semibold">{fmt(r.planPreview.manualAmount)} to hand back in person</span></>}
-                          {r.planPreview.unrefundableAmount > 0 && <> · <span className="text-red-600 font-semibold">{fmt(r.planPreview.unrefundableAmount)} not refundable — Payment ID does not exist</span></>}
-                          {r.planPreview.total !== r.amount && <> · <span className="text-gray-400">(was {fmt(r.amount)} when requested)</span></>}
-                        </p>
-                      )}
-                      {/* A discount given on this same payment: shown here so both ways of giving money back read together */}
-                      {r.discount && DISCOUNT_WAIT[r.discount.refund.state] && (
-                        <p className="text-[11px] mt-0.5 max-w-[220px]">
-                          <span className="text-gray-500">Includes {fmt(r.discount.amount)} discount · </span>
-                          <button type="button" onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
-                            className={`hover:underline ${DISCOUNT_WAIT[r.discount.refund.state].cls}`}>
-                            {DISCOUNT_WAIT[r.discount.refund.state].label}
-                          </button>
-                        </p>
-                      )}
-                      {/* 48-hour policy outcome: judged from when the customer ASKED */}
-                      {(() => {
-                        const tier   = r.status === "Pending" && r.planPreview ? r.planPreview.tier : (r.policyTier || (typeof r.returnDeposit === "boolean" ? (r.returnDeposit ? "full" : "late") : null)); // newer requests carry returnDeposit instead of policyTier
-                        const kept   = r.status === "Pending" && r.planPreview ? r.planPreview.forfeit : Number(r.depositForfeited) || 0;
-                        if (!tier) return null;
-                        const label  = tier === "full" ? "Full refund" : tier === "no_show" ? "No-show" : "Under 48h";
-                        const cls    = tier === "full" ? "bg-green-100 text-green-700 border-green-200" : "bg-amber-100 text-amber-700 border-amber-200";
-                        return (
-                          <p className="text-[11px] mt-0.5 max-w-[220px]">
-                            <span className={`inline-block rounded-full border px-2 py-0.5 font-semibold ${cls}`}>{label}</span>
-                            {kept > 0 && <span className="text-amber-700 font-semibold"> {fmt(kept)} deposit kept</span>}
-                            {r.forfeitWaived && <span className="text-blue-600 font-semibold" title={r.forfeitWaivedReason || ""}> forfeit waived</span>}
-                          </p>
-                        );
-                      })()}
-                      {Array.isArray(r.parts) && r.parts.length > 0 && (
-                        <div className="mt-1 space-y-0.5">
-                          {r.parts.map((pt, i) => (
-                            <p key={i} className="text-[11px] text-gray-500">
-                              {pt.kind === "balance" ? "Balance" : "Deposit"} {fmt(pt.amount)} —{" "}
-                              <span className={pt.status === "succeeded" ? "text-green-600" : pt.status === "failed" ? "text-red-600" : "text-blue-600"}>
-                                {pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed" : "processing"}
-                              </span>
-                            </p>
-                          ))}
-                        </div>
-                      )}
-                      {Number(r.unrefundableAmount) > 0 && (
-                        <p className="text-[11px] mt-0.5 text-red-600 font-semibold max-w-[240px]" title="Paid online, but no PayMongo payment ID is on record, so this can't be refunded through PayMongo. It is not a hand-back.">
-                          {fmt(r.unrefundableAmount)} not refunded — Payment ID does not exist
-                        </p>
-                      )}
-                      {r.manualRefund && (
-                        <p className={`text-[11px] mt-0.5 ${r.manualRefund.issued ? "text-green-600" : "text-orange-600 font-semibold"}`}>
-                          {fmt(r.manualRefund.amount)} in person — {r.manualRefund.issued ? `handed back${r.manualRefund.method ? ` (${r.manualRefund.method})` : ""}` : "not yet handed back"}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-5 py-4 whitespace-nowrap">
-                      {(() => {
-                        // Pending: live preview. Resolved: what was saved when the request was made.
-                        const tier = r.status === "Pending" && r.planPreview ? r.planPreview.tier : r.policyTier;
-                        const kept = r.status === "Pending" && r.planPreview ? r.planPreview.forfeit : Number(r.depositForfeited) || 0;
-                        // Rejected = nothing is refunded, so there is no deposit decision. No tier = older request from before the 48-hour rule.
-                        if (r.status === "Rejected" || !tier) return <span className="text-gray-300">—</span>;
-                        if (kept > 0) {
-                          return <span className="inline-block rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700" title={`${fmt(kept)} deposit kept`}>Kept</span>;
-                        }
-                        return (
-                          <span className="inline-flex items-center gap-1">
-                            <span className="inline-block rounded-full border border-green-200 bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">Not kept</span>
-                            {r.forfeitWaived && <span className="text-[11px] font-semibold text-blue-600" title={r.forfeitWaivedReason || ""}>waived</span>}
-                          </span>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-5 py-4 whitespace-nowrap"><DateCell date={toDate(r.createdAt)} /></td>
-                    <td className="px-5 py-4 whitespace-nowrap"><DateCell date={updatedDate(r)} /></td>
-                    <td className="px-5 py-4">
-                      <StatusBadge status={r.status} stage={stageOf(r)} />
-                      <button
-                        type="button"
-                        onClick={() => setOpenEntries((v) => (v === r.refundRequestID ? null : r.refundRequestID))}
-                        className="mt-1 block text-[11px] font-medium text-teal-700 hover:underline"
-                      >
-                        {openEntries === r.refundRequestID ? "Hide money movements" : "Money movements"}
-                      </button>
-                      {r.status === "Approved" && (() => {
-                        const w = fmtWaiting(r);
-                        return w ? (
-                          <p className={`mt-1 text-[11px] ${w.late ? "font-semibold text-amber-600" : "text-gray-400"}`}>
-                            Waiting {w.text}{w.late ? " — worth checking" : ""}
-                          </p>
-                        ) : null;
-                      })()}
-                    </td>
-                    {showActions && (
-                      <td className="px-5 py-4 text-right">
-                        {r.status === "Pending" ? (
-                          <div className="flex justify-end gap-2">
-                            <button
-                              onClick={() => startApprove(r)}
-                              disabled={busyId === r.refundRequestID || discountBlocksApproval(r)}
-                              title={discountBlocksApproval(r) ? "Wait for the discount refund to finish at PayMongo (or retry it on the Payments page) before approving." : undefined}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
-                            >
-                              <IconCheck /> {busyId === r.refundRequestID ? "…" : "Approve"}
-                            </button>
-                            <button
-                              onClick={() => { setRejectTarget(r); setRejectReason(""); }}
-                              disabled={busyId === r.refundRequestID}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50"
-                            >
-                              <IconX /> Reject
-                            </button>
-                          </div>
-                        ) : r.status === "Approved" ? (
-                          <div className="flex flex-col items-end gap-1.5">
-                            {stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
-                            {handbackDue(r) > 0 && (
-                              <div className="flex items-center gap-1.5">
-                                <select
-                                  value={handbackMethod[r.refundRequestID] || "Cash"}
-                                  onChange={(e) => setHandbackMethod((m) => ({ ...m, [r.refundRequestID]: e.target.value }))}
-                                  className="rounded-lg border border-gray-200 px-2 py-1 text-xs"
-                                >
-                                  <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
-                                </select>
-                                <button
-                                  onClick={() => markHandedBack(r)}
-                                  disabled={busyId === r.refundRequestID}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50"
-                                  title="Confirm you handed this amount back to the customer in person"
-                                >
-                                  <IconCheck /> {busyId === r.refundRequestID ? "…" : `Handed back ${fmt(handbackDue(r))}`}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ) : r.status === "Failed" ? (
-                          <span className="text-xs text-red-500 italic">Needs manual follow-up</span>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
+                    <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
+                      <td className="px-5 py-4"><DateOnly date={toDate(r.createdAt)} /></td>
+                      <td className="px-5 py-4"><TimeOnly date={toDate(r.createdAt)} /></td>
+                      <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
+                      <td className="px-5 py-4">
+                        {r.bookingID ? (
+                          <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
+                            className="font-medium text-teal-600 hover:text-teal-700 hover:underline" title="Open this booking">{r.bookingID}</button>
+                        ) : "—"}
                       </td>
-                    )}
-                  </tr>
-                  {openEntries === r.refundRequestID && (
-                    <tr className="border-b border-gray-50 bg-gray-50/40">
-                      <td colSpan={showActions ? 9 : 8} className="px-5 py-4">
-                        <PaymentEntriesPanel
-                          key={`${r.refundRequestID}-${r.status}-${r.updatedAt || ""}`}
-                          query={{ refundRequestID: r.refundRequestID }}
-                          title="Money movements for this refund"
-                        />
+                      <td className="px-5 py-4">
+                        <p className="text-gray-700 max-w-[240px] truncate" title={disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason)}>
+                          {disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}
+                        </p>
+                      </td>
+                      <td className="px-5 py-4 font-semibold text-arl-dark whitespace-nowrap">
+                        {fmt(disc ? r.refund.amount : (r.planPreview ? r.planPreview.total : r.amount))}
+                      </td>
+                      <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /></td>
+                      <td className="px-5 py-4"><DateOnly date={updatedOf(r)} /></td>
+                      <td className="px-5 py-4"><TimeOnly date={updatedOf(r)} /></td>
+                      <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
+                      <td className="px-5 py-4 text-right">
+                        <button onClick={() => setViewId(r.refundRequestID)}
+                          className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
                       </td>
                     </tr>
-                  )}
-                  </Fragment>
                   );
                 })}
               </tbody>
