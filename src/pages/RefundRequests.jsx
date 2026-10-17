@@ -53,6 +53,16 @@ const stageOf = (r) => {
 };
 const handbackDue = (r) => (r && r.status === "Approved" && r.manualRefund && !r.manualRefund.issued ? Number(r.manualRefund.amount) || 0 : 0);
 
+// A staff discount on the same payment is money going back to the customer too, and it waits on PayMongo like this
+// refund does. While it is still processing (or failed) the server refuses to approve, so the button says why.
+const DISCOUNT_WAIT = {
+  processing:        { label: "Discount refund waiting for PayMongo", cls: "text-blue-700" },
+  failed:            { label: "Discount refund failed — retry it on Payments", cls: "text-red-600 font-semibold" },
+  awaiting_handback: { label: "Discount to hand back in store", cls: "text-orange-600" },
+  refunded:          { label: "Discount refunded", cls: "text-green-700" },
+};
+const discountBlocksApproval = (r) => !!(r && r.discount && r.discount.refund && ["processing", "failed"].includes(r.discount.refund.state));
+
 function StatusBadge({ status, stage }) {
   const w   = stage ? WAIT_STAGE[stage] : null;
   const dot = w ? w.dot : (statusDot[status] || "bg-gray-400");
@@ -648,6 +658,16 @@ export default function RefundRequests() {
                           {r.planPreview.total !== r.amount && <> · <span className="text-gray-400">(was {fmt(r.amount)} when requested)</span></>}
                         </p>
                       )}
+                      {/* A discount given on this same payment: shown here so both ways of giving money back read together */}
+                      {r.discount && DISCOUNT_WAIT[r.discount.refund.state] && (
+                        <p className="text-[11px] mt-0.5 max-w-[220px]">
+                          <span className="text-gray-500">Includes {fmt(r.discount.amount)} discount · </span>
+                          <button type="button" onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
+                            className={`hover:underline ${DISCOUNT_WAIT[r.discount.refund.state].cls}`}>
+                            {DISCOUNT_WAIT[r.discount.refund.state].label}
+                          </button>
+                        </p>
+                      )}
                       {/* 48-hour policy outcome: judged from when the customer ASKED */}
                       {(() => {
                         const tier   = r.status === "Pending" && r.planPreview ? r.planPreview.tier : (r.policyTier || (typeof r.returnDeposit === "boolean" ? (r.returnDeposit ? "full" : "late") : null)); // newer requests carry returnDeposit instead of policyTier
@@ -730,7 +750,8 @@ export default function RefundRequests() {
                           <div className="flex justify-end gap-2">
                             <button
                               onClick={() => startApprove(r)}
-                              disabled={busyId === r.refundRequestID}
+                              disabled={busyId === r.refundRequestID || discountBlocksApproval(r)}
+                              title={discountBlocksApproval(r) ? "Wait for the discount refund to finish at PayMongo (or retry it on the Payments page) before approving." : undefined}
                               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
                             >
                               <IconCheck /> {busyId === r.refundRequestID ? "…" : "Approve"}

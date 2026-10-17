@@ -274,6 +274,7 @@ export default function Payments() {
   const [refundMethod, setRefundMethod] = useState("Cash");
   const [refundRef, setRefundRef] = useState("");
   const [markingRefund, setMarkingRefund] = useState(false);
+  const [retryingRefund, setRetryingRefund] = useState(false);
   const [detailTab, setDetailTab] = useState("summary");     // which tab of the payment modal is open
   const [entriesSummary, setEntriesSummary] = useState(null); // totals from All money movements (refunded amount etc.)
   const [sortKey, setSortKey]             = useState("submitted"); // default: newest submitted first
@@ -426,7 +427,7 @@ export default function Payments() {
       if (!res.ok) throw new Error(data.message);
       const how = data.data?.refundedVia;
       showToast(
-        how === "paymongo" ? "Discount given — the refund was sent through PayMongo."
+        how === "paymongo" ? "Discount given — PayMongo is processing the refund (can take up to 24 hours)."
         : how === "in_store" ? "Discount given — return the amount in store, then record it here."
         : "Discount given — deducted from the remaining balance."
       );
@@ -515,6 +516,25 @@ export default function Payments() {
       await fetchPayments(true);
     } catch (e) { showToast(e.message, "error"); }
     finally { setMarkingRefund(false); }
+  };
+
+  // The discount's PayMongo refund failed after PayMongo accepted it: send it again. The failed attempt stays on the
+  // ledger as history; the server refuses this while a refund is still processing or after it succeeded.
+  const handleRetryDiscountRefund = async () => {
+    if (!selected) return;
+    setRetryingRefund(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount-refund/retry`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast("Refund sent to PayMongo again.");
+      await openDetail(selected.id);
+      await fetchPayments(true);
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setRetryingRefund(false); }
   };
 
   // ── filter ──
@@ -767,28 +787,46 @@ export default function Payments() {
                           but never counted toward what is owed, and never touch the booking's balance or discount. */}
                       <PenaltyBreakdown penalties={selected.penalties} payment={selected} fmt={fmtCurrency} />
 
-                      {selected.refundDue > 0 && (
-                        <Section title="Refund Due to Customer (in store)">
-                          <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
-                            <div className="flex items-center justify-between text-sm">
-                              <span className="font-semibold text-red-700">Amount owed back</span>
-                              <span className="font-bold text-red-700">{peso(selected.refundDue, fmtCurrency)}</span>
-                            </div>
-                            <p className="text-xs text-red-600">
-                              A discount was given on money the customer paid in store, so it can't go back through PayMongo.
-                              Return it in store, then record how it was returned.
-                            </p>
-                            {canRecordInStore ? (
-                              <InStoreForm
-                                amountLabel={peso(selected.refundDue, fmtCurrency)}
-                                method={refundMethod} setMethod={setRefundMethod}
-                                reference={refundRef} setReference={setRefundRef}
-                                receivedByLabel="Returned by" receivedBy={receivedBy}
-                                onSubmit={handleMarkRefundIssued}
-                                saving={markingRefund} submitLabel={`Record ${peso(selected.refundDue, fmtCurrency)} as returned`}
-                              />
-                            ) : (
-                              <p className="text-xs text-gray-500">Only a Supervisor, Admin or Owner can record this.</p>
+                      {/* ONE place for money going back to the customer. A discount and a refund request both do that, and both
+                          wait on PayMongo, so they share the same stages as the Refund Requests page:
+                          Waiting for PayMongo -> Refunded, or Failed (retry) / Waiting for hand-back (in store). */}
+                      {(selected.discountRefund || selected.refundRequestID) && (
+                        <Section title="Money Back to Customer">
+                          <div className="space-y-3">
+                            {selected.discountRefund && (
+                              <DiscountRefundCard
+                                payment={selected} fmt={fmtCurrency}
+                                canAct={canRecordInStore}
+                                onRetry={handleRetryDiscountRefund} retrying={retryingRefund}
+                              >
+                                {selected.discountRefund.state === "awaiting_handback" && (canRecordInStore ? (
+                                  <InStoreForm
+                                    amountLabel={peso(selected.discountRefund.amount, fmtCurrency)}
+                                    method={refundMethod} setMethod={setRefundMethod}
+                                    reference={refundRef} setReference={setRefundRef}
+                                    receivedByLabel="Returned by" receivedBy={receivedBy}
+                                    onSubmit={handleMarkRefundIssued}
+                                    saving={markingRefund} submitLabel={`Record ${peso(selected.discountRefund.amount, fmtCurrency)} as returned`}
+                                  />
+                                ) : (
+                                  <p className="text-xs text-gray-500">Only a Supervisor, Admin or Owner can record this.</p>
+                                ))}
+                              </DiscountRefundCard>
+                            )}
+                            {selected.refundRequestID && (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-center justify-between gap-3">
+                                <div className="text-xs text-amber-800 space-y-0.5">
+                                  <p className="font-semibold">Refund request · {selected.refundRequestStatus}</p>
+                                  {selected.discountRefund && ["processing", "failed"].includes(selected.discountRefund.state) && (
+                                    <p>Approving it is on hold until the discount refund above is {selected.discountRefund.state === "failed" ? "retried and confirmed" : "confirmed by PayMongo"}.</p>
+                                  )}
+                                </div>
+                                <button type="button"
+                                  onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(selected.refundRequestID || selected.paymentID)}`)}
+                                  className="shrink-0 px-3 py-1.5 text-xs font-semibold text-amber-800 bg-white border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors whitespace-nowrap">
+                                  Open →
+                                </button>
+                              </div>
                             )}
                           </div>
                         </Section>
@@ -800,7 +838,7 @@ export default function Payments() {
                       pending / failed attempts) as a plain list, newest first, each with its own receipt. */}
                   <div className={detailTab === "movements" ? "" : "hidden"}>
                     <PaymentEntriesPanel
-                      key={`${selected.paymentID}-${selected.status}-${selected.amountPaid}-${selected.refundIssued}`}
+                      key={`${selected.paymentID}-${selected.status}-${selected.amountPaid}-${selected.refundIssued}-${selected.discountRefund?.state || ""}`}
                       query={{ paymentID: selected.paymentID || selected.id }}
                       title="All money movements"
                       hideSummary
@@ -815,22 +853,8 @@ export default function Payments() {
                     const canGiveDiscount =
                       !(selected.discountAmount > 0) && selected.status === "Approved" && !selected.refundRequestID &&
                       !["For Refund", "Refunded", "Cancelled"].includes(stageOf(selected));
-                    if (selected.refundRequestID) {
-                      return (
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-center justify-between gap-3">
-                          <p className="text-xs text-amber-800">
-                            A refund request ({selected.refundRequestStatus}) is open for this payment — manage it on the Refund Requests page.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(selected.refundRequestID || selected.paymentID)}`)}
-                            className="shrink-0 px-3 py-1.5 text-xs font-semibold text-amber-800 bg-white border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors whitespace-nowrap"
-                          >
-                            View refund request →
-                          </button>
-                        </div>
-                      );
-                    }
+                    // An open refund request (shown in "Money Back to Customer" above) means no new discount.
+                    if (selected.refundRequestID) return null;
                     if (!canGiveDiscount) return null;
                     return (
                       <div className="space-y-2">
@@ -1034,7 +1058,12 @@ export default function Payments() {
                 </td>
                 <td className="px-4 py-3 text-xs font-semibold">
                   {p.discountAmount > 0
-                    ? <span className="text-red-500">−{peso(p.discountAmount, fmtCurrency)}</span>
+                    ? (
+                      <div className="space-y-1">
+                        <span className="text-red-500">−{peso(p.discountAmount, fmtCurrency)}</span>
+                        <DiscountRefundBadge state={p.discountRefund?.state} />
+                      </div>
+                    )
                     : <span className="text-gray-300">—</span>}
                 </td>
                 <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.amountPaid, fmtCurrency)}</td>
@@ -1101,6 +1130,65 @@ function StatCard({ icon, value, label, color, onClick, active }) {
 
 // A flat block of the detail modal: a heading, then its rows, separated from the previous block by a hairline
 // (no grey boxes). `action` is an optional link / button shown at the right of the heading.
+// ─── DISCOUNT REFUND (shared vocabulary with the Refund Requests page) ───────────────────────────────────────
+// A discount given on a fully paid booking is money going back to the customer, and PayMongo takes time to confirm it
+// (up to ~24h), exactly like an approved refund request. These are the same stages, so staff read both the same way.
+const DISCOUNT_REFUND_STAGE = {
+  processing:        { label: "Waiting for PayMongo",  dot: "bg-blue-500",   box: "border-blue-200 bg-blue-50",     text: "text-blue-800" },
+  awaiting_handback: { label: "Waiting for hand-back", dot: "bg-orange-500", box: "border-orange-200 bg-orange-50", text: "text-orange-800" },
+  failed:            { label: "Refund failed",         dot: "bg-red-500",    box: "border-red-200 bg-red-50",       text: "text-red-800" },
+  refunded:          { label: "Refunded",              dot: "bg-green-500",  box: "border-green-200 bg-green-50",   text: "text-green-800" },
+  deducted:          { label: "Taken off the balance", dot: "bg-gray-400",   box: "border-gray-200 bg-gray-50",     text: "text-gray-700" },
+};
+
+// Only the states that need someone's attention get a badge in the table; settled ones stay quiet.
+function DiscountRefundBadge({ state }) {
+  if (!["processing", "awaiting_handback", "failed"].includes(state)) return null;
+  const st = DISCOUNT_REFUND_STAGE[state];
+  return (
+    <span className="flex items-center gap-1 text-[10px] font-semibold text-gray-700 whitespace-nowrap">
+      <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
+      {state === "processing" ? "Refund processing" : state === "failed" ? "Refund failed" : "Hand back"}
+    </span>
+  );
+}
+
+function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children }) {
+  const dr = payment.discountRefund;
+  if (!dr) return null;
+  const st = DISCOUNT_REFUND_STAGE[dr.state] || DISCOUNT_REFUND_STAGE.deducted;
+  const copy = {
+    deducted: "The discount came off the remaining balance, so no money moved.",
+    processing: `PayMongo has accepted the ${peso(dr.amount, fmt)} refund and is processing it. This can take up to 24 hours — nothing else is needed from you. The customer is notified once it is confirmed.`,
+    refunded: dr.via === "in_store" ? `${peso(dr.amount, fmt)} was handed back to the customer in store.` : `PayMongo confirmed the ${peso(dr.amount, fmt)} refund to the customer.`,
+    failed: `PayMongo could not complete the ${peso(dr.amount, fmt)} refund, so the customer has NOT received it yet.${dr.errorNote ? ` (${dr.errorNote})` : ""} Retry to send it again; the failed attempt stays on record.`,
+    awaiting_handback: `A discount was given on money the customer paid in store, so it can't go back through PayMongo. Return ${peso(dr.amount, fmt)} in store, then record how it was returned.`,
+  }[dr.state];
+  return (
+    <div className={`rounded-xl border p-4 space-y-3 ${st.box}`}>
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className={`font-semibold ${st.text}`}>Discount −{peso(payment.discountAmount, fmt)}</span>
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-white/70 border border-white text-black">
+          <span className={`w-2 h-2 rounded-full ${st.dot}`} />
+          {st.label}
+        </span>
+      </div>
+      {payment.discountReason && <p className="text-xs text-gray-600">Reason: {payment.discountReason}</p>}
+      <p className={`text-xs ${st.text}`}>{copy}</p>
+      {dr.referenceNumber && dr.via === "paymongo" && <p className="text-[11px] text-gray-500 font-mono">PayMongo ref {dr.referenceNumber}</p>}
+      {dr.state === "failed" && (canAct ? (
+        <button onClick={onRetry} disabled={retrying}
+          className="px-4 py-2 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition disabled:opacity-50">
+          {retrying ? "Sending…" : `Retry ${peso(dr.amount, fmt)} refund`}
+        </button>
+      ) : (
+        <p className="text-xs text-gray-500">Only a Supervisor, Admin or Owner can retry this.</p>
+      ))}
+      {children}
+    </div>
+  );
+}
+
 function Section({ title, action = null, children }) {
   return (
     <section className="py-5 border-t border-gray-100 first:border-t-0 first:pt-0">
