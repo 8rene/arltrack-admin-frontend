@@ -846,8 +846,8 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                   return (
                     <tr key={u.id} className="border-t hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3 whitespace-nowrap">
-                        <p className="text-gray-700">{fmtDate(u.createdAt)}</p>
-                        <p className="text-xs text-gray-400">{fmtTime(u.createdAt)}</p>
+                        <span className="text-gray-700">{fmtDate(u.createdAt)}</span>
+                        {fmtTime(u.createdAt) && (<><span className="mx-1.5 text-gray-300">|</span><span className="text-gray-500">{fmtTime(u.createdAt)}</span></>)}
                       </td>
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
@@ -938,7 +938,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
   const imgs = getDocImages(docu);
   const hasImgs = Object.values(imgs).some(v => v && v.trim() !== "");
   const ref = user.referral || {};
-  const joined = user.createdAt ? `${fmtDate(user.createdAt)}${fmtTime(user.createdAt) ? " · " + fmtTime(user.createdAt) : ""}` : "—";
+  const joined = user.createdAt ? `${fmtDate(user.createdAt)}${fmtTime(user.createdAt) ? " | " + fmtTime(user.createdAt) : ""}` : "—";
 
   const statusKey = (user.status || "").toLowerCase();
   const statusChip =

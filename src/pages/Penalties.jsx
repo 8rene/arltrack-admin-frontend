@@ -1136,8 +1136,7 @@ export default function Penalties() {
         <table className="w-full text-sm min-w-[900px]">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              <SortableTh label="Date"       sortKey="date"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Time</th>
+              <SortableTh label="Created At" sortKey="date"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Charges"    sortKey="charges"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Booking ID" sortKey="booking"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Customer"   sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -1152,13 +1151,13 @@ export default function Penalties() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 10 }).map((_, j) => (
+                  {Array.from({ length: 9 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={10} className="text-center py-16 text-gray-400 text-sm">
+              <tr><td colSpan={9} className="text-center py-16 text-gray-400 text-sm">
                 {search || activeStatFilter ? "No penalties match your filters." : "No penalties found."}
               </td></tr>
             ) : paginated.map((p, i) => {
@@ -1167,11 +1166,14 @@ export default function Penalties() {
               const chargesText = (p.lineItems || []).map((li) => li.description).join(", ");
               return (
                 <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${rowClass}`}>
-                  <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">
-                    {toDate(p.createdAt)?.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                    {toDate(p.createdAt)?.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }) || "—"}
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    {toDate(p.createdAt) ? (
+                      <>
+                        <span className="text-gray-700">{toDate(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
+                        <span className="mx-1.5 text-gray-300">|</span>
+                        <span className="text-gray-500">{toDate(p.createdAt).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}</span>
+                      </>
+                    ) : "—"}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700">
                     <div className="max-w-[220px] truncate" title={(p.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>

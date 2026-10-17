@@ -1738,8 +1738,7 @@ export default function Bookings() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
               <tr>
-                <SortableTh label="Date" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-3 text-left">Time</th>
+                <SortableTh label="Created At" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Contact No.</th>
                 <th className="px-4 py-3 text-left">Booking ID</th>
                 <th className="px-4 py-3 text-left">Customer</th>
@@ -1756,20 +1755,23 @@ export default function Bookings() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    {Array.from({ length: 12 }).map((__, j) => (
+                    {Array.from({ length: 11 }).map((__, j) => (
                       <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={12} className="text-center text-gray-400 py-12">No bookings found</td></tr>
+                <tr><td colSpan={11} className="text-center text-gray-400 py-12">No bookings found</td></tr>
               ) : (
                 pageItems.map((b) => {
                   const needsAction = b.status?.toLowerCase() === "cancellation_request";
                   return (
                     <tr key={b.id} className={`border-t hover:bg-gray-50 transition-colors ${needsAction ? "bg-orange-50 border-l-4 border-l-orange-500" : ""}`}>
-                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{fmtDate(b.createdAt)}</td>
-                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtTime(b.createdAt)}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="text-gray-700">{fmtDate(b.createdAt)}</span>
+                        <span className="mx-1.5 text-gray-300">|</span>
+                        <span className="text-gray-500">{fmtTime(b.createdAt)}</span>
+                      </td>
                       <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{b.phone || "—"}</td>
                       <td className="px-4 py-3 text-gray-700 text-xs">
                         {b.bookingID || b.id}

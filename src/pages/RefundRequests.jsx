@@ -218,8 +218,19 @@ function TypeBadge({ r }) {
   return <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${cls}`}>{TIER_LABEL[tier] || "Under 48h"}</span>;
 }
 
-const DateOnly = ({ date }) => { const p = stampParts(date); return p ? <span className="text-sm text-gray-700 whitespace-nowrap">{p.date}</span> : <span className="text-gray-300">—</span>; };
-const TimeOnly = ({ date }) => { const p = stampParts(date); return p ? <span className="text-xs text-gray-500 whitespace-nowrap">{p.time}</span> : <span className="text-gray-300">—</span>; };
+// "Oct 17, 2026 | 3:45 PM" — date and time in one cell, split by a pipe.
+const stampText = (d) => { const p = stampParts(d); return p ? `${p.date} | ${p.time}` : "—"; };
+const Stamp = ({ date }) => {
+  const p = stampParts(date);
+  if (!p) return <span className="text-gray-300">—</span>;
+  return (
+    <span className="whitespace-nowrap text-sm">
+      <span className="text-gray-700">{p.date}</span>
+      <span className="mx-1.5 text-gray-300">|</span>
+      <span className="text-gray-500">{p.time}</span>
+    </span>
+  );
+};
 
 // One labelled line in the View modal.
 const Line = ({ label, children }) => (
@@ -266,8 +277,8 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             </Line>
             <Line label="Type"><TypeBadge r={r} /></Line>
             <Line label="Amount"><span className="font-semibold">{fmt(pv ? pv.total : disc ? r.refund.amount : r.amount)}</span></Line>
-            <Line label="Requested">{stampParts(toDate(r.createdAt)) ? `${stampParts(toDate(r.createdAt)).date} · ${stampParts(toDate(r.createdAt)).time}` : "—"}</Line>
-            <Line label="Updated">{stampParts(updatedOf(r)) ? `${stampParts(updatedOf(r)).date} · ${stampParts(updatedOf(r)).time}` : "—"}</Line>
+            <Line label="Requested">{stampText(toDate(r.createdAt))}</Line>
+            <Line label="Updated">{stampText(updatedOf(r))}</Line>
             {w && <Line label="Waiting"><span className={w.late ? "font-semibold text-amber-600" : ""}>{w.text}{w.late ? " — worth checking" : ""}</span></Line>}
             <Line label={disc ? "Discount reason" : "Reason"}>{disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
             {!disc && r.notes && <Line label="Notes">{r.notes}</Line>}
@@ -674,7 +685,6 @@ export default function RefundRequests() {
   const processingItems = items.filter((r) => tabOf(r) === "processing");
   const processingCount = processingItems.length;
   const failedCount     = processingItems.filter((r) => waitKeyOf(r) === "failed").length;
-  const onItsWay        = processingItems.filter((r) => waitKeyOf(r) !== "failed").reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
   // Open on the tab that needs someone: requests to review first, otherwise what is still in flight.
   useEffect(() => {
@@ -801,7 +811,7 @@ export default function RefundRequests() {
           <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">Refunds</h1>
           <p className="text-sm text-gray-500">
             {pendingCount > 0 ? `${pendingCount} request${pendingCount > 1 ? "s" : ""} to review` : "No requests to review"}
-            {processingCount > 0 && <> · {processingCount} under process{onItsWay > 0 && <> · {fmt(onItsWay)} on its way back to customers</>}</>}
+            {processingCount > 0 && <> · {processingCount} under process</>}
             {failedCount > 0 && <span className="text-red-600 font-semibold"> · {failedCount} failed — needs you</span>}
           </p>
         </div>
@@ -879,14 +889,12 @@ export default function RefundRequests() {
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
                   <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <th className="px-5 py-3 font-semibold">Time</th>
                   <SortableTh label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Booking</th>
                   <th className="px-5 py-3 font-semibold">Reason</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Type</th>
                   <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <th className="px-5 py-3 font-semibold">Time</th>
                   <th className="px-5 py-3 font-semibold">Status</th>
                   <th className="px-5 py-3 font-semibold text-right">Actions</th>
                 </tr>
@@ -896,8 +904,7 @@ export default function RefundRequests() {
                   const disc = isDiscount(r);
                   return (
                     <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
-                      <td className="px-5 py-4"><DateOnly date={toDate(r.createdAt)} /></td>
-                      <td className="px-5 py-4"><TimeOnly date={toDate(r.createdAt)} /></td>
+                      <td className="px-5 py-4"><Stamp date={toDate(r.createdAt)} /></td>
                       <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
                       <td className="px-5 py-4">
                         {r.bookingID ? (
@@ -914,8 +921,7 @@ export default function RefundRequests() {
                         {fmt(disc ? r.refund.amount : (r.planPreview ? r.planPreview.total : r.amount))}
                       </td>
                       <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /></td>
-                      <td className="px-5 py-4"><DateOnly date={updatedOf(r)} /></td>
-                      <td className="px-5 py-4"><TimeOnly date={updatedOf(r)} /></td>
+                      <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>
                       <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
                       <td className="px-5 py-4 text-right">
                         <button onClick={() => setViewId(r.refundRequestID)}

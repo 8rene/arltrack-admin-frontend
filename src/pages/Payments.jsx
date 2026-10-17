@@ -1009,8 +1009,7 @@ export default function Payments() {
         <table className="w-full text-sm min-w-[800px]">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              <SortableTh label="Submitted Date" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Submitted Time</th>
+              <SortableTh label="Created At" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
               <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Type</th>
@@ -1037,8 +1036,11 @@ export default function Payments() {
               </td></tr>
             ) : paginated.map((p, i) => (
               <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
-                <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">{fmtDateOnly(p.createdAt)}</td>
-                <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtTimeOnly(p.createdAt)}</td>
+                <td className="px-4 py-3 text-xs whitespace-nowrap">
+                  <span className="text-gray-700">{fmtDateOnly(p.createdAt)}</span>
+                  <span className="mx-1.5 text-gray-300">|</span>
+                  <span className="text-gray-500">{fmtTimeOnly(p.createdAt)}</span>
+                </td>
                 <td className="px-4 py-3">
                   <div className="font-semibold text-gray-800 text-xs">{p.customerName}</div>
                 </td>
