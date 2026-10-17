@@ -211,6 +211,25 @@ const toMillis = (val) => {
   } catch { return -Infinity; }
 };
 
+// Time-of-day only (e.g. "3:45 PM") — shown in its own "Time" column next to "Date".
+const fmtTime = (val) => {
+  const ms = toMillis(val);
+  if (!isFinite(ms)) return "—";
+  return new Date(ms).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
+};
+
+// True when `val` falls on/after `from` and on/before `to` (both "YYYY-MM-DD"
+// strings from <input type="date">, either may be empty). Compared in local
+// time so a booking made at 11:30 PM still counts as that day.
+const inDateRange = (val, from, to) => {
+  if (!from && !to) return true;
+  const ms = toMillis(val);
+  if (!isFinite(ms)) return false;
+  if (from && ms < new Date(`${from}T00:00:00`).getTime()) return false;
+  if (to   && ms > new Date(`${to}T23:59:59.999`).getTime()) return false;
+  return true;
+};
+
 // ─── SORT HEADER ────────────────────────────────────────────────────────────
 // Clickable <th> that toggles asc/desc on the given sortKey. Shows a neutral
 // up/down chevrons icon when the column isn't the active sort (so it reads
@@ -252,7 +271,6 @@ function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, classN
 // Admin refund/cancel only applies before the trip starts — an ongoing trip goes through the customer's cancellation request instead.
 const canRefundCancel = (status) => ["to pay", "upcoming"].includes(status?.toLowerCase());
 const canEdit  = (status) => ["upcoming", "ongoing"].includes(status?.toLowerCase());
-const isLocked = (status) => ["completed", "cancelled", "stolen"].includes(status?.toLowerCase());
 
 const PAGE_SIZE = 10;
 
@@ -1486,15 +1504,17 @@ export default function Bookings() {
   // trigger down to this same modal via the userID it's given).
   const [profileUserID, setProfileUserID]   = useState(null);
   const [searchParams, setSearchParams]     = useSearchParams();
-  const [sortKey, setSortKey]               = useState(null);  // null = default/unsorted (API order)
-  const [sortDir, setSortDir]               = useState("asc");
+  const [sortKey, setSortKey]               = useState("created");  // newest bookings on top by default
+  const [sortDir, setSortDir]               = useState("desc");
+  const [dateFrom, setDateFrom]             = useState("");  // "YYYY-MM-DD" — filters by the booking's Created date
+  const [dateTo, setDateTo]                 = useState("");
 
   const handleSort = (key) => {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
-      setSortDir("asc");
+      setSortDir(key === "created" ? "desc" : "asc");
     }
   };
 
@@ -1578,6 +1598,7 @@ export default function Bookings() {
     : allBookings.filter((b) => b.status?.toLowerCase() === activeTab.toLowerCase());
 
   const filtered = tabFiltered.filter((b) => {
+    if (!inDateRange(b.createdAt, dateFrom, dateTo)) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -1603,7 +1624,7 @@ export default function Bookings() {
 
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   // Jump back to page 1 whenever the visible set changes shape (new search/filter/tab).
-  useEffect(() => { setPage(1); }, [search, activeTab, allBookings]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, activeTab, allBookings, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmtDuration = (days) => { if (days == null) return "—"; return days <= 1 ? `${days} day` : `${days} days`; };
 
@@ -1641,14 +1662,41 @@ export default function Bookings() {
       </div>
 
       {/* SEARCH */}
-      <div className="flex gap-3 items-center bg-white p-4 rounded-2xl border">
+      <div className="flex flex-wrap gap-3 items-center bg-white p-4 rounded-2xl border">
         <input
           type="text"
           placeholder="Search by booking ID, customer, vehicle, phone..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 px-4 py-2 border rounded-xl text-sm outline-none"
+          className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
         />
+        {/* Date range — filters by the date the booking was created */}
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <span className="text-xs uppercase tracking-wide text-gray-400">From</span>
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+          />
+          <span className="text-xs uppercase tracking-wide text-gray-400">To</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+          />
+          {(dateFrom || dateTo) && (
+            <button
+              onClick={() => { setDateFrom(""); setDateTo(""); }}
+              className="px-3 py-2 border rounded-xl text-xs text-gray-500 hover:bg-gray-50"
+            >
+              Clear
+            </button>
+          )}
+        </div>
         <button
           onClick={fetchBookings}
           className="px-4 py-2 border rounded-xl text-sm text-teal-600 font-medium hover:bg-teal-50 flex items-center gap-1.5"
@@ -1680,14 +1728,16 @@ export default function Bookings() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
               <tr>
+                <SortableTh label="Date" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left">Time</th>
+                <th className="px-4 py-3 text-left">Contact No.</th>
                 <th className="px-4 py-3 text-left">Booking ID</th>
                 <th className="px-4 py-3 text-left">Customer</th>
                 <th className="px-4 py-3 text-left">Vehicle</th>
-                <SortableTh label="Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Trip Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Duration</th>
                 <SortableTh label="Total Fee" sortKey="fee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Payment</th>
-                <SortableTh label="Created" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3"></th>
               </tr>
@@ -1696,18 +1746,21 @@ export default function Bookings() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    {Array.from({ length: 10 }).map((__, j) => (
+                    {Array.from({ length: 12 }).map((__, j) => (
                       <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={10} className="text-center text-gray-400 py-12">No bookings found</td></tr>
+                <tr><td colSpan={12} className="text-center text-gray-400 py-12">No bookings found</td></tr>
               ) : (
                 pageItems.map((b) => {
                   const needsAction = b.status?.toLowerCase() === "cancellation_request";
                   return (
                     <tr key={b.id} className={`border-t hover:bg-gray-50 transition-colors ${needsAction ? "bg-orange-50 border-l-4 border-l-orange-500" : ""}`}>
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{fmtDate(b.createdAt)}</td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtTime(b.createdAt)}</td>
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{b.phone || "—"}</td>
                       <td className="px-4 py-3 text-gray-700 text-xs">
                         {b.bookingID || b.id}
                       </td>
@@ -1719,7 +1772,6 @@ export default function Bookings() {
                         >
                           {b.customerName}
                         </button>
-                        <div className="text-xs text-gray-400">{b.phone}</div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="text-gray-700">{b.vehicleName}</div>
@@ -1732,27 +1784,9 @@ export default function Bookings() {
                       </td>
                       <td className="px-4 py-3 font-semibold text-gray-800">{fmt(b.totalFee)}</td>
                       <td className="px-4 py-3 text-gray-600">{b.paymentMethod}</td>
-                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDateTime(b.createdAt)}</td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
                       <td className="px-4 py-3">
-                        <div className="flex gap-2">
-                          <button onClick={() => setViewBooking(b)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
-                          <button
-                            onClick={() => canEdit(b.status) && setEditBooking(b)}
-                            disabled={isLocked(b.status)}
-                            className={`px-3 py-1 border rounded-lg text-xs transition-colors ${isLocked(b.status) ? "border-gray-200 text-gray-300 cursor-not-allowed" : "border-teal-400 text-teal-600 hover:bg-teal-50"}`}
-                          >Edit</button>
-                          {canRefundRole && canRefundCancel(b.status) && (
-                            <button
-                              onClick={() => setRefundBooking(b)}
-                              className="px-3 py-1 border border-orange-300 text-orange-600 rounded-lg text-xs hover:bg-orange-50 transition-colors whitespace-nowrap"
-                            >Refund / Cancel</button>
-                          )}
-                          <button
-                            onClick={() => setDeleteBooking(b)}
-                            className="px-3 py-1 border border-red-200 text-red-500 rounded-lg text-xs hover:bg-red-50 transition-colors"
-                          >Delete</button>
-                        </div>
+                        <button onClick={() => setViewBooking(b)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
                       </td>
                     </tr>
                   );

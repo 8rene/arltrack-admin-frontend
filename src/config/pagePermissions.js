@@ -36,7 +36,7 @@ export const PAGE_ACCESS = {
   // own CAN_EDIT_ROLES so Supervisor never even sees the control.
   "/users": [OWNER, ADMIN, SUPERVISOR],
   "/car-tracking": [OWNER, ADMIN, SUPERVISOR],
-  "/gps-setup": [ADMIN, SUPERVISOR],
+  "/gps-setup": [OWNER, ADMIN, SUPERVISOR],
   "/driver-dispatch": [OWNER, ADMIN, SUPERVISOR],
   "/maintenance": [OWNER, ADMIN, SUPERVISOR],
   "/penalties": [OWNER, ADMIN, SUPERVISOR],

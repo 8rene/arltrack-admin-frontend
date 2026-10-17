@@ -645,7 +645,7 @@ export default function Dashboard() {
                   if (isDamaged || isOverdueMaint) navigate(a.carID ? `/maintenance?carID=${a.carID}` : "/maintenance");
                   else if (isLicense) navigate(`/users?role=${a.role}&tab=directory&open=${a.userID}`);
                   else if (isRefund) navigate("/refund-requests");
-                  else if (isRequest) navigate(`/users?role=${a.role}&tab=editRequests&open=${a.userID}`);
+                  else if (isRequest) navigate(`/users?role=${a.role}&tab=${a.kind === "idResubmit" ? "documents" : "editRequests"}&open=${a.userID}`);
                   else navigate(`/bookings?open=${a.bookingID || a.id}`);
                 };
 
@@ -875,7 +875,7 @@ export default function Dashboard() {
                   const isIdReq  = w.kind === "idResubmit";
                   const goTo = () => {
                     if (isRefund) navigate("/refund-requests");
-                    else navigate(`/users?role=${w.role}&tab=editRequests&open=${w.userID}`);
+                    else navigate(`/users?role=${w.role}&tab=${isIdReq ? "documents" : "editRequests"}&open=${w.userID}`);
                   };
                   return (
                     <div

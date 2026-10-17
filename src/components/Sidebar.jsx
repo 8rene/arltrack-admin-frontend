@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { canAccess } from "../config/pagePermissions";
+import { canAccess, ROLES } from "../config/pagePermissions";
 
 const nav = [
   {
@@ -385,7 +385,14 @@ export default function Sidebar() {
       ...section,
       items: section.items.filter((item) => canAccess(effectiveRole, item.path)),
     }))
-    .filter((section) => section.items.length > 0);
+    .filter((section) => section.items.length > 0)
+    // Drivers only see Terms & Conditions under "Setup" — keep it at the very
+    // bottom, below My Trips and Account, instead of in the middle. Other roles
+    // keep the normal order.
+    .sort((a, b) => {
+      if (effectiveRole !== ROLES.DRIVER) return 0;
+      return (a.group === "Setup") - (b.group === "Setup");
+    });
 
   return (
     <aside

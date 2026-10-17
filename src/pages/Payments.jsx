@@ -93,6 +93,20 @@ function peso(n, fmtFn) {
   if (fmtFn) return fmtFn(n);
   return `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
 }
+function fmtDateOnly(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function fmtTimeOnly(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
+}
+
 function fmtDate(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -143,18 +157,6 @@ const stageOf   = (p) => p.paymentStage || p.status;
 
 const CHANNEL_LABEL = { gcash: "GCash", paymaya: "Maya", qrph: "QRPH" };
 const channelOf = (p) => CHANNEL_LABEL[String(p.paymongoChannel || "").toLowerCase()] || p.paymongoChannel || p.paymentMethod;
-const TXN_STATUS_STYLE = {
-  "Paid":        "bg-green-100 text-green-700",
-  "Pending":     "bg-amber-100 text-amber-700",
-  "Failed":      "bg-red-100 text-red-700",
-  "Cancelled":   "bg-gray-200 text-gray-600",
-  "Refunded":    "bg-purple-100 text-purple-700",
-  "Not yet due": "bg-gray-100 text-gray-500",
-};
-const refOf = (p) => {
-  const r = p.depositPaymongoPaymentID || p.paymongoPaymentID || p.referenceNumber;
-  return r && r !== "—" && r !== "N/A" ? r : null;
-};
 const TIME_RANGES = ["All Time", "Today", "Last 7 Days", "This Month", "Custom Range"];
 
 // ─── PAGINATION (same shared pattern as Bookings.jsx / Users.jsx) ─────────────
@@ -272,8 +274,10 @@ export default function Payments() {
   const [refundMethod, setRefundMethod] = useState("Cash");
   const [refundRef, setRefundRef] = useState("");
   const [markingRefund, setMarkingRefund] = useState(false);
-  const [sortKey, setSortKey]             = useState(null); // null = default/unsorted (API order)
-  const [sortDir, setSortDir]             = useState("asc");
+  const [detailTab, setDetailTab] = useState("summary");     // which tab of the payment modal is open
+  const [entriesSummary, setEntriesSummary] = useState(null); // totals from All money movements (refunded amount etc.)
+  const [sortKey, setSortKey]             = useState("submitted"); // default: newest submitted first
+  const [sortDir, setSortDir]             = useState("desc");
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -352,8 +356,24 @@ export default function Payments() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payments, searchParams]);
 
+  // Payment modal: Escape closes it (or the discount confirm on top of it first), and the page behind it
+  // doesn't scroll. The receipt popup listens for Escape in the CAPTURE phase and stops the event, so while a
+  // receipt is open Escape closes only the receipt -- this listener is deliberately the bubble-phase one.
+  const modalOpen = !!(selected || detailLoading);
+  useEffect(() => {
+    if (!modalOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      if (confirmDiscount) setConfirmDiscount(false); else setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prevOverflow; };
+  }, [modalOpen, confirmDiscount]);
+
   const openDetail = async (id) => {
-    setDetailLoading(true); setSelected(null);
+    setDetailLoading(true); setSelected(null); setEntriesSummary(null); setDetailTab("summary");
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
@@ -545,281 +565,320 @@ export default function Payments() {
         }`}>{toast.msg}</div>
       )}
 
-      {/* Payment Detail — centered modal like Bookings' "Booking Details".
-          z-[60], not z-40: the app's top Header bar is z-50 (see
-          Header.jsx), so z-40 let the navbar draw over the top of this
-          modal and hide the "Payment Detail" label entirely — matches
-          the other centered modals below (Confirm Edit Discount, Mark
-          Refund), which already use z-[60] for the same reason. */}
+      {/* Payment Details — centered modal laid out like Bookings' "Booking Details": title + status, who / what,
+          tabs, a scrolling body and a pinned footer. Clicking the dimmed area or pressing Escape closes it.
+          z-[60], not z-40: the app's top Header bar is z-50 (see Header.jsx), so z-40 let the navbar draw over
+          the top of this modal. The confirm dialogs below use z-[70] for the same reason. */}
       {(selected || detailLoading) && (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
+        <div
+          className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4"
+          onClick={() => { if (!confirmDiscount) setSelected(null); }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="payment-detail-title"
+            className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             {detailLoading ? (
               <div className="flex-1 flex items-center justify-center text-gray-400 text-sm py-20">Loading…</div>
             ) : selected && (
               <>
-                <div className="sticky top-0 bg-white border-b rounded-t-2xl px-6 py-4 flex items-center justify-between z-10">
-                  <div>
-                    <p className="text-xs text-gray-400 uppercase tracking-wider">Payment Detail</p>
-                    <p className="font-bold text-arl-dark text-sm">{selected.paymentID}</p>
+                {/* Header */}
+                <div className="px-6 pt-5 shrink-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <h2 id="payment-detail-title" className="font-bold text-lg text-gray-800">Payment Details</h2>
+                      <StatusBadge status={stageOf(selected)} />
+                    </div>
+                    <button onClick={() => setSelected(null)} aria-label="Close" className="text-gray-400 hover:text-gray-600 shrink-0">
+                      <IconX className="w-5 h-5" />
+                    </button>
                   </div>
-                  <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
-                    <IconX className="w-5 h-5" />
-                  </button>
+                  <p className="text-sm text-gray-500 mt-1 truncate">
+                    {selected.customerName || "—"}{selected.vehicleName ? ` · ${selected.vehicleName}` : ""}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5 truncate">
+                    <span className="font-mono">{selected.paymentID}</span>
+                    {selected.methodOfPayment && selected.methodOfPayment !== "—" ? ` · ${selected.methodOfPayment}` : ""}
+                    {` · Submitted ${fmtDate(selected.createdAt)}`}
+                  </p>
+                  <div className="flex border-b border-gray-100 mt-3" role="tablist">
+                    {[
+                      ["summary", "Summary"],
+                      ["movements", `Money movements${entriesSummary?.count ? ` (${entriesSummary.count})` : ""}`],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        role="tab"
+                        aria-selected={detailTab === key}
+                        onClick={() => setDetailTab(key)}
+                        className={`px-5 py-2.5 text-sm font-semibold border-b-2 -mb-px transition ${
+                          detailTab === key ? "border-teal-600 text-teal-700" : "border-transparent text-gray-400 hover:text-gray-600"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="p-6 space-y-5">
-                  {/* Status + Actions */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <StatusBadge status={stageOf(selected)} />
+                {/* Body. Both tabs stay mounted (the inactive one is just hidden) so the money movements load once,
+                    and the Refunded amount in the Fee Breakdown is ready before anyone opens that tab. */}
+                <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
+                  <div className={detailTab === "summary" ? "" : "hidden"}>
                     {selected.status === "Pending" && (
-                      <button disabled={updating} onClick={() => updateStatus(selected.id, "Rejected")}
-                        className="px-3 py-1.5 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50">
-                        Reject
-                      </button>
+                      <div className="flex items-center justify-between gap-4 pb-5">
+                        <p className="text-sm text-gray-500">
+                          Waiting for the customer to pay through PayMongo — it's marked as paid automatically the moment they do.
+                        </p>
+                        <button disabled={updating} onClick={() => updateStatus(selected.id, "Rejected")}
+                          className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50">
+                          Reject
+                        </button>
+                      </div>
                     )}
-                  </div>
-                  {selected.status === "Pending" && (
-                    <p className="text-xs text-gray-400 -mt-2">Waiting for the customer to pay through PayMongo — it's marked as paid automatically the moment they do.</p>
-                  )}
 
-                  <Section title="Customer">
-                    <Row label="Name" value={selected.customerName} />
-                    <Row label="Booking ID" value={selected.bookingID} mono />
-                    <Row label="Vehicle" value={selected.vehicleName} />
-                    {selected.bookingID && (
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/bookings?open=${encodeURIComponent(selected.bookingID)}`)}
-                        className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition-colors"
+                    {/* The three numbers staff look for first. */}
+                    <div className="grid grid-cols-3 border-y border-gray-100 py-4 mb-5">
+                      <KeyFigure label="Total fee" value={peso(selected.totalFee, fmtCurrency)} />
+                      <KeyFigure label="Amount paid" value={peso(selected.amountPaid, fmtCurrency)} />
+                      <KeyFigure
+                        label="Balance"
+                        value={peso(selected.balance, fmtCurrency)}
+                        color={selected.balance > 0 ? "text-red-500" : "text-green-600"}
+                        note={
+                          selected.balance > 0
+                            ? `Remaining${selected.balanceStatus === "pending" ? " · payment in progress" : ""}`
+                            : ["Cancelled", "Refunded", "Failed"].includes(stageOf(selected)) ? "No balance due" : "Fully paid"
+                        }
+                      />
+                    </div>
+
+                    {selected.heldAfterCancel && (
+                      <p className="mb-5 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                        This booking was cancelled but {peso(selected.amountPaid, fmtCurrency)} the customer paid is still being held and no refund has been opened. Ask the customer to request one, or arrange the return.
+                      </p>
+                    )}
+
+                    {/* The sections sit in their own wrapper so the first one has no hairline of its own
+                        (the figures above already end in one). */}
+                    <div>
+                      <Section
+                        title="Customer"
+                        action={selected.bookingID && selected.bookingID !== "—" ? (
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/bookings?open=${encodeURIComponent(selected.bookingID)}`)}
+                            className="text-xs font-semibold text-teal-700 hover:underline"
+                          >
+                            View booking →
+                          </button>
+                        ) : null}
                       >
-                        View booking →
-                      </button>
-                    )}
-                  </Section>
+                        <Row label="Name" value={selected.customerName} />
+                        <Row label="Booking ID" value={selected.bookingID} mono />
+                        <Row label="Vehicle" value={selected.vehicleName} />
+                      </Section>
 
-                  {selected.refundRequestID && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                      A refund request ({selected.refundRequestStatus}) is open for this payment — manage it on the Refund Requests page.
-                    </div>
-                  )}
-                  {selected.heldAfterCancel && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-                      This booking was cancelled but {peso(selected.amountPaid, fmtCurrency)} the customer paid is still being held and no refund has been opened. Ask the customer to request one, or arrange the return.
-                    </div>
-                  )}
+                      {/* Discount + what still has to be collected. (The balance itself is in the figures above; payments
+                          can have several movements, so there is no single "paid at" — see Money movements.) */}
+                      <Section title="Balance & discount">
+                        <Row
+                          label="Balance"
+                          hint="What the customer still has to pay. A discount on a partial payment comes off this amount."
+                          value={peso(selected.balance, fmtCurrency)}
+                          bold
+                          color={selected.balance > 0 ? "text-red-500" : "text-green-600"}
+                        />
+                        {selected.discountAmount > 0 ? (
+                          <>
+                            <Row label="Discount given" value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
+                            {selected.discountReason && <Row label="Reason" value={selected.discountReason} />}
+                            {selected.discountAt && <Row label="Given" value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
+                          </>
+                        ) : (
+                          <Row label="Discount given" value={peso(0, fmtCurrency)} color="text-gray-400" />
+                        )}
 
-                  <Section title="Payment Info">
-                    <Row label="Payment ID" value={selected.paymentID} mono />
-                    <Row label="Payment Type" value={selected.methodOfPayment} />
-                    <Row label="Submitted" value={fmtDate(selected.createdAt)} />
-                  </Section>
-
-                  {/* Every charge on this payment — deposit and balance, including pending / failed / not-yet-due ones. */}
-                  {Array.isArray(selected.paymongoTransactions) && selected.paymongoTransactions.length > 0 && (
-                    <Section title="Transactions">
-                      {selected.paymongoTransactions.map((t, i) => (
-                        <div key={`${t.phase}-${i}`} className="rounded-lg border border-gray-200 bg-white p-3 space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm font-semibold text-gray-800">{t.phase === "balance" ? "Balance" : (selected.payType === "Full" ? "Full payment" : "Deposit")}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${TXN_STATUS_STYLE[t.status] || "bg-gray-100 text-gray-600"}`}>{t.status}</span>
-                          </div>
-                          <p className={`text-sm break-all ${t.ref ? "font-mono text-gray-800" : "text-gray-400 italic"}`}>
-                            {t.ref || (t.source === "in_person" ? "No PayMongo ref — paid in person" : t.status === "Paid" ? "No ref recorded" : "No ref yet")}
-                          </p>
-                          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-gray-600">
-                            <span className="font-semibold text-gray-800">{peso(t.amount, fmtCurrency)}</span>
-                            {t.fee !== null && t.fee !== undefined && <span>PayMongo fee {peso(t.fee, fmtCurrency)}</span>}
-                            {t.channel && <span>{CHANNEL_LABEL[String(t.channel).toLowerCase()] || t.channel}</span>}
-                            {t.paidAt && <span>{fmtDate(t.paidAt)}</span>}
-                            {t.by && <span>by {t.by}</span>}
-                          </div>
-                        </div>
-                      ))}
-                      {/* PayMongo's own cost for the online charge(s): what PayMongo keeps, not the gateway fee the customer paid us. */}
-                      {selected.paymongoFee && selected.paymongoFee.total !== null && (
-                        <div className="border-t pt-2 mt-1">
-                          <Row label="Total PayMongo fee" value={peso(selected.paymongoFee.total, fmtCurrency)} bold />
-                          {selected.gatewayFee > 0 && (
-                            <Row
-                              label="Gateway fee collected − PayMongo fee"
-                              value={peso(selected.gatewayFee - selected.paymongoFee.total, fmtCurrency)}
-                              color={selected.gatewayFee - selected.paymongoFee.total >= 0 ? "text-green-600" : "text-red-500"}
-                            />
-                          )}
-                        </div>
-                      )}
-                    </Section>
-                  )}
-
-                  {selected.payType !== "Full" && (
-                    <Section title="Balance">
-                      <Row label="Status" value={
-                        selected.balanceCollected ? "Received in store"
-                        : selected.balanceStatus === "paid" ? "Paid online (PayMongo)"
-                        : selected.balanceStatus === "pending" ? "Payment in progress (PayMongo)"
-                        : selected.balance > 0 ? "Outstanding" : "—"} />
-                      {selected.balanceCollected && (
-                        <>
-                          <Row label="Payment mode" value={selected.balanceMethod || "—"} />
-                          <Row label="Reference no." value={selected.balanceReferenceNumber || "—"} mono />
-                          <Row label="Received by" value={selected.balanceCollectedBy} />
-                          <Row label="Received at" value={fmtDate(selected.balanceCollectedAt)} />
-                        </>
-                      )}
-                      {selected.balanceStatus === "paid" && <Row label="Paid at" value={fmtDate(selected.balancePaidAt)} />}
-
-                      {/* Still owed: the customer pays it online; this nudges them. In store is the exception. */}
-                      {selected.balance > 0 && selected.status === "Approved" && !selected.refundRequestID && selected.balanceStatus !== "pending" && (
-                        <div className="pt-2 space-y-2.5">
-                          <p className="text-xs text-gray-500">
-                            The remaining {peso(selected.balance, fmtCurrency)} is paid online through PayMongo from the customer's booking.
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            <button onClick={handleNotifyBalance} disabled={notifying}
-                              className="px-4 py-2 text-sm font-semibold rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition disabled:opacity-50">
-                              {notifying ? "Sending…" : "Notify customer to pay"}
-                            </button>
-                            {canRecordInStore && !inStoreOpen && (
-                              <button onClick={() => setInStoreOpen(true)}
-                                className="px-4 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
-                                Record in-store payment
+                        {/* Still owed: the customer pays it online; this nudges them. In store is the exception. */}
+                        {selected.balance > 0 && selected.status === "Approved" && !selected.refundRequestID && selected.balanceStatus !== "pending" && (
+                          <div className="pt-3 space-y-2.5">
+                            <p className="text-xs text-gray-500">
+                              The remaining {peso(selected.balance, fmtCurrency)} is paid online through PayMongo from the customer's booking.
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              <button onClick={handleNotifyBalance} disabled={notifying}
+                                className="px-4 py-2 text-sm font-semibold rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition disabled:opacity-50">
+                                {notifying ? "Sending…" : "Notify customer to pay"}
                               </button>
+                              {canRecordInStore && !inStoreOpen && (
+                                <button onClick={() => setInStoreOpen(true)}
+                                  className="px-4 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
+                                  Record in-store payment
+                                </button>
+                              )}
+                            </div>
+                            {selected.balanceReminderAt && (
+                              <p className="text-[11px] text-gray-400">Last reminded {fmtDate(selected.balanceReminderAt)}.</p>
+                            )}
+                            {inStoreOpen && canRecordInStore && (
+                              <InStoreForm
+                                amountLabel={peso(selected.balance, fmtCurrency)}
+                                method={inStoreMethod} setMethod={setInStoreMethod}
+                                reference={inStoreRef} setReference={setInStoreRef}
+                                receivedByLabel="Received by" receivedBy={receivedBy}
+                                onSubmit={submitInStorePayment} onCancel={() => setInStoreOpen(false)}
+                                saving={savingInStore} submitLabel="Record payment"
+                              />
                             )}
                           </div>
-                          {selected.balanceReminderAt && (
-                            <p className="text-[11px] text-gray-400">Last reminded {fmtDate(selected.balanceReminderAt)}.</p>
-                          )}
-                          {inStoreOpen && canRecordInStore && (
-                            <InStoreForm
-                              amountLabel={peso(selected.balance, fmtCurrency)}
-                              method={inStoreMethod} setMethod={setInStoreMethod}
-                              reference={inStoreRef} setReference={setInStoreRef}
-                              receivedByLabel="Received by" receivedBy={receivedBy}
-                              onSubmit={submitInStorePayment} onCancel={() => setInStoreOpen(false)}
-                              saving={savingInStore} submitLabel="Record payment"
-                            />
-                          )}
-                        </div>
-                      )}
-                      {selected.balanceStatus === "pending" && selected.balance > 0 && (
-                        <p className="text-xs text-amber-600 pt-1">The customer has a balance payment in progress on PayMongo — it will show as paid once it clears.</p>
-                      )}
-                    </Section>
-                  )}
-
-                  {/* EVERY money movement on this payment: deposit, balance, penalties paid on it, refunds, deposit returned,
-                      failed attempts. The "Transactions" list above only has the incoming charges. */}
-                  <PaymentEntriesPanel
-                    key={`${selected.paymentID}-${selected.status}-${selected.amountPaid}-${selected.refundIssued}`}
-                    query={{ paymentID: selected.paymentID || selected.id }}
-                    title="All money movements"
-                  />
-
-                  <Section title="Fee Breakdown">
-                    <Row label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
-                    <Row label="Extra Fee" value={peso(selected.extraFee, fmtCurrency)} />
-                    {selected.driversFee > 0 && <Row label="Driver's Fee" value={peso(selected.driversFee, fmtCurrency)} />}
-                    <Row label={selected.serviceFeeRate > 0 ? `Service Fee (${selected.serviceFeeRate}% of rental)` : "Service Fee"} value={peso(selected.serviceFee, fmtCurrency)} />
-                    {selected.securityDeposit > 0 && <Row label="Security Deposit (refundable)" value={peso(selected.securityDeposit, fmtCurrency)} />}
-                    {selected.gatewayFee > 0 && <Row label={selected.gatewayFeeRate > 0 ? `Gateway Fee (${selected.gatewayFeeRate}% of ${peso(selected.gatewayFeeBase, fmtCurrency)})` : "Gateway Fee"} value={peso(selected.gatewayFee, fmtCurrency)} />}
-                    <div className="border-t pt-2 mt-1">
-                      <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
-                      {selected.discountAmount > 0 && (
-                        <Row label="Discount" value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
-                      )}
-                      <Row label="Amount Paid" value={peso(selected.amountPaid, fmtCurrency)} bold />
-                      <Row label="Balance" value={peso(selected.balance, fmtCurrency)} bold color={selected.balance > 0 ? "text-red-500" : "text-green-600"} />
-                    </div>
-                  </Section>
-
-                  {selected.refundDue > 0 && (
-                    <Section title="Refund Due to Customer (in store)">
-                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="font-semibold text-red-700">Amount owed back</span>
-                          <span className="font-bold text-red-700">{peso(selected.refundDue, fmtCurrency)}</span>
-                        </div>
-                        <p className="text-xs text-red-600">
-                          A discount was given on money the customer paid in store, so it can't go back through PayMongo.
-                          Return it in store, then record how it was returned.
-                        </p>
-                        {canRecordInStore ? (
-                          <InStoreForm
-                            amountLabel={peso(selected.refundDue, fmtCurrency)}
-                            method={refundMethod} setMethod={setRefundMethod}
-                            reference={refundRef} setReference={setRefundRef}
-                            receivedByLabel="Returned by" receivedBy={receivedBy}
-                            onSubmit={handleMarkRefundIssued}
-                            saving={markingRefund} submitLabel={`Record ${peso(selected.refundDue, fmtCurrency)} as returned`}
-                          />
-                        ) : (
-                          <p className="text-xs text-gray-500">Only a Supervisor, Admin or Owner can record this.</p>
                         )}
-                      </div>
-                    </Section>
-                  )}
+                        {selected.balanceStatus === "pending" && selected.balance > 0 && (
+                          <p className="text-xs text-amber-600 pt-2">The customer has a balance payment in progress on PayMongo — it will show as paid once it clears.</p>
+                        )}
+                      </Section>
 
-                  <Section title="Give Discount">
-                    {selected.discountAmount > 0 ? (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                          <span className="text-gray-500">Discount given</span>
-                          <span className="font-semibold text-red-500">−{peso(selected.discountAmount, fmtCurrency)}</span>
+                      {/* What the booking cost, what was paid, and what happened to the deposit / discount / refund. */}
+                      <Section title="Fee Breakdown">
+                        <Row label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
+                        <Row label="Extra Fee" value={peso(selected.extraFee, fmtCurrency)} />
+                        {selected.driversFee > 0 && <Row label="Driver's Fee" value={peso(selected.driversFee, fmtCurrency)} />}
+                        <Row label={selected.serviceFeeRate > 0 ? `Service Fee (${selected.serviceFeeRate}% of rental)` : "Service Fee"} value={peso(selected.serviceFee, fmtCurrency)} />
+                        {selected.gatewayFee > 0 && <Row label={selected.gatewayFeeRate > 0 ? `Gateway Fee (${selected.gatewayFeeRate}% of ${peso(selected.gatewayFeeBase, fmtCurrency)})` : "Gateway Fee"} value={peso(selected.gatewayFee, fmtCurrency)} />}
+                        {selected.securityDeposit > 0 && <Row label="Security Deposit (refundable)" value={peso(selected.securityDeposit, fmtCurrency)} />}
+                        <div className="border-t border-gray-100 mt-2 pt-2">
+                          <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
+                          {selected.discountAmount > 0 ? (
+                            <Row label="Discount Given" value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
+                          ) : (
+                            <Row label="Discount Given" value={peso(0, fmtCurrency)} color="text-gray-400" />
+                          )}
+                          <Row label="Amount Paid" value={peso(selected.amountPaid, fmtCurrency)} bold />
                         </div>
-                        {selected.discountReason && <Row label="Reason" value={selected.discountReason} />}
-                        {selected.discountAt && <Row label="Given" value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
-                        <p className="text-[11px] text-gray-400">
-                          One discount per booking — it can't be changed or given again.
-                          {selected.balance <= 0 && selected.refundDue <= 0 && " Any refund shows in All money movements above."}
-                        </p>
-                      </div>
-                    ) : selected.status !== "Approved" || selected.refundRequestID ? (
-                      <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
-                        A discount can be given once the customer's first payment has been received through PayMongo{selected.refundRequestID ? ", and no refund request is open" : ""}.
-                      </div>
-                    ) : (
-                      <div className="space-y-2.5">
+                        {(selected.securityDeposit > 0 && (selected.depositSettled > 0 || selected.depositReturned > 0)) && (
+                          <div className="border-t border-gray-100 mt-2 pt-2">
+                            {selected.depositSettled > 0 && <Row label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />}
+                            {selected.depositReturned > 0 && <Row label="Deposit Returned" value={peso(selected.depositReturned, fmtCurrency)} />}
+                          </div>
+                        )}
+                        {entriesSummary && entriesSummary.refundedOut > 0 && (
+                          <div className="border-t border-gray-100 mt-2 pt-2">
+                            <Row label="Refunded Amount" value={`−${peso(entriesSummary.refundedOut, fmtCurrency)}`} bold color="text-purple-700" />
+                          </div>
+                        )}
+                      </Section>
+
+                      {/* The gateway fee the customer paid us vs. what PayMongo kept, one line per online charge. */}
+                      <GatewayBreakdown payment={selected} fmt={fmtCurrency} />
+
+                      {selected.refundDue > 0 && (
+                        <Section title="Refund Due to Customer (in store)">
+                          <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="font-semibold text-red-700">Amount owed back</span>
+                              <span className="font-bold text-red-700">{peso(selected.refundDue, fmtCurrency)}</span>
+                            </div>
+                            <p className="text-xs text-red-600">
+                              A discount was given on money the customer paid in store, so it can't go back through PayMongo.
+                              Return it in store, then record how it was returned.
+                            </p>
+                            {canRecordInStore ? (
+                              <InStoreForm
+                                amountLabel={peso(selected.refundDue, fmtCurrency)}
+                                method={refundMethod} setMethod={setRefundMethod}
+                                reference={refundRef} setReference={setRefundRef}
+                                receivedByLabel="Returned by" receivedBy={receivedBy}
+                                onSubmit={handleMarkRefundIssued}
+                                saving={markingRefund} submitLabel={`Record ${peso(selected.refundDue, fmtCurrency)} as returned`}
+                              />
+                            ) : (
+                              <p className="text-xs text-gray-500">Only a Supervisor, Admin or Owner can record this.</p>
+                            )}
+                          </div>
+                        </Section>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Every money movement on this payment (deposit, balance, penalties, refunds, deposit returned,
+                      pending / failed attempts) as a plain list, newest first, each with its own receipt. */}
+                  <div className={detailTab === "movements" ? "" : "hidden"}>
+                    <PaymentEntriesPanel
+                      key={`${selected.paymentID}-${selected.status}-${selected.amountPaid}-${selected.refundIssued}`}
+                      query={{ paymentID: selected.paymentID || selected.id }}
+                      title="All money movements"
+                      hideSummary
+                      onLoaded={setEntriesSummary}
+                    />
+                  </div>
+                </div>
+
+                {/* sticky footer: Give Discount + Close stay put while the rest scrolls */}
+                <div className="shrink-0 border-t bg-white px-6 py-4 rounded-b-2xl space-y-3">
+                  {(() => {
+                    const canGiveDiscount =
+                      !(selected.discountAmount > 0) && selected.status === "Approved" && !selected.refundRequestID &&
+                      !["For Refund", "Refunded", "Cancelled"].includes(stageOf(selected));
+                    if (selected.refundRequestID) {
+                      return (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-center justify-between gap-3">
+                          <p className="text-xs text-amber-800">
+                            A refund request ({selected.refundRequestStatus}) is open for this payment — manage it on the Refund Requests page.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => navigate("/refund-requests")}
+                            className="shrink-0 px-3 py-1.5 text-xs font-semibold text-amber-800 bg-white border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors whitespace-nowrap"
+                          >
+                            View refund request →
+                          </button>
+                        </div>
+                      );
+                    }
+                    if (!canGiveDiscount) return null;
+                    return (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Give Discount</p>
                         <div className="flex items-center gap-2">
-                          <div className="relative flex-1">
+                          <div className="relative w-28 shrink-0">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
                             <input
                               type="number" min="1" max={discountMax(selected)} step="1" placeholder="0"
                               value={discountInput}
                               onChange={(e) => setDiscountInput(e.target.value)}
-                              className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+                              className="w-full pl-7 pr-2 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
                             />
                           </div>
                           <input
                             type="text" placeholder="Reason (optional)"
                             value={discountReasonInput}
                             onChange={(e) => setDiscountReasonInput(e.target.value)}
-                            className="flex-[1.3] px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
+                            className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
                           />
+                          <button
+                            onClick={handleApplyDiscount}
+                            disabled={applyingDiscount || !(Number(discountInput) > 0) || Number(discountInput) > discountMax(selected)}
+                            className="px-4 py-2 text-sm font-semibold rounded-xl border border-arl-dark text-arl-dark hover:bg-gray-50 transition disabled:opacity-50 whitespace-nowrap"
+                          >
+                            Give discount
+                          </button>
                         </div>
-                        {Number(discountInput) > discountMax(selected) && (
+                        {Number(discountInput) > discountMax(selected) ? (
                           <p className="text-xs text-red-500">The discount can't be more than {peso(discountMax(selected), fmtCurrency)}.</p>
+                        ) : (
+                          <p className="text-[11px] text-gray-400">
+                            {selected.balance > 0
+                              ? `Comes off the remaining balance (up to ${peso(selected.balance, fmtCurrency)}).`
+                              : `Payment is complete, so PayMongo refunds it to the customer (up to ${peso(discountMax(selected), fmtCurrency)}).`}
+                            {" "}One discount only — you'll confirm first.
+                          </p>
                         )}
-                        <button
-                          onClick={handleApplyDiscount}
-                          disabled={applyingDiscount || !(Number(discountInput) > 0) || Number(discountInput) > discountMax(selected)}
-                          className="px-4 py-2 text-sm font-semibold rounded-xl border border-arl-dark text-arl-dark hover:bg-gray-50 transition disabled:opacity-50"
-                        >
-                          Give discount
-                        </button>
-                        <p className="text-[11px] text-gray-400">
-                          {selected.balance > 0
-                            ? `The payment is still partial, so the discount comes off the remaining balance (up to ${peso(selected.balance, fmtCurrency)}).`
-                            : `The payment is complete, so PayMongo refunds the discount to the customer (up to ${peso(discountMax(selected), fmtCurrency)}).`}
-                          {" "}You'll be asked to confirm first — it can't be changed afterwards.
-                        </p>
                       </div>
-                    )}
-                  </Section>
-
-                  <div className="flex gap-2">
-                    <button onClick={() => setSelected(null)} className="flex-1 py-2 border rounded-xl text-sm">Close</button>
-                  </div>
+                    );
+                  })()}
+                  <button onClick={() => setSelected(null)} className="w-full py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
                 </div>
               </>
             )}
@@ -929,23 +988,20 @@ export default function Payments() {
           </h2>
         </div>
         <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[900px]">
+        <table className="w-full text-sm min-w-[800px]">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Ref #</th>
+              <SortableTh label="Submitted Date" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Submitted Time</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Car</th>
               <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Type</th>
               <SortableTh label="Discount" sortKey="discount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Refund</th>
               <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Balance" sortKey="balance" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">PayMongo Fee</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Method</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Ref</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-              <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
             </tr>
           </thead>
@@ -953,22 +1009,22 @@ export default function Payments() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 12 }).map((_, j) => (
+                  {Array.from({ length: 11 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : paginated.length === 0 ? (
-              <tr><td colSpan={15} className="text-center py-16 text-gray-400 text-sm">
+              <tr><td colSpan={11} className="text-center py-16 text-gray-400 text-sm">
                 {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
               </td></tr>
             ) : paginated.map((p, i) => (
               <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
-                <td className="px-4 py-3 font-mono text-xs text-arl-dark font-semibold">{p.paymentID}</td>
+                <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">{fmtDateOnly(p.createdAt)}</td>
+                <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtTimeOnly(p.createdAt)}</td>
                 <td className="px-4 py-3">
                   <div className="font-semibold text-gray-800 text-xs">{p.customerName}</div>
                 </td>
-                <td className="px-4 py-3 text-xs text-gray-600">{p.vehicleName}</td>
                 <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.totalFee, fmtCurrency)}</td>
                 <td className="px-4 py-3">
                   {p.methodOfPayment && p.methodOfPayment !== "—" ? (
@@ -999,20 +1055,11 @@ export default function Payments() {
                 <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
                   {peso(p.balance, fmtCurrency)}
                 </td>
-                <td className="px-4 py-3 text-xs font-semibold text-gray-800" title={p.paymongoFee && p.paymongoFee.total !== null ? [p.paymongoFee.deposit !== null && `Deposit charge: ${peso(p.paymongoFee.deposit, fmtCurrency)}`, p.paymongoFee.balance !== null && `Balance charge: ${peso(p.paymongoFee.balance, fmtCurrency)}`].filter(Boolean).join(" · ") : "Not recorded (cash payment or paid before fee tracking)"}>
-                  {p.paymongoFee && p.paymongoFee.total !== null
-                    ? peso(p.paymongoFee.total, fmtCurrency)
-                    : <span className="text-gray-300">—</span>}
-                </td>
                 <td className="px-4 py-3 text-xs text-gray-600">{channelOf(p)}</td>
-                <td className="px-4 py-3 text-xs font-mono text-gray-600" title={p.balancePaymongoPaymentID ? `Balance: ${p.balancePaymongoPaymentID}` : undefined}>{refOf(p) || "—"}</td>
                 <td className="px-4 py-3"><StatusBadge status={stageOf(p)} /></td>
-                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                 <td className="px-4 py-3">
                   <button onClick={() => openDetail(p.id)}
-                    className="px-3 py-1.5 text-xs bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
-                    View →
-                  </button>
+                    className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
                 </td>
               </tr>
             ))}
@@ -1066,23 +1113,138 @@ function StatCard({ icon, value, label, color, onClick, active }) {
   );
 }
 
-function Section({ title, children }) {
+// A flat block of the detail modal: a heading, then its rows, separated from the previous block by a hairline
+// (no grey boxes). `action` is an optional link / button shown at the right of the heading.
+function Section({ title, action = null, children }) {
   return (
-    <div>
-      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{title}</p>
-      <div className="bg-gray-50 rounded-xl p-4 space-y-2">{children}</div>
+    <section className="py-5 border-t border-gray-100 first:border-t-0 first:pt-0">
+      <div className="flex items-center justify-between gap-3 mb-1.5">
+        <h3 className="text-sm font-semibold text-gray-800">{title}</h3>
+        {action}
+      </div>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+// `hint` (a short description of the row, e.g. how a figure was worked out) is hidden until the small "?" circle
+// beside the label is clicked, so the rows stay clean. Every row with a hint gets the same button.
+function Row({ label, hint, value, mono, bold, color }) {
+  const [showHint, setShowHint] = useState(false);
+  return (
+    <div className="py-1.5">
+      <div className="flex justify-between items-start gap-4">
+        <div className="min-w-0 shrink-0 max-w-[65%] flex items-center gap-1.5">
+          <span className="text-sm text-gray-500">{label}</span>
+          {hint && (
+            <button
+              type="button"
+              onClick={() => setShowHint((v) => !v)}
+              aria-expanded={showHint}
+              aria-label={`What is ${label}?`}
+              title={showHint ? "Hide description" : "What is this?"}
+              className={`w-4 h-4 shrink-0 rounded-full border text-[10px] leading-none font-semibold flex items-center justify-center transition-colors ${
+                showHint ? "border-teal-600 bg-teal-50 text-teal-700" : "border-gray-300 text-gray-400 hover:border-gray-500 hover:text-gray-600"
+              }`}
+            >
+              ?
+            </button>
+          )}
+        </div>
+        <span className={`text-sm text-right break-all ${mono ? "font-mono" : ""} ${bold ? "font-semibold" : ""} ${color || "text-gray-800"}`}>
+          {value ?? "—"}
+        </span>
+      </div>
+      {hint && showHint && <p className="text-xs text-gray-400 mt-1 pr-8">{hint}</p>}
     </div>
   );
 }
 
-function Row({ label, value, mono, bold, color }) {
+// One of the three headline numbers at the top of the Summary tab.
+function KeyFigure({ label, value, note, color }) {
   return (
-    <div className="flex justify-between items-start gap-2">
-      <span className="text-sm text-gray-500 shrink-0">{label}</span>
-      <span className={`text-sm text-right break-all ${mono ? "font-mono" : ""} ${bold ? "font-semibold" : ""} ${color || "text-gray-800"}`}>
-        {value ?? "—"}
-      </span>
+    <div className="px-4 first:pl-0 last:pr-0 border-l border-gray-100 first:border-l-0 min-w-0">
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className={`text-lg font-bold truncate ${color || "text-gray-800"}`}>{value}</p>
+      {note && <p className="text-xs text-gray-400 truncate">{note}</p>}
     </div>
+  );
+}
+
+// ─── Gateway breakdown ───────────────────────────────────────────────────────
+// Two different things are called "gateway fee" here, so they are shown side by side:
+//   received  = the gateway fee the CUSTOMER paid us (payments.gatewayFee, set at booking time)
+//   PayMongo  = what PayMongo itself kept, one fee per online charge (deposit, balance), read from the
+//               payment's paymentEntries rows (transactionFee)
+//   total     = all PayMongo fees added up
+//   sale      = received − total: what is left of the gateway fee after PayMongo took its cut
+//               (negative = the business absorbed the difference)
+const PHASE_NAME = { deposit: "Deposit", balance: "Balance" };
+
+const round2 = (n) => Math.round(n * 100) / 100;
+const signed = (n, fmtFn) => (n < 0 ? `−${peso(Math.abs(n), fmtFn)}` : peso(n, fmtFn));
+
+function buildGatewayBreakdown(p) {
+  const received = Number(p.gatewayFee) || 0;
+  const tx = Array.isArray(p.paymongoTransactions) ? p.paymongoTransactions : [];
+  const fees = [];
+  ["deposit", "balance"].forEach((phase) => {
+    const raw = p.paymongoFee ? p.paymongoFee[phase] : null;
+    if (raw === null || raw === undefined) return;          // no fee recorded for this charge
+    const t = tx.find((x) => x.phase === phase && x.source === "online") || {};
+    const channelRaw = t.channel || p.paymongoChannel || "";
+    fees.push({
+      phase,
+      amount: Number(raw) || 0,
+      channel: CHANNEL_LABEL[String(channelRaw).toLowerCase()] || channelRaw || null,
+      charged: t.amount != null ? Number(t.amount) : null,   // what that online charge was for
+    });
+  });
+  const storedTotal = p.paymongoFee ? p.paymongoFee.total : null;
+  const total = storedTotal !== null && storedTotal !== undefined
+    ? Number(storedTotal) || 0
+    : fees.length ? round2(fees.reduce((s, f) => s + f.amount, 0)) : null;
+  return {
+    received,
+    rate: Number(p.gatewayFeeRate) || 0,
+    base: Number(p.gatewayFeeBase) || 0,
+    fees,
+    total,
+    sale: total === null ? null : round2(received - total),
+    show: received > 0 || total !== null,
+  };
+}
+
+function GatewayBreakdown({ payment, fmt }) {
+  const g = buildGatewayBreakdown(payment);
+  if (!g.show) return null;
+  const saleColor = g.sale === null ? "" : g.sale >= 0 ? "text-green-600" : "text-red-500";
+  return (
+    <Section title="Gateway Breakdown">
+      <Row
+        label="Gateway received"
+        hint={g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid"}
+        value={peso(g.received, fmt)}
+      />
+      {g.fees.map((f, i) => (
+        <Row
+          key={f.phase}
+          label={`PayMongo fee ${i + 1} · ${PHASE_NAME[f.phase]}`}
+          hint={[f.channel, f.charged != null ? `charged ${peso(f.charged, fmt)}` : null].filter(Boolean).join(" · ") || null}
+          value={peso(f.amount, fmt)}
+        />
+      ))}
+      {g.total !== null ? (
+        <div className="border-t border-gray-100 mt-2 pt-2">
+          <Row label="Gateway total" hint="All PayMongo fees added up" value={peso(g.total, fmt)} bold />
+          <Row label="Gateway sale" hint="Gateway received minus gateway total" value={signed(g.sale, fmt)} bold color={saleColor} />
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400 pt-2">
+          PayMongo's own fee isn't recorded for this payment (cash payment, or paid before fee tracking started).
+        </p>
+      )}
+    </Section>
   );
 }
 
