@@ -63,14 +63,17 @@ function LateFeeSuggestion({ info, loading = false }) {
  * Driver's "Note a penalty" form. Every charge is typed as a line item. The
  * booking's end time, drop-off time and a suggestion ("3 hours late: ₱300")
  * are shown above the fields from the server's late-fee preview, for
- * reference only — nothing is auto-added. Submitting confirms the penalty
- * right away — the customer and staff are notified, and it counts against
- * the deposit (shown as "amount to return") from that moment.
+ * reference only — nothing is auto-added. What submitting does depends on who is submitting:
+ *   needsReview (a driver)   -> the penalty goes to a supervisor for review. The customer is NOT notified and
+ *                               nothing is deducted from their deposit until a supervisor confirms it.
+ *   otherwise (staff)        -> confirms the penalty right away — the customer and staff are notified, and it counts
+ *                               against the deposit (shown as "amount to return") from that moment.
  *
  *   loadLateFee()         -> late-fee preview (end/drop-off times + suggestion) or null
  *   onSubmit(body)        -> POSTs the penalty (throw on error)
+ *   needsReview           -> true for the driver's form (changes the wording only; the server decides by role)
  */
-export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, onSubmit }) {
+export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, onSubmit, needsReview = false }) {
   const [items, setItems] = useState([{ description: "", amount: "" }]);
   const [late, setLate] = useState(null);      // preview payload
   const [lateLoading, setLateLoading] = useState(false);
@@ -119,7 +122,11 @@ export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, 
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
         </div>
-        <p className="text-[11px] text-gray-400">The customer is notified right away and this is deducted from their deposit.</p>
+        <p className="text-[11px] text-gray-400">
+          {needsReview
+            ? "This goes to a supervisor for review first. The customer isn't notified and nothing is deducted from their deposit until it's confirmed."
+            : "The customer is notified right away and this is deducted from their deposit."}
+        </p>
 
         <LateFeeSuggestion info={late} loading={lateLoading} />
 
@@ -140,7 +147,7 @@ export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, 
         <div className="flex gap-2">
           <button onClick={onClose} className="flex-1 py-2 rounded-xl text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
           <button onClick={submit} disabled={!valid || busy} className="flex-1 py-2 rounded-xl text-sm font-semibold bg-red-600 text-white disabled:opacity-40">
-            {busy ? "Saving…" : "Charge penalty"}
+            {busy ? "Saving…" : needsReview ? "Submit for review" : "Charge penalty"}
           </button>
         </div>
       </div>

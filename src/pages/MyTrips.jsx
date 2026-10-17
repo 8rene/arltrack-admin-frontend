@@ -384,7 +384,7 @@ function ActiveTripsTab() {
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.message || "Couldn't charge the penalty.");
-    showToast("Penalty charged — the customer was notified and it's deducted from the deposit.");
+    showToast("Penalty sent for review — the customer isn't notified until a supervisor confirms it.");
     await fetchTrips({ silent: true });
   };
 
@@ -552,6 +552,7 @@ function ActiveTripsTab() {
         title={penaltyTrip ? `${penaltyTrip.customerName} — ${penaltyTrip.vehicleName}` : ""}
         loadLateFee={loadLateFee}
         onSubmit={submitPenalty}
+        needsReview
       />
     </div>
   );

@@ -1380,6 +1380,7 @@ function GatewayBreakdown({ payment, fmt }) {
 //   waived      = forgiven penalties, shown for the record; separate from "Discount Given" on purpose, because a
 //                 waived penalty never touched this payment's balance (a discount does)
 function penaltyState(p) {
+  if (p.status === "UnderReview") return { label: "Under review", color: "text-amber-600" };
   if (p.status === "Waived") return { label: "Waived", color: "text-amber-600" };
   if (p.status === "Voided") return { label: "Voided", color: "text-gray-400" };
   if (p.paidAmount >= p.amount && p.amount > 0) return { label: "Paid", color: "text-green-600" };
@@ -1407,7 +1408,9 @@ function PenaltyBreakdown({ penalties, payment, fmt }) {
             key={p.penaltyID}
             label={<><span className="text-gray-400 mr-1.5">{i + 1}</span>{p.description} · <span className={st.color}>{st.label}</span></>}
             hint={gone
-              ? `${p.status} on ${fmtDate(p.createdAt)}${p.statusReason ? ` — ${p.statusReason}` : ""}. Not counted as owed.`
+              ? p.status === "UnderReview"
+                ? `Noted ${fmtDate(p.createdAt)} — waiting for a supervisor's review on the Penalties page. The customer hasn't been notified. Not counted as owed yet.`
+                : `${p.status} on ${fmtDate(p.createdAt)}${p.statusReason ? ` — ${p.statusReason}` : ""}. Not counted as owed.`
               : `Charged ${fmtDate(p.createdAt)}${p.paidAmount > 0 ? ` · ${peso(Math.min(p.paidAmount, p.amount), fmt)} paid so far` : ""}`}
             value={peso(p.amount, fmt)}
             color={gone ? "text-gray-400 line-through" : undefined}

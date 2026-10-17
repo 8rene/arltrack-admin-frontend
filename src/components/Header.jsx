@@ -69,6 +69,9 @@ const ROUTE_BY_COLLECTION = {
   cars: "/car-tracking",
   refundRequests: "/refund-requests",
   maintenance: "/maintenance",
+  // "A penalty needs review" / "A penalty was charged" — opens the Penalties page with that penalty's details
+  // (Penalties.jsx reads ?open=).
+  penalties: "/penalties",
   // Profile edit / ID resubmit approve-reject notifications (sent to the
   // requester themself, not staff) — nothing to deep-link into beyond
   // their own Account page.
@@ -86,6 +89,9 @@ const META_BY_TYPE = {
   maintenance_overdue:  { bg: "bg-red-100",    emoji: "🔧", title: "Maintenance Overdue" },
   // A Supervisor scheduled maintenance — sent to the Owner(s) only.
   maintenance_created:  { bg: "bg-teal-100",   emoji: "🔧", title: "Maintenance Created" },
+  // A driver noted a penalty: it waits for a supervisor to edit / confirm it before the customer is told.
+  penalty_review:       { bg: "bg-amber-100",  emoji: "📝", title: "Penalty Needs Review" },
+  penalty_created:      { bg: "bg-red-100",    emoji: "⚠️", title: "Penalty Charged" },
   refund_request:       { bg: "bg-blue-100",   emoji: "💸", title: "Refund Request" },
   refund_due:           { bg: "bg-blue-100",   emoji: "💰", title: "Refund Due" },
   license_expiring:     { bg: "bg-yellow-100", emoji: "🪪", title: "License Expiring Soon" },
