@@ -3,7 +3,7 @@ import PaymentEntriesPanel from "./PaymentEntriesPanel";
 
 // Turns a camelCase/PascalCase field name into a readable label, e.g.
 // "bookingArchivesId" -> "Booking Archives Id".
-function prettyLabel(key) {
+export function prettyLabel(key) {
   return key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/^./, (c) => c.toUpperCase())
@@ -13,7 +13,7 @@ function prettyLabel(key) {
 // Fields that look like a date/timestamp by name get formatted as one.
 const DATE_KEY_RE = /(At|Date|Time)$/;
 
-function formatValue(key, val) {
+export function formatValue(key, val) {
   if (val === null || val === undefined || val === "") return "—";
   if (typeof val === "boolean") return val ? "Yes" : "No";
 
@@ -39,7 +39,7 @@ function formatValue(key, val) {
  * truncate most fields to fit a row. Pass the raw record object; every key
  * on it is shown unless listed in hideKeys.
  */
-export default function ArchiveDetailModal({ title, record, onClose, hideKeys = [], labelOverrides = {}, entriesQuery = null, entriesTitle }) {
+export default function ArchiveDetailModal({ title, record, onClose, hideKeys = [], labelOverrides = {}, entriesQuery = null, entriesTitle, extra = null, wide = false }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -57,7 +57,7 @@ export default function ArchiveDetailModal({ title, record, onClose, hideKeys = 
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col"
+        className={`bg-white rounded-2xl shadow-xl w-full ${wide ? "max-w-3xl" : "max-w-lg"} max-h-[85vh] overflow-hidden flex flex-col`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
@@ -91,6 +91,8 @@ export default function ArchiveDetailModal({ title, record, onClose, hideKeys = 
               <PaymentEntriesPanel query={entriesQuery} title={entriesTitle || "Money movements"} />
             </div>
           )}
+          {/* Optional extra content under the fields (e.g. the linked-records tabs on the Booking Archive page). */}
+          {extra}
         </div>
       </div>
     </div>

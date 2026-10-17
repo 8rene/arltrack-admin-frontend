@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
-import DeleteBundleModal from "../components/shared/DeleteBundleModal";
 import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -593,7 +592,7 @@ function DetailRow({ label, value }) {
   );
 }
 
-function PenaltyDetailsModal({ penalty: p, onClose, onViewBooking, onDelete }) {
+function PenaltyDetailsModal({ penalty: p, onClose, onViewBooking }) {
   const fmtDate = (v) => {
     const d = toDate(v);
     return d ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : null;
@@ -670,11 +669,6 @@ function PenaltyDetailsModal({ penalty: p, onClose, onViewBooking, onDelete }) {
         </div>
 
         <div className="flex justify-end gap-2 pt-1">
-          {onDelete && (
-            <button onClick={onDelete} className="mr-auto px-4 py-2 rounded-xl text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50">
-              Delete
-            </button>
-          )}
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
             Close
           </button>
@@ -715,9 +709,7 @@ export default function Penalties() {
   const [reasonModal, setReasonModal] = useState(null); // { penaltyID, action: "Voided" | "Waived" }
   const [markPaidModal, setMarkPaidModal] = useState(null); // the penalty record being paid off
   const [detailsModal, setDetailsModal] = useState(null); // the penalty record being viewed in detail
-  const [deleteTarget, setDeleteTarget] = useState(null);   // the penalty being deleted (Owner / Admin only)
   const { effectiveRole } = useAuth();
-  const canDelete = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);   // Supervisors can only delete bookings
   const canRecordInStore = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
 
   // Deep-link from Bookings.jsx's "Note a Penalty" button: opens the
@@ -909,17 +901,6 @@ export default function Penalties() {
           penalty={detailsModal}
           onClose={() => setDetailsModal(null)}
           onViewBooking={() => { setDetailsModal(null); viewBooking(detailsModal.bookingID); }}
-          onDelete={canDelete ? () => { setDeleteTarget(detailsModal); setDetailsModal(null); } : undefined}
-        />
-      )}
-
-      {deleteTarget && (
-        <DeleteBundleModal
-          kind="penalty"
-          id={deleteTarget.penaltyID}
-          label={`${deleteTarget.penaltyID} · booking ${deleteTarget.bookingID || "—"}`}
-          onClose={() => setDeleteTarget(null)}
-          onDone={(json) => { setDeleteTarget(null); showToast(json?.message || "Penalty archived.", "success"); fetchAll(); }}
         />
       )}
 

@@ -1,21 +1,16 @@
-damage setup on vehicle inspection
-
-pickup does it check driver?
-
-payment have a back button
-approve and disapprove no more
-review
+pickup does it check driver? - sean
 
 
-referral, in accepting t should show the name who referred him/her
+booking in customer show how much the completed and other status
+bookings remove the other button, and just view 
 
-
-municipality, ncr caloocan pasig, city of manila
-province location
-accept user from notification
 
 users joined recently by default
 
+penalties dont link to customer or booking
+payments
+paymongo fee dont show  payment ref too onlyin view modeal
+submitted = caeted
 
 
 booking not notified to the user

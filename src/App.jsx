@@ -29,16 +29,10 @@ import CodingRestrictions from "./pages/CodingRestrictions";
 import Addresses from "./pages/Addresses";
 import VehicleInspection from "./pages/VechicleInspection";
 import SessionLogArchivePage from "./pages/SessionLogArchivePage";
-import PaymentsArchivePage from "./pages/PaymentsArchivePage";
 import UserArchivePage from "./pages/UserArchivePage";
 import BookingArchivePage from "./pages/BookingArchivePage";
 import TransactionLogArchivePage from "./pages/TransactionLogArchivePage";
-import RefundArchivePage from "./pages/RefundArchivePage";
-import PenaltyArchivePage from "./pages/PenaltyArchivePage";
 import AuditLogsArchivePage from "./pages/AuditLogsArchivePage";
-import ReviewsArchivePage from "./pages/ReviewsArchivePage";
-import MaintenanceArchivePage from "./pages/MaintenanceArchivePage";
-import VehicleInspectionArchivePage from "./pages/VehicleInspectionArchivePage";
 import Reviews from "./pages/Reviews";
 import MyTrips from "./pages/MyTrips";
 import Account from "./pages/Account";
@@ -236,11 +230,6 @@ function AppRoutes() {
                     <DashboardLayout><SessionLogArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
-            <Route path="/archives/payments" element={
-                <ProtectedRoute>
-                    <DashboardLayout><PaymentsArchivePage /></DashboardLayout>
-                </ProtectedRoute>
-            } />
             <Route path="/archives/bookings" element={
                 <ProtectedRoute>
                     <DashboardLayout><BookingArchivePage /></DashboardLayout>
@@ -251,34 +240,9 @@ function AppRoutes() {
                     <DashboardLayout><TransactionLogArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
-            <Route path="/archives/penalties" element={
-                <ProtectedRoute>
-                    <DashboardLayout><PenaltyArchivePage /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/archives/refund-requests" element={
-                <ProtectedRoute>
-                    <DashboardLayout><RefundArchivePage /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/archives/maintenance" element={
-                <ProtectedRoute>
-                    <DashboardLayout><MaintenanceArchivePage /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/archives/vehicle-inspection" element={
-                <ProtectedRoute>
-                    <DashboardLayout><VehicleInspectionArchivePage /></DashboardLayout>
-                </ProtectedRoute>
-            } />
             <Route path="/archives/audit-log" element={
                 <ProtectedRoute>
                     <DashboardLayout><AuditLogsArchivePage /></DashboardLayout>
-                </ProtectedRoute>
-            } />
-            <Route path="/archives/reviews" element={
-                <ProtectedRoute>
-                    <DashboardLayout><ReviewsArchivePage /></DashboardLayout>
                 </ProtectedRoute>
             } />
             <Route path="/reviews" element={

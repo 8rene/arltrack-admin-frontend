@@ -1,15 +1,13 @@
 import { useEffect, useState } from "react";
 
-// The "are you sure?" for deleting a booking, a payment or a penalty.
+// The "are you sure?" for deleting a booking: the ONLY delete for a booking and everything that belongs to it.
 //
-// "Delete" here means ARCHIVE. It first asks the server what would happen (nothing is written):
-//   - the booking still exists -> the WHOLE booking goes with it (every payment, refund request, penalty,
-//     review and session), so the dialog lists exactly those counts;
-//   - the booking no longer exists -> only this one record is archived.
+// "Delete" here means ARCHIVE. It first asks the server what would happen (nothing is written) and lists exactly
+// what goes with the booking (payment, money entries, refund requests, penalties, reviews, trip session, driver
+// assignments, cancellation records, maintenance, vehicle inspection).
 // Things still in flight (ongoing trip, open refund, unpaid penalty ...) block the delete. Owner / Admin can
 // delete past them after ticking the box; a Supervisor cannot (the server enforces this too).
-const PATH = { booking: "bookings", payment: "payments", penalty: "penalties" };
-const NOUN = { booking: "booking", payment: "payment", penalty: "penalty" };
+// A table the server could not read shows up as a warning; the delete can still go ahead.
 const COUNT_LABEL = {
   booking: ["booking", "bookings"], payment: ["payment", "payments"], refund: ["refund request", "refund requests"],
   penalty: ["penalty", "penalties"], review: ["review", "reviews"], session: ["trip session", "trip sessions"],
@@ -35,7 +33,7 @@ const failMessage = ({ res, json, notJson }, fallback) => {
   return fallback;
 };
 
-export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) {
+export default function DeleteBundleModal({ id, label, onClose, onDone }) {
   const [preview, setPreview] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [gone, setGone] = useState(false);          // the record itself no longer exists: nothing to delete
@@ -43,7 +41,7 @@ export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) 
   const [force, setForce] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const base = `${process.env.REACT_APP_API_URL}/api/${PATH[kind]}/${encodeURIComponent(id)}`;
+  const base = `${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(id)}`;
   const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
 
   useEffect(() => {
@@ -62,7 +60,7 @@ export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) 
   }, [base]);
 
   // A record that no longer exists cannot be deleted; closing the dialog refreshes the list so the stale row disappears.
-  const close = () => (gone ? onDone({ message: `This ${NOUN[kind]} no longer exists. The list was refreshed.` }) : onClose());
+  const close = () => (gone ? onDone({ message: `This booking no longer exists. The list was refreshed.` }) : onClose());
 
   const blockers = blocked?.blockers ?? preview?.blockers ?? [];
   const warnings = blocked?.warnings ?? preview?.warnings ?? [];
@@ -87,16 +85,16 @@ export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) 
   return (
     <div className="fixed inset-0 bg-black/40 z-[70] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
-        <h2 className="font-bold text-lg text-gray-800">Delete {NOUN[kind]}</h2>
+        <h2 className="font-bold text-lg text-gray-800">Delete booking</h2>
         <p className="text-sm text-gray-600"><span className="font-mono font-semibold text-gray-800 break-all">{label || id}</span></p>
 
         {!preview && !loadError && <p className="text-sm text-gray-400">Checking what this affects…</p>}
         {loadError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">{loadError}</p>}
 
-        {preview && preview.mode === "bundle" && (
+        {preview && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
             <p className="text-sm font-semibold text-amber-800">
-              {kind === "booking" ? "This archives the booking together with:" : `Deleting a ${NOUN[kind]} archives its whole booking (${preview.booking?.bookingID}) together with:`}
+              This archives the booking together with:
             </p>
             <ul className="text-sm text-amber-700 list-disc ml-4 space-y-0.5">
               {counts.map(([k, n]) => <li key={k}>{n} {COUNT_LABEL[k]?.[n === 1 ? 0 : 1] || k}</li>)}
@@ -106,12 +104,6 @@ export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) 
             </p>
           </div>
         )}
-        {preview && preview.mode === "alone" && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-1">
-            <p className="text-sm font-semibold text-amber-800">Only this {NOUN[kind]} will be archived.</p>
-            <p className="text-xs text-amber-700">{preview.note}</p>
-          </div>
-        )}
 
         {warnings.length > 0 && (
           <ul className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1 list-disc ml-0 pl-6">
@@ -119,7 +111,7 @@ export default function DeleteBundleModal({ kind, id, label, onClose, onDone }) 
           </ul>
         )}
 
-        {preview && preview.mode === "bundle" && preview.missing?.length > 0 && (
+        {preview && preview.missing?.length > 0 && (
           <p className="text-xs text-gray-500">None found (already gone or never existed): {preview.missing.join(", ")}.</p>
         )}
 

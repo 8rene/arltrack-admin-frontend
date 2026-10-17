@@ -4,7 +4,6 @@ import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
-import DeleteBundleModal from "../components/shared/DeleteBundleModal";
 import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
@@ -254,9 +253,7 @@ export default function Payments() {
   const [customFrom, setCustomFrom]       = useState("");
   const [customTo, setCustomTo]           = useState("");
   const [selected, setSelected]           = useState(null);
-  const [deleteTarget, setDeleteTarget]   = useState(null);   // the payment being deleted (Owner / Admin only)
   const { effectiveRole } = useAuth();
-  const canDelete = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);   // Supervisors can only delete bookings
   const canRecordInStore = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
   const [detailLoading, setDetailLoading] = useState(false);
   const [toast, setToast]                 = useState(null);
@@ -554,16 +551,6 @@ export default function Payments() {
           modal and hide the "Payment Detail" label entirely — matches
           the other centered modals below (Confirm Edit Discount, Mark
           Refund), which already use z-[60] for the same reason. */}
-      {deleteTarget && (
-        <DeleteBundleModal
-          kind="payment"
-          id={deleteTarget.id || deleteTarget.paymentID}
-          label={`${deleteTarget.paymentID} · booking ${deleteTarget.bookingID || "—"}`}
-          onClose={() => setDeleteTarget(null)}
-          onDone={(json) => { setDeleteTarget(null); setSelected(null); showToast(json?.message || "Payment archived.", "success"); fetchPayments(); }}
-        />
-      )}
-
       {(selected || detailLoading) && (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
@@ -831,10 +818,6 @@ export default function Payments() {
                   </Section>
 
                   <div className="flex gap-2">
-                    {canDelete && (
-                      <button onClick={() => setDeleteTarget(selected)}
-                        className="px-4 py-2 border border-red-200 text-red-600 rounded-xl text-sm hover:bg-red-50">Delete</button>
-                    )}
                     <button onClick={() => setSelected(null)} className="flex-1 py-2 border rounded-xl text-sm">Close</button>
                   </div>
                 </div>

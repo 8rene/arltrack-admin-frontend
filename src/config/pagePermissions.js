@@ -69,15 +69,9 @@ export const PAGE_ACCESS = {
 
   // Archives — Owner keeps access, Admin added per this round's decision.
   "/archives/session-log": [OWNER, ADMIN],
-  "/archives/payments": [OWNER, ADMIN],
   "/archives/bookings": [OWNER, ADMIN],
   "/archives/transaction-log": [OWNER, ADMIN],
-  "/archives/penalties": [OWNER, ADMIN],
-  "/archives/refund-requests": [OWNER, ADMIN],
   "/archives/audit-log": [OWNER, ADMIN],
-  "/archives/reviews": [OWNER, ADMIN],
-  "/archives/maintenance": [OWNER, ADMIN],
-  "/archives/vehicle-inspection": [OWNER, ADMIN],
   "/reviews": [OWNER, ADMIN],
   "/archives/users": [OWNER, ADMIN],
 
