@@ -623,7 +623,7 @@ export default function RefundRequests() {
                     <td className="px-5 py-4">
                       {r.bookingID ? (
                         <button
-                          onClick={() => navigate(`/bookings?open=${encodeURIComponent(r.bookingID)}`)}
+                          onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
                           className="font-medium text-teal-600 hover:text-teal-700 hover:underline"
                           title="Open this booking"
                         >
