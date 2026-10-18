@@ -1,3 +1,4 @@
+import PlaceLabel from "../components/PlaceLabel";
 import { useEffect, useState, useCallback, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -238,7 +239,6 @@ export default function GPSTracking() {
         activeMarker.current = L.marker([loc.lat, loc.lng], { icon: makeCarIcon(true) })
           .addTo(leafletMap.current)
           .bindPopup(`<b>Device: ${device.gpsName}</b><br>${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}<br>
-            ${loc.lastLocation ? `<span style="font-size:11px">${loc.lastLocation}</span><br>` : ""}
             <span style="color:#9ca3af;font-size:11px">${timeAgo(loc.updatedAt)}</span>`)
           .openPopup();
         leafletMap.current.setView([loc.lat, loc.lng], 15, { animate: true });
@@ -502,12 +502,10 @@ export default function GPSTracking() {
                             <p className="text-xs text-gray-400 font-mono mt-0.5">
                               {parseFloat(loc.lat).toFixed(5)}, {parseFloat(loc.lng).toFixed(5)}
                             </p>
-                            {loc.lastLocation && (
-                              <p className="text-xs text-gray-500 mt-0.5 truncate flex items-center gap-1" title={loc.lastLocation}>
-                                <Icons.MapPin className="w-3 h-3 shrink-0" />
-                                {loc.lastLocation}
-                              </p>
-                            )}
+                            <p className="text-xs text-gray-500 mt-0.5 truncate flex items-center gap-1">
+                              <Icons.MapPin className="w-3 h-3 shrink-0" />
+                              <PlaceLabel lat={parseFloat(loc.lat)} lng={parseFloat(loc.lng)} />
+                            </p>
                             <p className="text-xs text-green-500 mt-0.5 font-medium flex items-center gap-1">
                               <Icons.Clock className="w-3 h-3" />
                               {timeAgo(loc.updatedAt)}

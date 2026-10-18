@@ -1457,6 +1457,14 @@ export default function Penalties() {
   // penalties are never split across two pages.
   const [groupByBooking, setGroupByBooking] = useState(true);
   const [bookingModalID, setBookingModalID] = useState(null); // bookingID whose penalties are listed in the booking window
+  // Deep-link from Car Tracking's customer window: open this booking's penalty window (the list, with "Add penalty").
+  // Runs once and strips the param so a refresh doesn't re-open it.
+  useEffect(() => {
+    const v = searchParams.get("viewBooking");
+    if (!v) return;
+    setBookingModalID(v);
+    setSearchParams((prev) => { prev.delete("viewBooking"); return prev; }, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Bookings.jsx doesn't yet auto-open a specific booking's panel from a
   // URL param — this gets staff to the right page with the bookingID

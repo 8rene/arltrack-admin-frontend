@@ -20,12 +20,15 @@ const REFUND_METHODS = ["Cash", "GCash", "Maya", "BankTransfer"];
  *   onConfirmReturn()      -> completes the return (throw on error)
  *   onNotePenalty()        -> optional, opens the caller's penalty flow
  *   onMarkDroppedOff()     -> optional, lets them mark dropped off from here
+ *   onOpenPayments()       -> optional. When given (Car Tracking), the deposit/penalty summary and the settle section are
+ *                             hidden and replaced by one "deposit still held -- return it on Payments" line that calls
+ *                             this. The deposit is returned from the Payments page (depositOnly view), never from here.
  *   depositOnly            -> "Return deposit" view: just the deposit hand-back (plus the
  *                             drop-off prerequisite), no inspection/GPS rows or Confirm Return
  */
 export default function ReturnChecklistModal({
   open, onClose, title, driverName, depositOnly = false,
-  loadChecklist, onSettleDeposit, onConfirmReturn, onNotePenalty, onMarkDroppedOff,
+  loadChecklist, onSettleDeposit, onConfirmReturn, onNotePenalty, onMarkDroppedOff, onOpenPayments, onOpenRefunds,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -61,6 +64,8 @@ export default function ReturnChecklistModal({
   };
 
   const item = (key) => data?.items?.find((i) => i.key === key);
+  const compact = !!onOpenPayments && !depositOnly;   // Car Tracking: no money section here, just a pointer to Payments
+  const depositHeldNow = data?.depositStatus === "Held" && !data?.depositSettled;
   const refundDue = (data?.amountToReturn ?? 0) > 0;
   const owes = (data?.amountToReturn ?? 0) < 0;
   const onlineOpt = data?.onlineReturn || null;                 // { available, channel?, reason? } from the server
@@ -119,7 +124,24 @@ export default function ReturnChecklistModal({
               ))}
             </ul>
 
-            <div className="bg-gray-50 rounded-xl p-3 text-sm space-y-1">
+            {/* An online deposit return that PayMongo hasn't finished (or refused): it is followed on the Refunds page. */}
+            {onOpenRefunds && data.depositReturn?.via === "paymongo" && ["processing", "failed"].includes(data.depositReturn.state) && (
+              <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs border ${data.depositReturn.state === "failed" ? "bg-red-50 border-red-200 text-red-800" : "bg-blue-50 border-blue-200 text-blue-800"}`}>
+                <span>{data.depositReturn.state === "failed"
+                  ? "PayMongo could not return this deposit. Retry it or record an in-store hand-back on the Refunds page."
+                  : "The deposit is being returned through PayMongo. It can take up to 24 hours. Follow it on the Refunds page."}</span>
+                <button type="button" onClick={onOpenRefunds} className="shrink-0 font-semibold underline">Open Refunds</button>
+              </div>
+            )}
+
+            {compact && depositHeldNow && (
+              <div className="flex items-center justify-between gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-800">
+                <span>Deposit still held ({data.depositHeld == null ? "—" : peso(data.depositHeld)}). Return it on Payments.</span>
+                <button type="button" onClick={onOpenPayments} className="shrink-0 font-semibold underline hover:text-amber-900">Open Payments</button>
+              </div>
+            )}
+
+            {!compact && (<div className="bg-gray-50 rounded-xl p-3 text-sm space-y-1">
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Deposit &amp; penalties</p>
               <div className="flex justify-between"><span className="text-gray-500">Driver</span><span className="font-medium text-arl-dark">{driverName || "No driver"}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Security deposit <span className="text-[11px] text-gray-400">({data.depositStatus})</span></span><span className="font-medium">{data.depositHeld == null ? "—" : peso(data.depositHeld)}</span></div>
@@ -168,7 +190,7 @@ export default function ReturnChecklistModal({
               {data.depositSettled && data.stillOwed > 0 && (
                 <p className="text-[11px] text-red-600">{peso(data.stillOwed)} in penalties is still unpaid (Penalties page → Mark Paid). This doesn&apos;t block completing the booking.</p>
               )}
-            </div>
+            </div>)}
 
             {onNotePenalty && (
               <button onClick={onNotePenalty} className="w-full py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">
@@ -183,7 +205,7 @@ export default function ReturnChecklistModal({
               </button>
             )}
 
-            {(depositOnly ? (data.depositStatus === "Held" && !data.depositSettled) : data.canSettle) && (
+            {!compact && (depositOnly ? (data.depositStatus === "Held" && !data.depositSettled) : data.canSettle) && (
               <div className="border border-gray-200 rounded-xl p-3 space-y-2">
                 <p className="text-sm font-semibold text-arl-dark">Settle security deposit</p>
                 {data.underReviewCount > 0 && (

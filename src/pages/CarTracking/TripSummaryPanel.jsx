@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 const API = process.env.REACT_APP_API_URL;
 
@@ -14,9 +15,26 @@ function fmtDateTime(val) {
   } catch { return "—"; }
 }
 
-function fmtMoney(n) {
-  if (typeof n !== "number") return "—";
-  return `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 0 })}`;
+function toMs(val) {
+  if (!val) return null;
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else d = new Date(val);
+    const t = d.getTime();
+    return isNaN(t) ? null : t;
+  } catch { return null; }
+}
+
+// "1h 20m" / "35m" / "2d 3h"
+function fmtSpan(ms) {
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
+  const d = Math.floor(h / 24), rh = h % 24;
+  return rh ? `${d}d ${rh}h` : `${d}d`;
 }
 
 const STATUS_STYLES = {
@@ -42,7 +60,11 @@ const STATUS_STYLES = {
  * required to start"). If bookingID is missing entirely (legacy archive with
  * no session metadata) this just falls back to the trip label passed in.
  */
-export default function TripSummaryPanel({ bookingID, carLabel, tripLabel, token, onClose }) {
+export default function TripSummaryPanel({
+  bookingID, carLabel, tripLabel, token, onClose,
+  droppedOffAt = null, completedAt = null, geofenceAlertCount = 0, codingAlertCount = 0,
+}) {
+  const navigate = useNavigate();
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
@@ -121,22 +143,63 @@ export default function TripSummaryPanel({ bookingID, carLabel, tripLabel, token
               )}
             </div>
 
-            {(booking.totalFee || booking.rentalFee) && (
-              <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-500">Rental fee</span>
-                  <span className="text-gray-700 font-mono">{fmtMoney(booking.rentalFee)}</span>
+            {/* What actually happened on the trip (money lives on Payments / Penalties, not here). */}
+            {(() => {
+              const dropMs = toMs(droppedOffAt || booking.droppedOffTime);
+              const doneMs = toMs(completedAt || booking.completedAt);
+              const endMs  = toMs(booking.endDateTime);
+              const backMs = doneMs ?? dropMs;
+              const lateMs = backMs != null && endMs != null ? backMs - endMs : null;
+              return (
+                <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-1.5">
+                  <p className="text-[11px] font-semibold text-gray-500">Dropped off</p>
+                  <p className="text-xs text-gray-700">{fmtDateTime(droppedOffAt || booking.droppedOffTime)}</p>
+                  <p className="text-[11px] font-semibold text-gray-500 pt-1">Completed</p>
+                  <p className="text-xs text-gray-700">{fmtDateTime(completedAt || booking.completedAt)}</p>
+                  {lateMs != null && (
+                    <p className={`text-xs font-semibold pt-1 ${lateMs > 60000 ? "text-red-600" : "text-green-700"}`}>
+                      {lateMs > 60000 ? `Returned ${fmtSpan(lateMs)} late` : "Returned on time"}
+                    </p>
+                  )}
+                  <div className="flex gap-1.5 flex-wrap pt-1">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${geofenceAlertCount ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-500"}`}>
+                      {geofenceAlertCount} geofence alert{geofenceAlertCount === 1 ? "" : "s"}
+                    </span>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${codingAlertCount ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500"}`}>
+                      {codingAlertCount} coding alert{codingAlertCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-500">Service fee</span>
-                  <span className="text-gray-700 font-mono">{fmtMoney(booking.serviceFee)}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs pt-1 border-t border-gray-100 font-semibold">
-                  <span className="text-gray-600">Total</span>
-                  <span className="text-gray-800 font-mono">{fmtMoney(booking.totalFee)}</span>
-                </div>
+              );
+            })()}
+
+            {booking.driverName && (
+              <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                <p className="text-[11px] font-semibold text-gray-500">Driver</p>
+                <p className="text-xs text-gray-700">{booking.driverName}</p>
               </div>
             )}
+
+            {booking.deposit?.status === "Held" && !booking.depositSettled && (
+              <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
+                <p className="text-xs font-semibold text-amber-700">Security deposit still held</p>
+                <p className="text-[11px] text-amber-700 opacity-90">Return it from Payments.</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-1.5 pt-1">
+              {(() => {
+                const key = encodeURIComponent(booking.bookingID || bookingID);
+                const btn = "w-full px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 text-left";
+                return (
+                  <>
+                    <button className={btn} onClick={() => navigate(`/bookings?open=${key}`)}>View booking →</button>
+                    <button className={btn} onClick={() => navigate(`/payments?bookingID=${key}`)}>View payments →</button>
+                    <button className={btn} onClick={() => navigate(`/penalties?viewBooking=${key}`)}>View penalties →</button>
+                  </>
+                );
+              })()}
+            </div>
 
             {booking.notesAdmin && (
               <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">

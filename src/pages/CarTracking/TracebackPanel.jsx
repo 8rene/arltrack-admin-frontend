@@ -774,6 +774,10 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
                 bookingID={sessionByCar[focusedCar]?.bookingID}
                 carLabel={effectiveCars.find(c => c.id === focusedCar)?.name || focusedCar}
                 tripLabel={reviewData?.label}
+                droppedOffAt={zonesAlerts[focusedCar]?.droppedOffAt || null}
+                completedAt={zonesAlerts[focusedCar]?.completedAt || null}
+                geofenceAlertCount={(zonesAlerts[focusedCar]?.geofenceAlerts || []).length}
+                codingAlertCount={(zonesAlerts[focusedCar]?.codingAlerts || []).length}
                 token={token}
                 onClose={() => setShowBookingInfo(false)}
               />

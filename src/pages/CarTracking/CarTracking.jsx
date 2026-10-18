@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -12,11 +13,11 @@ import ReviewPanel from "./ReviewPanel";
 import SimulatePanel from "./SimulatePanel";
 import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
-import PaymentStatusModal from "../../components/PaymentStatusModal";
 import ReturnChecklistModal from "../../components/ReturnChecklistModal";
 import DriverPenaltyModal from "../../components/DriverPenaltyModal";
 import GeofenceBanner from "../../components/GeofenceBanner";
 import PlaceLabel from "../../components/PlaceLabel";
+import { reverseGeocode, roundKey } from "../../utils/reverseGeocode";
 import { isGeofenceBreachedNow, isCodingRestrictedNow, activeCodingAlertNow } from "../../utils/geofenceAlerts";
 import { colorForCar } from "../../utils/carColors";
 import { fetchCityBoundary } from "../../utils/cityBoundary";
@@ -266,6 +267,226 @@ function makeCarIcon(active = false, imageURL = null, status = "Active") {
   });
 }
 
+// ── Customer / booking window: opened by the View button on a booking ─────────
+const cbPeso = (n) => `₱${Number(n || 0).toLocaleString()}`;
+const CB_METHOD_LABEL = { cash: "Cash", gcash: "GCash", maya: "Maya", bank_transfer: "Bank transfer" };
+const cbFmtWhen = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !isNaN(d) ? d.toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : null;
+};
+
+const CB_STATUS_CHIP = {
+  ongoing:   "bg-teal-50 text-teal-700 border-teal-200",
+  upcoming:  "bg-blue-50 text-blue-700 border-blue-200",
+  completed: "bg-green-50 text-green-700 border-green-200",
+};
+
+function CbRow({ label, hint, children, tone }) {
+  return (
+    <div className="flex justify-between gap-3 items-start">
+      <span className="text-gray-500">
+        {label}
+        {hint && <span className="block text-[11px] text-gray-400">{hint}</span>}
+      </span>
+      <span className={`font-medium text-right ${tone || "text-arl-dark"}`}>{children}</span>
+    </div>
+  );
+}
+
+function CbSection({ title, aside, children }) {
+  return (
+    <div className="bg-gray-50 rounded-xl p-3 text-sm space-y-1.5">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{title}</p>
+        {aside}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Car Tracking's "who is this booking" window: customer, payment status, what happened to the security deposit, and
+ * every penalty already written, with one link each to the booking, its payments and its penalties.
+ * Nothing is changed here -- money and penalties are handled on their own pages.
+ *
+ *   booking         the Car Tracking booking row (name, phone, status, totals)
+ *   loadChecklist() the same data the return checklist uses: deposit position, penalties, depositReturn
+ */
+function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, onViewPayments, onViewPenalties }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!booking) return undefined;
+    let cancelled = false;
+    setData(null); setError(null); setLoading(true);
+    Promise.resolve(loadChecklist(booking))
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setError(e.message || "Couldn't load the deposit and penalty details."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking?.id]);
+
+  if (!booking) return null;
+
+  const status = String(booking.status || "").toLowerCase();
+  const paid = ["approved", "paid"].includes(String(booking.paymentStatus || "").toLowerCase()) && (booking.balance ?? 0) <= 0;
+  const penalties = Array.isArray(data?.penalties) ? data.penalties : [];
+  const confirmedTotal = penalties.filter((p) => p.status === "Confirmed").reduce((s, p) => s + (p.amount || 0), 0);
+  const dr = data?.depositReturn || null;
+
+  // ── Deposit lines ──────────────────────────────────────────────────────────
+  const held = data && data.depositStatus === "Held" && !data.depositSettled;
+  const returnedAmount = data?.depositSettled ? (dr?.amount ?? Math.max(0, data.amountToReturn || 0)) : 0;
+  const returnState = dr?.state === "refunded" ? { text: "Returned", cls: "text-green-700" }
+    : dr?.state === "processing" ? { text: "Waiting for PayMongo", cls: "text-amber-700" }
+    : dr?.state === "failed" ? { text: "PayMongo refused it — needs follow-up", cls: "text-red-600" }
+    : null;
+  const returnHow = !dr ? null
+    : dr.via === "paymongo" ? "Online through PayMongo"
+    : `In store${dr.method ? ` · ${CB_METHOD_LABEL[dr.method] || dr.method}` : ""}`;
+
+  const act = (fn) => () => { onClose(); fn(booking); };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-bold text-arl-dark truncate">{booking.customerName || "Customer"}</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {booking.phone && booking.phone !== "—" ? booking.phone : "No phone on file"}
+            </p>
+            <p className="text-[11px] text-gray-400 font-mono mt-0.5 break-all">{booking.bookingID || booking.id}</p>
+          </div>
+          <div className="flex items-start gap-2 shrink-0">
+            {status && (
+              <span className={`text-[11px] font-semibold capitalize px-2 py-0.5 rounded-full border ${CB_STATUS_CHIP[status] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{status}</span>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+          </div>
+        </div>
+
+        <CbSection title="Payment" aside={
+          <span className={`text-[11px] font-semibold ${paid ? "text-green-700" : "text-amber-700"}`}>
+            {paid ? "Fully paid" : (booking.balance ?? 0) > 0 ? `${cbPeso(booking.balance)} unpaid` : "Not confirmed"}
+          </span>
+        }>
+          <CbRow label="Total">{booking.totalFee != null ? cbPeso(booking.totalFee) : "—"}</CbRow>
+          <CbRow label="Paid">{booking.amountPaid != null ? cbPeso(booking.amountPaid) : "—"}</CbRow>
+          {(booking.balance ?? 0) > 0 && <CbRow label="Balance" tone="text-red-600">{cbPeso(booking.balance)}</CbRow>}
+        </CbSection>
+
+        {loading && <p className="text-xs text-gray-400 px-1">Loading deposit and penalties…</p>}
+        {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
+
+        {data && (
+          <>
+            <CbSection title="Security deposit">
+              {data.depositHeld == null ? (
+                <p className="text-gray-400 text-xs">No security deposit recorded for this booking.</p>
+              ) : (
+                <>
+                  <CbRow label="Deposit" hint={data.depositStatus ? `Status: ${data.depositStatus}` : null}>{cbPeso(data.depositHeld)}</CbRow>
+                  {(data.depositDeducted || 0) > 0 && (
+                    <CbRow label="Used for penalties" tone="text-red-600">− {cbPeso(data.depositDeducted)}</CbRow>
+                  )}
+
+                  {held && (
+                    <>
+                      <CbRow label={(data.amountToReturn ?? 0) < 0 ? "Customer will owe" : "To return after penalties"}
+                        tone={(data.amountToReturn ?? 0) < 0 ? "text-red-600" : "text-green-700"}>
+                        {cbPeso(Math.abs(data.amountToReturn || 0))}
+                      </CbRow>
+                      <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                        Deposit still held. Return it on Payments{status === "completed" ? " (the booking is already completed)." : "."}
+                      </p>
+                    </>
+                  )}
+
+                  {data.depositSettled && (
+                    <>
+                      <CbRow label="Deposit returned" tone={returnedAmount > 0 ? "text-green-700" : undefined}>
+                        {returnedAmount > 0 ? cbPeso(returnedAmount) : "Nothing to return"}
+                      </CbRow>
+                      {returnedAmount > 0 && returnHow && <CbRow label="How">{returnHow}</CbRow>}
+                      {returnedAmount > 0 && returnState && <CbRow label="Status" tone={returnState.cls}>{returnState.text}</CbRow>}
+                      {returnedAmount > 0 && cbFmtWhen(dr?.at) && <CbRow label="When">{cbFmtWhen(dr.at)}</CbRow>}
+                      {returnedAmount > 0 && dr?.referenceNumber && (
+                        <CbRow label="Reference"><span className="font-mono text-xs break-all">{dr.referenceNumber}</span></CbRow>
+                      )}
+                      {dr?.state === "failed" && dr.errorNote && <p className="text-[11px] text-red-600">{dr.errorNote}</p>}
+                      {returnedAmount === 0 && (
+                        <p className="text-[11px] text-gray-400">Penalties used the whole deposit.</p>
+                      )}
+                    </>
+                  )}
+
+                  {(data.stillOwed || 0) > 0 && (
+                    <CbRow label="Customer still owes" tone="text-red-600">{cbPeso(data.stillOwed)}</CbRow>
+                  )}
+                </>
+              )}
+            </CbSection>
+
+            <CbSection title={`Penalties (${penalties.length})`} aside={
+              penalties.length > 0 ? <span className="text-[11px] font-semibold text-red-600">Total {cbPeso(confirmedTotal)}</span> : null
+            }>
+              {penalties.length === 0 ? (
+                <p className="text-gray-400 text-xs">No penalties written for this booking.</p>
+              ) : (
+                <ul className="bg-white border border-gray-100 rounded-lg divide-y divide-gray-100 text-xs max-h-48 overflow-y-auto">
+                  {penalties.map((pen, idx) => {
+                    const items = Array.isArray(pen.lineItems) ? pen.lineItems : [];
+                    const inactive = pen.status && pen.status !== "Confirmed";
+                    const unpaid = Math.max(0, (pen.amount || 0) - (pen.paidAmount || 0));
+                    const label = pen.status === "UnderReview" ? "Under review — not counted yet"
+                      : inactive ? pen.status
+                      : unpaid > 0 ? `Unpaid · ${cbPeso(unpaid)} left` : "Paid";
+                    return (
+                      <li key={pen.penaltyID || pen.id || idx} className={`px-3 py-2 ${inactive ? "opacity-60" : ""}`}>
+                        <div className="flex justify-between gap-2">
+                          <span className="font-medium text-arl-dark">
+                            {items.length ? items.map((li) => li.description).filter(Boolean).join(", ") : (pen.description || pen.type || "Penalty")}
+                          </span>
+                          <span className={`font-semibold shrink-0 ${inactive ? "line-through text-gray-400" : "text-red-600"}`}>{cbPeso(pen.amount)}</span>
+                        </div>
+                        <p className={`text-[11px] mt-0.5 ${!inactive && unpaid > 0 ? "text-amber-700" : "text-gray-400"}`}>{label}</p>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CbSection>
+          </>
+        )}
+
+        <div className="space-y-2 pt-1">
+          <button onClick={act(onViewBooking)}
+            className="w-full py-2 rounded-xl text-sm font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50">View booking</button>
+          <div className="flex items-center gap-2">
+            <button onClick={act(onViewPayments)}
+              className="flex-1 py-2 rounded-xl text-sm font-semibold border border-teal-300 text-teal-700 hover:bg-teal-50">View payments</button>
+            {!paid && (
+              <span className="shrink-0 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                ⚠ {(booking.balance ?? 0) > 0 ? `${cbPeso(booking.balance)} unpaid` : "Payment not confirmed"}
+              </span>
+            )}
+          </div>
+          <button onClick={act(onViewPenalties)}
+            className="w-full py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">View / create penalties</button>
+          <button onClick={onClose} className="w-full py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export default function CarTracking() {
   const [allCars,      setAllCars]      = useState([]);
   const [brandMap,     setBrandMap]     = useState({});
@@ -280,9 +501,8 @@ export default function CarTracking() {
   const [lastPoll,     setLastPoll]     = useState(null);
   const [notice,       setNotice]       = useState(null);
   const [actionBusyId, setActionBusyId] = useState(null); // booking doc id currently being acted on
-  const [paymentModalBooking, setPaymentModalBooking] = useState(null);
+  const [customerBooking, setCustomerBooking] = useState(null);   // small "who booked" modal
   const [returnModalBooking, setReturnModalBooking] = useState(null); // Return checklist panel
-  const [returnDepositOnly, setReturnDepositOnly] = useState(false);   // true = opened from the payment modal's "Return deposit"
   const [penaltyBooking, setPenaltyBooking] = useState(null);         // in-place "Note a penalty" form
   // Deep-link from Bookings' "Trip History" button — { tab: "history", carID, bookingID }.
   // Only consumed once; switching tabs away and back won't re-trigger it since
@@ -321,6 +541,7 @@ export default function CarTracking() {
   const zoneLayersRef = useRef({}); // { [carId]: { geofence: Layer[], destCircle, destMarker, codingShape, codingLabel } }
   const leafletMap  = useRef(null);
   const markersRef  = useRef({}); // { [carId]: L.Marker }
+  const placeRef    = useRef({}); // { [roundKey]: address string | null } -- live reverse-geocode results for the marker popups
   const token       = localStorage.getItem("token");
 
   // ── Init Leaflet map ──────────────────────────────────────────────────────
@@ -616,12 +837,25 @@ export default function CarTracking() {
         : car.status === "Inactive"
           ? `<span style="color:#6b7280;font-size:11px;font-weight:600">⛔ Inactive</span><br>`
           : "";
-      const popupHtml = `<b>${getCarLabel(car)}</b><br>
+      // The address comes from the car's CURRENT coordinates (Nominatim, cached + rate-limited in reverseGeocode).
+      // The `lastLocation` text stored on the gpsLocation document is never refreshed by the backend, so it can be
+      // a stale label from a previous position -- it is not used here.
+      const placeKey = roundKey(loc.lat, loc.lng);
+      const buildPopup = (place) => `<b>${getCarLabel(car)}</b><br>
         ${statusLine}
-        ${loc.lastLocation ? `${loc.lastLocation}<br>` : ""}
+        ${place ? `${place}<br>` : `<span style="color:#9ca3af;font-size:11px">${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}</span><br>`}
         Speed: ${typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h<br>
         ${loc.offline ? `<span style="color:#f59e0b;font-size:11px">📦 Offline flush</span><br>` : ""}
         <span style="color:#9ca3af;font-size:11px">${timeAgo(loc.updatedAt)}</span>`;
+      const popupHtml = buildPopup(placeRef.current[placeKey]);
+      if (!(placeKey in placeRef.current)) {
+        placeRef.current[placeKey] = null;   // mark as requested so a poll doesn't queue it twice
+        reverseGeocode(loc.lat, loc.lng).then((label) => {
+          placeRef.current[placeKey] = label || null;
+          const m = markersRef.current[car.id];
+          if (label && m) m.setPopupContent(buildPopup(label));
+        });
+      }
 
       const existing = markersRef.current[car.id];
       if (existing) {
@@ -841,7 +1075,7 @@ export default function CarTracking() {
   const handlePickup = (b) => {
     const paymentReady = ["approved", "paid"].includes((b.paymentStatus || "").toLowerCase()) && (b.balance ?? 0) <= 0;
     if (!paymentReady) {
-      setNotice({ type: "error", msg: "Payment still requires action — collect or confirm the remaining balance before pickup." });
+      setNotice({ type: "error", msg: "Payment still requires action. Remind the customer or record an in-store payment in Payments." });
       return;
     }
     if (!b.beforeDocsComplete) {
@@ -855,9 +1089,21 @@ export default function CarTracking() {
   // still missing (drop-off, inspection, penalties, GPS device check) and
   // only enables "Confirm Return" once everything is done. No override —
   // the server enforces the same rules on the PATCH itself.
-  const handleReturn = (b) => { setReturnDepositOnly(false); setReturnModalBooking(b); };
+  const handleReturn = (b) => { setReturnModalBooking(b); };
+  // Money lives on its own pages now: Car Tracking only links to them.
+  const bookingKey = (b) => encodeURIComponent(b?.bookingID || b?.id || "");
+  const goPayments  = (b) => navigate(`/payments?bookingID=${bookingKey(b)}`);
+  // Opens that booking's penalty window on the Penalties page (the list, with "Add penalty" inside it).
+  const goPenalties = (b) => navigate(`/penalties?viewBooking=${bookingKey(b)}`);
 
   const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  // Same endpoint as the return checklist, for any booking: deposit position, penalties, how the deposit went back.
+  const loadCustomerChecklist = useCallback(async (b) => {
+    const res = await fetch(`${API}/api/bookings/${b.id}/return-checklist`, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't load the deposit and penalty details.");
+    return json.data;
+  }, [token]);
   const loadReturnChecklist = useCallback(async () => {
     if (!returnModalBooking) return null;
     const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/return-checklist`, { headers: { Authorization: `Bearer ${token}` } });
@@ -886,16 +1132,6 @@ export default function CarTracking() {
     await fetchBookings();
   };
 
-  const settleDepositNow = async ({ method, referenceNumber, online }) => {
-    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/settle-deposit`, {
-      method: "PATCH", headers: authHeaders, body: JSON.stringify({ method, referenceNumber, online: online === true }),
-    });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.message || "Couldn't settle the deposit.");
-    await fetchBookings();
-    return json.data;   // the modal reads data.online to say whether PayMongo took the refund
-  };
-
   const confirmReturn = async () => {
     // Keep a copy — the modal clears returnModalBooking right after this resolves.
     const returned = returnModalBooking;
@@ -910,8 +1146,7 @@ export default function CarTracking() {
 
     // Hand off to Maintenance with the returned car selected and this
     // booking linked (basis defaults to "Post-Rental" there). Only runs
-    // for a real Return — the deposit-only flow settles via
-    // settleDepositNow, not this function. Drivers return from My Trips
+    // for a real Return. Drivers return from My Trips
     // instead and can't open /maintenance, so this stays supervisor-side.
     if (returned?.carID) {
       const params = new URLSearchParams({
@@ -1363,7 +1598,7 @@ export default function CarTracking() {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 mt-3">
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
                     <button
                       onClick={() => handleReturn(ongoing)}
                       disabled={actionBusyId === ongoing.id}
@@ -1373,13 +1608,7 @@ export default function CarTracking() {
                       {actionBusyId === ongoing.id ? "…" : "Mark Complete"}
                     </button>
                     <button
-                      onClick={() => setPaymentModalBooking(ongoing)}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-teal-300 text-teal-700 rounded-xl text-xs font-semibold hover:bg-teal-50 active:scale-95 transition-all"
-                    >
-                      Payments
-                    </button>
-                    <button
-                      onClick={() => navigate(`/bookings?open=${encodeURIComponent(ongoing.bookingID || ongoing.id)}`)}
+                      onClick={() => setCustomerBooking(ongoing)}
                       className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-300 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
                     >
                       <Icons.Eye className="w-3.5 h-3.5" />
@@ -1438,20 +1667,8 @@ export default function CarTracking() {
                           // of letting them start a trip with no driver.
                           <div className="shrink-0 flex items-center gap-1.5">
                             <button
-                              onClick={() => setPaymentModalBooking(b)}
-                              title="View payment breakdown"
-                              className={`flex items-center gap-1 px-2.5 py-1.5 border rounded-lg text-xs font-semibold active:scale-95 transition-all ${
-                                b.balance > 0
-                                  ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-                                  : "border-green-300 text-green-700 hover:bg-green-50"
-                              }`}
-                            >
-                              {!(b.balance > 0) && <Icons.Peso className="w-3 h-3" />}
-                              {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
-                            </button>
-                            <button
-                              onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.bookingID || b.id)}`)}
-                              title="View this booking"
+                              onClick={() => setCustomerBooking(b)}
+                              title="Customer details and links"
                               className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
                             >
                               <Icons.Eye className="w-3 h-3" />
@@ -1478,20 +1695,8 @@ export default function CarTracking() {
                                 </button>
                               )}
                               <button
-                                onClick={() => setPaymentModalBooking(b)}
-                                title="View payment breakdown"
-                                className={`flex items-center gap-1 px-2.5 py-1.5 border rounded-lg text-xs font-semibold active:scale-95 transition-all ${
-                                  b.balance > 0
-                                    ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-                                    : "border-green-300 text-green-700 hover:bg-green-50"
-                                }`}
-                              >
-                                {!(b.balance > 0) && <Icons.Peso className="w-3 h-3" />}
-                                {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
-                              </button>
-                              <button
-                                onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.bookingID || b.id)}`)}
-                                title="View this booking"
+                                onClick={() => setCustomerBooking(b)}
+                                title="Customer details and links"
                                 className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
                               >
                                 <Icons.Eye className="w-3 h-3" />
@@ -1548,20 +1753,8 @@ export default function CarTracking() {
                             </button>
                           )}
                           <button
-                            onClick={() => setPaymentModalBooking(b)}
-                            title="View payment breakdown"
-                            className={`flex items-center gap-1 px-2 py-1 border rounded-lg text-[11px] font-semibold active:scale-95 transition-all ${
-                              b.balance > 0
-                                ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-                                : "border-green-300 text-green-700 hover:bg-green-50"
-                            }`}
-                          >
-                            {!(b.balance > 0) && <Icons.Peso className="w-3 h-3" />}
-                            {b.balance > 0 ? `₱${b.balance.toLocaleString()}` : "Paid"}
-                          </button>
-                          <button
-                            onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.bookingID || b.id)}`)}
-                            title="View this booking"
+                            onClick={() => setCustomerBooking(b)}
+                            title="Customer details and links"
                             className="flex items-center gap-1 px-2 py-1 border border-gray-200 text-gray-500 rounded-lg text-[11px] font-semibold hover:bg-gray-50 active:scale-95 transition-all"
                           >
                             <Icons.Eye className="w-3 h-3" />
@@ -1601,9 +1794,8 @@ export default function CarTracking() {
       onClose={() => setReturnModalBooking(null)}
       title={returnModalBooking ? `${returnModalBooking.customerName} — ${returnModalBooking.vehicleName}` : ""}
       driverName={returnModalBooking?.driverName}
-      depositOnly={returnDepositOnly}
       loadChecklist={loadReturnChecklist}
-      onSettleDeposit={settleDepositNow}
+      onOpenPayments={() => { const b = returnModalBooking; setReturnModalBooking(null); goPayments(b); }}
       onConfirmReturn={confirmReturn}
       onMarkDroppedOff={dropoffFromChecklist}
       onNotePenalty={() => { const b = returnModalBooking; setReturnModalBooking(null); setPenaltyBooking(b); }}
@@ -1617,37 +1809,13 @@ export default function CarTracking() {
       onSubmit={submitPenalty}
     />
 
-    <PaymentStatusModal
-      bookingID={paymentModalBooking?.bookingID || paymentModalBooking?.id}
-      open={!!paymentModalBooking}
-      onClose={() => setPaymentModalBooking(null)}
-      customerName={paymentModalBooking?.customerName}
-      payment={paymentModalBooking ? {
-        totalFee:       paymentModalBooking.totalFee,
-        amountPaid:     paymentModalBooking.amountPaid,
-        balance:        paymentModalBooking.balance,
-        payType:        paymentModalBooking.payType,
-        paymentStatus:  paymentModalBooking.paymentStatus,
-        paymentStage:   paymentModalBooking.paymentStage,
-        discountAmount: paymentModalBooking.discountAmount,
-        refundDue:      paymentModalBooking.refundDue,
-        refundIssued:   paymentModalBooking.refundIssued,
-        depositAmount:         paymentModalBooking.depositAmount,
-        depositStatus:         paymentModalBooking.depositStatus,
-        confirmedPenaltyTotal: paymentModalBooking.confirmedPenaltyTotal,
-        amountToReturn:        paymentModalBooking.amountToReturn,
-        depositSettled:        paymentModalBooking.depositSettled,
-        depositDeducted:       paymentModalBooking.depositDeducted,
-      } : null}
-      // Nothing is settled on this screen: payments and penalties are handled on their own pages.
-      onGoToPayments={() => navigate(`/payments?bookingID=${paymentModalBooking?.bookingID || paymentModalBooking?.id || ""}`)}
-      onGoToPenalties={() => navigate(`/penalties?bookingID=${paymentModalBooking?.bookingID || paymentModalBooking?.id || ""}`)}
-      onNotePenalty={String(paymentModalBooking?.status || "").toLowerCase() === "ongoing"
-        ? () => { const b = paymentModalBooking; setPaymentModalBooking(null); setPenaltyBooking(b); }
-        : undefined}
-      onReturnDeposit={String(paymentModalBooking?.status || "").toLowerCase() === "ongoing"
-        ? () => { const b = paymentModalBooking; setPaymentModalBooking(null); setReturnDepositOnly(true); setReturnModalBooking(b); }
-        : undefined}
+    <CustomerBookingModal
+      booking={customerBooking}
+      onClose={() => setCustomerBooking(null)}
+      loadChecklist={loadCustomerChecklist}
+      onViewBooking={(b) => navigate(`/bookings?open=${bookingKey(b)}`)}
+      onViewPayments={goPayments}
+      onViewPenalties={goPenalties}
     />
     </>
   );

@@ -11,6 +11,55 @@ const IconCheck = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconChevronDown = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconUndo = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9 14L4 9l5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M4 9h10a6 6 0 010 12h-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconShield = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6l8-3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconTag = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3 13V3h10l7.6 7.6a2 2 0 010 2.8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" />
+  </svg>
+);
+
+// Clickable summary card, same look as the Payments page's. Click to filter by that type; click again to clear.
+function StatCard({ icon, value, label, sub, color, onClick, active }) {
+  const bgColors = {
+    teal:   "bg-teal-50 text-teal-600",
+    yellow: "bg-yellow-50 text-yellow-600",
+    purple: "bg-purple-50 text-purple-600",
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!!active}
+      title={active ? "Click to clear this filter" : `Show only ${label}`}
+      className={`bg-white rounded-2xl shadow-soft p-4 flex items-center gap-4 text-left w-full transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-arl-light ${active ? "ring-2 ring-arl-light" : ""}`}
+    >
+      <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>{icon}</div>
+      <div className="min-w-0">
+        <div className="text-xl font-bold text-arl-dark">{value}</div>
+        <div className="text-xs text-gray-500">{label}</div>
+        {sub && <div className="text-[11px] text-orange-600 font-semibold">{sub}</div>}
+      </div>
+    </button>
+  );
+}
+
 const IconX = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -171,6 +220,9 @@ const waitKeyOf = (r) => {
   if (r.status === "Approved") return stageOf(r);
   return null;
 };
+// Which KIND of money an item is, for the Type filter. Cancellation = a customer's refund request (or a staff cancel);
+// the other two are outcomes with no approval step: a deposit handed back, or a discount that overpaid.
+const typeOf = (r) => (isDeposit(r) ? "deposit" : r.kind === "discount" ? "discount" : "cancellation");
 const TABS = [
   { key: "pending",    label: "Request Pending", chips: [] },
   { key: "processing", label: "Under Process",   chips: [
@@ -224,6 +276,11 @@ function TypeBadge({ r }) {
   const cls = tier === "full" ? "bg-green-100 text-green-700 border-green-200" : "bg-amber-100 text-amber-700 border-amber-200";
   return <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${cls}`}>{TIER_LABEL[tier] || "Under 48h"}</span>;
 }
+
+// Money handed back across the counter (no PayMongo involved). Only deposit returns and discounts can be this.
+const InStoreTag = ({ r }) => (isDiscount(r) && r.refund.via === "in_store"
+  ? <span className="ml-1.5 inline-block rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-semibold text-gray-600">In store</span>
+  : null);
 
 // "Oct 17, 2026 | 3:45 PM" — date and time in one cell, split by a pipe.
 const stampText = (d) => { const p = stampParts(d); return p ? `${p.date} | ${p.time}` : "—"; };
@@ -501,6 +558,7 @@ export default function RefundRequests() {
   const [retryingId, setRetryingId] = useState(null);
   const [viewId, setViewId]   = useState(null);   // refundRequestID of the item open in the View modal
   const [statusF, setStatusF]   = useState("All");
+  const [typeF, setTypeF]       = useState("All");   // All | cancellation | deposit | discount
   const [search, setSearch]     = useState("");
   const [toast, setToast]       = useState(null);
   const [busyId, setBusyId]     = useState(null);
@@ -713,7 +771,8 @@ export default function RefundRequests() {
       || (r.paymentID || "").toLowerCase().includes(q);
     const matchTab = tabOf(r) === tabKey;
     const matchS = chipMatches(tabKey, statusF, r);
-    return matchQ && matchTab && matchS;
+    const matchT = typeF === "All" || typeOf(r) === typeF;
+    return matchQ && matchTab && matchS && matchT;
   });
 
   // Numbered pagination (same shared component as Bookings/Payments). The hook
@@ -739,7 +798,7 @@ export default function RefundRequests() {
   });
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, statusF, tabKey, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, statusF, typeF, tabKey, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const pendingCount    = items.filter((r) => tabOf(r) === "pending").length;
@@ -878,6 +937,28 @@ export default function RefundRequests() {
         </div>
       </div>
 
+      {/* The three kinds of money going back. Click a card to show only that kind (click again to clear). Each card
+          counts every item of its kind, in all tabs; the orange line is how many of them still need someone. */}
+      {(() => {
+        const of = (t) => items.filter((r) => typeOf(r) === t);
+        const open = (t) => of(t).filter((r) => tabOf(r) !== "history").length;
+        const card = (t, icon, label, color) => (
+          <StatCard
+            icon={icon} value={of(t).length} label={label} color={color}
+            sub={open(t) > 0 ? `${open(t)} not finished` : null}
+            active={typeF === t}
+            onClick={() => setTypeF(typeF === t ? "All" : t)}
+          />
+        );
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {card("cancellation", <IconUndo />,   "Cancellation refunds", "yellow")}
+            {card("deposit",      <IconShield />, "Deposit returns",      "teal")}
+            {card("discount",     <IconTag />,    "Discount refunds",     "purple")}
+          </div>
+        );
+      })()}
+
       {/* Request Pending / Under Process / History */}
       <div className="flex gap-1 border-b border-gray-100">
         {TABS.map((t) => (
@@ -904,34 +985,33 @@ export default function RefundRequests() {
 
       {/* What this tab means, in one line */}
       <p className="text-xs text-gray-400 -mt-2">
-        {tabKey === "pending" && "Customers asking for a refund. Approve or reject each one."}
-        {tabKey === "processing" && "Approved refunds and discount refunds whose money isn't back with the customer yet. PayMongo can take up to 24 hours; anything marked Failed needs a person."}
-        {tabKey === "history" && "Finished: the money went back, or the request was rejected."}
+        {tabKey === "pending" && "Customers asking for a refund. Approve or reject each one. (Deposit returns and discount refunds need no approval, so they never wait here.)"}
+        {tabKey === "processing" && "Approved refunds, deposit returns and discount refunds whose money isn't back with the customer yet. PayMongo can take up to 24 hours; anything marked Failed needs a person."}
+        {tabKey === "history" && "Finished: the money went back (online or in store), or the request was rejected."}
       </p>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-center">
+      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-center">
         <input
+          type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by customer, booking, or payment ID…"
-          className="flex-1 min-w-[220px] rounded-xl border border-gray-200 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
+          className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
         />
         {activeTab.chips.length > 0 && (
-          <div className="flex gap-2 flex-wrap">
-            {[{ key: "All", label: "All" }, ...activeTab.chips].map((c) => (
-              <button
-                key={c.key}
-                onClick={() => setStatusF(c.key)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                  statusF === c.key ? "bg-arl-dark text-white border-arl-dark" : "bg-white text-gray-600 border-gray-200 hover:border-arl-dark"
-                }`}
-              >
-                {c.label}
-              </button>
-            ))}
+          <div className="relative">
+            <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
+              className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
+              {[{ key: "All", label: "All statuses" }, ...activeTab.chips].map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         )}
+        <button onClick={fetchRequests} disabled={loading}
+          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+          {loading ? "…" : "Refresh"}
+        </button>
       </div>
 
       {/* Table */}
@@ -981,7 +1061,7 @@ export default function RefundRequests() {
                       <td className="px-5 py-4 font-semibold text-arl-dark whitespace-nowrap">
                         {fmt(disc ? r.refund.amount : (r.planPreview ? r.planPreview.total : r.amount))}
                       </td>
-                      <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /></td>
+                      <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /><InStoreTag r={r} /></td>
                       <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>
                       <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
                       <td className="px-5 py-4 text-right">

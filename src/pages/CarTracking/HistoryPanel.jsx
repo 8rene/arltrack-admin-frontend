@@ -31,6 +31,9 @@ const STATUS_STYLES = {
 export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = null }) {
   const [selectedCar, setSelectedCar] = useState(null);
   const [history, setHistory]         = useState([]);
+  // Which car the current `history` list belongs to. The auto-open below must wait for this, otherwise it runs in the
+  // same render that selects the car (before the fetch has even started), sees an empty list and gives up.
+  const [loadedCarID, setLoadedCarID] = useState(null);
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
   const [reviewData, setReviewData]   = useState(null);
@@ -52,7 +55,7 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
   // keep re-opening the same trip.
   useEffect(() => {
     if (!autoOpen?.bookingID || autoOpenedRef.current) return;
-    if (loading || selectedCar !== autoOpen.carID) return;
+    if (loading || selectedCar !== autoOpen.carID || loadedCarID !== autoOpen.carID) return;
     autoOpenedRef.current = true;
     const match = history.find(h => h.bookingID === autoOpen.bookingID);
     if (match) {
@@ -60,11 +63,12 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
     } else {
       setDeepLinkNotice("Couldn't find that trip's archived record for this car.");
     }
-  }, [history, loading, selectedCar, autoOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [history, loading, selectedCar, loadedCarID, autoOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchHistory = useCallback(async (carId) => {
     setLoading(true);
     setError(null);
+    setLoadedCarID(null);
     if (!API) {
       setError("REACT_APP_API_URL is not set — check your .env and restart the dev server.");
       setLoading(false);
@@ -84,6 +88,7 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
       setHistory([]);
     } finally {
       setLoading(false);
+      setLoadedCarID(carId);   // last, so the auto-open only ever sees a finished list
     }
   }, [token]);
 

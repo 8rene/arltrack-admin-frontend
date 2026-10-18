@@ -1770,14 +1770,13 @@ export default function Bookings() {
             <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
               <tr>
                 <SortableTh label="Created At" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-3 text-left">Contact No.</th>
-                <th className="px-4 py-3 text-left">Booking ID</th>
                 <th className="px-4 py-3 text-left">Customer</th>
+                <th className="px-4 py-3 text-left">Contact No.</th>
                 <th className="px-4 py-3 text-left">Vehicle</th>
                 <SortableTh label="Trip Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Duration</th>
                 <SortableTh label="Total Fee" sortKey="fee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-3 text-left">Payment</th>
+                <th className="px-4 py-3 text-left">Phase</th>
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3"></th>
               </tr>
@@ -1786,13 +1785,13 @@ export default function Bookings() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    {Array.from({ length: 11 }).map((__, j) => (
+                    {Array.from({ length: 10 }).map((__, j) => (
                       <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={11} className="text-center text-gray-400 py-12">No bookings found</td></tr>
+                <tr><td colSpan={10} className="text-center text-gray-400 py-12">No bookings found</td></tr>
               ) : (
                 pageItems.map((b) => {
                   const needsAction = b.status?.toLowerCase() === "cancellation_request";
@@ -1803,10 +1802,6 @@ export default function Bookings() {
                         <span className="mx-1.5 text-gray-300">|</span>
                         <span className="text-gray-500">{fmtTime(b.createdAt)}</span>
                       </td>
-                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{b.phone || "—"}</td>
-                      <td className="px-4 py-3 text-gray-700 text-xs">
-                        {b.bookingID || b.id}
-                      </td>
                       <td className="px-4 py-3">
                         <button
                           onClick={() => setProfileUserID(b.userID)}
@@ -1816,9 +1811,9 @@ export default function Bookings() {
                           {b.customerName}
                         </button>
                       </td>
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{b.phone || "—"}</td>
                       <td className="px-4 py-3">
                         <div className="text-gray-700">{b.vehicleName}</div>
-                        <div className="text-xs text-gray-400">{b.serviceTypeName}</div>
                       </td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(b.startDateTime)} – {fmtDate(b.endDateTime)}</td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
@@ -1826,7 +1821,10 @@ export default function Bookings() {
                         {b.durationType && <span className="text-xs text-gray-400 ml-1">· {b.durationType}</span>}
                       </td>
                       <td className="px-4 py-3 font-semibold text-gray-800">{fmt(b.totalFee)}</td>
-                      <td className="px-4 py-3 text-gray-600">{b.paymentMethod}</td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                        {b.paymentStage && b.paymentStage !== "—" ? b.paymentStage : "—"}
+                        {Number(b.balance) > 0 && <div className="text-xs text-orange-600">{fmt(b.balance)} remaining</div>}
+                      </td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
                       <td className="px-4 py-3">
                         <button onClick={() => setViewBooking(b)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
