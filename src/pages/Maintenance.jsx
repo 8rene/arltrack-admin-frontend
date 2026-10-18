@@ -1346,16 +1346,21 @@ function MaintenanceModal({
             </div>
           </ModalSection>
 
-          {/* 3 · TOTAL */}
-          <ModalSection n="3" title="Total">
-            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-2 text-sm">
+          </fieldset>
+        </div>
+
+        {/* Total — pinned under the scrolling body so it is always visible */}
+        <div className="shrink-0 px-6 py-2 border-t border-gray-100">
+          <fieldset disabled={viewing} className="min-w-0 m-0 border-0 p-0">
+            <h3 className="text-sm font-bold text-gray-800 mb-1.5">Total</h3>
+            <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 space-y-1 text-sm">
               <div className="flex justify-between text-gray-600"><span>Services</span><span>{peso(servicesTotal)}</span></div>
               <div className="flex justify-between text-gray-600"><span>Parts</span><span>{peso(partsTotal)}</span></div>
-              <div className="flex justify-between text-gray-500 border-t border-gray-200 pt-2 text-xs">
+              <div className="flex justify-between text-gray-500 border-t border-gray-200 pt-1 text-xs">
                 <span>Sum of the above</span><span>{peso(computedTotal)}</span>
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer pt-1">
+              <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={form.useManualTotal}
                   onChange={e => setForm(f => ({ ...f, useManualTotal: e.target.checked }))}
                   className="accent-teal-600" />
@@ -1367,12 +1372,11 @@ function MaintenanceModal({
                   placeholder="₱0" className={inputCls} />
               )}
 
-              <div className="flex justify-between items-center border-t border-gray-200 pt-2">
+              <div className="flex justify-between items-center border-t border-gray-200 pt-1">
                 <span className="font-semibold text-gray-700">Total</span>
-                <span className="text-lg font-bold text-gray-900">{peso(effectiveTotal)}</span>
+                <span className="text-lg font-bold text-gray-900 leading-tight">{peso(effectiveTotal)}</span>
               </div>
             </div>
-          </ModalSection>
           </fieldset>
         </div>
 
