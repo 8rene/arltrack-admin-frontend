@@ -257,7 +257,7 @@ const EMPTY_FORM = {
 
 export default function Maintenance() {
   const token = localStorage.getItem("token");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
 
   const [records, setRecords]             = useState([]);
@@ -429,6 +429,23 @@ export default function Maintenance() {
     setShowAdd(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, records, damagedParts]);
+
+  // Arrived from a notification-bell click ("Maintenance Created" / "Maintenance Overdue"): the bell sends
+  // ?open=<maintenance doc id> (Header.jsx, same ?open= convention as Bookings / Users / Penalties), so open that
+  // record in its read-only view. Runs once after the first load; the param is then dropped so a refresh or a
+  // later navigation does not re-open it. A record that is gone (deleted / archived since) gets a toast instead
+  // of a silent landing on the list.
+  const openLinkHandled = useRef(false);
+  useEffect(() => {
+    const openID = searchParams.get("open");
+    if (!openID || loading || openLinkHandled.current) return;
+    openLinkHandled.current = true;
+    const match = records.find((r) => r.id === openID);
+    if (match) openView(match);
+    else showToast("That maintenance record could not be found. It may have been deleted or archived.", "error");
+    setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, records]);
 
   // Arrived straight from a Return on Car Tracking (see confirmReturn
   // there) — tell staff why the form is open instead of silently landing
