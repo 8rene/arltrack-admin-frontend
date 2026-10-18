@@ -5,6 +5,7 @@ import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
 import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
+import ReturnChecklistModal from "../components/ReturnChecklistModal";
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
@@ -258,6 +259,8 @@ export default function Payments() {
   const { effectiveRole } = useAuth();
   const canRecordInStore = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
   const [detailLoading, setDetailLoading] = useState(false);
+  // "Return deposit": the hand-back of the security deposit (after penalties) for the open payment's booking.
+  const [returnDepositOpen, setReturnDepositOpen] = useState(false);
   const [toast, setToast]                 = useState(null);
   const [updating, setUpdating]           = useState(false);
   const [applyingDiscount, setApplyingDiscount] = useState(false);
@@ -365,13 +368,14 @@ export default function Payments() {
     if (!modalOpen) return undefined;
     const onKey = (e) => {
       if (e.key !== "Escape") return;
+      if (returnDepositOpen) return;   // the Return deposit window is on top: let it handle its own close
       if (confirmDiscount) setConfirmDiscount(false); else setSelected(null);
     };
     window.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prevOverflow; };
-  }, [modalOpen, confirmDiscount]);
+  }, [modalOpen, confirmDiscount, returnDepositOpen]);
 
   const openDetail = async (id) => {
     setDetailLoading(true); setSelected(null); setEntriesSummary(null); setDetailTab("summary");
@@ -386,6 +390,28 @@ export default function Payments() {
       setRefundMethod("Cash"); setRefundRef("");
     } catch (e) { showToast(e.message, "error"); }
     finally { setDetailLoading(false); }
+  };
+
+  // Return deposit — same checklist/settle endpoints Car Tracking uses (they accept the bookingID the payment carries).
+  // Settling changes this payment (deposit settled / returned) and its penalties, so re-open the detail afterwards.
+  const loadReturnChecklist = useCallback(async () => {
+    if (!selected) return null;
+    const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(selected.bookingID)}/return-checklist`, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't load the deposit details.");
+    return json.data;
+  }, [selected, token]);
+
+  const settleDepositFromPayments = async ({ method, referenceNumber }) => {
+    const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(selected.bookingID)}/settle-deposit`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ method, referenceNumber }),
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't settle the deposit.");
+    showToast("Deposit settled.", "success");
+    fetchPayments(true);
   };
 
   const updateStatus = async (id, status) => {
@@ -579,6 +605,15 @@ export default function Payments() {
     <div className="w-full px-4 space-y-5">
 
       {/* Toast */}
+      <ReturnChecklistModal
+        open={returnDepositOpen && !!selected}
+        onClose={() => setReturnDepositOpen(false)}
+        title={selected ? `${selected.customerName} — ${selected.vehicleName}` : ""}
+        depositOnly
+        loadChecklist={loadReturnChecklist}
+        onSettleDeposit={settleDepositFromPayments}
+      />
+
       {toast && (
         <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
           toast.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
@@ -754,6 +789,7 @@ export default function Payments() {
                         <Row label={selected.serviceFeeRate > 0 ? `Service Fee (${selected.serviceFeeRate}% of rental)` : "Service Fee"} value={peso(selected.serviceFee, fmtCurrency)} />
                         {selected.gatewayFee > 0 && <Row label={selected.gatewayFeeRate > 0 ? `Gateway Fee (${selected.gatewayFeeRate}% of ${peso(selected.gatewayFeeBase, fmtCurrency)})` : "Gateway Fee"} value={peso(selected.gatewayFee, fmtCurrency)} />}
                         {selected.securityDeposit > 0 && <Row label="Security Deposit (refundable)" value={peso(selected.securityDeposit, fmtCurrency)} />}
+                        {selected.securityDeposit > 0 && selected.depositStatus && <Row label="Deposit Status" value={selected.depositStatus} />}
                         <div className="border-t border-gray-100 mt-2 pt-2">
                           <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
                           {selected.discountAmount > 0 ? (
@@ -771,6 +807,15 @@ export default function Payments() {
                           <div className="border-t border-gray-100 mt-2 pt-2">
                             {selected.depositSettled > 0 && <Row label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />}
                             {selected.depositReturned > 0 && <Row label="Deposit Returned" value={peso(selected.depositReturned, fmtCurrency)} />}
+                          </div>
+                        )}
+                        {canRecordInStore && selected.depositStatus === "Held" && String(selected.bookingStatus || "").toLowerCase() === "ongoing" && (
+                          <div className="border-t border-gray-100 mt-2 pt-3 space-y-1.5">
+                            <p className="text-xs text-gray-500">The booking is ongoing and the deposit is still held. Return it here once the vehicle has been dropped off — penalties are deducted first.</p>
+                            <button onClick={() => setReturnDepositOpen(true)}
+                              className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700">
+                              Return deposit
+                            </button>
                           </div>
                         )}
                         {entriesSummary && entriesSummary.refundedOut > 0 && (

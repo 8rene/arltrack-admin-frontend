@@ -1211,7 +1211,8 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     after:       [{ label: "Vehicle Inspections", onClick: goToInventory }],
     maintenance: [{ label: "Maintenance", onClick: goToMaintenance }],
     penalties:   [{ label: "Penalties", onClick: goToNotePenalty }],
-    deposit:     [{ label: "Payments", onClick: goToPayments }],
+    // The deposit is handed back from the Payments page ("Return deposit"), so name the button for it while one is waiting.
+    deposit:     [{ label: status === "ongoing" && depStatus === "Held" ? "Return deposit (Payments)" : "Payments", onClick: goToPayments }],
   };
 
   const stepBtn = "px-3.5 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition whitespace-nowrap";

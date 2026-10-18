@@ -124,7 +124,7 @@ export default function ReturnChecklistModal({
                           <span className={`font-semibold ${inactive ? "line-through text-gray-400" : "text-red-600"}`}>{peso(pen.amount)}</span>
                         </div>
                         <div className="flex justify-between text-[11px] text-gray-400 mt-0.5">
-                          <span>{inactive ? pen.status : unpaid > 0 ? "Unpaid" : "Paid"}</span>
+                          <span>{pen.status === "UnderReview" ? "Under review — not counted yet" : inactive ? pen.status : unpaid > 0 ? "Unpaid" : "Paid"}</span>
                           {!inactive && unpaid > 0 && (pen.paidAmount || 0) > 0 && <span>{peso(unpaid)} left</span>}
                         </div>
                       </li>
@@ -160,6 +160,12 @@ export default function ReturnChecklistModal({
             {(depositOnly ? (data.depositStatus === "Held" && !data.depositSettled) : data.canSettle) && (
               <div className="border border-gray-200 rounded-xl p-3 space-y-2">
                 <p className="text-sm font-semibold text-arl-dark">Settle security deposit</p>
+                {data.underReviewCount > 0 && (
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    {data.underReviewCount} penalt{data.underReviewCount === 1 ? "y is" : "ies are"} still waiting for a supervisor's review. Confirm or discard
+                    {data.underReviewCount === 1 ? " it" : " them"} on the Penalties page first — until then they aren't counted and the deposit can't be settled.
+                  </p>
+                )}
                 <p className="text-[11px] text-gray-500">
                   {refundDue ? `Hand ${peso(data.amountToReturn)} back to the customer, after deducting penalties.`
                     : owes ? `Penalties use the whole deposit; ${peso(Math.abs(data.amountToReturn))} is still owed.`
