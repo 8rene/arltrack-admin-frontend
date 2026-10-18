@@ -6,6 +6,7 @@ import {
 import { db } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
+import UserActivityTab from "../components/UserActivityTab";
 
 // ─── ROLE TABS ───────────────────────────────────────────────────────────────
 // Role IDs are no longer resolved here at all (previously: hardcoded, then
@@ -142,6 +143,11 @@ const Icons = {
   Star: (props) => (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <polygon points="12 2 15 9 22 9.3 16.5 14 18.3 21 12 17 5.7 21 7.5 14 2 9.3 9 9" />
+    </svg>
+  ),
+  Activity: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
     </svg>
   ),
 };
@@ -912,7 +918,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
-      {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
+      {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} viewerRole={viewerRole} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
       {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }}
         viewerRole={viewerRole} currentRoleName={currentRoleName} />}
       {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} error={deleteError} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => { setConfirmDelete(null); setDeleteError(null); }} />}
@@ -921,8 +927,10 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
 }
 
 // ─── VIEW DETAILS MODAL (Information / Documents sub-tabs) ────────────────────
-function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
-  const [tab, setTab] = useState("information"); // "information" | "documents"
+function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose, onEdit }) {
+  const [tab, setTab] = useState("information"); // "information" | "documents" | "activity"
+  // Activity exists for Customers (recent feed), Drivers (current trips + history), and Supervisors / Admins (their audit-log entries).
+  const hasActivity = ["Customer", "Driver", "Supervisor", "Admin"].includes(roleLabelSingular);
   // Drilling into a referrer's or an invited user's own record, without
   // leaving this modal — resolved locally from the already-loaded `users`
   // list (same role tab, which referrals are always within in practice),
@@ -1025,6 +1033,12 @@ function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === "documents" ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
               <Icons.Document className="w-4 h-4" /> Documents
             </button>
+            {hasActivity && (
+              <button onClick={() => setTab("activity")}
+                className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === "activity" ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+                <Icons.Activity className="w-4 h-4" /> Activity
+              </button>
+            )}
           </div>
         </div>
 
@@ -1123,6 +1137,8 @@ function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
                 </section>
               )}
             </>
+          ) : tab === "activity" && hasActivity ? (
+            <UserActivityTab user={user} kind={roleLabelSingular} viewerRole={viewerRole} />
           ) : (
             <>
               <Section title="Document Info" icon={Icons.IdCard}>
@@ -1163,6 +1179,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, onClose, onEdit }) {
           user={nestedUser}
           users={users}
           roleLabelSingular={roleLabelSingular}
+          viewerRole={viewerRole}
           onClose={() => setNestedUserID(null)}
         />
       )}
