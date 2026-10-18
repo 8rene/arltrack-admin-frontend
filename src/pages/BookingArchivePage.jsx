@@ -416,7 +416,7 @@ function LocationMap({ record, height = 240 }) {
   return (
     <section>
       <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Map</h4>
-      <div className="relative rounded-xl overflow-hidden border border-gray-100" style={{ height }}>
+      <div className="relative isolate rounded-xl overflow-hidden border border-gray-100" style={{ height }}>
         <MapContainer center={[places[0].lat, places[0].lng]} zoom={14} scrollWheelZoom={false} style={{ height: "100%", width: "100%" }}>
           <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
           <PlaceMarkers places={places} />
