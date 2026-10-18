@@ -336,6 +336,8 @@ function DepositNotice({ deposit, amount = 0, acknowledged = false, onAcknowledg
 // check the amount before hitting Create.
 function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }) {
   const [bookingID, setBookingID] = useState(initialBookingID);
+  const [showMaintenance, setShowMaintenance] = useState(false);
+  const { fmt } = useCurrency();
   // Opened via Bookings.jsx's "Note a Penalty" button (see goToNotePenalty
   // there) — the bookingID arrives pre-filled via ?bookingID= and is kept
   // locked so the penalty this creates is guaranteed to link back to the
@@ -434,11 +436,19 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div className="relative flex flex-col md:flex-row items-stretch justify-center gap-3 w-full max-h-[90vh] overflow-y-auto md:overflow-visible px-4">
+        {showMaintenance && bookingID.trim() && (
+          <MaintenanceSidePanel bookingID={bookingID.trim()} token={token} fmt={fmt} onClose={() => setShowMaintenance(false)} />
+        )}
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
         <div className="flex items-center justify-between">
           <h3 className="font-bold text-arl-dark">New Penalty</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
         </div>
+
+        {bookingID.trim() && (
+          <ModalActions maintenanceOpen={showMaintenance} onToggleMaintenance={() => setShowMaintenance((v) => !v)} />
+        )}
 
         <div>
           <label className="text-xs font-semibold text-gray-500">Booking ID</label>
@@ -516,6 +526,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
             {submitting ? "Creating…" : "Create & Notify Customer"}
           </button>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -706,8 +717,8 @@ function MaintenanceSidePanel({ bookingID, token, fmt, onClose }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      setLoading(true); setError(""); setRecords([]);
+    setLoading(true); setError(""); setRecords([]);
+    const timer = setTimeout(async () => {   // small delay: in the New Penalty form the booking ID is typed, not picked
       try {
         const res = await fetch(`${API_URL}/api/maintenance/booking/${encodeURIComponent(bookingID)}`, { headers: { Authorization: `Bearer ${token}` } });
         const json = await res.json();
@@ -718,8 +729,8 @@ function MaintenanceSidePanel({ bookingID, token, fmt, onClose }) {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
-    return () => { cancelled = true; };
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [bookingID, token]);
 
   const total = records.filter((r) => r.status !== "Cancelled").reduce((sum, r) => sum + (Number(r.totalCost) || 0), 0);
@@ -778,11 +789,26 @@ function MaintenanceSidePanel({ bookingID, token, fmt, onClose }) {
   );
 }
 
+// ─── MODAL HEADER ACTIONS ───────────────────────────────────────────────
+// The same two buttons, in the same place (right under the title), on every penalty modal: View Maintenance toggles the
+// maintenance panel on the left, View Booking opens the booking on the Bookings page.
+function ModalActions({ maintenanceOpen = false, onToggleMaintenance = null, onViewBooking = null }) {
+  if (!onToggleMaintenance && !onViewBooking) return null;
+  const btn = "flex-1 px-3 py-2 rounded-xl text-xs font-semibold text-center border border-teal-200 text-teal-700 bg-teal-50/50 hover:bg-teal-50";
+  return (
+    <div className="flex gap-2">
+      {onToggleMaintenance && <button type="button" onClick={onToggleMaintenance} className={btn}>{maintenanceOpen ? "Hide Maintenance" : "View Maintenance"}</button>}
+      {onViewBooking && <button type="button" onClick={onViewBooking} className={btn}>View Booking →</button>}
+    </div>
+  );
+}
+
 // --- BOOKING PENALTIES MODAL -------------------------------------------------
 // Everything noted on ONE booking, in a window: totals on top, then each penalty (open it to see / edit / confirm /
 // void it), and a button to add another penalty to this booking whatever state the existing ones are in.
-function BookingPenaltiesModal({ bookingID, penalties, canAdd, onClose, onViewPenalty, onAddPenalty, onViewBooking }) {
+function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, onViewPenalty, onAddPenalty, onViewBooking }) {
   const { fmt } = useCurrency();
+  const [showMaintenance, setShowMaintenance] = useState(false);
   const list = [...penalties].sort((a, b) => {
     const aR = a.status === "UnderReview", bR = b.status === "UnderReview";
     if (aR !== bR) return aR ? -1 : 1;   // waiting for review first
@@ -800,7 +826,11 @@ function BookingPenaltiesModal({ bookingID, penalties, canAdd, onClose, onViewPe
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div className="relative flex flex-col md:flex-row items-stretch justify-center gap-3 w-full max-h-[90vh] overflow-y-auto md:overflow-visible px-4">
+        {showMaintenance && bookingID && (
+          <MaintenanceSidePanel bookingID={bookingID} token={token} fmt={fmt} onClose={() => setShowMaintenance(false)} />
+        )}
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="font-bold text-arl-dark">Penalties on this booking</h3>
@@ -814,12 +844,11 @@ function BookingPenaltiesModal({ bookingID, penalties, canAdd, onClose, onViewPe
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
         </div>
 
-        {onViewBooking && (
-          <button onClick={onViewBooking}
-            className="w-full px-4 py-2 rounded-xl text-sm font-semibold border border-teal-200 text-teal-700 bg-teal-50/50 hover:bg-teal-50">
-            View booking →
-          </button>
-        )}
+        <ModalActions
+          maintenanceOpen={showMaintenance}
+          onToggleMaintenance={canAdd ? () => setShowMaintenance((v) => !v) : null}
+          onViewBooking={onViewBooking}
+        />
 
         <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 text-xs space-y-1">
           <div className="flex justify-between"><span className="text-gray-500">Total charged</span><span className="font-semibold text-gray-800">{fmt(charged)}</span></div>
@@ -876,6 +905,7 @@ function BookingPenaltiesModal({ bookingID, penalties, canAdd, onClose, onViewPe
           ) : <span />}
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Close</button>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -981,6 +1011,14 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             </div>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
           </div>
+
+          {p.bookingID && (
+            <ModalActions
+              maintenanceOpen={showMaintenance}
+              onToggleMaintenance={canRecordInStore ? () => setShowMaintenance((v) => !v) : null}
+              onViewBooking={onViewBookingPage}
+            />
+          )}
 
           <div className="flex items-center gap-2">
             <SettlementBadge status={p.settlementStatus} />
@@ -1183,18 +1221,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                 + New penalty
               </button>
             )}
-            {p.bookingID && canRecordInStore && (
-              <button onClick={() => setShowMaintenance((v) => !v)}
-                className="px-4 py-2 rounded-xl text-sm font-semibold border border-teal-600 text-teal-700 hover:bg-teal-50">
-                {showMaintenance ? "Hide Maintenance" : "View Maintenance"}
-              </button>
-            )}
-            {p.bookingID && (
-              <button onClick={onViewBookingPage}
-                className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700">
-                View Booking
-              </button>
-            )}
+
           </div>
         </div>
 
@@ -1560,6 +1587,7 @@ export default function Penalties() {
       {bookingModalID && (
         <BookingPenaltiesModal
           bookingID={bookingModalID}
+          token={token}
           penalties={records.filter((r) => r.bookingID === bookingModalID)}
           canAdd={canRecordInStore}
           onClose={() => setBookingModalID(null)}
