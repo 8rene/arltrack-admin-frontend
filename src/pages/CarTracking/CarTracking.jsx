@@ -403,7 +403,7 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
                         {cbPeso(Math.abs(data.amountToReturn || 0))}
                       </CbRow>
                       <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                        Deposit still held. Return it on Payments{status === "completed" ? " (the booking is already completed)." : "."}
+                        Deposit still held. {status === "completed" ? "Return it on Payments." : "Complete the booking first, then return it on Payments."}
                       </p>
                     </>
                   )}

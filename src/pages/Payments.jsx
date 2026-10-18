@@ -883,9 +883,12 @@ export default function Payments() {
                           {selected.depositStatus && <Row label="Deposit Status" value={selected.depositStatus} />}
                           <Row label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />
                           <Row label="Deposit Returned" value={peso(selected.depositReturned, fmtCurrency)} />
-                          {canRecordInStore && selected.depositStatus === "Held" && ["ongoing", "completed"].includes(String(selected.bookingStatus || "").toLowerCase()) && (
+                          {canRecordInStore && selected.depositStatus === "Held" && String(selected.bookingStatus || "").toLowerCase() === "ongoing" && (
+                            <p className="border-t border-gray-100 mt-2 pt-3 text-xs text-gray-500">The deposit is still held. It can be returned here once the booking is completed in Car Tracking.</p>
+                          )}
+                          {canRecordInStore && selected.depositStatus === "Held" && String(selected.bookingStatus || "").toLowerCase() === "completed" && (
                             <div className="border-t border-gray-100 mt-2 pt-3 space-y-1.5">
-                              <p className="text-xs text-gray-500">The deposit is still held (the booking can already be completed). Return it here once the vehicle has been dropped off — penalties are deducted first.</p>
+                              <p className="text-xs text-gray-500">The booking is completed and the deposit is still held. Return it here — penalties are deducted first.</p>
                               <button onClick={() => setReturnDepositOpen(true)}
                                 className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700">
                                 Return deposit

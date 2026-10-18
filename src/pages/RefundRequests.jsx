@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
-import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 
 // ─── SVG ICONS ─────────────────────────────────────────────────────────────
 
@@ -277,10 +276,23 @@ function TypeBadge({ r }) {
   return <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${cls}`}>{TIER_LABEL[tier] || "Under 48h"}</span>;
 }
 
-// Money handed back across the counter (no PayMongo involved). Only deposit returns and discounts can be this.
-const InStoreTag = ({ r }) => (isDiscount(r) && r.refund.via === "in_store"
-  ? <span className="ml-1.5 inline-block rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-semibold text-gray-600">In store</span>
-  : null);
+// HOW the money went (or is going) back: through PayMongo, handed over in store, or both. Its own column, separate from
+// Type (which says what KIND of refund it is). A request nobody has approved yet has no route, so it shows "—".
+const viaOf = (r) => {
+  if (isDiscount(r)) return r.refund.via === "in_store" ? "in_store" : r.refund.via === "paymongo" ? "paymongo" : null;
+  const online = (r.parts || []).length > 0;
+  const store  = !!(r.manualRefund && Number(r.manualRefund.amount) > 0);
+  return online && store ? "both" : online ? "paymongo" : store ? "in_store" : null;
+};
+const VIA_STYLE = {
+  paymongo: { label: "PayMongo",            cls: "border-blue-200 bg-blue-50 text-blue-700" },
+  in_store: { label: "In store",            cls: "border-gray-200 bg-gray-50 text-gray-600" },
+  both:     { label: "PayMongo + in store", cls: "border-indigo-200 bg-indigo-50 text-indigo-700" },
+};
+const ViaBadge = ({ r }) => {
+  const v = VIA_STYLE[viaOf(r)];
+  return v ? <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${v.cls}`}>{v.label}</span> : <span className="text-gray-300">—</span>;
+};
 
 // "Oct 17, 2026 | 3:45 PM" — date and time in one cell, split by a pipe.
 const stampText = (d) => { const p = stampParts(d); return p ? `${p.date} | ${p.time}` : "—"; };
@@ -391,6 +403,8 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                       <span className={pt.status === "succeeded" ? "text-green-600" : pt.status === "failed" ? "text-red-600" : "text-blue-600"}>
                         {pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed" : "processing at PayMongo"}
                       </span>
+                      {pt.paymongoRefundID && <span className="block font-mono text-[11px] text-gray-400">{pt.paymongoRefundID}</span>}
+                      {pt.status === "failed" && pt.error && <span className="block text-[11px] text-red-600">{pt.error}</span>}
                     </Line>
                   ))}
                   {r.manualRefund && (
@@ -417,13 +431,6 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             </>
           )}
 
-          <Block title="Money movements">
-            <PaymentEntriesPanel
-              key={`${r.refundRequestID}-${disc ? r.refund.state : r.status}`}
-              query={disc ? { paymentID: r.paymentID } : { refundRequestID: r.refundRequestID }}
-              title=""
-            />
-          </Block>
         </div>
 
         <div className="shrink-0 border-t border-gray-100 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
@@ -476,7 +483,16 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               </button>
             )}
           </div>
-          <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50">Close</button>
+          <div className="flex items-center gap-2">
+            {r.paymentID && (
+              <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
+                title="Open this payment — receipts, slips and every money movement are there"
+                className="px-4 py-2 rounded-xl border text-sm font-semibold text-teal-700 hover:bg-teal-50">
+                View in Payments →
+              </button>
+            )}
+            <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50">Close</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1035,6 +1051,7 @@ export default function RefundRequests() {
                   <th className="px-5 py-3 font-semibold">Reason</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Type</th>
+                  <th className="px-5 py-3 font-semibold">Via</th>
                   <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Status</th>
                   <th className="px-5 py-3 font-semibold text-right">Actions</th>
@@ -1061,7 +1078,8 @@ export default function RefundRequests() {
                       <td className="px-5 py-4 font-semibold text-arl-dark whitespace-nowrap">
                         {fmt(disc ? r.refund.amount : (r.planPreview ? r.planPreview.total : r.amount))}
                       </td>
-                      <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /><InStoreTag r={r} /></td>
+                      <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /></td>
+                      <td className="px-5 py-4 whitespace-nowrap"><ViaBadge r={r} /></td>
                       <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>
                       <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
                       <td className="px-5 py-4 text-right">
