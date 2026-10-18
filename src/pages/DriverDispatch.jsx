@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -85,6 +85,28 @@ const licenseWarning = (lic) => {
   return null;
 };
 
+// How one driver fits ONE booking's window, from GET /api/driver-dispatch/availability.
+//   free = no clash · tight = gap shorter than the buffer (warning) · busy = real overlap (needs a reason)
+const fmtGap = (mins) => {
+  const m = Number(mins) || 0;
+  if (m <= 0) return "no gap";
+  const h = Math.floor(m / 60), r = m % 60;
+  return [h ? `${h} h` : "", r ? `${r} min` : ""].filter(Boolean).join(" ");
+};
+const fitLabel = (fit) => {
+  if (!fit) return "";
+  if (fit.status === "busy")  return "busy — overlaps another trip";
+  if (fit.status === "tight") return `tight — ${fmtGap(fit.conflict?.gapMinutes)} gap`;
+  return "free";
+};
+const FIT_STYLES = {
+  free:  "bg-green-50 text-green-700 border-green-200",
+  tight: "bg-amber-50 text-amber-700 border-amber-200",
+  busy:  "bg-red-50 text-red-700 border-red-200",
+};
+// A real overlap can only be forced with a typed reason; keep in step with OVERRIDE_REASON_MIN_LENGTH in the backend.
+const OVERRIDE_REASON_MIN = 5;
+
 const StatCard = ({ icon, value, label, color }) => {
   const colors = {
     red:    "bg-red-50 text-red-600",
@@ -154,7 +176,10 @@ export default function DriverDispatch() {
   const [toast, setToast]       = useState(null);
   const [picked, setPicked]     = useState({});   // { [bookingDocID]: driverID }
   const [busyID, setBusyID]     = useState(null);  // bookingDocID currently being assigned/unassigned
-  const [conflict, setConflict] = useState(null);  // { bookingDocID, driverID, message }
+  const [conflict, setConflict] = useState(null);  // { bookingDocID, driverID, message, conflictType, requiresReason, bufferMinutes }
+  const [overrideReason, setOverrideReason] = useState(""); // typed reason when forcing a real overlap
+  const [availability, setAvailability] = useState({});     // { [bookingDocID]: { bufferMinutes, byDriver: { [driverID]: fit } } }
+  const availRequested = useRef(new Set());                 // booking ids already fetched (or in flight) since the last board load
   const [expanded, setExpanded] = useState({});    // { [driverID]: bool }
   const [openCards, setOpenCards] = useState({});          // { [bookingDocID]: bool } — details row expanded
   const [queuePage, setQueuePage]     = useState(1);        // "Needs a Driver" — 1-based
@@ -183,6 +208,8 @@ export default function DriverDispatch() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to load driver dispatch board.");
       setBoard(json.data);
+      availRequested.current = new Set(); // schedules may have changed: ask again for whatever is open
+      setAvailability({});
       setQueuePage(1);
       setDriversPage(1);
     } catch (e) {
@@ -227,23 +254,30 @@ export default function DriverDispatch() {
     [board.drivers]
   );
 
-  const doAssign = async (bookingDocID, driverID, force = false) => {
+  const clearConflict = () => { setConflict(null); setOverrideReason(""); };
+
+  const doAssign = async (bookingDocID, driverID, force = false, reason = "") => {
     if (!driverID) { showToast("Pick a driver first.", "error"); return false; }
     setBusyID(bookingDocID);
     try {
       const res  = await authedFetch("/api/driver-dispatch/assign", {
         method: "POST",
-        body: JSON.stringify({ bookingID: bookingDocID, driverID, force }),
+        body: JSON.stringify({ bookingID: bookingDocID, driverID, force, ...(reason ? { overrideReason: reason } : {}) }),
       });
       const json = await res.json();
       if (!res.ok) {
         if (json.conflict) {
-          setConflict({ bookingDocID, driverID, message: json.message });
+          setConflict({
+            bookingDocID, driverID, message: json.message,
+            conflictType: json.conflictType || null,      // "overlap" | "tight" | null (license only)
+            requiresReason: !!json.requiresReason,
+            bufferMinutes: json.bufferMinutes ?? null,
+          });
           return false;
         }
         throw new Error(json.message || "Failed to assign driver.");
       }
-      setConflict(null);
+      clearConflict();
       // Assignment is done: drop the dropdown selection for this booking so it
       // doesn't linger (or come back pre-selected if the driver is later unassigned).
       setPicked((prev) => {
@@ -308,6 +342,36 @@ export default function DriverDispatch() {
   // booking lives, so it's simply on-screen by the time this renders.
   const queueTotalPages   = Math.max(1, Math.ceil(board.unassigned.length / PAGE_SIZE));
   const visibleUnassigned = board.unassigned.slice((queuePage - 1) * PAGE_SIZE, queuePage * PAGE_SIZE);
+
+  // Collapsed by default; opens on its own for the booking we arrived to assign or one showing a conflict
+  // prompt. An explicit click always wins.
+  const isCardOpen = (b) => {
+    const forcedOpen = assignForBooking?.bookingId === b.id || conflict?.bookingDocID === b.id;
+    return openCards[b.id] !== undefined ? openCards[b.id] : forcedOpen;
+  };
+
+  // Free / tight / busy for every driver, fetched only for the bookings that are open (and the one we are
+  // assigning), so the picker can show it before anyone clicks Assign. Informational only: the server
+  // re-checks inside the assignment itself.
+  useEffect(() => {
+    if (loading) return;
+    const ids = new Set(visibleUnassigned.filter(isCardOpen).map((b) => b.id));
+    if (assignForBooking?.bookingId) ids.add(assignForBooking.bookingId);
+    ids.forEach(async (id) => {
+      if (availRequested.current.has(id)) return;
+      availRequested.current.add(id);
+      try {
+        const res  = await authedFetch(`/api/driver-dispatch/availability?bookingID=${encodeURIComponent(id)}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Failed to load driver availability.");
+        const byDriver = Object.fromEntries((json.data?.drivers || []).map((x) => [x.driverID, x]));
+        setAvailability((prev) => ({ ...prev, [id]: { bufferMinutes: json.data?.bufferMinutes ?? null, byDriver } }));
+      } catch {
+        availRequested.current.delete(id); // not cached: it will retry the next time the card is opened
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, board.unassigned, queuePage, openCards, assignForBooking, conflict?.bookingDocID, authedFetch]);
 
   const driversTotalPages = Math.max(1, Math.ceil(board.drivers.length / PAGE_SIZE));
   const visibleDrivers    = board.drivers.slice((driversPage - 1) * PAGE_SIZE, driversPage * PAGE_SIZE);
@@ -391,11 +455,7 @@ export default function DriverDispatch() {
           ) : (
             <div className="space-y-2">
               {visibleUnassigned.map((b) => {
-                // Collapsed by default — one row per booking. Opens on its own
-                // when we arrived to assign this booking, or when a conflict
-                // prompt needs to be seen; an explicit click always wins.
-                const forcedOpen = assignForBooking?.bookingId === b.id || conflict?.bookingDocID === b.id;
-                const isOpen = openCards[b.id] !== undefined ? openCards[b.id] : forcedOpen;
+                const isOpen = isCardOpen(b);
                 return (
                 <div key={b.id} id={`booking-${b.id}`} className={`border rounded-xl px-2.5 py-2 transition-all ${
                   assignForBooking?.bookingId === b.id ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200"
@@ -444,21 +504,42 @@ export default function DriverDispatch() {
                         </button>
                       </div>
 
-                    {conflict?.bookingDocID === b.id ? (
-                      <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 space-y-2">
-                        <p className="text-xs text-red-700">{conflict.message}</p>
+                    {conflict?.bookingDocID === b.id ? (() => {
+                      const needsReason = conflict.requiresReason;
+                      const reasonOk = overrideReason.trim().length >= OVERRIDE_REASON_MIN;
+                      return (
+                      <div className={`rounded-lg p-2.5 space-y-2 border ${
+                        conflict.conflictType === "overlap" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"
+                      }`}>
+                        <p className={`text-xs ${conflict.conflictType === "overlap" ? "text-red-700" : "text-amber-800"}`}>{conflict.message}</p>
+                        {needsReason && (
+                          <div className="space-y-1">
+                            <label className="block text-[11px] font-semibold text-red-700">
+                              Reason for assigning over an overlap (saved in the audit log)
+                            </label>
+                            <textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} rows={2}
+                              placeholder="e.g. both trips are short and in the same area"
+                              className="w-full border border-red-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-200" />
+                            {!reasonOk && overrideReason.length > 0 && (
+                              <p className="text-[11px] text-red-600">At least {OVERRIDE_REASON_MIN} characters.</p>
+                            )}
+                          </div>
+                        )}
                         <div className="flex gap-2">
-                          <button onClick={() => doAssign(b.id, conflict.driverID, true)} disabled={busyID === b.id}
-                            className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-arl-cta text-white hover:opacity-90 disabled:opacity-40">
+                          <button onClick={() => doAssign(b.id, conflict.driverID, true, needsReason ? overrideReason.trim() : "")}
+                            disabled={busyID === b.id || (needsReason && !reasonOk)}
+                            title={needsReason && !reasonOk ? "Type a reason first" : undefined}
+                            className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-arl-cta text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
                             Assign Anyway
                           </button>
-                          <button onClick={() => setConflict(null)}
+                          <button onClick={clearConflict}
                             className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
                             Cancel
                           </button>
                         </div>
                       </div>
-                    ) : (
+                      );
+                    })() : (
                       <div className="space-y-1.5">
                         <div className="flex gap-2">
                           <select
@@ -468,7 +549,8 @@ export default function DriverDispatch() {
                             <option value="">Select driver…</option>
                             {driverOptions.map((d) => {
                               const w = licenseWarning(d.license);
-                              return <option key={d.id} value={d.id}>{d.name}{w ? ` — ${w.short}` : ""}</option>;
+                              const fit = availability[b.id]?.byDriver?.[d.id];
+                              return <option key={d.id} value={d.id}>{d.name}{fit ? ` — ${fitLabel(fit)}` : ""}{w ? ` — ${w.short}` : ""}</option>;
                             })}
                           </select>
                           <button onClick={() => doAssign(b.id, picked[b.id])} disabled={busyID === b.id || !picked[b.id]}
@@ -477,6 +559,19 @@ export default function DriverDispatch() {
                             Assign
                           </button>
                         </div>
+                        {(() => {
+                          const fit = availability[b.id]?.byDriver?.[picked[b.id]];
+                          if (!fit || fit.status === "free") return null;
+                          return (
+                            <p className={`flex items-center gap-1.5 text-[11px] rounded-lg px-2 py-1.5 border ${FIT_STYLES[fit.status]}`}>
+                              <IconWarning className="w-3.5 h-3.5 shrink-0" />
+                              <span>
+                                {fit.conflict?.message}
+                                {fit.status === "busy" ? " You'll need to give a reason to assign anyway." : ""}
+                              </span>
+                            </p>
+                          );
+                        })()}
                         {(() => {
                           const w = licenseWarning(driverOptions.find((d) => d.id === picked[b.id])?.license);
                           if (!w) return null;
@@ -534,8 +629,10 @@ export default function DriverDispatch() {
                     disabled={isAssignTarget && isAssigning}
                     className="w-full flex items-center justify-between gap-2 p-3 hover:bg-gray-50 text-left disabled:opacity-50">
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-arl-light flex items-center justify-center text-arl-primary">
-                        <IconUser />
+                      <div className="w-8 h-8 rounded-full bg-arl-light flex items-center justify-center text-arl-primary overflow-hidden shrink-0">
+                        {d.profileImage
+                          ? <img src={d.profileImage} alt={d.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          : <IconUser />}
                       </div>
                       <div>
                         <div className="text-sm font-semibold text-arl-dark">{d.name}</div>
@@ -563,6 +660,16 @@ export default function DriverDispatch() {
                       }`}>
                         {d.assignments.length > 0 ? "On a Trip" : "Available"}
                       </span>
+                      {isAssignTarget && (() => {
+                        const fit = availability[assignForBooking.bookingId]?.byDriver?.[d.driverID];
+                        if (!fit) return null;
+                        return (
+                          <span title={fit.conflict?.message || undefined}
+                            className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg border ${FIT_STYLES[fit.status]}`}>
+                            {fit.status === "free" ? "Free for this trip" : fit.status === "tight" ? "Tight gap" : "Busy"}
+                          </span>
+                        );
+                      })()}
                       <span className="text-[10px] text-gray-400">
                         {isAssignTarget && isAssigning ? "Assigning…" : `${d.assignments.length} trip${d.assignments.length === 1 ? "" : "s"}`}
                       </span>
@@ -571,16 +678,22 @@ export default function DriverDispatch() {
 
                   {!isAssignTarget && expanded[d.driverID] && (
                     <div className="border-t border-gray-100 p-3 space-y-2 bg-gray-50/50">
+                      <div className="flex justify-end">
+                        <button type="button" onClick={() => navigate(`/users?role=driver&tab=directory&open=${encodeURIComponent(d.driverID)}`)}
+                          className="text-[11px] font-semibold text-arl-dark border border-gray-200 bg-white rounded-lg px-2 py-1 hover:bg-gray-50">
+                          View Driver Info
+                        </button>
+                      </div>
                       {d.assignments.length === 0 ? (
                         <p className="text-xs text-gray-400">No trips assigned.</p>
                       ) : (
                         d.assignments.map((b) => (
                           <div key={b.id} className="flex items-start justify-between gap-2 bg-white border border-gray-200 rounded-lg p-2.5">
                             <div className="space-y-0.5">
-                              <div className="text-xs font-semibold text-arl-dark">{b.customerName} · {b.vehicleName}</div>
+                              <div className="text-xs font-semibold text-arl-dark">{b.vehicleName} | {b.customerName}</div>
                               <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
-                                <span className="flex items-center gap-1"><IconClock className="w-3.5 h-3.5" /> {fmtDateTime(b.startDateTime)}</span>
-                                <span className="flex items-center gap-1"><IconPin className="w-3.5 h-3.5" /> {b.location}</span>
+                                <span className="flex items-center gap-1"><IconClock className="w-3.5 h-3.5" /> Start: {fmtDateTime(b.startDateTime)}</span>
+                                <span className="flex items-center gap-1"><IconClock className="w-3.5 h-3.5" /> End: {fmtDateTime(b.endDateTime)}</span>
                               </div>
                               <span className={`inline-block text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
                                 b.status === "ongoing" ? "bg-green-50 text-green-700" : "bg-yellow-50 text-yellow-700"
