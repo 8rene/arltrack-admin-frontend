@@ -149,17 +149,15 @@ function NotifRow({ n, onOpen, onDelete }) {
 }
 
 /* ── Notification Dropdown ── */
-const EMPTY_TEXT = { all: "No notifications", unread: "No unread notifications", read: "No read notifications" };
+const EMPTY_TEXT = { all: "No notifications", unread: "No unread notifications" };
 
 function NotificationDropdown({ notifications, tab, onTab, error, onOpen, onDelete, onMarkAllRead, onClear }) {
   const unread = notifications.filter((n) => !n.isRead);
-  const read   = notifications.filter((n) => n.isRead);
-  const shown  = tab === "unread" ? unread : tab === "read" ? read : notifications;
+  const shown  = tab === "unread" ? unread : notifications;
 
   const tabs = [
     { key: "all",    label: "All",    count: notifications.length },
     { key: "unread", label: "Unread", count: unread.length },
-    { key: "read",   label: "Read",   count: read.length },
   ];
 
   return (
@@ -177,8 +175,8 @@ function NotificationDropdown({ notifications, tab, onTab, error, onOpen, onDele
               </button>
             )}
             {tab !== "unread" && shown.length > 0 && (
-              <button onClick={() => onClear(tab === "read" ? "read" : "all")} className="text-xs font-semibold text-red-500 hover:text-red-600">
-                {tab === "read" ? "Clear read" : "Clear all"}
+              <button onClick={() => onClear("all")} className="text-xs font-semibold text-red-500 hover:text-red-600">
+                Clear all
               </button>
             )}
           </div>
@@ -228,7 +226,7 @@ export default function Header({ title = "Dashboard" }) {
   const navigate = useNavigate();
   const [notifOpen, setNotifOpen]         = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [notifTab, setNotifTab]             = useState("all"); // "all" | "unread" | "read"
+  const [notifTab, setNotifTab]             = useState("all"); // "all" | "unread"
   const [notifError, setNotifError]         = useState("");
   // Sourced from AuthContext (backed by localStorage under the hood) rather
   // than reading localStorage directly here — that used to be a one-time
