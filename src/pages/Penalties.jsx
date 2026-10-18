@@ -682,44 +682,39 @@ function DetailRow({ label, value }) {
   );
 }
 
-// ─── BOOKING SIDE PANEL ──────────────────────────────────────────────────
-//
-// Read-only summary of the penalty's booking, shown beside the penalty
-// details so staff don't have to leave this page. There is no single-booking
-// endpoint, so it reads the same list Bookings.jsx does (/api/bookings?status=all)
-// and picks the booking out of it; the list is cached for 30s so toggling the
-// panel on several penalties in a row doesn't re-download everything.
-let bookingsCache = { at: 0, data: null };
-
 const fmtBookingDate = (val) => {
   const d = toDate(val);
   return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : null;
 };
-const BOOKING_DOT = { "to pay": "bg-orange-400", upcoming: "bg-yellow-400", ongoing: "bg-blue-500", completed: "bg-green-500", cancelled: "bg-red-500", stolen: "bg-red-700" };
-const BOOKING_BG  = { "to pay": "bg-orange-50 border border-orange-200", upcoming: "bg-yellow-50 border border-yellow-200", ongoing: "bg-blue-50 border border-blue-200", completed: "bg-green-50 border border-green-200", cancelled: "bg-red-50 border border-red-200", stolen: "bg-red-100 border border-red-300" };
 
-function BookingSidePanel({ bookingID, token, fmt, onClose, onOpenFull }) {
-  const [booking, setBooking] = useState(null);
+// ─── MAINTENANCE SIDE PANEL ─────────────────────────────────────────────
+//
+// Read-only list of the maintenance jobs tied to the penalty's booking (post-rental repairs, cleaning, etc.), shown to
+// the LEFT of the penalty details so staff can compare the charge with the actual repair cost without leaving this page.
+// Reads GET /api/maintenance/booking/:bookingID (Supervisor / Admin / Owner only, like the Maintenance page).
+const MAINT_STATUS_STYLE = {
+  Scheduled: "bg-yellow-50 border border-yellow-200 text-yellow-800",
+  Completed: "bg-green-50 border border-green-200 text-green-800",
+  Cancelled: "bg-red-50 border border-red-200 text-red-700",
+};
+
+function MaintenanceSidePanel({ bookingID, token, fmt, onClose }) {
+  const navigate = useNavigate();
+  const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true); setError(""); setBooking(null);
+      setLoading(true); setError(""); setRecords([]);
       try {
-        if (!bookingsCache.data || Date.now() - bookingsCache.at > 30000) {
-          const res = await fetch(`${API_URL}/api/bookings?status=all`, { headers: { Authorization: `Bearer ${token}` } });
-          const json = await res.json();
-          if (!res.ok) throw new Error(json.message || "Failed to load booking.");
-          bookingsCache = { at: Date.now(), data: json.data || [] };
-        }
-        const found = bookingsCache.data.find((b) => (b.bookingID || b.id) === bookingID || b.id === bookingID);
-        if (cancelled) return;
-        if (found) setBooking(found);
-        else setError("Booking not found — it may have been archived or deleted.");
+        const res = await fetch(`${API_URL}/api/maintenance/booking/${encodeURIComponent(bookingID)}`, { headers: { Authorization: `Bearer ${token}` } });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Failed to load maintenance.");
+        if (!cancelled) setRecords(Array.isArray(json.data) ? json.data : []);
       } catch (e) {
-        if (!cancelled) setError(e.message || "Failed to load booking.");
+        if (!cancelled) setError(e.message || "Failed to load maintenance.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -727,70 +722,56 @@ function BookingSidePanel({ bookingID, token, fmt, onClose, onOpenFull }) {
     return () => { cancelled = true; };
   }, [bookingID, token]);
 
-  const b = booking;
-  const st = (b?.status || "").toLowerCase();
-  const deposit = !b ? null
-    : b.paymentStatus === "Refunded" && b.securityDeposit > 0 ? `${fmt(b.securityDeposit)} · Refunded`
-    : b.deposit ? (b.deposit.status === "Waived" ? "Waived" : `${fmt(b.deposit.amount)} · ${b.deposit.status || "Held"}`)
-    : Number(b.securityDeposit) > 0 ? `${fmt(b.securityDeposit)} · Awaiting payment`
-    : "Not collected";
+  const total = records.filter((r) => r.status !== "Cancelled").reduce((sum, r) => sum + (Number(r.totalCost) || 0), 0);
 
   return (
     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-bold text-arl-dark">Booking</h3>
+          <h3 className="font-bold text-arl-dark">Maintenance</h3>
           <p className="text-xs text-gray-400 font-mono">{bookingID}</p>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600" title="Hide booking"><IconX /></button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600" title="Hide maintenance"><IconX /></button>
       </div>
 
       {loading && (
         <div className="space-y-2">
-          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />)}
+          {Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />)}
         </div>
       )}
       {!loading && error && <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>}
+      {!loading && !error && records.length === 0 && (
+        <p className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-xl px-3 py-3">No maintenance has been logged for this booking yet.</p>
+      )}
 
-      {b && (
-        <>
-          <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_BG[st] || "bg-gray-50 border border-gray-200"}`}>
-            <span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_DOT[st] || "bg-gray-400"}`} />
-            {(b.status || "—").replace("_", " ")}
-          </span>
-
-          <div className="rounded-xl border border-gray-100 p-3 space-y-0.5">
-            <DetailRow label="Customer" value={b.customerName} />
-            <DetailRow label="Phone" value={b.phone} />
-            <DetailRow label="Vehicle" value={b.vehicleName} />
-            <DetailRow label="Service type" value={b.serviceTypeName} />
-            <DetailRow label="Driving" value={b.modeOfDriving} />
-            <DetailRow label="Location" value={b.location} />
+      {records.map((r) => {
+        const services = Array.isArray(r.services) ? r.services : [];
+        const parts = Array.isArray(r.partsAddressed) ? r.partsAddressed : [];
+        return (
+          <div key={r.id || r.maintenanceID} className="rounded-xl border border-gray-100 p-3 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-arl-dark">{r.basis || "Maintenance"}</span>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${MAINT_STATUS_STYLE[r.status] || "bg-gray-50 border border-gray-200 text-gray-600"}`}>{r.status || "—"}</span>
+            </div>
+            <DetailRow label="Date" value={fmtBookingDate(r.maintenanceDate)} />
+            {services.length > 0 && <DetailRow label="Services" value={services.map((x) => x.serviceName).filter(Boolean).join(", ")} />}
+            {parts.length > 0 && <DetailRow label="Parts" value={parts.map((x) => x.partName || x.name).filter(Boolean).join(", ")} />}
+            {r.description && <DetailRow label="Notes" value={r.description} />}
+            <DetailRow label="Cost" value={<span className="font-semibold">{fmt(r.totalCost)}</span>} />
           </div>
+        );
+      })}
 
-          <div className="rounded-xl border border-gray-100 p-3 space-y-0.5">
-            <DetailRow label="Start" value={fmtBookingDate(b.startDateTime)} />
-            <DetailRow label="End" value={fmtBookingDate(b.endDateTime)} />
-            <DetailRow label="Duration" value={b.totalDays != null ? `${b.totalDays} day${b.totalDays > 1 ? "s" : ""}` : null} />
-            <DetailRow label="Created" value={fmtBookingDate(b.createdAt)} />
-          </div>
-
-          <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 space-y-0.5">
-            <DetailRow label="Rental fee" value={fmt(b.rentalFee)} />
-            <DetailRow label="Service fee" value={fmt(b.serviceFee)} />
-            {Number(b.gatewayFee) > 0 && <DetailRow label="Gateway fee" value={fmt(b.gatewayFee)} />}
-            <DetailRow label="Extra fee" value={fmt(b.extraFee)} />
-            {Number(b.driversFee) > 0 && <DetailRow label="Driver's fee" value={fmt(b.driversFee)} />}
-            <DetailRow label="Security deposit" value={deposit} />
-            <DetailRow label="Total fee" value={<span className="font-semibold">{fmt(b.totalFee)}</span>} />
-            <DetailRow label="Payment" value={b.paymentMethod} />
-          </div>
-        </>
+      {records.length > 0 && (
+        <div className="flex justify-between text-xs rounded-xl bg-gray-50 border border-gray-100 px-3 py-2">
+          <span className="text-gray-500">Total maintenance cost{records.some((r) => r.status === "Cancelled") ? " (excl. cancelled)" : ""}</span>
+          <span className="font-semibold text-gray-700">{fmt(total)}</span>
+        </div>
       )}
 
       <div className="flex justify-end">
-        <button onClick={onOpenFull} className="text-xs font-semibold text-teal-600 hover:text-teal-700">
-          Open in Bookings page →
+        <button onClick={() => navigate("/maintenance")} className="text-xs font-semibold text-teal-600 hover:text-teal-700">
+          Open Maintenance page →
         </button>
       </div>
     </div>
@@ -902,7 +883,7 @@ function BookingPenaltiesModal({ bookingID, penalties, canAdd, onClose, onViewPe
 
 function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClose, onViewBookingPage, onMarkPaid, onWaive, onVoid, onConfirm, onSaveEdit, onAddPenalty }) {
   const { fmt } = useCurrency();
-  const [showBooking, setShowBooking] = useState(false);
+  const [showMaintenance, setShowMaintenance] = useState(false);
 
   // ── Review-step state. A penalty a driver noted is UnderReview: supervisors can edit it (descriptions, amounts, add /
   // remove items) and confirm it, which notifies the customer and locks it. Everything below is inert for other statuses.
@@ -984,6 +965,14 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative flex flex-col md:flex-row items-stretch justify-center gap-3 w-full max-h-[90vh] overflow-y-auto md:overflow-visible">
+        {showMaintenance && p.bookingID && (
+          <MaintenanceSidePanel
+            bookingID={p.bookingID}
+            token={token}
+            fmt={fmt}
+            onClose={() => setShowMaintenance(false)}
+          />
+        )}
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
           <div className="flex items-center justify-between">
             <div>
@@ -1194,24 +1183,21 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                 + New penalty
               </button>
             )}
+            {p.bookingID && canRecordInStore && (
+              <button onClick={() => setShowMaintenance((v) => !v)}
+                className="px-4 py-2 rounded-xl text-sm font-semibold border border-teal-600 text-teal-700 hover:bg-teal-50">
+                {showMaintenance ? "Hide Maintenance" : "View Maintenance"}
+              </button>
+            )}
             {p.bookingID && (
-              <button onClick={() => setShowBooking((v) => !v)}
+              <button onClick={onViewBookingPage}
                 className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700">
-                {showBooking ? "Hide Booking" : "View Booking"}
+                View Booking
               </button>
             )}
           </div>
         </div>
 
-        {showBooking && p.bookingID && (
-          <BookingSidePanel
-            bookingID={p.bookingID}
-            token={token}
-            fmt={fmt}
-            onClose={() => setShowBooking(false)}
-            onOpenFull={onViewBookingPage}
-          />
-        )}
       </div>
     </div>
   );
@@ -1448,7 +1434,7 @@ export default function Penalties() {
   // Bookings.jsx doesn't yet auto-open a specific booking's panel from a
   // URL param — this gets staff to the right page with the bookingID
   // visible, but they still search/select it themselves once there.
-  const viewBooking = (bookingID) => navigate(`/bookings?bookingID=${encodeURIComponent(bookingID)}`);
+  const viewBooking = (bookingID) => navigate(`/bookings?open=${encodeURIComponent(bookingID)}`);   // Bookings.jsx opens the booking from ?open=
 
   // One penalty row.
   const renderRow = (p, i) => {
