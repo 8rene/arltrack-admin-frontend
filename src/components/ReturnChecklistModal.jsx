@@ -97,7 +97,7 @@ export default function ReturnChecklistModal({
             <div className="bg-gray-50 rounded-xl p-3 text-sm space-y-1">
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Deposit &amp; penalties</p>
               <div className="flex justify-between"><span className="text-gray-500">Driver</span><span className="font-medium text-arl-dark">{driverName || "No driver"}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Deposit held <span className="text-[11px] text-gray-400">({data.depositStatus})</span></span><span className="font-medium">{data.depositHeld == null ? "—" : peso(data.depositHeld)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">Security deposit <span className="text-[11px] text-gray-400">({data.depositStatus})</span></span><span className="font-medium">{data.depositHeld == null ? "—" : peso(data.depositHeld)}</span></div>
               <div className="flex justify-between items-center">
                 <button type="button" onClick={() => setShowPenalties((v) => !v)} disabled={!data.penalties?.length}
                   aria-expanded={showPenalties}
@@ -132,6 +132,7 @@ export default function ReturnChecklistModal({
                   })}
                 </ul>
               )}
+              <div className="flex justify-between"><span className="text-gray-500">Deducted from deposit <span className="text-[11px] text-gray-400">(deposit settled)</span></span><span className="font-medium text-red-600">− {peso(data.depositDeducted || 0)}</span></div>
               <div className="flex justify-between border-t border-gray-200 pt-1 mt-1">
                 <span className="font-semibold text-arl-dark">
                   {data.depositSettled ? (owes ? "Settled — customer owed" : "Settled — deposit returned") : (owes ? "Customer will owe" : "Deposit to return")}
