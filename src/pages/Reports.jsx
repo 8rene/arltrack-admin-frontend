@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import { useCurrency } from "../context/CurrencyContext";
 import { downloadReportPdf } from "../utils/reportPdf";
@@ -39,14 +39,6 @@ const IconBarChart = ({ className = "w-5 h-5" }) => (
 const IconDownload = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-const IconPrinter = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M6 9V2h12v7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-    <rect x="3" y="9" width="18" height="10" rx="2" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M6 14h12M6 18h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 );
 
@@ -103,13 +95,6 @@ const IconUsers = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
-const IconMail = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.75" />
-    <path d="M3.5 6.5L12 13l8.5-6.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 const IconCreditCard = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.75" />
@@ -140,9 +125,11 @@ const PERIODS = [
   { key: "yearly",  label: "Yearly",  Icon: IconBarChart,      desc: "Pick a year" },
 ];
 
-const MAIN_TABS = [
-  { key: "view",    label: "View Reports" },
-  { key: "receive", label: "Receive Reports" },
+// Three cuts, same as the app: Revenue & Payments / Rentals & Customers / Vehicles.
+const REPORT_TABS = [
+  { key: "revenue",  label: "Revenue & Payments" },
+  { key: "rentals",  label: "Rentals & Customers" },
+  { key: "vehicles", label: "Vehicles" },
 ];
 
 const TOTALS_TABS = [
@@ -150,11 +137,6 @@ const TOTALS_TABS = [
   { key: "week",  label: "Week" },
   { key: "month", label: "Month" },
   { key: "year",  label: "Year" },
-];
-
-const DETAIL_TABS = [
-  { key: "payments", label: "Payments", Icon: IconCreditCard },
-  { key: "bookings", label: "Bookings", Icon: IconPackage },
 ];
 
 const STATUS_COLORS = {
@@ -172,9 +154,6 @@ const STATUS_COLORS = {
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-function fmt2(n) {
-  return Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 function fmtDate(iso) {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
@@ -209,12 +188,9 @@ export default function Reports() {
   const [report, setReport]       = useState(null);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState(null);
-  const [mainTab, setMainTab]     = useState("view");
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detailTab, setDetailTab]   = useState("payments");
   const [totalsTab, setTotalsTab]   = useState("day");
+  const [reportTab, setReportTab]   = useState("revenue");   // which of the three reports is open
   const [downloadOpen, setDownloadOpen] = useState(false);
-  const [periodOpen, setPeriodOpen] = useState(true);   // the "Select Report Period" card can be minimized
   const [pdfBusy, setPdfBusy]       = useState(false);
   const cacheRef = useRef(new Map());   // query string -> { at, data }, so flipping back to a period is instant
   const reqRef   = useRef(0);           // only the newest request may update the page
@@ -394,30 +370,34 @@ export default function Reports() {
     const printContent = printRef.current?.querySelector(".report-printable");
     if (!printContent) return;
 
+    // Print every tab, not just the one on screen.
+    const clone = printContent.cloneNode(true);
+    clone.querySelectorAll("[data-panel]").forEach((el) => { el.style.display = "block"; });
+
+    // Reuse the page's own stylesheets so the print looks like the screen. (A stylesheet link must be absolute
+    // here: the print frame is a blank page, so a relative path would not resolve.)
+    const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+      .map((n) => (n.tagName === "LINK" ? `<link rel="stylesheet" href="${n.href}">` : n.outerHTML))
+      .join("\n");
+
     const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8"/>
   <title>Report – ${report?.label || ""}</title>
+  ${styles}
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
-    body { padding: 32px; color: #111; font-size: 12px; }
-    h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-    .sub { color: #6b7280; font-size: 11px; margin-bottom: 24px; }
-    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #9ca3af; margin: 20px 0 8px; }
-    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
-    .card-label { font-size: 10px; color: #9ca3af; text-transform: uppercase; margin-bottom: 4px; }
-    .card-value { font-size: 16px; font-weight: 700; color: #111; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-    th { text-align: left; font-size: 10px; text-transform: uppercase; color: #9ca3af; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
-    td { padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #f3f4f6; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; background: #f3f4f6; }
-    @media print { body { padding: 16px; } }
+    body { padding: 24px; background: #fff; }
+    h1.print-title { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
+    p.print-sub { color: #6b7280; font-size: 11px; margin-bottom: 16px; }
+    [data-panel] { break-inside: auto; }
+    @media print { body { padding: 8px; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   </style>
 </head>
 <body>
-  ${printContent.innerHTML}
+  <h1 class="print-title">Report</h1>
+  <p class="print-sub">${report?.label || ""} · Generated ${fmtDateTime(report?.generatedAt)}</p>
+  ${clone.innerHTML}
 </body>
 </html>`;
 
@@ -434,6 +414,72 @@ export default function Reports() {
     };
   };
 
+  // ── table columns: click a header to sort by it (click again to flip) ──
+  const dateVal = (iso) => (iso ? new Date(iso).getTime() : null);
+  const maintenanceCols = [
+    { key: "date",    label: "Date",     type: "date", sortValue: (r) => dateVal(r.date), render: (r) => fmtDate(r.date), cellClass: () => "text-gray-500 whitespace-nowrap" },
+    { key: "carName", label: "Vehicle",  cellClass: () => "font-semibold text-gray-800" },
+    { key: "basis",   label: "Basis",    render: (r) => r.basis || "—" },
+    { key: "services", label: "Services", render: (r) => r.services || "—" },
+    { key: "amount",  label: "Amount",   type: "num", align: "right", render: (r) => fmt(r.amount), cellClass: () => "font-semibold text-red-500" },
+  ];
+  const methodCols = [
+    { key: "method", label: "Method",   cellClass: () => "font-semibold text-gray-800" },
+    { key: "count",  label: "Payments", type: "num", align: "right" },
+    { key: "amount", label: "Amount",   type: "num", align: "right", render: (r) => fmt(r.amount), cellClass: () => "font-semibold text-green-700" },
+  ];
+  const vehicleCols = [
+    { key: "name",    label: "Vehicle",  cellClass: () => "font-semibold text-gray-800" },
+    { key: "rentals", label: "Rentals",  type: "num", align: "right" },
+    { key: "revenue", label: "Revenue",  type: "num", align: "right", render: (r) => fmt(r.revenue), cellClass: () => "font-semibold text-green-700" },
+  ];
+  const customerCols = [
+    { key: "name", label: "Customer", cellClass: () => "text-gray-800",
+      render: (r) => (
+        <span className="flex items-center gap-2">
+          <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-[10px] font-semibold flex items-center justify-center shrink-0">{r.name?.[0]?.toUpperCase() || "?"}</span>
+          <span className="font-semibold">{r.name}</span>
+        </span>
+      ) },
+    { key: "rentals",    label: "Rentals",     type: "num", align: "right" },
+    { key: "amountPaid", label: "Amount Paid", type: "num", align: "right", render: (r) => fmt(r.amountPaid), cellClass: () => "font-semibold text-blue-600" },
+  ];
+  const totalsCols = [
+    { key: "label",         label: "Period",    type: "date", sortValue: (r) => dateVal(r.start), cellClass: () => "font-semibold text-gray-800 whitespace-nowrap" },
+    { key: "sales",         label: "Sales",     type: "num", align: "right", render: (r) => fmt(r.sales),    cellClass: () => "font-semibold text-green-700" },
+    { key: "pending",       label: "Pending",   type: "num", align: "right", render: (r) => fmt(r.pending),  cellClass: () => "text-amber-600" },
+    { key: "refunded",      label: "Refunded",  type: "num", align: "right", render: (r) => fmt(r.refunded), cellClass: () => "text-red-500" },
+    { key: "payments",      label: "Payments",  type: "num", align: "right" },
+    { key: "rentals",       label: "Rentals",   type: "num", align: "right" },
+    { key: "completed",     label: "Done",      type: "num", align: "right" },
+    { key: "cancelled",     label: "Cancelled", type: "num", align: "right" },
+    { key: "newCustomers",  label: "New Cust.", type: "num", align: "right" },
+    { key: "vehiclesRented", label: "Vehicles", type: "num", align: "right" },
+  ];
+  const paymentCols = [
+    { key: "paymentID",       label: "Payment ID", cellClass: () => "font-mono text-gray-600 max-w-[130px] truncate" },
+    { key: "amount",          label: "Total",      type: "num", render: (r) => fmt(r.amount),     cellClass: () => "font-semibold" },
+    { key: "amountPaid",      label: "Paid",       type: "num", render: (r) => fmt(r.amountPaid), cellClass: () => "text-green-700 font-semibold" },
+    { key: "balance",         label: "Balance",    type: "num", render: (r) => fmt(r.balance),    cellClass: (r) => `font-semibold ${r.balance > 0 ? "text-red-500" : "text-green-600"}` },
+    { key: "status",          label: "Status",
+      render: (r) => <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[r.status] || "bg-gray-100 text-gray-500"}`}>{r.status}</span> },
+    { key: "methodOfPayment", label: "Type" },
+    { key: "paymentMethod",   label: "Gateway" },
+    { key: "referenceNumber", label: "Ref #",      cellClass: () => "font-mono text-gray-500" },
+    { key: "createdAt",       label: "Date",       type: "date", sortValue: (r) => dateVal(r.createdAt), render: (r) => fmtDate(r.createdAt), cellClass: () => "text-gray-400 whitespace-nowrap" },
+  ];
+  const bookingCols = [
+    { key: "bookingID", label: "Booking ID", cellClass: () => "font-mono text-gray-600 max-w-[130px] truncate" },
+    { key: "status",    label: "Status",
+      render: (r) => <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[r.status] || "bg-gray-100 text-gray-500"}`}>{r.status}</span> },
+    { key: "location",  label: "Location",   cellClass: () => "text-gray-600 max-w-[140px] truncate" },
+    { key: "totalFee",  label: "Total Fee",  type: "num", render: (r) => fmt(r.totalFee), cellClass: () => "font-semibold text-gray-800" },
+    { key: "totalDays", label: "Days",       type: "num", render: (r) => `${r.totalDays}d` },
+    { key: "startDate", label: "Start",      type: "date", sortValue: (r) => dateVal(r.startDate), render: (r) => fmtDate(r.startDate), cellClass: () => "text-gray-400 whitespace-nowrap" },
+    { key: "endDate",   label: "End",        type: "date", sortValue: (r) => dateVal(r.endDate),   render: (r) => fmtDate(r.endDate),   cellClass: () => "text-gray-400 whitespace-nowrap" },
+    { key: "createdAt", label: "Created",    type: "date", sortValue: (r) => dateVal(r.createdAt), render: (r) => fmtDate(r.createdAt), cellClass: () => "text-gray-400 whitespace-nowrap" },
+  ];
+
   return (
     <div className="w-full px-4 space-y-5" ref={printRef}>
 
@@ -445,7 +491,7 @@ export default function Reports() {
             {report ? `${report.label} · Generated ${fmtDateTime(report.generatedAt)}` : loading ? "Loading report…" : "Pick a period to see its report"}
           </p>
         </div>
-        {report && mainTab === "view" && (
+        {report && (
           <div className="relative">
             <button onClick={() => setDownloadOpen((v) => !v)} disabled={pdfBusy}
               className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-60">
@@ -477,463 +523,242 @@ export default function Reports() {
         )}
       </div>
 
-      {/* MAIN TABS */}
-      <div className="border-b border-gray-100 flex gap-6">
-        {MAIN_TABS.map((t) => (
-          <button key={t.key} onClick={() => setMainTab(t.key)}
-            className={`pb-3 -mb-px text-sm font-medium border-b-2 transition-colors ${
-              mainTab === t.key
-                ? "border-arl-dark text-arl-dark font-semibold"
-                : "border-transparent text-gray-400 hover:text-gray-600"
-            }`}>
-            {t.label}
-          </button>
-        ))}
+      {/* REPORT TABS — the main titles */}
+      <div className="overflow-x-auto">
+        <div className="flex gap-2 border-b border-gray-100 min-w-max">
+          {REPORT_TABS.map((t) => (
+            <button key={t.key} onClick={() => setReportTab(t.key)}
+              className={`px-5 py-3 -mb-px text-base font-semibold border-b-2 whitespace-nowrap transition-colors ${
+                reportTab === t.key
+                  ? "border-arl-dark text-arl-dark"
+                  : "border-transparent text-gray-400 hover:text-gray-600"
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {mainTab === "receive" ? (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft flex flex-col items-center justify-center py-20 gap-3 text-gray-300">
-          <IconMail className="w-12 h-12" />
-          <p className="text-gray-500 font-semibold">Scheduled reports coming soon</p>
-          <p className="text-gray-400 text-sm max-w-sm text-center">
-            This will let you have reports emailed to you automatically on a daily, weekly, or monthly schedule.
-          </p>
+      {/* PERIOD — one compact row: pick Daily / Weekly / Monthly / Yearly, then which one. Changing any of them
+          reloads the report by itself. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <span className="mr-auto text-xs text-gray-400 flex items-center gap-2">
+          {loading && (
+            <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+            </svg>
+          )}
+          {loading ? "Loading…" : report ? `Updated ${fmtDateTime(report.generatedAt)}` : ""}
+        </span>
+
+        <select aria-label="Report period" value={period} onChange={(e) => setPeriod(e.target.value)}
+          className="px-3 py-2 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-800 focus:outline-none focus:border-arl-dark">
+          {PERIODS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+        </select>
+
+        <select aria-label="Year" value={selYear} onChange={(e) => setSelYear(Number(e.target.value))}
+          className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+          {YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+
+        {(period === "daily" || period === "weekly" || period === "monthly") && (
+          <select aria-label="Month" value={selMonth} onChange={(e) => setSelMonth(Number(e.target.value))}
+            className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+            {MONTH_NAMES.map((name, i) => <option key={name} value={i + 1}>{name}</option>)}
+          </select>
+        )}
+
+        {period === "weekly" && (
+          <select aria-label="Week" value={selWeek} onChange={(e) => setSelWeek(Number(e.target.value))}
+            className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+            {WEEK_OPTIONS.map((w) => <option key={w} value={w}>Week {w}</option>)}
+          </select>
+        )}
+
+        {period === "daily" && (
+          <select aria-label="Day" value={selDay} onChange={(e) => setSelDay(Number(e.target.value))}
+            className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+            {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => <option key={d} value={d}>Day {d}</option>)}
+          </select>
+        )}
+
+        <button onClick={() => load({ force: true })} disabled={loading}
+          className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+          Refresh
+        </button>
+      </div>
+
+      {/* ERROR */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
+          <IconWarning className="w-4 h-4 shrink-0" />
+          {error}
         </div>
-      ) : (
-        <>
-          {/* PERIOD SELECTOR */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Select Report Period</p>
-              <button onClick={() => setPeriodOpen((v) => !v)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-800">
-                {periodOpen ? "Minimize" : "Change"} <IconChevron className="w-3.5 h-3.5" open={periodOpen} />
-              </button>
-            </div>
+      )}
 
-            {!periodOpen && (
-              <p className="mt-3 text-sm text-gray-700">
-                <span className="inline-block px-2.5 py-1 rounded-lg bg-arl-dark text-white text-xs font-semibold mr-2 align-middle">
-                  {PERIODS.find((x) => x.key === period)?.label}
-                </span>
-                <span className="font-semibold align-middle">
-                  {period === "daily"   ? `${MONTH_NAMES[selMonth - 1]} ${selDay}, ${selYear}`
-                : period === "weekly"  ? `Week ${selWeek} · ${MONTH_NAMES[selMonth - 1]} ${selYear}`
-                : period === "monthly" ? `${MONTH_NAMES[selMonth - 1]} ${selYear}`
-                : String(selYear)}
-                </span>
-              </p>
-            )}
+      {/* REPORT OUTPUT — one tab per report */}
+      {report && (
+            <>
+              {/* Every tab stays in the page (the inactive ones are just hidden) so Print can include them all. */}
+              <div className={`report-printable space-y-4 transition-opacity ${loading ? "opacity-50 pointer-events-none" : ""}`}>
 
-            {periodOpen && (
-              <div className="mt-4">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {PERIODS.map((p) => (
-                  <button key={p.key} onClick={() => setPeriod(p.key)}
-                    className={`flex flex-col items-center gap-1 px-4 py-4 rounded-xl border-2 transition-all ${
-                      period === p.key
-                        ? "border-arl-dark bg-arl-dark text-white"
-                        : "border-gray-100 hover:border-gray-300 text-gray-600"
-                    }`}>
-                    <p.Icon className="w-7 h-7" />
-                    <span className="font-semibold text-sm">{p.label}</span>
-                    <span className={`text-xs ${period === p.key ? "text-white/70" : "text-gray-400"}`}>{p.desc}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* WHICH WEEK / MONTH / YEAR */}
-              <div className="mt-5 pt-5 border-t border-gray-100">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                  Which {period === "daily" ? "day" : period === "weekly" ? "week" : period === "monthly" ? "month" : "year"}?
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  {/* Year — always shown */}
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-400">Year</span>
-                    <select value={selYear} onChange={(e) => setSelYear(Number(e.target.value))}
-                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                      {YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}
-                    </select>
-                  </label>
-
-                  {/* Month — for daily / weekly / monthly */}
-                  {(period === "daily" || period === "weekly" || period === "monthly") && (
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs text-gray-400">Month</span>
-                      <select value={selMonth} onChange={(e) => setSelMonth(Number(e.target.value))}
-                        className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                        {MONTH_NAMES.map((name, i) => <option key={name} value={i + 1}>{name}</option>)}
-                      </select>
-                    </label>
-                  )}
-
-                  {/* Week — for weekly only */}
-                  {period === "weekly" && (
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs text-gray-400">Week</span>
-                      <select value={selWeek} onChange={(e) => setSelWeek(Number(e.target.value))}
-                        className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                        {WEEK_OPTIONS.map((w) => <option key={w} value={w}>Week {w}</option>)}
-                      </select>
-                    </label>
-                  )}
-
-                  {/* Day — for daily only */}
-                  {period === "daily" && (
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs text-gray-400">Day</span>
-                      <select value={selDay} onChange={(e) => setSelDay(Number(e.target.value))}
-                        className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                        {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
-                      </select>
-                    </label>
-                  )}
+                {/* OVERVIEW — the summary strip, always visible above the three reports */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <TopStatCard icon={IconBarChart}   label="Total Sales"          value={fmt(report.topStats.totalSales)} hint="Money received minus completed maintenance" />
+                  <TopStatCard icon={IconCreditCard} label="Gross Sales"          value={fmt(report.topStats.grossSales)} hint="Money actually received" />
+                  <TopStatCard icon={IconPackage}    label="Maintenance Expense"  value={fmt(report.topStats.maintenanceExpense)} hint="Completed maintenance only" />
+                  <TopStatCard icon={IconWarning}    label="Refunded"             value={fmt(report.topStats.refundedAmount)} hint="Handed back to customers (not deducted)" />
+                  <TopStatCard icon={IconDoc}        label="Number of Rentals"    value={report.topStats.numberOfRentals} />
+                  <TopStatCard icon={IconTrendUp}    label="Average Sale"         value={fmt(report.topStats.averageSale)} hint="Gross sales per rental" />
                 </div>
-              </div>
 
-              </div>
-            )}
-
-            <div className="mt-4 flex items-center justify-end gap-3">
-              <span className="text-xs text-gray-400 flex items-center gap-2">
-                {loading && (
-                  <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                  </svg>
-                )}
-                {loading ? "Loading…" : report ? `Updated ${fmtDateTime(report.generatedAt)}` : ""}
-              </span>
-              <button onClick={() => load({ force: true })} disabled={loading}
-                className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          {/* ERROR */}
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
-              <IconWarning className="w-4 h-4 shrink-0" />
-              {error}
-            </div>
-          )}
-
-          {/* REPORT OUTPUT */}
-          {report && (
-            <div className={`report-printable space-y-4 transition-opacity ${loading ? "opacity-50 pointer-events-none" : ""}`}>
-
-              {/* TOP STAT CARDS */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <TopStatCard icon={IconBarChart}  label="Total Sales"         value={fmt(report.topStats.totalSales)} hint="Money received minus completed maintenance" />
-                <TopStatCard icon={IconCreditCard} label="Gross Sales"        value={fmt(report.topStats.grossSales)} hint="Money actually received" />
-                <TopStatCard icon={IconPackage}   label="Maintenance Expense" value={fmt(report.topStats.maintenanceExpense)} hint="Completed maintenance only" />
-                <TopStatCard icon={IconWarning}   label="Refunded"            value={fmt(report.topStats.refundedAmount)} hint="Handed back to customers (not deducted)" />
-                <TopStatCard icon={IconDoc}       label="Number of Rentals"   value={report.topStats.numberOfRentals} />
-                <TopStatCard icon={IconTrendUp}   label="Average Sale"        value={fmt(report.topStats.averageSale)} hint="Gross sales per rental" />
-              </div>
-
-              {/* REVENUE REPORT */}
-              <ReportSection icon={IconDoc} title="Revenue Report">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <MiniStat label="Total Revenue"   value={fmt(report.revenueReport.totalRevenue)} />
-                  <MiniStat label="Paid Amount"     value={fmt(report.revenueReport.paidAmount)}     color="text-green-600" />
-                  <MiniStat label="Pending Amount"  value={fmt(report.revenueReport.pendingAmount)}  color="text-amber-500" />
-                  <MiniStat label="Refunded Amount" value={fmt(report.revenueReport.refundedAmount)} color="text-red-500" />
-                </div>
-                <div className="mt-4">
-                  <ChartCard title="Revenue breakdown">
-                    <DonutChart
-                      data={[
-                        { label: "Collected",   value: report.revenueReport.paidAmount,     color: C_GREEN },
-                        { label: "Outstanding", value: report.revenueReport.pendingAmount,  color: C_AMBER },
-                        { label: "Refunded",    value: report.revenueReport.refundedAmount, color: C_RED },
-                      ]}
-                      format={fmt}
-                      centerLabel="Revenue (excl. refunds)"
-                      centerValue={fmt(report.revenueReport.totalRevenue)} />
-                  </ChartCard>
-                </div>
-              </ReportSection>
-
-              {/* MAINTENANCE EXPENSES */}
-              <ReportSection icon={IconPackage} title="Maintenance Expenses">
-                {report.maintenanceExpenses.length === 0 ? (
-                  <p className="text-sm text-gray-400 italic">No completed maintenance in this period.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm min-w-[560px]">
-                      <thead>
-                        <tr className="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100">
-                          {["Date", "Vehicle", "Basis", "Services", "Amount"].map((h) => (
-                            <th key={h} className={`py-2 pr-4 font-semibold ${h === "Amount" ? "text-right" : "text-left"}`}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {report.maintenanceExpenses.map((m) => (
-                          <tr key={m.id} className="border-b border-gray-50 last:border-0">
-                            <td className="py-2 pr-4 text-xs text-gray-500 whitespace-nowrap">{fmtDate(m.date)}</td>
-                            <td className="py-2 pr-4 text-xs font-semibold text-gray-800">{m.carName}</td>
-                            <td className="py-2 pr-4 text-xs text-gray-600">{m.basis || "—"}</td>
-                            <td className="py-2 pr-4 text-xs text-gray-600">{m.services || "—"}</td>
-                            <td className="py-2 text-right text-xs font-semibold text-red-500">{fmt(m.amount)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </ReportSection>
-
-              {/* RENTAL REPORT */}
-              <ReportSection icon={IconChecklist} title="Rental Report">
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-                  <MiniStat label="Total Rentals" value={report.rentalReport.totalRentals} />
-                  <MiniStat label="Completed" value={report.rentalReport.completed} color="text-green-600" />
-                  <MiniStat label="Ongoing"   value={report.rentalReport.ongoing}   color="text-teal-600" />
-                  <MiniStat label="Upcoming"  value={report.rentalReport.upcoming}  color="text-purple-600" />
-                  <MiniStat label="Cancelled" value={report.rentalReport.cancelled} color="text-red-500" />
-                </div>
-                <div className="mt-4">
-                  <ChartCard title="Rentals by status">
-                    <DonutChart
-                      data={[
-                        { label: "Completed", value: report.rentalReport.completed, color: C_GREEN },
-                        { label: "Ongoing",   value: report.rentalReport.ongoing,   color: C_BLUE },
-                        { label: "Upcoming",  value: report.rentalReport.upcoming,  color: C_AMBER },
-                        { label: "Cancelled", value: report.rentalReport.cancelled, color: C_RED },
-                      ]}
-                      format={(v) => String(v)}
-                      centerLabel="Rentals"
-                      centerValue={String(report.rentalReport.totalRentals)} />
-                  </ChartCard>
-                </div>
-              </ReportSection>
-
-              {/* VEHICLE REPORT */}
-              <ReportSection icon={IconCar} title="Vehicle Report">
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <MiniStat label="Total Vehicles Rented" value={report.vehicleReport.totalVehiclesRented} />
-                  <MiniStat label="Revenue per Vehicle"   value={fmt(report.vehicleReport.revenuePerVehicle)} />
-                </div>
-                {report.vehicleReport.totalVehiclesRented > 0 ? (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pb-2">
-                      <ChartCard title="Rentals per vehicle (top 5)">
-                        <BarChart data={report.vehicleReport.topVehicles.slice(0, 5).map((v) => ({ label: v.name, value: v.rentals, color: C_BLUE }))} format={(v) => String(v)} />
+                {/* ── 1. REVENUE & PAYMENTS ── */}
+                <Panel id="revenue" active={reportTab}>
+                  <ReportSection icon={IconDoc} title="Revenue & Payments">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <MiniStat label="Total Revenue"   value={fmt(report.revenueReport.totalRevenue)} />
+                      <MiniStat label="Paid Amount"     value={fmt(report.revenueReport.paidAmount)}     color="text-green-600" />
+                      <MiniStat label="Pending Amount"  value={fmt(report.revenueReport.pendingAmount)}  color="text-amber-500" />
+                      <MiniStat label="Refunded Amount" value={fmt(report.revenueReport.refundedAmount)} color="text-red-500" />
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">
+                      <MiniStat label="Total Payments" value={report.paymentReport.totalPayments} />
+                      {report.paymentReport.byMethod.map((m) => (
+                        <MiniStat key={m.method} label={`${m.method} · ${m.count} payment${m.count === 1 ? "" : "s"}`} value={fmt(m.amount)} color="text-green-600" />
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                      <ChartCard title="Revenue breakdown">
+                        <DonutChart
+                          data={[
+                            { label: "Collected",   value: report.revenueReport.paidAmount,     color: C_GREEN },
+                            { label: "Outstanding", value: report.revenueReport.pendingAmount,  color: C_AMBER },
+                            { label: "Refunded",    value: report.revenueReport.refundedAmount, color: C_RED },
+                          ]}
+                          format={fmt}
+                          centerLabel="Revenue (excl. refunds)"
+                          centerValue={fmt(report.revenueReport.totalRevenue)} />
                       </ChartCard>
-                      <ChartCard title="Revenue per vehicle (top 5)">
-                        <BarChart data={report.vehicleReport.topVehicles.slice(0, 5).map((v) => ({ label: v.name, value: v.revenue, color: C_GREEN }))} format={fmt} />
+                      <ChartCard title="Amount by payment method">
+                        <BarChart data={report.paymentReport.byMethod.map((m) => ({ label: m.method, value: m.amount, color: C_BLUE }))} format={fmt} />
                       </ChartCard>
                     </div>
-                    <RankRow icon="up"   label="Most Rented Vehicle"  name={report.vehicleReport.mostRented?.name}  countLabel={`${report.vehicleReport.mostRented?.rentals} rentals`} />
-                    <RankRow icon="down" label="Least Rented Vehicle" name={report.vehicleReport.leastRented?.name} countLabel={`${report.vehicleReport.leastRented?.rentals} rentals`} />
-                    {report.vehicleReport.topVehicles.length > 1 && (
-                      <div className="pt-3">
-                        <p className="text-xs text-gray-400 font-semibold mb-2">Top Vehicles</p>
-                        <div className="space-y-1.5">
-                          {report.vehicleReport.topVehicles.map((v, i) => (
-                            <div key={v.carID} className="flex items-center gap-3 py-1">
-                              <span className="text-xs text-gray-400 w-4">{i + 1}</span>
-                              <span className="text-sm text-gray-700 flex-1 truncate">{v.name}</span>
-                              <span className="text-xs text-gray-500">{v.rentals} rental{v.rentals === 1 ? "" : "s"}</span>
-                              <span className="text-sm font-semibold text-blue-600 w-28 text-right">{fmt(v.revenue)}</span>
-                            </div>
-                          ))}
-                        </div>
+                    {report.paymentReport.byMethod.length > 0 && (
+                      <div className="mt-4">
+                        <SortTable columns={methodCols} rows={report.paymentReport.byMethod} rowKey={(r) => r.method}
+                          defaultSort={{ key: "amount", dir: "desc" }} minWidth={360} />
                       </div>
                     )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-400 italic">No vehicles rented in this period.</p>
-                )}
-              </ReportSection>
+                    <p className="text-xs text-gray-400 mt-3">Payments are counted by where each peso actually came in, so a deposit paid online and a balance paid in cash show under both.</p>
+                  </ReportSection>
 
-              {/* CUSTOMER REPORT */}
-              <ReportSection icon={IconUsers} title="Customer Report">
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <MiniStat label="Total Customers" value={report.customerReport.totalCustomers} />
-                  <MiniStat label="New Customers (in this period)" value={report.customerReport.newCustomers} color="text-green-600" />
-                </div>
-                {report.customerReport.topCustomers.length > 0 ? (
-                  <div>
+                  <ReportSection icon={IconPackage} title={`Maintenance Expenses (${report.maintenanceExpenses.length})`}>
+                    <SortTable columns={maintenanceCols} rows={report.maintenanceExpenses} rowKey={(r) => r.id}
+                      defaultSort={{ key: "date", dir: "desc" }} empty="No completed maintenance in this period." minWidth={560} />
+                  </ReportSection>
+
+                  <ReportSection icon={IconCreditCard} title={`Payment Records (${report.payments.length})`}>
+                    <SortTable columns={paymentCols} rows={report.payments} rowKey={(r) => r.id}
+                      defaultSort={{ key: "createdAt", dir: "desc" }} empty="No payment records in this period." minWidth={820} />
+                  </ReportSection>
+                </Panel>
+
+                {/* ── 2. RENTALS & CUSTOMERS ── */}
+                <Panel id="rentals" active={reportTab}>
+                  <ReportSection icon={IconChecklist} title="Rentals">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                      <MiniStat label="Total Rentals" value={report.rentalReport.totalRentals} />
+                      <MiniStat label="Completed" value={report.rentalReport.completed} color="text-green-600" />
+                      <MiniStat label="Ongoing"   value={report.rentalReport.ongoing}   color="text-teal-600" />
+                      <MiniStat label="Upcoming"  value={report.rentalReport.upcoming}  color="text-purple-600" />
+                      <MiniStat label="Cancelled" value={report.rentalReport.cancelled} color="text-red-500" />
+                    </div>
+                    <div className="mt-4">
+                      <ChartCard title="Rentals by status">
+                        <DonutChart
+                          data={[
+                            { label: "Completed", value: report.rentalReport.completed, color: C_GREEN },
+                            { label: "Ongoing",   value: report.rentalReport.ongoing,   color: C_BLUE },
+                            { label: "Upcoming",  value: report.rentalReport.upcoming,  color: C_AMBER },
+                            { label: "Cancelled", value: report.rentalReport.cancelled, color: C_RED },
+                          ]}
+                          format={(v) => String(v)}
+                          centerLabel="Rentals"
+                          centerValue={String(report.rentalReport.totalRentals)} />
+                      </ChartCard>
+                    </div>
+                  </ReportSection>
+
+                  <ReportSection icon={IconUsers} title="Customers">
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <MiniStat label="Total Customers" value={report.customerReport.totalCustomers} />
+                      <MiniStat label="New Customers (in this period)" value={report.customerReport.newCustomers} color="text-green-600" />
+                    </div>
                     <p className="text-xs text-gray-400 font-semibold mb-2">Top Customers</p>
-                    <div className="space-y-1.5">
-                      {report.customerReport.topCustomers.map((c, i) => (
-                        <div key={c.userID} className="flex items-center gap-3 py-1">
-                          <span className="text-xs text-gray-400 w-4">{i + 1}</span>
-                          <span className="w-7 h-7 rounded-full bg-blue-100 text-blue-600 text-xs font-semibold flex items-center justify-center shrink-0">
-                            {c.name?.[0]?.toUpperCase() || "?"}
-                          </span>
-                          <span className="text-sm text-gray-700 flex-1 truncate">{c.name}</span>
-                          <span className="text-xs text-gray-500">{c.rentals} rental{c.rentals === 1 ? "" : "s"}</span>
-                          <span className="text-sm font-semibold text-blue-600 w-28 text-right">{fmt(c.amountPaid)}</span>
+                    <SortTable columns={customerCols} rows={report.customerReport.topCustomers} rowKey={(r) => r.userID}
+                      defaultSort={{ key: "amountPaid", dir: "desc" }} empty="No paying customers in this period." minWidth={420} />
+                  </ReportSection>
+
+                  <ReportSection icon={IconPackage} title={`Booking Records (${report.bookings.length})`}>
+                    <SortTable columns={bookingCols} rows={report.bookings} rowKey={(r) => r.id}
+                      defaultSort={{ key: "startDate", dir: "desc" }} empty="No booking records in this period." minWidth={780} />
+                  </ReportSection>
+                </Panel>
+
+                {/* ── 3. VEHICLES ── */}
+                <Panel id="vehicles" active={reportTab}>
+                  <ReportSection icon={IconCar} title="Vehicles">
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <MiniStat label="Total Vehicles Rented" value={report.vehicleReport.totalVehiclesRented} />
+                      <MiniStat label="Revenue per Vehicle"   value={fmt(report.vehicleReport.revenuePerVehicle)} />
+                    </div>
+                    {report.vehicleReport.totalVehiclesRented > 0 ? (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <RankRow icon="up"   label="Most Rented Vehicle"  name={report.vehicleReport.mostRented?.name}  countLabel={`${report.vehicleReport.mostRented?.rentals} rentals`} />
+                          <RankRow icon="down" label="Least Rented Vehicle" name={report.vehicleReport.leastRented?.name} countLabel={`${report.vehicleReport.leastRented?.rentals} rentals`} />
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-400 italic">No paying customers in this period.</p>
-                )}
-              </ReportSection>
-
-              {/* PAYMENT REPORT */}
-              <ReportSection icon={IconCreditCard} title="Payment Report">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <MiniStat label="Total Payments" value={report.paymentReport.totalPayments} />
-                  {report.paymentReport.byMethod.map((m) => (
-                    <MiniStat key={m.method} label={`${m.method} · ${m.count} payment${m.count === 1 ? "" : "s"}`} value={fmt(m.amount)} color="text-green-600" />
-                  ))}
-                </div>
-                {report.paymentReport.byMethod.length === 0 ? (
-                  <p className="text-sm text-gray-400 italic mt-3">No confirmed payments in this period.</p>
-                ) : (
-                  <div className="mt-4">
-                    <ChartCard title="Amount by payment method">
-                      <BarChart data={report.paymentReport.byMethod.map((m) => ({ label: m.method, value: m.amount, color: C_BLUE }))} format={fmt} />
-                    </ChartCard>
-                  </div>
-                )}
-                <p className="text-xs text-gray-400 mt-3">Counted by where each peso actually came in, so a deposit paid online and a balance paid in cash show under both.</p>
-              </ReportSection>
-
-              {/* TOTALS PER DAY / WEEK / MONTH / YEAR */}
-              <ReportSection icon={IconBarChart} title="Totals by Day / Week / Month / Year">
-                <div className="flex gap-1 mb-3">
-                  {TOTALS_TABS.map((t) => (
-                    <button key={t.key} onClick={() => setTotalsTab(t.key)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                        totalsTab === t.key ? "bg-arl-dark text-white" : "bg-gray-100 text-gray-500 hover:text-gray-700"
-                      }`}>
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[760px]">
-                    <thead>
-                      <tr className="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100">
-                        {["Period", "Sales", "Pending", "Refunded", "Payments", "Rentals", "Done", "Cancelled", "New Cust.", "Vehicles"].map((h) => (
-                          <th key={h} className={`py-2 pr-3 font-semibold ${h === "Period" ? "text-left" : "text-right"}`}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(report.periodTotals?.[totalsTab] || []).length === 0 ? (
-                        <tr><td colSpan={10} className="text-center py-8 text-gray-400 text-sm">No activity in this period.</td></tr>
-                      ) : report.periodTotals[totalsTab].map((b) => (
-                        <tr key={b.start} className="border-b border-gray-50 last:border-0">
-                          <td className="py-2 pr-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{b.label}</td>
-                          <td className="py-2 pr-3 text-right text-xs font-semibold text-green-700">{fmt(b.sales)}</td>
-                          <td className="py-2 pr-3 text-right text-xs text-amber-600">{fmt(b.pending)}</td>
-                          <td className="py-2 pr-3 text-right text-xs text-red-500">{fmt(b.refunded)}</td>
-                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.payments}</td>
-                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.rentals}</td>
-                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.completed}</td>
-                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.cancelled}</td>
-                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.newCustomers}</td>
-                          <td className="py-2 text-right text-xs text-gray-600">{b.vehiclesRented}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="text-xs text-gray-400 mt-3">Sales, pending and refunds are dated by when the payment was made; rentals by when the trip starts; new customers by sign-up date.</p>
-              </ReportSection>
-
-              {/* DETAIL RECORDS (collapsible — raw payments/bookings tables) */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
-                <button onClick={() => setDetailOpen((v) => !v)}
-                  className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50/50">
-                  <span className="font-semibold text-gray-800 text-sm">Detailed Records</span>
-                  <IconChevron open={detailOpen} />
-                </button>
-
-                {detailOpen && (
-                  <div className="border-t border-gray-100">
-                    <div className="px-5 pt-4 flex gap-1 bg-gray-50/50">
-                      {DETAIL_TABS.map((t) => (
-                        <button key={t.key} onClick={() => setDetailTab(t.key)}
-                          className={`px-4 py-2 rounded-t-lg text-sm font-medium flex items-center gap-1.5 ${
-                            detailTab === t.key ? "bg-white text-arl-dark font-semibold border border-b-0 border-gray-100" : "text-gray-500 hover:text-gray-700"
-                          }`}>
-                          <t.Icon className="w-3.5 h-3.5" />
-                          {t.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {detailTab === "payments" && (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm min-w-[750px]">
-                          <thead>
-                            <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
-                              {["Payment ID","Total","Paid","Balance","Status","Type","Gateway","Ref #","Date"].map(h => (
-                                <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {report.payments.length === 0 ? (
-                              <tr><td colSpan={9} className="text-center py-12 text-gray-400 text-sm">No payment records in this period.</td></tr>
-                            ) : report.payments.map((p, i) => (
-                              <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/50 ${i%2===1?"bg-gray-50/30":""}`}>
-                                <td className="px-4 py-3 font-mono text-xs text-gray-600 truncate max-w-[130px]">{p.paymentID}</td>
-                                <td className="px-4 py-3 text-xs font-semibold">{fmt(p.amount)}</td>
-                                <td className="px-4 py-3 text-xs text-green-700 font-semibold">{fmt(p.amountPaid)}</td>
-                                <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>{fmt(p.balance)}</td>
-                                <td className="px-4 py-3">
-                                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[p.status]||"bg-gray-100 text-gray-500"}`}>{p.status}</span>
-                                </td>
-                                <td className="px-4 py-3 text-xs text-gray-600">{p.methodOfPayment}</td>
-                                <td className="px-4 py-3 text-xs text-gray-600">{p.paymentMethod}</td>
-                                <td className="px-4 py-3 text-xs font-mono text-gray-500">{p.referenceNumber}</td>
-                                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <ChartCard title="Rentals per vehicle (top 5)">
+                            <BarChart data={report.vehicleReport.topVehicles.slice(0, 5).map((v) => ({ label: v.name, value: v.rentals, color: C_BLUE }))} format={(v) => String(v)} />
+                          </ChartCard>
+                          <ChartCard title="Revenue per vehicle (top 5)">
+                            <BarChart data={report.vehicleReport.topVehicles.slice(0, 5).map((v) => ({ label: v.name, value: v.revenue, color: C_GREEN }))} format={fmt} />
+                          </ChartCard>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-400 font-semibold mb-2">All rented vehicles</p>
+                          <SortTable columns={vehicleCols} rows={report.vehicleReport.ranking} rowKey={(r) => r.carID}
+                            defaultSort={{ key: "rentals", dir: "desc" }} minWidth={420} />
+                        </div>
                       </div>
+                    ) : (
+                      <p className="text-sm text-gray-400 italic">No vehicles rented in this period.</p>
                     )}
+                  </ReportSection>
+                </Panel>
 
-                    {detailTab === "bookings" && (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm min-w-[700px]">
-                          <thead>
-                            <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
-                              {["Booking ID","Status","Location","Total Fee","Days","Start","End","Created"].map(h => (
-                                <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {report.bookings.length === 0 ? (
-                              <tr><td colSpan={8} className="text-center py-12 text-gray-400 text-sm">No booking records in this period.</td></tr>
-                            ) : report.bookings.map((b, i) => (
-                              <tr key={b.id} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/50 ${i%2===1?"bg-gray-50/30":""}`}>
-                                <td className="px-4 py-3 font-mono text-xs text-gray-600 truncate max-w-[130px]">{b.bookingID}</td>
-                                <td className="px-4 py-3">
-                                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[b.status]||"bg-gray-100 text-gray-500"}`}>{b.status}</span>
-                                </td>
-                                <td className="px-4 py-3 text-xs text-gray-600 max-w-[140px] truncate">{b.location}</td>
-                                <td className="px-4 py-3 text-xs font-semibold text-gray-800">{fmt(b.totalFee)}</td>
-                                <td className="px-4 py-3 text-xs text-gray-600">{b.totalDays}d</td>
-                                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.startDate)}</td>
-                                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.endDate)}</td>
-                                <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmtDate(b.createdAt)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                {/* TOTALS PER DAY / WEEK / MONTH / YEAR — its own card under the reports, like the app */}
+                <ReportSection icon={IconBarChart} title="Totals by Day / Week / Month / Year">
+                  <div className="flex gap-1 mb-3">
+                    {TOTALS_TABS.map((t) => (
+                      <button key={t.key} onClick={() => setTotalsTab(t.key)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                          totalsTab === t.key ? "bg-arl-dark text-white" : "bg-gray-100 text-gray-500 hover:text-gray-700"
+                        }`}>
+                        {t.label}
+                      </button>
+                    ))}
                   </div>
-                )}
+                  <SortTable key={totalsTab} columns={totalsCols} rows={report.periodTotals?.[totalsTab] || []} rowKey={(r) => r.start}
+                    defaultSort={{ key: "label", dir: "desc" }} empty="No activity in this period." minWidth={760} />
+                  <p className="text-xs text-gray-400 mt-3">Sales, pending and refunds are dated by when the payment was made; rentals by when the trip starts; new customers by sign-up date.</p>
+                </ReportSection>
               </div>
-            </div>
+            </>
           )}
+
 
           {/* Empty state */}
           {!report && (loading || !error) && (
@@ -943,14 +768,85 @@ export default function Reports() {
               <p className="text-gray-400 text-sm">It updates by itself when you change the period above</p>
             </div>
           )}
-        </>
-      )}
 
     </div>
   );
 }
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
+
+// ─── TABS + SORTABLE TABLES ──────────────────────────────────────────────────────
+
+/** One report tab's content. Hidden (not removed) when inactive, so Print can still include every tab. */
+function Panel({ id, active, children }) {
+  return <div data-panel style={{ display: active === id ? "block" : "none" }} className="space-y-4">{children}</div>;
+}
+
+/**
+ * Table with click-to-sort headers. columns: [{ key, label, type?: "num" | "date", align?: "right",
+ * sortValue?(row), render?(row), cellClass?(row) }]. Numbers and dates sort high-to-low on the first click, text
+ * A-Z; clicking again flips it. Empty values always sink to the bottom.
+ */
+function SortTable({ columns, rows, rowKey, defaultSort, empty = "Nothing to show.", minWidth = 600 }) {
+  const [sort, setSort] = useState(defaultSort);
+  const col = columns.find((c) => c.key === sort.key);
+
+  const sorted = useMemo(() => {
+    if (!col) return rows;
+    const val = (r) => (col.sortValue ? col.sortValue(r) : r[col.key]);
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const blank = (v) => v === null || v === undefined || v === "" || v === "—";
+    return [...rows].sort((a, b) => {
+      const x = val(a), y = val(b);
+      if (blank(x) && blank(y)) return 0;
+      if (blank(x)) return 1;
+      if (blank(y)) return -1;
+      if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
+      return String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: "base" }) * dir;
+    });
+  }, [rows, col, sort.dir]);
+
+  const toggle = (c) => setSort((s) => (s.key === c.key
+    ? { key: c.key, dir: s.dir === "asc" ? "desc" : "asc" }
+    : { key: c.key, dir: c.type === "num" || c.type === "date" ? "desc" : "asc" }));
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm" style={{ minWidth }}>
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
+            {columns.map((c) => {
+              const on = sort.key === c.key;
+              return (
+                <th key={c.key} className={`px-4 py-3 font-semibold ${c.align === "right" ? "text-right" : "text-left"}`}
+                  aria-sort={on ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+                  <button type="button" onClick={() => toggle(c)}
+                    className={`inline-flex items-center gap-1 uppercase tracking-wide hover:text-gray-700 ${on ? "text-gray-700" : ""}`}>
+                    {c.label}
+                    <span className={on ? "" : "opacity-40"}>{on ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
+                  </button>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.length === 0 ? (
+            <tr><td colSpan={columns.length} className="text-center py-10 text-gray-400 text-sm">{empty}</td></tr>
+          ) : sorted.map((r, i) => (
+            <tr key={rowKey(r)} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/50 ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
+              {columns.map((c) => (
+                <td key={c.key} className={`px-4 py-3 text-xs ${c.align === "right" ? "text-right" : ""} ${c.cellClass ? c.cellClass(r) : "text-gray-600"}`}>
+                  {c.render ? c.render(r) : (r[c.key] ?? "—")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // ─── CHARTS (inline styles / SVG so they also look right when printed) ──────────
 

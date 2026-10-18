@@ -16,7 +16,7 @@ export async function downloadReportPdf(report, { fmt, fmtDate, fmtDateTime, cur
   const autoTable = [autoTableMod.default, autoTableMod.autoTable, autoTableMod.default?.default, autoTableMod.default?.autoTable].find((f) => typeof f === "function");
   if (!autoTable) throw new Error("PDF table plugin failed to load.");
 
-  const money = (n) => String(fmt(n)).replace(/[^\x00-\xFF]/g, `${currency} `);
+  const money = (n) => String(fmt(n)).replace(/[\u0100-\uFFFF]/g, `${currency} `);
   const dash = (v) => (v === undefined || v === null || v === "" ? "—" : String(v)).replace(/—/g, "-");
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
