@@ -141,8 +141,8 @@ const INSPECTION_GROUPS = [
 ];
 
 // Label/value cards in two columns; ids are monospaced, long or object values take the full row.
-function Fields({ record, labels = {} }) {
-  const entries = Object.entries(record || {});
+function Fields({ record, labels = {}, omit = [] }) {
+  const entries = Object.entries(record || {}).filter(([k]) => !omit.includes(k));
   if (entries.length === 0) return <p className="text-sm text-gray-400">No details available.</p>;
   return (
     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -157,6 +157,62 @@ function Fields({ record, labels = {} }) {
         );
       })}
     </dl>
+  );
+}
+
+// ── Inspection photos ────────────────────────────────────────
+// Photo fields are stored as links (frontViewUrl, leftMirrorUrl, ...). Show them as thumbnails; click to enlarge.
+const isHttpUrl = (v) => typeof v === "string" && /^https?:\/\//i.test(v.trim());
+const isPhotoEntry = ([k, v]) => /Url$/.test(k) && isHttpUrl(v);
+const photoLabel = (k) => prettyLabel(k.replace(/Url$/, ""));
+
+// Esc closes the topmost layer only (capture phase, so the modal underneath doesn't close too).
+function useEscapeLayer(onClose) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+}
+
+function PhotoLightbox({ photo, onClose }) {
+  useEscapeLayer(onClose);
+  return (
+    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/80 p-4" onClick={onClose} role="dialog" aria-modal="true" aria-label={photo.label}>
+      <div className="w-full max-w-5xl flex items-center justify-between text-white mb-2" onClick={(e) => e.stopPropagation()}>
+        <p className="text-sm font-semibold">{photo.label}</p>
+        <div className="flex items-center gap-3">
+          <a href={photo.url} target="_blank" rel="noreferrer" className="text-xs underline text-white/80 hover:text-white">Open original</a>
+          <button onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center">✕</button>
+        </div>
+      </div>
+      <img src={photo.url} alt={photo.label} onClick={(e) => e.stopPropagation()} className="max-w-full max-h-[80vh] rounded-xl object-contain bg-black/30" />
+    </div>
+  );
+}
+
+function PhotoGrid({ photos, onOpen }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
+      {photos.map((ph) => (
+        <button key={ph.key} type="button" onClick={() => onOpen(ph)} className="group text-left rounded-xl overflow-hidden border border-gray-100 bg-gray-50 hover:border-teal-300 transition">
+          <img src={ph.url} alt={ph.label} loading="lazy" className="w-full h-28 object-cover bg-gray-100"
+            onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          <span className="block px-2 py-1.5 text-[11px] font-medium text-gray-600 truncate group-hover:text-teal-700">{ph.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// One documentation record: its photos as thumbnails, its other fields (ids, dates) as before.
+function PhotoRecord({ row, onOpen }) {
+  const photos = Object.entries(row).filter(isPhotoEntry).map(([k, v]) => ({ key: k, label: photoLabel(k), url: v.trim() }));
+  return (
+    <div className="border border-gray-100 rounded-xl bg-white p-3">
+      <Fields record={row} omit={photos.map((p) => p.key)} />
+      {photos.length > 0 && <PhotoGrid photos={photos} onOpen={onOpen} />}
+    </div>
   );
 }
 
@@ -219,6 +275,7 @@ function ListRows({ tab, rows }) {
 }
 
 function LinkedBody({ tab, state }) {
+  const [photo, setPhoto] = useState(null);
   if (!state || state.loading) return <Skeleton />;
   if (state.error) return <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">{state.error}</div>;
 
@@ -248,11 +305,14 @@ function LinkedBody({ tab, state }) {
             <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{label} <span className="text-gray-300">({data[key].length})</span></h4>
             <div className="space-y-2">
               {data[key].map((row, i) => (
-                <div key={row.id ?? i} className="border border-gray-100 rounded-xl bg-white p-3"><Fields record={row} /></div>
+                key.startsWith("vehicleDocumentation")
+                  ? <PhotoRecord key={row.id ?? i} row={row} onOpen={setPhoto} />
+                  : <div key={row.id ?? i} className="border border-gray-100 rounded-xl bg-white p-3"><Fields record={row} /></div>
               ))}
             </div>
           </section>
         ))}
+        {photo && <PhotoLightbox photo={photo} onClose={() => setPhoto(null)} />}
       </div>
     );
   }
@@ -291,9 +351,14 @@ function collectPlaces(record) {
 
 const PLACE_COLOR = { pickup: "#0d9488", dropoff: "#f59e0b", location: "#6366f1", position: "#ef4444", zone: "#3b82f6" };
 
-function FitPlaces({ places }) {
+function FitPlaces({ places, focus = null }) {
   const map = useMap();
   useEffect(() => {
+    if (focus !== null && places[focus]) {          // a clicked place: zoom right in on it
+      map.invalidateSize();
+      map.setView([places[focus].lat, places[focus].lng], 17);
+      return;
+    }
     const bounds = L.latLngBounds([]);
     places.forEach((p) => {
       if (Number.isFinite(p.radius) && p.radius > 0) bounds.extend(L.latLng(p.lat, p.lng).toBounds(p.radius * 2)); // box around the circle; needs no map (Circle.getBounds() does)
@@ -302,42 +367,80 @@ function FitPlaces({ places }) {
     if (!bounds.isValid()) return;
     map.invalidateSize();
     map.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
-  }, [map, places]);
+  }, [map, places, focus]);
   return null;
+}
+
+function PlaceMarkers({ places }) {
+  return places.map((p, i) => (
+    <Fragment key={i}>
+      {Number.isFinite(p.radius) && p.radius > 0 && (
+        <Circle center={[p.lat, p.lng]} radius={p.radius} pathOptions={{ color: PLACE_COLOR[p.kind], weight: 1.5, fillOpacity: 0.12 }} />
+      )}
+      <CircleMarker center={[p.lat, p.lng]} radius={8} pathOptions={{ color: "#fff", weight: 2, fillColor: PLACE_COLOR[p.kind], fillOpacity: 1 }}>
+        <Tooltip>{p.label}</Tooltip>
+      </CircleMarker>
+    </Fragment>
+  ));
+}
+
+// Big, fully zoomable map. `focus` = index of the clicked place (null = show every place).
+function MapLightbox({ places, focus, onClose }) {
+  useEscapeLayer(onClose);
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={onClose} role="dialog" aria-modal="true" aria-label="Map">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-800 truncate">{focus !== null && places[focus] ? places[focus].label : "Map"}</p>
+          <button onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100">✕</button>
+        </div>
+        <div style={{ height: "75vh" }}>
+          <MapContainer center={[places[0].lat, places[0].lng]} zoom={14} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
+            <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <PlaceMarkers places={places} />
+            <FitPlaces places={places} focus={focus} />
+          </MapContainer>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function LocationMap({ record, height = 240 }) {
   const places = collectPlaces(record);
+  const [zoomed, setZoomed] = useState(false);   // is the big map open
+  const [focus, setFocus]   = useState(null);    // index of the place it opened on (null = all)
+  const closeZoom = useCallback(() => setZoomed(false), []);
   if (places.length === 0) return null;
+  const openZoom = (i = null) => { setFocus(i); setZoomed(true); };
   return (
     <section>
       <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Map</h4>
-      <div className="rounded-xl overflow-hidden border border-gray-100" style={{ height }}>
+      <div className="relative rounded-xl overflow-hidden border border-gray-100" style={{ height }}>
         <MapContainer center={[places[0].lat, places[0].lng]} zoom={14} scrollWheelZoom={false} style={{ height: "100%", width: "100%" }}>
           <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          {places.map((p, i) => (
-            <Fragment key={i}>
-              {Number.isFinite(p.radius) && p.radius > 0 && (
-                <Circle center={[p.lat, p.lng]} radius={p.radius} pathOptions={{ color: PLACE_COLOR[p.kind], weight: 1.5, fillOpacity: 0.12 }} />
-              )}
-              <CircleMarker center={[p.lat, p.lng]} radius={8} pathOptions={{ color: "#fff", weight: 2, fillColor: PLACE_COLOR[p.kind], fillOpacity: 1 }}>
-                <Tooltip>{p.label}</Tooltip>
-              </CircleMarker>
-            </Fragment>
-          ))}
+          <PlaceMarkers places={places} />
           <FitPlaces places={places} />
         </MapContainer>
+        <button type="button" onClick={() => openZoom(null)}
+          className="absolute top-2 right-2 z-[1000] px-2.5 py-1 rounded-lg bg-white/95 border border-gray-200 shadow text-xs font-semibold text-gray-700 hover:bg-white">
+          ⤢ Enlarge
+        </button>
       </div>
       <ul className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
         {places.map((p, i) => (
-          <li key={i} className="flex items-start gap-2 text-xs text-gray-600 min-w-0">
-            <span className="mt-1 w-2.5 h-2.5 rounded-full shrink-0" style={{ background: PLACE_COLOR[p.kind] }} />
-            <span className="break-words min-w-0">
-              {p.label}{Number.isFinite(p.radius) && p.radius > 0 ? ` (${p.radius} m)` : ""}
-            </span>
+          <li key={i} className="min-w-0">
+            <button type="button" onClick={() => openZoom(i)} title="Click to zoom to this place"
+              className="w-full flex items-start gap-2 text-xs text-gray-600 text-left min-w-0 rounded-lg px-1 py-0.5 hover:bg-teal-50 hover:text-teal-700">
+              <span className="mt-1 w-2.5 h-2.5 rounded-full shrink-0" style={{ background: PLACE_COLOR[p.kind] }} />
+              <span className="break-words min-w-0">
+                {p.label}{Number.isFinite(p.radius) && p.radius > 0 ? ` (${p.radius} m)` : ""}
+              </span>
+            </button>
           </li>
         ))}
       </ul>
+      {zoomed && <MapLightbox places={places} focus={focus} onClose={closeZoom} />}
     </section>
   );
 }
