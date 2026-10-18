@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { useCurrency } from "../context/CurrencyContext";
+import { downloadReportPdf } from "../utils/reportPdf";
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
 
@@ -144,6 +145,13 @@ const MAIN_TABS = [
   { key: "receive", label: "Receive Reports" },
 ];
 
+const TOTALS_TABS = [
+  { key: "day",   label: "Day" },
+  { key: "week",  label: "Week" },
+  { key: "month", label: "Month" },
+  { key: "year",  label: "Year" },
+];
+
 const DETAIL_TABS = [
   { key: "payments", label: "Payments", Icon: IconCreditCard },
   { key: "bookings", label: "Bookings", Icon: IconPackage },
@@ -204,6 +212,12 @@ export default function Reports() {
   const [mainTab, setMainTab]     = useState("view");
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailTab, setDetailTab]   = useState("payments");
+  const [totalsTab, setTotalsTab]   = useState("day");
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [periodOpen, setPeriodOpen] = useState(true);   // the "Select Report Period" card can be minimized
+  const [pdfBusy, setPdfBusy]       = useState(false);
+  const cacheRef = useRef(new Map());   // query string -> { at, data }, so flipping back to a period is instant
+  const reqRef   = useRef(0);           // only the newest request may update the page
   const printRef = useRef(null);
   const token = localStorage.getItem("token");
 
@@ -213,27 +227,63 @@ export default function Reports() {
     if (selDay > maxDay) setSelDay(maxDay);
   }, [maxDay, selDay]);
 
-  const generate = useCallback(async () => {
-    setLoading(true); setError(null); setReport(null);
-    try {
-      const params = new URLSearchParams({ period, year: String(selYear) });
-      if (period === "monthly" || period === "weekly" || period === "daily") {
-        params.set("month", String(selMonth));
-      }
-      if (period === "weekly") params.set("week", String(selWeek));
-      if (period === "daily")  params.set("day", String(selDay));
+  // Loads the report for the current selection. Runs by itself whenever a dropdown changes (see the effect below),
+  // so there is no Generate button. Results are kept for a minute; Refresh bypasses that.
+  const load = useCallback(async ({ force = false } = {}) => {
+    const params = new URLSearchParams({ period, year: String(selYear) });
+    if (period === "monthly" || period === "weekly" || period === "daily") params.set("month", String(selMonth));
+    if (period === "weekly") params.set("week", String(selWeek));
+    if (period === "daily")  params.set("day", String(selDay));
+    const qs = params.toString();
 
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/reports?${params.toString()}`, {
+    const hit = cacheRef.current.get(qs);
+    if (!force && hit && Date.now() - hit.at < 60000) {
+      reqRef.current += 1;
+      setReport(hit.data); setError(null); setLoading(false);
+      return;
+    }
+
+    const id = ++reqRef.current;
+    setLoading(true); setError(null);
+    try {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/reports?${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Failed to generate report.");
+      if (!res.ok) throw new Error(json.message || "Failed to load the report.");
+      if (id !== reqRef.current) return;               // a newer selection already took over
+      cacheRef.current.set(qs, { at: Date.now(), data: json.data });
       setReport(json.data);
-      setDetailOpen(false);
-      setDetailTab("payments");
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+    } catch (e) {
+      if (id !== reqRef.current) return;
+      setReport(null); setError(e.message);
+    } finally {
+      if (id === reqRef.current) setLoading(false);
+    }
   }, [token, period, selYear, selMonth, selWeek, selDay]);
+
+  // Auto-load: on first open and whenever the period or any dropdown changes (short delay so quick changes
+  // don't each fire a request).
+  useEffect(() => {
+    const t = setTimeout(() => { load(); }, 250);
+    return () => clearTimeout(t);
+  }, [load]);
+
+  // The PDF is a real file download (no print dialog).
+  const downloadPdf = async () => {
+    if (!report) return;
+    setPdfBusy(true);
+    try {
+      await downloadReportPdf(report, {
+        fmt, fmtDate, fmtDateTime, currency, totalsKey: totalsTab,
+        fileName: `report-${report.period}-${report.label.replace(/[\s/–→·,]+/g, "-")}`,
+      });
+    } catch (e) {
+      setError(`Couldn't create the PDF: ${e.message}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   // ── Excel Export ──
   const exportCSV = () => {
@@ -257,7 +307,10 @@ export default function Reports() {
       ["Currency",      currency],
       [],
       ["Metric", "Value"],
-      ["Total Sales",              fmt(report.topStats.totalSales)],
+      ["Total Sales (after maintenance)", fmt(report.topStats.totalSales)],
+      ["Gross Sales",              fmt(report.topStats.grossSales)],
+      ["Maintenance Expense",      fmt(report.topStats.maintenanceExpense)],
+      ["Refunded",                 fmt(report.topStats.refundedAmount)],
       ["Number of Rentals",        report.topStats.numberOfRentals],
       ["Average Sale",             fmt(report.topStats.averageSale)],
       [],
@@ -282,9 +335,15 @@ export default function Reports() {
       [],
       ["Customer Report"],
       ["Total Customers",           report.customerReport.totalCustomers],
-      ["New Customers (this month)",report.customerReport.newCustomersThisMonth],
-      ["Top Customer", "Amount Paid"],
-      ...report.customerReport.topCustomers.map((c) => [c.name, fmt(c.amountPaid)]),
+      ["New Customers (in this period)", report.customerReport.newCustomers],
+      ["Top Customer", "Amount Paid", "Rentals"],
+      ...report.customerReport.topCustomers.map((c) => [c.name, fmt(c.amountPaid), c.rentals]),
+      [],
+      ["Top Vehicles", "Rentals", "Revenue"],
+      ...report.vehicleReport.topVehicles.map((v) => [v.name, v.rentals, fmt(v.revenue)]),
+      [],
+      ["Payment Methods", "Payments", "Amount"],
+      ...report.paymentReport.byMethod.map((m) => [m.method, m.count, fmt(m.amount)]),
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
     autoWidth(wsSummary, summaryRows);
@@ -310,6 +369,22 @@ export default function Reports() {
     const wsBookings = XLSX.utils.aoa_to_sheet([bookHeaders, ...bookRows]);
     autoWidth(wsBookings, [bookHeaders, ...bookRows]);
     XLSX.utils.book_append_sheet(wb, wsBookings, "Bookings");
+
+    const mxHeaders = ["Date","Vehicle","Basis","Services","Amount"];
+    const mxRows = report.maintenanceExpenses.map((m) => [fmtDate(m.date), m.carName, m.basis, m.services, Number(m.amount)]);
+    const wsMx = XLSX.utils.aoa_to_sheet([mxHeaders, ...mxRows]);
+    autoWidth(wsMx, [mxHeaders, ...mxRows]);
+    XLSX.utils.book_append_sheet(wb, wsMx, "Maintenance");
+
+    const totHeaders = ["Period","Sales","Pending","Refunded","Payments","Rentals","Completed","Cancelled","New Customers","Vehicles Rented"];
+    TOTALS_TABS.forEach((t) => {
+      const rows = (report.periodTotals?.[t.key] || []).map((b) => [
+        b.label, Number(b.sales), Number(b.pending), Number(b.refunded), b.payments, b.rentals, b.completed, b.cancelled, b.newCustomers, b.vehiclesRented,
+      ]);
+      const ws = XLSX.utils.aoa_to_sheet([totHeaders, ...rows]);
+      autoWidth(ws, [totHeaders, ...rows]);
+      XLSX.utils.book_append_sheet(wb, ws, `By ${t.label}`);
+    });
 
     XLSX.writeFile(wb, `report-${report.period}-${report.label.replace(/[\s/–→]/g, "-")}.xlsx`);
   };
@@ -367,19 +442,37 @@ export default function Reports() {
         <div>
           <h1 className="text-xl font-bold text-arl-dark">Reports</h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            {report ? `${report.label} · Generated ${fmtDateTime(report.generatedAt)}` : "Select a period and generate a report"}
+            {report ? `${report.label} · Generated ${fmtDateTime(report.generatedAt)}` : loading ? "Loading report…" : "Pick a period to see its report"}
           </p>
         </div>
         {report && mainTab === "view" && (
-          <div className="flex gap-2">
-            <button onClick={exportCSV}
-              className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50">
-              <IconDownload className="w-4 h-4" /> Export Excel
+          <div className="relative">
+            <button onClick={() => setDownloadOpen((v) => !v)} disabled={pdfBusy}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-60">
+              <IconDownload className="w-4 h-4" /> {pdfBusy ? "Creating PDF…" : "Download"} <IconChevron className="w-3.5 h-3.5" open={downloadOpen} />
             </button>
-            <button onClick={printReport}
-              className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90">
-              <IconPrinter className="w-4 h-4" /> Print / PDF
-            </button>
+            {downloadOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setDownloadOpen(false)} />
+                <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl border border-gray-100 shadow-lg z-20 py-1.5 text-sm">
+                  <button onClick={() => { setDownloadOpen(false); exportCSV(); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50">
+                    <span className="font-semibold text-gray-800">Excel (.xlsx)</span>
+                    <span className="block text-xs text-gray-400">All figures, ready to calculate with</span>
+                  </button>
+                  <button onClick={() => { setDownloadOpen(false); downloadPdf(); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50">
+                    <span className="font-semibold text-gray-800">PDF (.pdf)</span>
+                    <span className="block text-xs text-gray-400">To share, send or file</span>
+                  </button>
+                  <button onClick={() => { setDownloadOpen(false); printReport(); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-t border-gray-100">
+                    <span className="font-semibold text-gray-800">Print</span>
+                    <span className="block text-xs text-gray-400">Open the print dialog</span>
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -410,81 +503,111 @@ export default function Reports() {
         <>
           {/* PERIOD SELECTOR */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Select Report Period</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {PERIODS.map((p) => (
-                <button key={p.key} onClick={() => setPeriod(p.key)}
-                  className={`flex flex-col items-center gap-1 px-4 py-4 rounded-xl border-2 transition-all ${
-                    period === p.key
-                      ? "border-arl-dark bg-arl-dark text-white"
-                      : "border-gray-100 hover:border-gray-300 text-gray-600"
-                  }`}>
-                  <p.Icon className="w-7 h-7" />
-                  <span className="font-semibold text-sm">{p.label}</span>
-                  <span className={`text-xs ${period === p.key ? "text-white/70" : "text-gray-400"}`}>{p.desc}</span>
-                </button>
-              ))}
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Select Report Period</p>
+              <button onClick={() => setPeriodOpen((v) => !v)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-800">
+                {periodOpen ? "Minimize" : "Change"} <IconChevron className="w-3.5 h-3.5" open={periodOpen} />
+              </button>
             </div>
 
-            {/* WHICH WEEK / MONTH / YEAR */}
-            <div className="mt-5 pt-5 border-t border-gray-100">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                Which {period === "daily" ? "day" : period === "weekly" ? "week" : period === "monthly" ? "month" : "year"}?
+            {!periodOpen && (
+              <p className="mt-3 text-sm text-gray-700">
+                <span className="inline-block px-2.5 py-1 rounded-lg bg-arl-dark text-white text-xs font-semibold mr-2 align-middle">
+                  {PERIODS.find((x) => x.key === period)?.label}
+                </span>
+                <span className="font-semibold align-middle">
+                  {period === "daily"   ? `${MONTH_NAMES[selMonth - 1]} ${selDay}, ${selYear}`
+                : period === "weekly"  ? `Week ${selWeek} · ${MONTH_NAMES[selMonth - 1]} ${selYear}`
+                : period === "monthly" ? `${MONTH_NAMES[selMonth - 1]} ${selYear}`
+                : String(selYear)}
+                </span>
               </p>
-              <div className="flex flex-wrap gap-3">
-                {/* Year — always shown */}
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs text-gray-400">Year</span>
-                  <select value={selYear} onChange={(e) => setSelYear(Number(e.target.value))}
-                    className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                    {YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                </label>
+            )}
 
-                {/* Month — for daily / weekly / monthly */}
-                {(period === "daily" || period === "weekly" || period === "monthly") && (
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-400">Month</span>
-                    <select value={selMonth} onChange={(e) => setSelMonth(Number(e.target.value))}
-                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                      {MONTH_NAMES.map((name, i) => <option key={name} value={i + 1}>{name}</option>)}
-                    </select>
-                  </label>
-                )}
-
-                {/* Week — for weekly only */}
-                {period === "weekly" && (
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-400">Week</span>
-                    <select value={selWeek} onChange={(e) => setSelWeek(Number(e.target.value))}
-                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                      {WEEK_OPTIONS.map((w) => <option key={w} value={w}>Week {w}</option>)}
-                    </select>
-                  </label>
-                )}
-
-                {/* Day — for daily only */}
-                {period === "daily" && (
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-400">Day</span>
-                    <select value={selDay} onChange={(e) => setSelDay(Number(e.target.value))}
-                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
-                      {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
-                    </select>
-                  </label>
-                )}
+            {periodOpen && (
+              <div className="mt-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {PERIODS.map((p) => (
+                  <button key={p.key} onClick={() => setPeriod(p.key)}
+                    className={`flex flex-col items-center gap-1 px-4 py-4 rounded-xl border-2 transition-all ${
+                      period === p.key
+                        ? "border-arl-dark bg-arl-dark text-white"
+                        : "border-gray-100 hover:border-gray-300 text-gray-600"
+                    }`}>
+                    <p.Icon className="w-7 h-7" />
+                    <span className="font-semibold text-sm">{p.label}</span>
+                    <span className={`text-xs ${period === p.key ? "text-white/70" : "text-gray-400"}`}>{p.desc}</span>
+                  </button>
+                ))}
               </div>
-            </div>
 
-            <div className="mt-4 flex justify-end">
-              <button onClick={generate} disabled={loading}
-                className="px-6 py-2.5 bg-arl-dark text-white rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50 flex items-center gap-2">
-                {loading ? (
-                  <><svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+              {/* WHICH WEEK / MONTH / YEAR */}
+              <div className="mt-5 pt-5 border-t border-gray-100">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                  Which {period === "daily" ? "day" : period === "weekly" ? "week" : period === "monthly" ? "month" : "year"}?
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {/* Year — always shown */}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-400">Year</span>
+                    <select value={selYear} onChange={(e) => setSelYear(Number(e.target.value))}
+                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                      {YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  </label>
+
+                  {/* Month — for daily / weekly / monthly */}
+                  {(period === "daily" || period === "weekly" || period === "monthly") && (
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-gray-400">Month</span>
+                      <select value={selMonth} onChange={(e) => setSelMonth(Number(e.target.value))}
+                        className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                        {MONTH_NAMES.map((name, i) => <option key={name} value={i + 1}>{name}</option>)}
+                      </select>
+                    </label>
+                  )}
+
+                  {/* Week — for weekly only */}
+                  {period === "weekly" && (
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-gray-400">Week</span>
+                      <select value={selWeek} onChange={(e) => setSelWeek(Number(e.target.value))}
+                        className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                        {WEEK_OPTIONS.map((w) => <option key={w} value={w}>Week {w}</option>)}
+                      </select>
+                    </label>
+                  )}
+
+                  {/* Day — for daily only */}
+                  {period === "daily" && (
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-gray-400">Day</span>
+                      <select value={selDay} onChange={(e) => setSelDay(Number(e.target.value))}
+                        className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-arl-dark">
+                        {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              </div>
+            )}
+
+            <div className="mt-4 flex items-center justify-end gap-3">
+              <span className="text-xs text-gray-400 flex items-center gap-2">
+                {loading && (
+                  <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                  </svg> Generating…</>
-                ) : "Generate Report →"}
+                  </svg>
+                )}
+                {loading ? "Loading…" : report ? `Updated ${fmtDateTime(report.generatedAt)}` : ""}
+              </span>
+              <button onClick={() => load({ force: true })} disabled={loading}
+                className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                Refresh
               </button>
             </div>
           </div>
@@ -499,13 +622,16 @@ export default function Reports() {
 
           {/* REPORT OUTPUT */}
           {report && (
-            <div className="report-printable space-y-4">
+            <div className={`report-printable space-y-4 transition-opacity ${loading ? "opacity-50 pointer-events-none" : ""}`}>
 
               {/* TOP STAT CARDS */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <TopStatCard icon={IconBarChart}  label="Total Sales"       value={fmt(report.topStats.totalSales)} />
-                <TopStatCard icon={IconDoc}       label="Number of Rentals" value={report.topStats.numberOfRentals} />
-                <TopStatCard icon={IconTrendUp}   label="Average Sale"      value={fmt(report.topStats.averageSale)} />
+                <TopStatCard icon={IconBarChart}  label="Total Sales"         value={fmt(report.topStats.totalSales)} hint="Money received minus completed maintenance" />
+                <TopStatCard icon={IconCreditCard} label="Gross Sales"        value={fmt(report.topStats.grossSales)} hint="Money actually received" />
+                <TopStatCard icon={IconPackage}   label="Maintenance Expense" value={fmt(report.topStats.maintenanceExpense)} hint="Completed maintenance only" />
+                <TopStatCard icon={IconWarning}   label="Refunded"            value={fmt(report.topStats.refundedAmount)} hint="Handed back to customers (not deducted)" />
+                <TopStatCard icon={IconDoc}       label="Number of Rentals"   value={report.topStats.numberOfRentals} />
+                <TopStatCard icon={IconTrendUp}   label="Average Sale"        value={fmt(report.topStats.averageSale)} hint="Gross sales per rental" />
               </div>
 
               {/* REVENUE REPORT */}
@@ -516,6 +642,49 @@ export default function Reports() {
                   <MiniStat label="Pending Amount"  value={fmt(report.revenueReport.pendingAmount)}  color="text-amber-500" />
                   <MiniStat label="Refunded Amount" value={fmt(report.revenueReport.refundedAmount)} color="text-red-500" />
                 </div>
+                <div className="mt-4">
+                  <ChartCard title="Revenue breakdown">
+                    <DonutChart
+                      data={[
+                        { label: "Collected",   value: report.revenueReport.paidAmount,     color: C_GREEN },
+                        { label: "Outstanding", value: report.revenueReport.pendingAmount,  color: C_AMBER },
+                        { label: "Refunded",    value: report.revenueReport.refundedAmount, color: C_RED },
+                      ]}
+                      format={fmt}
+                      centerLabel="Revenue (excl. refunds)"
+                      centerValue={fmt(report.revenueReport.totalRevenue)} />
+                  </ChartCard>
+                </div>
+              </ReportSection>
+
+              {/* MAINTENANCE EXPENSES */}
+              <ReportSection icon={IconPackage} title="Maintenance Expenses">
+                {report.maintenanceExpenses.length === 0 ? (
+                  <p className="text-sm text-gray-400 italic">No completed maintenance in this period.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[560px]">
+                      <thead>
+                        <tr className="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                          {["Date", "Vehicle", "Basis", "Services", "Amount"].map((h) => (
+                            <th key={h} className={`py-2 pr-4 font-semibold ${h === "Amount" ? "text-right" : "text-left"}`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {report.maintenanceExpenses.map((m) => (
+                          <tr key={m.id} className="border-b border-gray-50 last:border-0">
+                            <td className="py-2 pr-4 text-xs text-gray-500 whitespace-nowrap">{fmtDate(m.date)}</td>
+                            <td className="py-2 pr-4 text-xs font-semibold text-gray-800">{m.carName}</td>
+                            <td className="py-2 pr-4 text-xs text-gray-600">{m.basis || "—"}</td>
+                            <td className="py-2 pr-4 text-xs text-gray-600">{m.services || "—"}</td>
+                            <td className="py-2 text-right text-xs font-semibold text-red-500">{fmt(m.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </ReportSection>
 
               {/* RENTAL REPORT */}
@@ -527,6 +696,20 @@ export default function Reports() {
                   <MiniStat label="Upcoming"  value={report.rentalReport.upcoming}  color="text-purple-600" />
                   <MiniStat label="Cancelled" value={report.rentalReport.cancelled} color="text-red-500" />
                 </div>
+                <div className="mt-4">
+                  <ChartCard title="Rentals by status">
+                    <DonutChart
+                      data={[
+                        { label: "Completed", value: report.rentalReport.completed, color: C_GREEN },
+                        { label: "Ongoing",   value: report.rentalReport.ongoing,   color: C_BLUE },
+                        { label: "Upcoming",  value: report.rentalReport.upcoming,  color: C_AMBER },
+                        { label: "Cancelled", value: report.rentalReport.cancelled, color: C_RED },
+                      ]}
+                      format={(v) => String(v)}
+                      centerLabel="Rentals"
+                      centerValue={String(report.rentalReport.totalRentals)} />
+                  </ChartCard>
+                </div>
               </ReportSection>
 
               {/* VEHICLE REPORT */}
@@ -537,8 +720,31 @@ export default function Reports() {
                 </div>
                 {report.vehicleReport.totalVehiclesRented > 0 ? (
                   <div className="space-y-2">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pb-2">
+                      <ChartCard title="Rentals per vehicle (top 5)">
+                        <BarChart data={report.vehicleReport.topVehicles.slice(0, 5).map((v) => ({ label: v.name, value: v.rentals, color: C_BLUE }))} format={(v) => String(v)} />
+                      </ChartCard>
+                      <ChartCard title="Revenue per vehicle (top 5)">
+                        <BarChart data={report.vehicleReport.topVehicles.slice(0, 5).map((v) => ({ label: v.name, value: v.revenue, color: C_GREEN }))} format={fmt} />
+                      </ChartCard>
+                    </div>
                     <RankRow icon="up"   label="Most Rented Vehicle"  name={report.vehicleReport.mostRented?.name}  countLabel={`${report.vehicleReport.mostRented?.rentals} rentals`} />
                     <RankRow icon="down" label="Least Rented Vehicle" name={report.vehicleReport.leastRented?.name} countLabel={`${report.vehicleReport.leastRented?.rentals} rentals`} />
+                    {report.vehicleReport.topVehicles.length > 1 && (
+                      <div className="pt-3">
+                        <p className="text-xs text-gray-400 font-semibold mb-2">Top Vehicles</p>
+                        <div className="space-y-1.5">
+                          {report.vehicleReport.topVehicles.map((v, i) => (
+                            <div key={v.carID} className="flex items-center gap-3 py-1">
+                              <span className="text-xs text-gray-400 w-4">{i + 1}</span>
+                              <span className="text-sm text-gray-700 flex-1 truncate">{v.name}</span>
+                              <span className="text-xs text-gray-500">{v.rentals} rental{v.rentals === 1 ? "" : "s"}</span>
+                              <span className="text-sm font-semibold text-blue-600 w-28 text-right">{fmt(v.revenue)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="text-sm text-gray-400 italic">No vehicles rented in this period.</p>
@@ -549,7 +755,7 @@ export default function Reports() {
               <ReportSection icon={IconUsers} title="Customer Report">
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <MiniStat label="Total Customers" value={report.customerReport.totalCustomers} />
-                  <MiniStat label="New Customers (this month)" value={report.customerReport.newCustomersThisMonth} color="text-green-600" />
+                  <MiniStat label="New Customers (in this period)" value={report.customerReport.newCustomers} color="text-green-600" />
                 </div>
                 {report.customerReport.topCustomers.length > 0 ? (
                   <div>
@@ -562,7 +768,8 @@ export default function Reports() {
                             {c.name?.[0]?.toUpperCase() || "?"}
                           </span>
                           <span className="text-sm text-gray-700 flex-1 truncate">{c.name}</span>
-                          <span className="text-sm font-semibold text-blue-600">{fmt(c.amountPaid)}</span>
+                          <span className="text-xs text-gray-500">{c.rentals} rental{c.rentals === 1 ? "" : "s"}</span>
+                          <span className="text-sm font-semibold text-blue-600 w-28 text-right">{fmt(c.amountPaid)}</span>
                         </div>
                       ))}
                     </div>
@@ -570,6 +777,70 @@ export default function Reports() {
                 ) : (
                   <p className="text-sm text-gray-400 italic">No paying customers in this period.</p>
                 )}
+              </ReportSection>
+
+              {/* PAYMENT REPORT */}
+              <ReportSection icon={IconCreditCard} title="Payment Report">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <MiniStat label="Total Payments" value={report.paymentReport.totalPayments} />
+                  {report.paymentReport.byMethod.map((m) => (
+                    <MiniStat key={m.method} label={`${m.method} · ${m.count} payment${m.count === 1 ? "" : "s"}`} value={fmt(m.amount)} color="text-green-600" />
+                  ))}
+                </div>
+                {report.paymentReport.byMethod.length === 0 ? (
+                  <p className="text-sm text-gray-400 italic mt-3">No confirmed payments in this period.</p>
+                ) : (
+                  <div className="mt-4">
+                    <ChartCard title="Amount by payment method">
+                      <BarChart data={report.paymentReport.byMethod.map((m) => ({ label: m.method, value: m.amount, color: C_BLUE }))} format={fmt} />
+                    </ChartCard>
+                  </div>
+                )}
+                <p className="text-xs text-gray-400 mt-3">Counted by where each peso actually came in, so a deposit paid online and a balance paid in cash show under both.</p>
+              </ReportSection>
+
+              {/* TOTALS PER DAY / WEEK / MONTH / YEAR */}
+              <ReportSection icon={IconBarChart} title="Totals by Day / Week / Month / Year">
+                <div className="flex gap-1 mb-3">
+                  {TOTALS_TABS.map((t) => (
+                    <button key={t.key} onClick={() => setTotalsTab(t.key)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        totalsTab === t.key ? "bg-arl-dark text-white" : "bg-gray-100 text-gray-500 hover:text-gray-700"
+                      }`}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[760px]">
+                    <thead>
+                      <tr className="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                        {["Period", "Sales", "Pending", "Refunded", "Payments", "Rentals", "Done", "Cancelled", "New Cust.", "Vehicles"].map((h) => (
+                          <th key={h} className={`py-2 pr-3 font-semibold ${h === "Period" ? "text-left" : "text-right"}`}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(report.periodTotals?.[totalsTab] || []).length === 0 ? (
+                        <tr><td colSpan={10} className="text-center py-8 text-gray-400 text-sm">No activity in this period.</td></tr>
+                      ) : report.periodTotals[totalsTab].map((b) => (
+                        <tr key={b.start} className="border-b border-gray-50 last:border-0">
+                          <td className="py-2 pr-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{b.label}</td>
+                          <td className="py-2 pr-3 text-right text-xs font-semibold text-green-700">{fmt(b.sales)}</td>
+                          <td className="py-2 pr-3 text-right text-xs text-amber-600">{fmt(b.pending)}</td>
+                          <td className="py-2 pr-3 text-right text-xs text-red-500">{fmt(b.refunded)}</td>
+                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.payments}</td>
+                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.rentals}</td>
+                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.completed}</td>
+                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.cancelled}</td>
+                          <td className="py-2 pr-3 text-right text-xs text-gray-600">{b.newCustomers}</td>
+                          <td className="py-2 text-right text-xs text-gray-600">{b.vehiclesRented}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-gray-400 mt-3">Sales, pending and refunds are dated by when the payment was made; rentals by when the trip starts; new customers by sign-up date.</p>
               </ReportSection>
 
               {/* DETAIL RECORDS (collapsible — raw payments/bookings tables) */}
@@ -665,11 +936,11 @@ export default function Reports() {
           )}
 
           {/* Empty state */}
-          {!report && !loading && !error && (
+          {!report && (loading || !error) && (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-soft flex flex-col items-center justify-center py-20 gap-3 text-gray-300">
               <IconClipboard className="w-12 h-12" />
-              <p className="text-gray-500 font-semibold">No report generated yet</p>
-              <p className="text-gray-400 text-sm">Pick a period above and click Generate Report</p>
+              <p className="text-gray-500 font-semibold">Loading report…</p>
+              <p className="text-gray-400 text-sm">It updates by itself when you change the period above</p>
             </div>
           )}
         </>
@@ -681,7 +952,80 @@ export default function Reports() {
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
 
-function TopStatCard({ icon: Icon, label, value }) {
+// ─── CHARTS (inline styles / SVG so they also look right when printed) ──────────
+
+const C_GREEN = "#16a34a", C_AMBER = "#ca8a04", C_RED = "#ef4444", C_BLUE = "#2563eb";
+
+function ChartCard({ title, children }) {
+  return (
+    <div style={{ border: "1px solid #f3f4f6", borderRadius: 12, padding: 16, background: "#fff" }}>
+      <p style={{ fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 12 }}>{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function NoData() {
+  return <p style={{ fontSize: 14, color: "#9ca3af", fontStyle: "italic" }}>No data yet.</p>;
+}
+
+/** Ring chart with a legend. `data` = [{ label, value, color }]. */
+function DonutChart({ data, format, centerLabel, centerValue }) {
+  const total = data.reduce((sum, d) => sum + d.value, 0);
+  if (total <= 0) return <NoData />;
+  const R = 52, CIRC = 2 * Math.PI * R;
+  let offset = 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+      <div style={{ position: "relative", width: 140, height: 140, flexShrink: 0 }}>
+        <svg viewBox="0 0 140 140" width="140" height="140" style={{ transform: "rotate(-90deg)" }}>
+          <circle cx="70" cy="70" r={R} fill="none" stroke="#f3f4f6" strokeWidth="18" />
+          {data.filter((d) => d.value > 0).map((d) => {
+            const len = (d.value / total) * CIRC;
+            const el = <circle key={d.label} cx="70" cy="70" r={R} fill="none" stroke={d.color} strokeWidth="18" strokeDasharray={`${len} ${CIRC - len}`} strokeDashoffset={-offset} />;
+            offset += len;
+            return el;
+          })}
+        </svg>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "0 24px" }}>
+          <span style={{ fontSize: 9, color: "#9ca3af", lineHeight: 1.2 }}>{centerLabel}</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{centerValue}</span>
+        </div>
+      </div>
+      <div style={{ flex: 1, minWidth: 150 }}>
+        {data.map((d) => (
+          <div key={d.label} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 5, background: d.color, flexShrink: 0 }} />
+            <span style={{ flex: 1, color: "#374151" }}>{d.label}</span>
+            <span style={{ fontWeight: 700, color: "#111827" }}>{format(d.value)}</span>
+            <span style={{ width: 38, textAlign: "right", color: "#9ca3af" }}>{Math.round((d.value / total) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Horizontal bars scaled to the largest value. `data` = [{ label, value, color }]. */
+function BarChart({ data, format }) {
+  const max = Math.max(0, ...data.map((d) => d.value));
+  if (data.length === 0 || max <= 0) return <NoData />;
+  return (
+    <div>
+      {data.map((d) => (
+        <div key={d.label} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0" }}>
+          <span title={d.label} style={{ width: 100, fontSize: 12, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.label}</span>
+          <div style={{ flex: 1, height: 12, borderRadius: 6, background: "#f3f4f6" }}>
+            <div style={{ width: `${Math.min(100, (d.value / max) * 100)}%`, height: 12, borderRadius: 6, background: d.color }} />
+          </div>
+          <span style={{ width: 92, textAlign: "right", fontSize: 12, fontWeight: 700, color: "#111827", whiteSpace: "nowrap" }}>{format(d.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TopStatCard({ icon: Icon, label, value, hint }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5 flex items-start gap-4">
       <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
@@ -690,6 +1034,7 @@ function TopStatCard({ icon: Icon, label, value }) {
       <div>
         <p className="text-sm text-gray-500 mb-1">{label}</p>
         <p className="text-2xl font-bold text-gray-900">{value}</p>
+        {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
       </div>
     </div>
   );

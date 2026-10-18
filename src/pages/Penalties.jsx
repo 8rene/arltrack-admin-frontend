@@ -267,6 +267,63 @@ function LateFeeSuggestion({ info, loading = false }) {
   );
 }
 
+// ─── DEPOSIT NOTICE ────────────────────────────────────────────────────────
+// Tells staff how a penalty on this booking gets paid, from the `deposit` the late-fee preview returns:
+//   deposit already returned (settled / refunded / forfeited / waived, or none held)
+//       -> it can't be deducted; the customer will be asked to pay it online
+//   deposit still held
+//       -> it is deducted from the deposit when the deposit is settled (any part the deposit can't cover is paid online)
+// `acknowledged` / `onAcknowledge` add a required "confirm the deduction" tick (the New Penalty form); without them
+// it is information only (the confirm step on a penalty under review).
+function DepositNotice({ deposit, amount = 0, acknowledged = false, onAcknowledge = null }) {
+  if (!deposit) return null;
+  const amt = Number(amount) || 0;
+
+  if (deposit.returned) {
+    const why = !deposit.exists
+      ? "There is no security deposit held on this booking."
+      : deposit.reason === "settled"
+        ? "The security deposit was already settled and returned."
+        : `The security deposit was ${String(deposit.status || "closed").toLowerCase()}.`;
+    return (
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs space-y-0.5">
+        <p className="font-semibold text-blue-800">Deposit already returned — pay online</p>
+        <p className="text-blue-700">
+          {why} This penalty can't be deducted from it, so the customer will be asked to pay{amt > 0 ? ` ${peso(amt)}` : " it"} online.
+        </p>
+      </div>
+    );
+  }
+
+  const available = Number(deposit.availableForNew) || 0;
+  const deducted = Math.min(amt, available);
+  const online = Math.max(0, amt - deducted);
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs space-y-1.5">
+      <p className="font-semibold text-amber-800">Deposit not returned yet — deducted from it</p>
+      <div className="space-y-0.5 text-amber-800">
+        <div className="flex justify-between gap-3"><span>Deposit held</span><span>{peso(deposit.amount)}</span></div>
+        {deposit.alreadyClaimed > 0 && (
+          <div className="flex justify-between gap-3"><span>Already taken by other penalties</span><span>− {peso(deposit.alreadyClaimed)}</span></div>
+        )}
+        <div className="flex justify-between gap-3 font-semibold"><span>Left for this penalty</span><span>{peso(available)}</span></div>
+      </div>
+      {amt > 0 && (
+        <p className="text-amber-700">
+          {peso(deducted)} will be deducted from the deposit when it's returned
+          {online > 0 ? `; the other ${peso(online)} is more than the deposit has left, so the customer will be asked to pay that online.` : "."}
+        </p>
+      )}
+      {onAcknowledge && deducted > 0 && (
+        <label className="flex items-start gap-2 pt-1 cursor-pointer text-amber-900">
+          <input type="checkbox" checked={acknowledged} onChange={(e) => onAcknowledge(e.target.checked)} className="mt-0.5" />
+          <span>I confirm {peso(deducted)} is deducted from the customer's deposit.</span>
+        </label>
+      )}
+    </div>
+  );
+}
+
 // ─── CREATE PENALTY MODAL ──────────────────────────────────────────────────
 //
 // Every charge is typed by hand as a line item. Above the fields, the
@@ -291,8 +348,14 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
   const [previewLoading, setPreviewLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [ackDeduction, setAckDeduction] = useState(false); // staff ticked "I confirm it's deducted from the deposit"
 
   const computedTotal = lineItems.reduce((sum, li) => sum + (Number(li.amount) || 0), 0);
+  // What this penalty will be once created: the override if there is one, else the line-item total.
+  const penaltyAmount = overrideAmount.trim() !== "" ? (Number(overrideAmount) || 0) : computedTotal;
+  const depositInfo = preview?.deposit || null;
+  // Only a deposit that is still held can be deducted from; that needs a tick before the penalty is created.
+  const needsAck = !!depositInfo && !depositInfo.returned && Math.min(penaltyAmount, Number(depositInfo.availableForNew) || 0) > 0;
 
   const updateLineItem = (i, field, value) =>
     setLineItems((items) => items.map((li, idx) => (idx === i ? { ...li, [field]: value } : li)));
@@ -304,6 +367,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
   // end time / drop-off / suggestion panel below. A failed lookup just hides it.
   useEffect(() => {
     const id = bookingID.trim();
+    setAckDeduction(false);   // a different booking means a different deposit: the tick doesn't carry over
     if (!id) { setPreview(null); return undefined; }
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -336,6 +400,10 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
     const finalAmount = overrideAmount.trim() !== "" ? Number(overrideAmount) : computed;
     if (finalAmount !== computed && !overrideReason.trim()) {
       setError("A reason is required when the amount is adjusted from the computed total.");
+      return;
+    }
+    if (needsAck && !ackDeduction) {
+      setError("Confirm the deduction from the customer's deposit first.");
       return;
     }
 
@@ -382,11 +450,16 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
               }`} />
           </div>
           {linkedFromBooking && (
-            <p className="text-xs text-teal-600 mt-1">Linked from Booking Details — this penalty will be tied to booking {bookingID}.</p>
+            <p className="text-xs text-teal-600 mt-1">Linked to the booking — this penalty will be tied to booking {bookingID}.</p>
           )}
           <div className="mt-2">
             <LateFeeSuggestion info={preview} loading={previewLoading} />
           </div>
+          {depositInfo && (
+            <div className="mt-2">
+              <DepositNotice deposit={depositInfo} amount={penaltyAmount} acknowledged={ackDeduction} onAcknowledge={setAckDeduction} />
+            </div>
+          )}
         </div>
 
         <div>
@@ -724,7 +797,98 @@ function BookingSidePanel({ bookingID, token, fmt, onClose, onOpenFull }) {
   );
 }
 
-function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClose, onViewBookingPage, onMarkPaid, onWaive, onVoid, onConfirm, onSaveEdit }) {
+// --- BOOKING PENALTIES MODAL -------------------------------------------------
+// Everything noted on ONE booking, in a window: totals on top, then each penalty (open it to see / edit / confirm /
+// void it), and a button to add another penalty to this booking whatever state the existing ones are in.
+function BookingPenaltiesModal({ bookingID, penalties, canAdd, onClose, onViewPenalty, onAddPenalty, onViewBooking }) {
+  const { fmt } = useCurrency();
+  const list = [...penalties].sort((a, b) => {
+    const aR = a.status === "UnderReview", bR = b.status === "UnderReview";
+    if (aR !== bR) return aR ? -1 : 1;   // waiting for review first
+    return (toDate(b.createdAt)?.getTime() || 0) - (toDate(a.createdAt)?.getTime() || 0);
+  });
+  const first = list[0];
+  const live = list.filter((p) => p.status === "Confirmed");
+  const charged = live.reduce((n, p) => n + (p.amount || 0), 0);
+  const paid = live.reduce((n, p) => n + Math.min(p.paidAmount || 0, p.amount || 0), 0);
+  const inReview = list.filter((p) => p.status === "UnderReview");
+  const reviewAmount = inReview.reduce((n, p) => n + (p.amount || 0), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-bold text-arl-dark">Penalties on this booking</h3>
+            <p className="text-xs text-gray-400 mt-0.5 font-mono">{bookingID}</p>
+            {first && (
+              <p className="text-xs text-gray-500 mt-0.5">
+                {first.customerName || "--"}{first.brandName !== "--" || first.modelName !== "--" ? ` · ${first.brandName} ${first.modelName}` : ""}
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
+        </div>
+
+        {onViewBooking && (
+          <button onClick={onViewBooking}
+            className="w-full px-4 py-2 rounded-xl text-sm font-semibold border border-teal-200 text-teal-700 bg-teal-50/50 hover:bg-teal-50">
+            View booking →
+          </button>
+        )}
+
+        <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 text-xs space-y-1">
+          <div className="flex justify-between"><span className="text-gray-500">Total charged</span><span className="font-semibold text-gray-800">{fmt(charged)}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Paid</span><span className="font-semibold text-gray-800">{fmt(paid)}</span></div>
+          <div className="flex justify-between border-t border-gray-100 pt-1">
+            <span className="text-gray-500">Still owed</span>
+            <span className={`font-semibold ${charged - paid > 0 ? "text-red-500" : "text-green-600"}`}>{fmt(Math.max(0, charged - paid))}</span>
+          </div>
+          {reviewAmount > 0 && (
+            <p className="text-amber-700 pt-1">+ {fmt(reviewAmount)} still under review — not counted until a supervisor confirms it.</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          {list.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No penalties on this booking.</p>}
+          {list.map((p) => (
+            <div key={p.id}
+              className={`rounded-xl border px-3 py-2.5 flex items-center gap-3 ${p.status === "UnderReview" ? "border-amber-200 bg-amber-50/40" : "border-gray-100"}`}>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-gray-800 truncate" title={(p.lineItems || []).map((li) => li.description).join(", ")}>
+                  {(p.lineItems || []).map((li) => li.description).join(", ") || "--"}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  {toDate(p.createdAt) ? toDate(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "--"}
+                  {p.status === "UnderReview" && p.createdByName ? ` · noted by ${p.createdByName}` : ""}
+                  {p.status === "Confirmed" && p.paidAmount > 0 ? ` · ${fmt(p.paidAmount)} paid` : ""}
+                </p>
+              </div>
+              <div className="text-right shrink-0 space-y-1">
+                <p className={`text-xs font-semibold ${p.status === "Confirmed" || p.status === "UnderReview" ? "text-gray-800" : "text-gray-400 line-through"}`}>{fmt(p.amount)}</p>
+                <SettlementBadge status={p.settlementStatus} />
+              </div>
+              <button onClick={() => onViewPenalty(p)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50 shrink-0">View</button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 pt-1">
+          {canAdd ? (
+            <button onClick={onAddPenalty}
+              className="px-4 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">
+              + New penalty
+            </button>
+          ) : <span />}
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClose, onViewBookingPage, onMarkPaid, onWaive, onVoid, onConfirm, onSaveEdit, onAddPenalty }) {
   const { fmt } = useCurrency();
   const [showBooking, setShowBooking] = useState(false);
 
@@ -737,6 +901,16 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
   const [editError, setEditError] = useState("");
   const [saving, setSaving] = useState(false);
   const [armConfirm, setArmConfirm] = useState(false); // first click arms it, second click confirms + notifies
+  const [depositInfo, setDepositInfo] = useState(null);  // how this penalty would be paid (deposit still held vs already returned)
+  useEffect(() => {
+    if (p.status !== "UnderReview" || !p.bookingID) { setDepositInfo(null); return undefined; }
+    let cancelled = false;
+    fetch(`${API_URL}/api/penalties/late-fee-preview/${encodeURIComponent(p.bookingID)}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!cancelled) setDepositInfo(j?.data?.deposit || null); })
+      .catch(() => { if (!cancelled) setDepositInfo(null); });
+    return () => { cancelled = true; };
+  }, [p.id, p.status, p.bookingID, token]);
 
   const startEdit = () => {
     setEditItems((p.lineItems || []).map((li) => ({ description: li.description || "", amount: String(li.amount ?? "") })));
@@ -946,6 +1120,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                     Confirm {fmt(p.amount)} and notify {p.customerName && p.customerName !== "—" ? p.customerName : "the customer"}? They'll see the charge
                     right away, and it can't be edited after this.
                   </p>
+                  <DepositNotice deposit={depositInfo} amount={p.amount} />
                   <div className="flex justify-end gap-2">
                     <button onClick={() => setArmConfirm(false)} disabled={busy}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white disabled:opacity-40">
@@ -1001,6 +1176,12 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
               Close
             </button>
+            {canRecordInStore && p.bookingID && onAddPenalty && !editing && (
+              <button onClick={onAddPenalty}
+                className="px-4 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">
+                + New penalty
+              </button>
+            )}
             {p.bookingID && (
               <button onClick={() => setShowBooking((v) => !v)}
                 className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700">
@@ -1247,13 +1428,125 @@ export default function Penalties() {
     );
   });
 
-  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, activeStatFilter, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+  // `groups` (defined below, after renderRow) when grouped by booking: pages hold whole bookings, so a booking's
+  // penalties are never split across two pages.
+  const [groupByBooking, setGroupByBooking] = useState(true);
+  const [bookingModalID, setBookingModalID] = useState(null); // bookingID whose penalties are listed in the booking window
 
   // Bookings.jsx doesn't yet auto-open a specific booking's panel from a
   // URL param — this gets staff to the right page with the bookingID
   // visible, but they still search/select it themselves once there.
   const viewBooking = (bookingID) => navigate(`/bookings?bookingID=${encodeURIComponent(bookingID)}`);
+
+  // One penalty row.
+  const renderRow = (p, i) => {
+    const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(p);
+    const rowClass = statMatch ? "bg-red-50/40 ring-1 ring-inset ring-red-100"
+      : p.status === "UnderReview" ? "bg-amber-50/40"
+      : i % 2 === 1 ? "bg-gray-50/30" : "";
+    const chargesText = (p.lineItems || []).map((li) => li.description).join(", ");
+    return (
+        <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${rowClass}`}>
+          <td className="px-4 py-3 text-xs whitespace-nowrap">
+            {toDate(p.createdAt) ? (
+              <>
+                <span className="text-gray-700">{toDate(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
+                <span className="mx-1.5 text-gray-300">|</span>
+                <span className="text-gray-500">{toDate(p.createdAt).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}</span>
+              </>
+            ) : "—"}
+          </td>
+          <td className="px-4 py-3 text-xs text-gray-700">
+            <div className="max-w-[220px] truncate" title={(p.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>
+              {chargesText || "—"}
+            </div>
+          </td>
+          <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap">{p.bookingID || "—"}</td>
+          <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-xs">{p.customerName || "—"}</div></td>
+          <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
+            {p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName}` : "—"}
+          </td>
+          <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(p.amount)}</td>
+          <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(p.paidAmount)}</td>
+          <td className="px-4 py-3"><SettlementBadge status={p.settlementStatus} /></td>
+          <td className="px-4 py-3">
+            <button onClick={() => setDetailsModal(p)}
+              className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
+          </td>
+        </tr>
+    );
+  };
+
+  // ── Group by booking ─────────────────────────────────────────────────────────────────────────────────────────────
+  // One header row per booking that has more than one penalty (a booking with a single penalty stays a plain row), with
+  // its penalties underneath. Groups are built from the already searched / sorted / stat-filtered list, so the group
+  // order follows the first penalty of each booking in that order (e.g. a booking with something under review is on
+  // top by default). Totals count CONFIRMED penalties only, like Total charged on the Payments page: under review,
+  // waived and voided ones are not money owed.
+  const groups = (() => {
+    const byKey = new Map();
+    filtered.forEach((p) => {
+      const key = p.bookingID && p.bookingID !== "—" ? p.bookingID : `__${p.id}`;
+      if (!byKey.has(key)) byKey.set(key, { key, items: [] });
+      byKey.get(key).items.push(p);
+    });
+    return [...byKey.values()].map((g) => {
+      const live = g.items.filter((x) => x.status === "Confirmed");
+      const inReview = g.items.filter((x) => x.status === "UnderReview");
+      const rank = (x) => SETTLEMENT_RANK[x.settlementStatus] ?? 99;
+      return {
+        ...g,
+        first: g.items[0],
+        amount: live.reduce((n, x) => n + (x.amount || 0), 0),
+        paid: live.reduce((n, x) => n + Math.min(x.paidAmount || 0, x.amount || 0), 0),
+        reviewCount: inReview.length,
+        reviewAmount: inReview.reduce((n, x) => n + (x.amount || 0), 0),
+        // The most urgent status in the group: under review, then still owed, then partly paid, paid, waived, voided.
+        worst: g.items.reduce((best, x) => (rank(x) < rank(best) ? x : best), g.items[0]).settlementStatus,
+        latest: g.items.reduce((m, x) => Math.max(m, toDate(x.createdAt)?.getTime() || 0), 0),
+      };
+    });
+  })();
+  // A booking with several penalties is one row; View opens a window listing them all (BookingPenaltiesModal).
+  const renderGroup = (g, gi) => {
+    if (g.items.length === 1) return renderRow(g.items[0], gi);
+    const d = g.latest ? new Date(g.latest) : null;
+    return (
+      <tr key={g.key} onClick={() => setBookingModalID(g.first.bookingID)}
+        className={`border-b border-gray-100 cursor-pointer hover:bg-arl-light/30 transition-colors ${g.reviewCount > 0 ? "bg-amber-50/50" : "bg-gray-50/70"}`}>
+        <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-500">
+          {d ? d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "--"}
+        </td>
+        <td className="px-4 py-3 text-xs">
+          <span className="font-semibold text-gray-800">{g.items.length} penalties</span>
+          {g.reviewCount > 0 && (
+            <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+              {g.reviewCount} under review
+            </span>
+          )}
+        </td>
+        <td className="px-4 py-3 text-xs text-gray-700 font-mono whitespace-nowrap">{g.first.bookingID || "--"}</td>
+        <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-xs">{g.first.customerName || "--"}</div></td>
+        <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
+          {g.first.brandName !== "--" || g.first.modelName !== "--" ? `${g.first.brandName} ${g.first.modelName}` : "--"}
+        </td>
+        <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">
+          {fmt(g.amount)}
+          {g.reviewAmount > 0 && <div className="text-[10px] font-medium text-amber-700">+ {fmt(g.reviewAmount)} under review</div>}
+        </td>
+        <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(g.paid)}</td>
+        <td className="px-4 py-3 text-xs text-gray-300">—</td>
+        <td className="px-4 py-3">
+          <button onClick={(e) => { e.stopPropagation(); setBookingModalID(g.first.bookingID); }}
+            className="px-3 py-1 border rounded-lg text-xs hover:bg-white">View</button>
+        </td>
+      </tr>
+    );
+  };
+
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(groupByBooking ? groups : filtered, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [search, activeStatFilter, sortKey, sortDir, groupByBooking]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -1263,6 +1556,19 @@ export default function Penalties() {
         }`}>
           {toast.msg}
         </div>
+      )}
+
+      {/* First of the windows, so every other one (a penalty's details, New Penalty, void / waive, mark paid) opens on top of it. */}
+      {bookingModalID && (
+        <BookingPenaltiesModal
+          bookingID={bookingModalID}
+          penalties={records.filter((r) => r.bookingID === bookingModalID)}
+          canAdd={canRecordInStore}
+          onClose={() => setBookingModalID(null)}
+          onViewPenalty={(p) => setDetailsModal(p)}
+          onViewBooking={() => { const id = bookingModalID; setBookingModalID(null); viewBooking(id); }}
+          onAddPenalty={() => { const id = bookingModalID; setBookingModalID(null); setPrefillBookingID(id); setShowCreate(true); }}
+        />
       )}
 
       {showCreate && (
@@ -1309,6 +1615,8 @@ export default function Penalties() {
           onVoid={() => { setReasonModal({ penaltyID: detailsModal.id, action: "Voided", underReview: detailsModal.status === "UnderReview" }); setDetailsModal(null); }}
           onConfirm={() => submitConfirm(detailsModal.id)}
           onSaveEdit={(body) => submitEdit(detailsModal.id, body)}
+          // Works whether this penalty is under review or not: opens New Penalty with this booking filled in.
+          onAddPenalty={() => { const id = detailsModal.bookingID; setDetailsModal(null); setBookingModalID(null); setPrefillBookingID(id); setShowCreate(true); }}
         />
       )}
 
@@ -1372,8 +1680,19 @@ export default function Penalties() {
         <div className="flex justify-between items-center px-5 py-4 border-b border-gray-100">
           <h2 className="font-bold text-arl-dark">
             All Penalty Records{" "}
-            <span className="text-gray-400 text-sm font-normal">({filtered.length} results)</span>
+            <span className="text-gray-400 text-sm font-normal">
+              ({groupByBooking ? `${groups.length} booking${groups.length === 1 ? "" : "s"} · ${filtered.length} penalties` : `${filtered.length} results`})
+            </span>
           </h2>
+          {/* One row per booking (its penalties underneath), or every penalty on its own row. */}
+          <div className="inline-flex rounded-xl border border-gray-200 p-0.5 text-xs font-semibold">
+            {[[true, "By booking"], [false, "All penalties"]].map(([val, label]) => (
+              <button key={label} onClick={() => setGroupByBooking(val)}
+                className={`px-3 py-1.5 rounded-[10px] transition-colors ${groupByBooking === val ? "bg-teal-600 text-white" : "text-gray-500 hover:text-gray-700"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[900px]">
@@ -1403,43 +1722,9 @@ export default function Penalties() {
               <tr><td colSpan={9} className="text-center py-16 text-gray-400 text-sm">
                 {search || activeStatFilter ? "No penalties match your filters." : "No penalties found."}
               </td></tr>
-            ) : paginated.map((p, i) => {
-              const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(p);
-              const rowClass = statMatch ? "bg-red-50/40 ring-1 ring-inset ring-red-100"
-                : p.status === "UnderReview" ? "bg-amber-50/40"
-                : i % 2 === 1 ? "bg-gray-50/30" : "";
-              const chargesText = (p.lineItems || []).map((li) => li.description).join(", ");
-              return (
-                <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${rowClass}`}>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
-                    {toDate(p.createdAt) ? (
-                      <>
-                        <span className="text-gray-700">{toDate(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
-                        <span className="mx-1.5 text-gray-300">|</span>
-                        <span className="text-gray-500">{toDate(p.createdAt).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}</span>
-                      </>
-                    ) : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-700">
-                    <div className="max-w-[220px] truncate" title={(p.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>
-                      {chargesText || "—"}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap">{p.bookingID || "—"}</td>
-                  <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-xs">{p.customerName || "—"}</div></td>
-                  <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
-                    {p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName}` : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(p.amount)}</td>
-                  <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(p.paidAmount)}</td>
-                  <td className="px-4 py-3"><SettlementBadge status={p.settlementStatus} /></td>
-                  <td className="px-4 py-3">
-                    <button onClick={() => setDetailsModal(p)}
-                      className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
-                  </td>
-                </tr>
-              );
-            })}
+            ) : groupByBooking
+              ? paginated.map((g, gi) => renderGroup(g, gi))
+              : paginated.map((p, i) => renderRow(p, i))}
           </tbody>
         </table>
         </div>

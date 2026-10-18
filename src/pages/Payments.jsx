@@ -789,7 +789,6 @@ export default function Payments() {
                         <Row label={selected.serviceFeeRate > 0 ? `Service Fee (${selected.serviceFeeRate}% of rental)` : "Service Fee"} value={peso(selected.serviceFee, fmtCurrency)} />
                         {selected.gatewayFee > 0 && <Row label={selected.gatewayFeeRate > 0 ? `Gateway Fee (${selected.gatewayFeeRate}% of ${peso(selected.gatewayFeeBase, fmtCurrency)})` : "Gateway Fee"} value={peso(selected.gatewayFee, fmtCurrency)} />}
                         {selected.securityDeposit > 0 && <Row label="Security Deposit (refundable)" value={peso(selected.securityDeposit, fmtCurrency)} />}
-                        {selected.securityDeposit > 0 && selected.depositStatus && <Row label="Deposit Status" value={selected.depositStatus} />}
                         <div className="border-t border-gray-100 mt-2 pt-2">
                           <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
                           {selected.discountAmount > 0 ? (
@@ -803,21 +802,6 @@ export default function Payments() {
                           )}
                           <Row label="Amount Paid" value={peso(selected.amountPaid, fmtCurrency)} bold />
                         </div>
-                        {(selected.securityDeposit > 0 && (selected.depositSettled > 0 || selected.depositReturned > 0)) && (
-                          <div className="border-t border-gray-100 mt-2 pt-2">
-                            {selected.depositSettled > 0 && <Row label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />}
-                            {selected.depositReturned > 0 && <Row label="Deposit Returned" value={peso(selected.depositReturned, fmtCurrency)} />}
-                          </div>
-                        )}
-                        {canRecordInStore && selected.depositStatus === "Held" && String(selected.bookingStatus || "").toLowerCase() === "ongoing" && (
-                          <div className="border-t border-gray-100 mt-2 pt-3 space-y-1.5">
-                            <p className="text-xs text-gray-500">The booking is ongoing and the deposit is still held. Return it here once the vehicle has been dropped off — penalties are deducted first.</p>
-                            <button onClick={() => setReturnDepositOpen(true)}
-                              className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700">
-                              Return deposit
-                            </button>
-                          </div>
-                        )}
                         {entriesSummary && entriesSummary.refundedOut > 0 && (
                           <div className="border-t border-gray-100 mt-2 pt-2">
                             <Row label="Refunded Amount" value={`−${peso(entriesSummary.refundedOut, fmtCurrency)}`} bold color="text-purple-700" />
@@ -830,7 +814,13 @@ export default function Payments() {
 
                       {/* Every penalty charged on this booking: charged, paid, waived. Waived / voided ones are listed
                           but never counted toward what is owed, and never touch the booking's balance or discount. */}
-                      <PenaltyBreakdown penalties={selected.penalties} payment={selected} fmt={fmtCurrency} />
+                      <PenaltyBreakdown
+                        penalties={selected.penalties} payment={selected} fmt={fmtCurrency}
+                        // Opens the Penalties page's New Penalty form with this booking already filled in (same as Bookings).
+                        onNotePenalty={canRecordInStore && selected.bookingID && selected.bookingID !== "—"
+                          ? () => navigate(`/penalties?bookingID=${encodeURIComponent(selected.bookingID)}`)
+                          : null}
+                      />
 
                       {/* ONE place for money going back to the customer. A discount and a refund request both do that, and both
                           wait on PayMongo, so they share the same stages as the Refund Requests page:
@@ -874,6 +864,26 @@ export default function Payments() {
                               </div>
                             )}
                           </div>
+                        </Section>
+                      )}
+
+                      {/* LAST on the summary: where the security deposit stands, and where it is handed back. Penalties are
+                          deducted from it first (Deposit Settled), the rest goes back to the customer (Deposit Returned). */}
+                      {selected.securityDeposit > 0 && (
+                        <Section title="Deposit Breakdown">
+                          <Row label="Security Deposit" value={peso(selected.securityDeposit, fmtCurrency)} />
+                          {selected.depositStatus && <Row label="Deposit Status" value={selected.depositStatus} />}
+                          <Row label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />
+                          <Row label="Deposit Returned" value={peso(selected.depositReturned, fmtCurrency)} />
+                          {canRecordInStore && selected.depositStatus === "Held" && String(selected.bookingStatus || "").toLowerCase() === "ongoing" && (
+                            <div className="border-t border-gray-100 mt-2 pt-3 space-y-1.5">
+                              <p className="text-xs text-gray-500">The booking is ongoing and the deposit is still held. Return it here once the vehicle has been dropped off — penalties are deducted first.</p>
+                              <button onClick={() => setReturnDepositOpen(true)}
+                                className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700">
+                                Return deposit
+                              </button>
+                            </div>
+                          )}
                         </Section>
                       )}
                     </div>
@@ -1433,7 +1443,7 @@ function penaltyState(p) {
   return { label: "Unpaid", color: "text-red-500" };
 }
 
-function PenaltyBreakdown({ penalties, payment, fmt }) {
+function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null }) {
   const list = Array.isArray(penalties) ? penalties : [];
   const hasDeposit = Number(payment?.securityDeposit) > 0;
   const live = list.filter((p) => p.status === "Confirmed");
@@ -1488,6 +1498,12 @@ function PenaltyBreakdown({ penalties, payment, fmt }) {
           </>
         )}
       </div>
+      {onNotePenalty && (
+        <button onClick={onNotePenalty}
+          className="mt-3 w-full py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">
+          + Note penalty
+        </button>
+      )}
     </Section>
   );
 }
