@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useLocation } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
-import { buildFlaggedParts } from "../utils/damagedParts";
+import { buildFlaggedParts, toMs } from "../utils/damagedParts";
 
 const API_URL = process.env.REACT_APP_API_URL;
 const PAGE_SIZE = 15;
@@ -389,12 +389,46 @@ export default function Maintenance() {
   useEffect(() => {
     const carID = searchParams.get("carID");
     const bookingID = searchParams.get("bookingID");
-    if (carID) {
+    // ?carPartID=... (Dashboard "Damaged Part" alert) is resolved by the effect below once the records have loaded.
+    if (carID && !searchParams.get("carPartID")) {
       setForm((f) => ({ ...f, carID, bookingID: bookingID || "", basis: bookingID ? "Post-Rental" : f.basis }));
       setShowAdd(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Arrived from a Dashboard "Damaged Part Detected" alert (?carID=...&carPartID=...).
+  //   1. A Scheduled job on that car already covers the part -> open the most recent one (by its date).
+  //   2. Otherwise -> open a new job for the car with just that part selected.
+  // Only Scheduled jobs count: a Completed job didn't fix it (or the part was flagged again since), and
+  // a Cancelled one isn't going to happen. Runs once, after the first load finishes.
+  const partLinkHandled = useRef(false);
+  useEffect(() => {
+    const carID = searchParams.get("carID");
+    const carPartID = searchParams.get("carPartID");
+    if (!carID || !carPartID || loading || partLinkHandled.current) return;
+    partLinkHandled.current = true;
+
+    const existing = records
+      .filter((r) => r.carID === carID && r.status === "Scheduled" && (r.partsAddressed || []).some((p) => p?.carPartID === carPartID))
+      .sort((a, b) => toMs(b.maintenanceDate) - toMs(a.maintenanceDate) || toMs(b.updatedAt) - toMs(a.updatedAt))[0];
+    if (existing) {
+      openView(existing);
+      showToast("This part is already on a scheduled maintenance job.");
+      return;
+    }
+
+    const flagged = damagedParts.find((p) => p.carID === carID && p.carPartID === carPartID);
+    const entry = flagged
+      ? entryFromFlagged(flagged)
+      : { carPartID, carPartName: partNames[carPartID] || "Unknown Part", conditionBefore: "Damaged", conditionAfter: defaultAfter(), price: undefined, description: "" };
+    setForm({ ...EMPTY_FORM, carID, partsAddressed: [entry] });
+    setCustomName(""); setCustomPrice("");
+    setEditRecord(null);
+    setViewing(false);
+    setShowAdd(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, records, damagedParts]);
 
   // Arrived straight from a Return on Car Tracking (see confirmReturn
   // there) — tell staff why the form is open instead of silently landing

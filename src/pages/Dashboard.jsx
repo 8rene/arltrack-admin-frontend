@@ -642,7 +642,10 @@ export default function Dashboard() {
                 const isRefund   = isRequest && a.kind === "refundRequest";
                 const isCancel   = a.status === "cancellation_request";
                 const goTo = () => {
-                  if (isDamaged || isOverdueMaint) navigate(a.carID ? `/maintenance?carID=${a.carID}` : "/maintenance");
+                  // Damaged part: Maintenance opens the latest Scheduled job that already covers this part,
+                  // or a new job with this part pre-selected when there isn't one.
+                  if (isDamaged && a.carID && a.carPartID) navigate(`/maintenance?carID=${a.carID}&carPartID=${a.carPartID}`);
+                  else if (isDamaged || isOverdueMaint) navigate(a.carID ? `/maintenance?carID=${a.carID}` : "/maintenance");
                   else if (isLicense) navigate(`/users?role=${a.role}&tab=directory&open=${a.userID}`);
                   else if (isRefund) navigate("/refund-requests");
                   else if (isRequest) navigate(`/users?role=${a.role}&tab=${a.kind === "idResubmit" ? "documents" : "editRequests"}&open=${a.userID}`);
