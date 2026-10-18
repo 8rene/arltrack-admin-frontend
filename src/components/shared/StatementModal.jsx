@@ -131,12 +131,19 @@ export default function StatementModal({ bookingID, onClose }) {
 
         {s && (
           <div className="space-y-4" data-testid="statement">
-            <div className="text-center space-y-0.5">
-              <p className="text-lg font-bold text-gray-900">{s.business.name}</p>
-              {s.business.address && <p className="text-xs text-gray-500">{s.business.address}</p>}
-              {(s.business.phone || s.business.email) && <p className="text-xs text-gray-500">{[s.business.phone, s.business.email].filter(Boolean).join(" · ")}</p>}
-              <p className="pt-2 text-sm font-semibold tracking-wide uppercase text-gray-700">{s.title}</p>
-              <p className="text-xs text-gray-500">As of {fmtDate(s.asOf)}</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <img src={`${process.env.PUBLIC_URL || ""}/logo192.png`} alt="ARL Car Rental" className="h-14 w-14 shrink-0 object-contain" />
+                <div className="min-w-0 space-y-0.5">
+                  <p className="text-lg font-bold leading-tight text-gray-900">{s.business.name}</p>
+                  {s.business.address && <p className="text-xs text-gray-500">{s.business.address}</p>}
+                  {(s.business.phone || s.business.email) && <p className="text-xs text-gray-500">{[s.business.phone, s.business.email].filter(Boolean).join(" · ")}</p>}
+                </div>
+              </div>
+              <div className="border-t border-gray-200 pt-2 text-center">
+                <p className="text-sm font-semibold tracking-wide uppercase text-gray-700">{s.title}</p>
+                <p className="text-xs text-gray-500">As of {fmtDate(s.asOf)}</p>
+              </div>
             </div>
 
             <div className="border-t border-dashed border-gray-300 pt-3">

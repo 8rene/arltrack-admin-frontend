@@ -108,11 +108,16 @@ export default function ReceiptModal({ entryID, onClose }) {
               <p className="absolute top-4 right-4 rotate-6 border-2 border-gray-400 text-gray-400 text-xs font-bold tracking-widest px-2 py-0.5 rounded">COPY</p>
             )}
 
-            <div className="text-center space-y-0.5">
-              <p className="text-lg font-bold text-gray-900">{r.business.name}</p>
-              {r.business.address && <p className="text-xs text-gray-500">{r.business.address}</p>}
-              {(r.business.phone || r.business.email) && <p className="text-xs text-gray-500">{[r.business.phone, r.business.email].filter(Boolean).join(" · ")}</p>}
-              <p className="pt-2 text-sm font-semibold tracking-wide uppercase text-gray-700">{r.title}</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <img src={`${process.env.PUBLIC_URL || ""}/logo192.png`} alt="ARL Car Rental" className="h-14 w-14 shrink-0 object-contain" />
+                <div className="min-w-0 space-y-0.5">
+                  <p className="text-lg font-bold leading-tight text-gray-900">{r.business.name}</p>
+                  {r.business.address && <p className="text-xs text-gray-500">{r.business.address}</p>}
+                  {(r.business.phone || r.business.email) && <p className="text-xs text-gray-500">{[r.business.phone, r.business.email].filter(Boolean).join(" · ")}</p>}
+                </div>
+              </div>
+              <p className="border-t border-gray-200 pt-2 text-center text-sm font-semibold tracking-wide uppercase text-gray-700">{r.title}</p>
             </div>
 
             <div className="border-t border-dashed border-gray-300 pt-3">

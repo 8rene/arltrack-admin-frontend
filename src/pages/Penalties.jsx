@@ -310,7 +310,7 @@ function DepositNotice({ deposit, amount = 0, acknowledged = false, onAcknowledg
       </div>
       {amt > 0 && (
         <p className="text-amber-700">
-          {peso(deducted)} will be deducted from the deposit when it's returned
+          {peso(deducted)} is deducted from the deposit right away and this penalty is marked Paid
           {online > 0 ? `; the other ${peso(online)} is more than the deposit has left, so the customer will be asked to pay that online.` : "."}
         </p>
       )}
@@ -813,6 +813,8 @@ function BookingPenaltiesModal({ bookingID, penalties, canAdd, onClose, onViewPe
   const paid = live.reduce((n, p) => n + Math.min(p.paidAmount || 0, p.amount || 0), 0);
   const inReview = list.filter((p) => p.status === "UnderReview");
   const reviewAmount = inReview.reduce((n, p) => n + (p.amount || 0), 0);
+  const voidedAmount = list.filter((p) => p.status === "Voided").reduce((n, p) => n + (p.amount || 0), 0);
+  const waivedAmount = list.filter((p) => p.status === "Waived").reduce((n, p) => n + (p.amount || 0), 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -847,6 +849,16 @@ function BookingPenaltiesModal({ bookingID, penalties, canAdd, onClose, onViewPe
           </div>
           {reviewAmount > 0 && (
             <p className="text-amber-700 pt-1">+ {fmt(reviewAmount)} still under review — not counted until a supervisor confirms it.</p>
+          )}
+          {(voidedAmount > 0 || waivedAmount > 0) && (
+            <div className="border-t border-gray-100 pt-1 space-y-1">
+              {voidedAmount > 0 && (
+                <div className="flex justify-between"><span className="text-gray-500">Voided</span><span className="font-semibold text-gray-400 line-through">{fmt(voidedAmount)}</span></div>
+              )}
+              {waivedAmount > 0 && (
+                <div className="flex justify-between"><span className="text-gray-500">Waived</span><span className="font-semibold text-purple-600">{fmt(waivedAmount)}</span></div>
+              )}
+            </div>
           )}
         </div>
 
