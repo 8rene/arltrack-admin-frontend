@@ -886,13 +886,14 @@ export default function CarTracking() {
     await fetchBookings();
   };
 
-  const settleDepositNow = async ({ method, referenceNumber }) => {
+  const settleDepositNow = async ({ method, referenceNumber, online }) => {
     const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/settle-deposit`, {
-      method: "PATCH", headers: authHeaders, body: JSON.stringify({ method, referenceNumber }),
+      method: "PATCH", headers: authHeaders, body: JSON.stringify({ method, referenceNumber, online: online === true }),
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.message || "Couldn't settle the deposit.");
     await fetchBookings();
+    return json.data;   // the modal reads data.online to say whether PayMongo took the refund
   };
 
   const confirmReturn = async () => {

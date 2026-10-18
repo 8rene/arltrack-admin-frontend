@@ -15,7 +15,8 @@ const REFUND_METHODS = ["Cash", "GCash", "Maya", "BankTransfer"];
  * Shared by Car Tracking (supervisor) and My Trips (driver); the caller
  * supplies the data/actions so each uses its own endpoints:
  *   loadChecklist()        -> checklist data (see getReturnChecklist)
- *   onSettleDeposit({method, referenceNumber}) -> settles the deposit (throw on error)
+ *   onSettleDeposit({method, referenceNumber, online}) -> settles the deposit (throw on error). Resolves with the
+ *                          server's result; result.online.state is "processing" | "failed" when it went through PayMongo.
  *   onConfirmReturn()      -> completes the return (throw on error)
  *   onNotePenalty()        -> optional, opens the caller's penalty flow
  *   onMarkDroppedOff()     -> optional, lets them mark dropped off from here
@@ -32,6 +33,8 @@ export default function ReturnChecklistModal({
   const [busy, setBusy] = useState(false);
   const [refundMethod, setRefundMethod] = useState(REFUND_METHODS[0]);
   const [refundRef, setRefundRef] = useState("");
+  const [returnMode, setReturnMode] = useState("store");   // "store" = hand it back in person, "online" = refund through PayMongo
+  const [notice, setNotice] = useState(null);              // { type: "info" | "warn", text } -- survives the refresh after settling
   const [showPenalties, setShowPenalties] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -44,7 +47,7 @@ export default function ReturnChecklistModal({
 
   useEffect(() => {
     if (open) refresh();
-    else { setData(null); setShowPenalties(false); }
+    else { setData(null); setShowPenalties(false); setReturnMode("store"); setNotice(null); }
   }, [open, refresh]);
 
   if (!open) return null;
@@ -60,6 +63,25 @@ export default function ReturnChecklistModal({
   const item = (key) => data?.items?.find((i) => i.key === key);
   const refundDue = (data?.amountToReturn ?? 0) > 0;
   const owes = (data?.amountToReturn ?? 0) < 0;
+  const onlineOpt = data?.onlineReturn || null;                 // { available, channel?, reason? } from the server
+  const canOnline = refundDue && !!onlineOpt?.available;
+  const goOnline = canOnline && returnMode === "online";
+  const channelName = onlineOpt?.channel === "paymaya" ? "Maya" : onlineOpt?.channel === "gcash" ? "GCash" : "their e-wallet";
+
+  const settle = () => run(async () => {
+    const result = await onSettleDeposit({
+      online: goOnline,
+      method: refundDue && !goOnline ? refundMethod : undefined,
+      referenceNumber: goOnline ? "" : refundRef.trim(),
+    });
+    const o = result?.online;
+    if (o?.state === "failed") {
+      setNotice({ type: "warn", text: `Deposit settled, but PayMongo refused the refund${o.error ? ` (${o.error})` : ""}. Retry it or hand it back in store from the Refunds page.` });
+    } else if (o?.state === "processing") {
+      setNotice({ type: "info", text: `Deposit settled. PayMongo is returning ${peso(result.net)} to the customer's ${channelName}. This can take up to 24 hours; track it on the Refunds page under Under Process.` });
+    }
+    await refresh();
+  });
 
   // Portaled to <body> so no parent stacking context (animated wrappers, the
   // Leaflet map cards with z-[1000] overlays, etc.) can ever cover the modal.
@@ -77,6 +99,9 @@ export default function ReturnChecklistModal({
 
         {loading && !data && <p className="text-sm text-gray-400">Checking…</p>}
         {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
+        {notice && (
+          <p className={`text-xs rounded-lg px-3 py-2 border ${notice.type === "warn" ? "text-amber-800 bg-amber-50 border-amber-200" : "text-blue-800 bg-blue-50 border-blue-200"}`}>{notice.text}</p>
+        )}
 
         {data && (
           <>
@@ -168,11 +193,29 @@ export default function ReturnChecklistModal({
                   </p>
                 )}
                 <p className="text-[11px] text-gray-500">
-                  {refundDue ? `Hand ${peso(data.amountToReturn)} back to the customer, after deducting penalties.`
+                  {refundDue ? `${goOnline ? "Refund" : "Hand"} ${peso(data.amountToReturn)} ${goOnline ? "to the customer online" : "back to the customer"}, after deducting penalties.`
                     : owes ? `Penalties use the whole deposit; ${peso(Math.abs(data.amountToReturn))} is still owed.`
                     : "Penalties use the whole deposit — nothing to hand back."}
                 </p>
-                {refundDue && (
+                {canOnline && (
+                  <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="How to return the deposit">
+                    {[{ k: "store", t: "Hand back in store" }, { k: "online", t: `Refund online (${channelName})` }].map((o) => (
+                      <button key={o.k} type="button" role="radio" aria-checked={returnMode === o.k} onClick={() => setReturnMode(o.k)}
+                        className={`px-2 py-2 rounded-lg border text-xs font-semibold ${returnMode === o.k ? "border-teal-600 bg-teal-50 text-teal-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                        {o.t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {refundDue && !canOnline && onlineOpt?.reason && (
+                  <p className="text-[11px] text-gray-400">Online refund isn't available: {onlineOpt.reason}</p>
+                )}
+                {goOnline && (
+                  <p className="text-[11px] text-gray-500">
+                    PayMongo sends it back to the customer's {channelName}, taken from your PayMongo payout balance. It can take up to 24 hours and will show on the Refunds page until it is confirmed.
+                  </p>
+                )}
+                {refundDue && !goOnline && (
                   <>
                     <select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}
                       className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm">
@@ -183,9 +226,9 @@ export default function ReturnChecklistModal({
                   </>
                 )}
                 <button disabled={busy || !data.canSettle}
-                  onClick={() => run(async () => { await onSettleDeposit({ method: refundDue ? refundMethod : undefined, referenceNumber: refundRef.trim() }); await refresh(); })}
+                  onClick={settle}
                   className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40">
-                  {refundDue ? "Confirm deposit returned" : "Confirm settlement"}
+                  {busy ? "…" : goOnline ? `Refund ${peso(data.amountToReturn)} online` : refundDue ? "Confirm deposit returned" : "Confirm settlement"}
                 </button>
               </div>
             )}

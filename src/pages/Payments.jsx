@@ -402,16 +402,23 @@ export default function Payments() {
     return json.data;
   }, [selected, token]);
 
-  const settleDepositFromPayments = async ({ method, referenceNumber }) => {
+  const settleDepositFromPayments = async ({ method, referenceNumber, online }) => {
     const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(selected.bookingID)}/settle-deposit`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ method, referenceNumber }),
+      body: JSON.stringify({ method, referenceNumber, online: online === true }),
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.message || "Couldn't settle the deposit.");
-    showToast("Deposit settled.", "success");
+    const o = json.data?.online;
+    showToast(
+      o?.state === "failed" ? "Deposit settled, but PayMongo refused the refund. See the Refunds page."
+        : o?.state === "processing" ? "Deposit settled. PayMongo is returning it to the customer."
+        : "Deposit settled.",
+      o?.state === "failed" ? "error" : "success"
+    );
     fetchPayments(true);
+    return json.data;
   };
 
   const updateStatus = async (id, status) => {

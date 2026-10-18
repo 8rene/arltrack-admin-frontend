@@ -153,7 +153,10 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
 //                    a person. Refund requests AND discount refunds both live here: both wait on PayMongo.
 //   History          finished: refunded or rejected
 const DISCOUNT_STATES = { processing: "paymongo", awaiting_handback: "handback", failed: "failed", refunded: "done" };
-const isDiscount = (r) => !!r && r.kind === "discount";
+// "Discount" rows and "deposit return" rows are both money that went (or is going) back through PayMongo and carry a
+// `refund` object, so every place that handles `isDiscount` handles both. isDeposit tells them apart for wording and actions.
+const isDeposit  = (r) => !!r && r.kind === "deposit";
+const isDiscount = (r) => !!r && (r.kind === "discount" || r.kind === "deposit");
 // Which tab an item belongs to.
 const tabOf = (r) => {
   if (isDiscount(r)) return r.refund.state === "refunded" ? "history" : "processing";
@@ -184,6 +187,9 @@ const chipMatches = (tab, chip, r) => {
 // A discount refund shaped like a request row, so the table, search, sort and tabs treat both the same way.
 const toDiscountItem = (d) => ({ ...d, kind: "discount", refundRequestID: `discount_${d.paymentID}`, amount: d.refund.amount, createdAt: d.discountAt, updatedAt: d.refund.at, status: d.refund.state });
 
+// A security-deposit return sent through PayMongo, shaped the same way.
+const toDepositItem = (d) => ({ ...d, kind: "deposit", refundRequestID: `deposit_${d.paymentID}`, amount: d.refund.amount, discountAmount: 0, updatedAt: d.refund.at, status: d.refund.state });
+
 // A discount that sent money back, as a row. Same columns and the same stages as a refund request, so the two read alike.
 const DISCOUNT_BADGE = {
   processing:        { label: "Waiting for PayMongo",  dot: "bg-blue-500",   bg: "bg-blue-50 border border-blue-200" },
@@ -211,6 +217,7 @@ const policyOf = (r) => {
 const TIER_LABEL = { full: "Full refund", late: "Under 48h", no_show: "No-show" };
 
 function TypeBadge({ r }) {
+  if (isDeposit(r)) return <span className="inline-block rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700">Deposit return</span>;
   if (isDiscount(r)) return <span className="inline-block rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">Discount</span>;
   const { tier } = policyOf(r);
   if (!tier) return <span className="inline-block rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-semibold text-gray-600">{r.source === "staff" ? "Staff cancel" : "Refund"}</span>;
@@ -263,7 +270,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4 border-b border-gray-100">
           <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{disc ? "Discount refund" : "Refund request"}</p>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{isDeposit(r) ? "Deposit return" : disc ? "Discount refund" : "Refund request"}</p>
             <h3 className="font-bold text-arl-dark text-lg truncate">{r.customerName || "—"}</h3>
             <div className="mt-1.5">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</div>
           </div>
@@ -280,18 +287,19 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             <Line label="Requested">{stampText(toDate(r.createdAt))}</Line>
             <Line label="Updated">{stampText(updatedOf(r))}</Line>
             {w && <Line label="Waiting"><span className={w.late ? "font-semibold text-amber-600" : ""}>{w.text}{w.late ? " — worth checking" : ""}</span></Line>}
-            <Line label={disc ? "Discount reason" : "Reason"}>{disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
+            <Line label={isDeposit(r) ? "Reason" : disc ? "Discount reason" : "Reason"}>{isDeposit(r) ? "Security deposit returned after the trip" : disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
             {!disc && r.notes && <Line label="Notes">{r.notes}</Line>}
             {!disc && r.status === "Rejected" && r.rejectReason && <Line label="Rejected because"><span className="text-red-600">{r.rejectReason}</span></Line>}
           </Block>
 
           {disc ? (
-            <Block title="Discount">
-              <Line label="Discount given">{fmt(r.discountAmount)}</Line>
-              <Line label="Sent back to customer">{fmt(r.refund.amount)} {r.refund.via === "in_store" ? "in store" : "via PayMongo"}</Line>
+            <Block title={isDeposit(r) ? "Deposit return" : "Discount"}>
+              {!isDeposit(r) && <Line label="Discount given">{fmt(r.discountAmount)}</Line>}
+              <Line label={isDeposit(r) ? "Returned to customer" : "Sent back to customer"}>{fmt(r.refund.amount)} {r.refund.via === "in_store" ? "in store" : "via PayMongo"}</Line>
               {r.refund.referenceNumber && r.refund.via === "paymongo" && <Line label="PayMongo ref"><span className="font-mono text-xs">{r.refund.referenceNumber}</span></Line>}
               {r.refund.state === "failed" && <p className="text-xs text-red-600 mt-2">PayMongo could not complete this refund, so the customer has not received it.{r.refund.errorNote ? ` (${r.refund.errorNote})` : ""}</p>}
               {r.refund.state === "processing" && <p className="text-xs text-blue-700 mt-2">PayMongo is processing this refund. It can take up to 24 hours.</p>}
+              {isDeposit(r) && r.refund.state === "failed" && <p className="text-xs text-gray-500 mt-1">The deposit is already settled. Retry the PayMongo refund, or hand the money back in store and record it here. Check your PayMongo payout balance if it keeps failing.</p>}
               {r.refund.state === "awaiting_handback" && <p className="text-xs text-orange-700 mt-2">Paid in store, so it can't go through PayMongo. Return it in store, then record it on the payment.</p>}
             </Block>
           ) : (
@@ -389,6 +397,17 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               </>
             )}
             {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">Needs manual follow-up</span>}
+            {isDeposit(r) && r.refund.state === "failed" && (
+              <>
+                <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm">
+                  <option>Cash</option><option>GCash</option><option>Maya</option><option>Bank Transfer</option>
+                </select>
+                <button onClick={onHandback} disabled={busy || retrying} title="Confirm you handed the deposit back to the customer in store"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
+                  <IconCheck /> {busy ? "…" : `Handed back ${fmt(r.refund.amount)}`}
+                </button>
+              </>
+            )}
             {disc && r.refund.state === "failed" && (
               <button onClick={onRetry} disabled={retrying} className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
                 {retrying ? "…" : `Retry ${fmt(r.refund.amount)} refund`}
@@ -477,6 +496,7 @@ export default function RefundRequests() {
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
   const [tab, setTab]           = useState(null);          // null until the list loads, then the most useful tab (see below)
+  const [depositReturns, setDepositReturns] = useState([]);   // security deposits sent back through PayMongo
   const [discounts, setDiscounts] = useState([]);           // discount refunds (money a staff discount sent back)
   const [retryingId, setRetryingId] = useState(null);
   const [viewId, setViewId]   = useState(null);   // refundRequestID of the item open in the View modal
@@ -496,7 +516,7 @@ export default function RefundRequests() {
   const [handbackMethod, setHandbackMethod] = useState({});
   const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
   const [sortDir, setSortDir] = useState("asc");
-  const items = [...requests, ...discounts.map(toDiscountItem)];
+  const items = [...requests, ...discounts.map(toDiscountItem), ...depositReturns.map(toDepositItem)];
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -553,6 +573,12 @@ export default function RefundRequests() {
         const ddata = await dres.json();
         setDiscounts(dres.ok ? (ddata.data || []) : []);
       } catch { setDiscounts([]); }
+      // Deposit returns sent through PayMongo ride along the same way.
+      try {
+        const rres = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/deposit-returns`, { headers: { Authorization: `Bearer ${token}` } });
+        const rdata = await rres.json();
+        setDepositReturns(rres.ok ? (rdata.data || []) : []);
+      } catch { setDepositReturns([]); }
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }, [token]);
@@ -622,6 +648,41 @@ export default function RefundRequests() {
       fetchRequests();
     } catch (e) { showToast(e.message, "error"); }
     finally { setRetryingId(null); }
+  };
+
+  // A deposit return PayMongo refused: send it again (the failed attempt stays on record).
+  const retryDeposit = async (r) => {
+    setRetryingId(r.refundRequestID);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(r.bookingID)}/deposit-return/retry`, {
+        method: "PATCH", headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.message || "Could not retry the deposit return.");
+      showToast("Deposit return sent to PayMongo again.");
+      setViewId(null);
+      fetchRequests();
+    } catch (e) { showToast(e.message, "error"); fetchRequests(); }
+    finally { setRetryingId(null); }
+  };
+
+  // The online return failed: staff handed the deposit back in store and record it.
+  const handBackDeposit = async (r) => {
+    const id = r.refundRequestID;
+    setBusyId(id);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(r.bookingID)}/deposit-return/handback`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ method: handbackMethod[id] || "Cash" }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.message || "Could not record the hand-back.");
+      showToast("Deposit hand-back recorded.");
+      setViewId(null);
+      fetchRequests();
+    } catch (e) { showToast(e.message, "error"); fetchRequests(); }
+    finally { setBusyId(null); }
   };
 
   const submitReject = async () => {
@@ -711,11 +772,11 @@ export default function RefundRequests() {
             r={v} fmt={fmt} navigate={navigate} onClose={() => setViewId(null)}
             onApprove={() => startApprove(v)}
             onReject={() => { setRejectTarget(v); setRejectReason(""); }}
-            onHandback={() => markHandedBack(v)}
+            onHandback={() => (isDeposit(v) ? handBackDeposit(v) : markHandedBack(v))}
             handbackMethod={handbackMethod[v.refundRequestID]}
             setHandbackMethod={(m) => setHandbackMethod((x) => ({ ...x, [v.refundRequestID]: m }))}
             busy={busyId === v.refundRequestID}
-            onRetry={() => retryDiscount(v)} retrying={retryingId === v.refundRequestID}
+            onRetry={() => (isDeposit(v) ? retryDeposit(v) : retryDiscount(v))} retrying={retryingId === v.refundRequestID}
           />
         );
       })()}
@@ -913,8 +974,8 @@ export default function RefundRequests() {
                         ) : "—"}
                       </td>
                       <td className="px-5 py-4">
-                        <p className="text-gray-700 max-w-[240px] truncate" title={disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason)}>
-                          {disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}
+                        <p className="text-gray-700 max-w-[240px] truncate" title={isDeposit(r) ? "Security deposit return" : disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason)}>
+                          {isDeposit(r) ? "Security deposit return" : disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}
                         </p>
                       </td>
                       <td className="px-5 py-4 font-semibold text-arl-dark whitespace-nowrap">
