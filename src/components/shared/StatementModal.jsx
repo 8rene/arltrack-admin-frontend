@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useCurrency } from "../../context/CurrencyContext";
 
@@ -204,7 +204,12 @@ export default function StatementModal({ bookingID, onClose }) {
                     <Row label="Penalty total">{fmt(p.amount)}</Row>
                     {p.active ? (
                       <>
-                        {p.payments.map((l) => <Move key={l.id} l={{ ...l, label: "Paid" }} fmt={fmt} bold={false} />)}
+                        {p.payments.map((l) => (
+                          <React.Fragment key={l.id}>
+                            <Move l={{ ...l, label: "Paid" }} fmt={fmt} bold={false} />
+                            {Number(l.fee) > 0 && <Row label="Online payment fee">{fmt(l.fee)}</Row>}
+                          </React.Fragment>
+                        ))}
                         {p.coveredByDeposit > 0 && <Row label="Covered by security deposit">{fmt(p.coveredByDeposit)}</Row>}
                         <Row label="Still owed on this penalty" strong>{fmt(p.outstanding)}</Row>
                       </>
@@ -247,6 +252,7 @@ export default function StatementModal({ bookingID, onClose }) {
               {o.coveredByDeposit > 0 && <Row label="Covered by security deposit">{fmt(o.coveredByDeposit)}</Row>}
               {o.refunded > 0 && <Row label="Refunded to customer">{fmt(o.refunded)}</Row>}
               {o.depositReturned > 0 && <Row label="Security deposit returned">{fmt(o.depositReturned)}</Row>}
+              {o.onlineFees > 0 && <Row label="Online payment fees (not counted above)">{fmt(o.onlineFees)}</Row>}
               <div className="border-t border-blue-200 mt-1 pt-1">
                 <Row label="Net received">{fmt(o.netReceived)}</Row>
                 <div className="flex justify-between gap-4 pt-0.5">
