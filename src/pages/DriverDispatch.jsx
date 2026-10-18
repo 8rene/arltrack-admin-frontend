@@ -20,13 +20,6 @@ const IconClock = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-const IconPin = ({ className = "w-4 h-4" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s7-7.75 7-13a7 7 0 10-14 0c0 5.25 7 13 7 13z" />
-    <circle cx="12" cy="8" r="2.5" />
-  </svg>
-);
-
 const IconWarning = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path strokeLinecap="round" strokeLinejoin="round" d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
@@ -460,25 +453,27 @@ export default function DriverDispatch() {
                 <div key={b.id} id={`booking-${b.id}`} className={`border rounded-xl px-2.5 py-2 transition-all ${
                   assignForBooking?.bookingId === b.id ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200"
                 }`}>
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-arl-dark" title={b.customerName}>{b.customerName}</span>
-                    <span className="shrink-0 flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap">
-                      <IconClock className="w-3.5 h-3.5" /> {fmtDateTime(b.startDateTime)}
-                    </span>
-                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg bg-yellow-50 text-yellow-700 border border-yellow-200">
+                  {/* One fixed column per item (status | customer | pickup | driver | details), so every row
+                      lines up. Below sm there is no room for columns, so the items simply wrap. */}
+                  <div className="flex flex-wrap items-center gap-2 sm:grid sm:grid-cols-[84px_minmax(0,1fr)_150px_84px_28px] sm:gap-x-2">
+                    <span className="w-[84px] text-center text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg bg-yellow-50 text-yellow-700 border border-yellow-200">
                       Upcoming
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-arl-dark" title={b.customerName}>{b.customerName}</span>
+                    <span className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap tabular-nums">
+                      <IconClock className="w-3.5 h-3.5 shrink-0" /> {fmtDateTime(b.startDateTime)}
                     </span>
                     {/* Every row in this column is unassigned by definition —
                         spelled out explicitly rather than left implicit in
                         which section it's in, so it reads at a glance. */}
-                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200">
+                    <span className="w-[84px] text-center text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200">
                       No Driver
                     </span>
                     <button type="button"
                       onClick={() => setOpenCards((prev) => ({ ...prev, [b.id]: !isOpen }))}
                       aria-expanded={isOpen}
                       title={isOpen ? "Hide details" : "Show details"}
-                      className={`shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
+                      className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
                         isOpen ? "bg-gray-100 border-gray-300 text-arl-dark" : "border-gray-200 text-gray-500 hover:bg-gray-50"
                       }`}>
                       <IconDots className="w-4 h-4" />
@@ -490,9 +485,9 @@ export default function DriverDispatch() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 space-y-1.5">
                           <div className="text-xs text-gray-400">{b.vehicleName}</div>
-                          <div className="flex items-start gap-1 text-xs text-gray-500">
-                            <IconPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                            <span className="min-w-0 break-words">{b.location}</span>
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
+                            <span className="flex items-center gap-1"><IconClock className="w-3.5 h-3.5" /> Start: {fmtDateTime(b.startDateTime)}</span>
+                            <span className="flex items-center gap-1"><IconClock className="w-3.5 h-3.5" /> End: {fmtDateTime(b.endDateTime)}</span>
                           </div>
                         </div>
                         {/* Full booking record — Bookings.jsx opens straight to it via
@@ -690,14 +685,16 @@ export default function DriverDispatch() {
                         d.assignments.map((b) => (
                           <div key={b.id} className="flex items-start justify-between gap-2 bg-white border border-gray-200 rounded-lg p-2.5">
                             <div className="space-y-0.5">
-                              <div className="text-xs font-semibold text-arl-dark">{b.vehicleName} | {b.customerName}</div>
+                              <div className="flex items-center gap-1.5 text-xs font-semibold text-arl-dark">
+                                <span className={`shrink-0 w-[68px] text-center text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                                  b.status === "ongoing" ? "bg-green-50 text-green-700" : "bg-yellow-50 text-yellow-700"
+                                }`}>{b.status}</span>
+                                <span className="min-w-0">{b.vehicleName} | {b.customerName}</span>
+                              </div>
                               <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
                                 <span className="flex items-center gap-1"><IconClock className="w-3.5 h-3.5" /> Start: {fmtDateTime(b.startDateTime)}</span>
                                 <span className="flex items-center gap-1"><IconClock className="w-3.5 h-3.5" /> End: {fmtDateTime(b.endDateTime)}</span>
                               </div>
-                              <span className={`inline-block text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
-                                b.status === "ongoing" ? "bg-green-50 text-green-700" : "bg-yellow-50 text-yellow-700"
-                              }`}>{b.status}</span>
                             </div>
                             <div className="shrink-0 flex flex-col items-end gap-1.5">
                               <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(b.id)}`)}
