@@ -294,6 +294,28 @@ const ViaBadge = ({ r }) => {
   return v ? <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${v.cls}`}>{v.label}</span> : <span className="text-gray-300">—</span>;
 };
 
+// HOW THE CUSTOMER PAID (the backend sends r.paidWith = { deposit, balance } for requests still being worked on).
+// QR Ph is highlighted: PayMongo's refund API refuses it, so it can only be handed back in person.
+const PAID_WITH_LABEL = { gcash: "GCash", maya: "Maya", qrph: "QR Ph", cash: "Cash", bank_transfer: "Bank transfer" };
+const paidWithList = (r) => {
+  const pw = r && r.paidWith;
+  if (!pw) return [];
+  return [...new Set([pw.deposit, pw.balance].filter(Boolean))];
+};
+const paidWithLabel = (code) => PAID_WITH_LABEL[code] || String(code);
+const PaidWithBadge = ({ r }) => {
+  const list = paidWithList(r);
+  if (!list.length) return <span className="text-gray-300">—</span>;
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {list.map((c) => (
+        <span key={c} className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${c === "qrph" ? "border-orange-200 bg-orange-50 text-orange-700" : "border-gray-200 bg-gray-50 text-gray-600"}`}>{paidWithLabel(c)}</span>
+      ))}
+    </span>
+  );
+};
+const QRPH_NOTE = "QR Ph can't be refunded through PayMongo. Approving moves this to Under Process: hand the money back in person, then record the hand-back.";
+
 // "Oct 17, 2026 | 3:45 PM" — date and time in one cell, split by a pipe.
 const stampText = (d) => { const p = stampParts(d); return p ? `${p.date} | ${p.time}` : "—"; };
 const Stamp = ({ date }) => {
@@ -388,6 +410,10 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
 
               {(pv || (Array.isArray(r.parts) && r.parts.length > 0) || r.manualRefund || Number(r.unrefundableAmount) > 0) && (
                 <Block title="Where the money goes">
+                  {paidWithList(r).length > 0 && <Line label="Paid with"><PaidWithBadge r={r} /></Line>}
+                  {((pv && Number(pv.qrphAmount) > 0) || (r.status === "Approved" && paidWithList(r).includes("qrph"))) && (
+                    <p className="text-[11px] text-orange-700 mb-1">{QRPH_NOTE}</p>
+                  )}
                   {pv && (
                     <>
                       <Line label="Customer paid">{fmt(pv.bookingPaid ?? pv.grossPaid)}</Line>
@@ -875,6 +901,11 @@ export default function RefundRequests() {
                 <div className="flex justify-between text-amber-700"><span>Deposit kept (48-hour policy)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.forfeit)}</span></div>
                 <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(waiveForfeit ? pv.grossPaid : pv.total)}</span></div>
               </div>
+              {Number(pv.qrphAmount) > 0 && (
+                <p className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-800">
+                  {QRPH_NOTE} The customer is notified that our staff will hand it back in person.
+                </p>
+              )}
               <p className="text-[11px] text-gray-400">The timing is judged by when the customer sent the request, not by when you approve it.</p>
               <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
                 <input type="checkbox" className="mt-0.5" checked={waiveForfeit} onChange={(e) => setWaiveForfeit(e.target.checked)} />
@@ -1047,10 +1078,11 @@ export default function RefundRequests() {
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
                   <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <th className="px-5 py-3 font-semibold">Booking</th>
+                  {tabKey !== "processing" && <th className="px-5 py-3 font-semibold">Booking</th>}
                   <th className="px-5 py-3 font-semibold">Reason</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Type</th>
+                  <th className="px-5 py-3 font-semibold">Paid with</th>
                   <th className="px-5 py-3 font-semibold">Via</th>
                   <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Status</th>
@@ -1064,12 +1096,14 @@ export default function RefundRequests() {
                     <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                       <td className="px-5 py-4"><Stamp date={toDate(r.createdAt)} /></td>
                       <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
-                      <td className="px-5 py-4">
-                        {r.bookingID ? (
-                          <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
-                            className="font-medium text-teal-600 hover:text-teal-700 hover:underline" title="Open this booking">{r.bookingID}</button>
-                        ) : "—"}
-                      </td>
+                      {tabKey !== "processing" && (
+                        <td className="px-5 py-4">
+                          {r.bookingID ? (
+                            <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
+                              className="font-medium text-teal-600 hover:text-teal-700 hover:underline" title="Open this booking">{r.bookingID}</button>
+                          ) : "—"}
+                        </td>
+                      )}
                       <td className="px-5 py-4">
                         <p className="text-gray-700 max-w-[240px] truncate" title={isDeposit(r) ? "Security deposit return" : disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason)}>
                           {isDeposit(r) ? "Security deposit return" : disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}
@@ -1079,6 +1113,7 @@ export default function RefundRequests() {
                         {fmt(disc ? r.refund.amount : (r.planPreview ? r.planPreview.total : r.amount))}
                       </td>
                       <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /></td>
+                      <td className="px-5 py-4"><PaidWithBadge r={r} /></td>
                       <td className="px-5 py-4 whitespace-nowrap"><ViaBadge r={r} /></td>
                       <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>
                       <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
