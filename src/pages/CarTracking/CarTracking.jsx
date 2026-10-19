@@ -395,6 +395,9 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
                   {(data.depositDeducted || 0) > 0 && (
                     <CbRow label="Used for penalties" tone="text-red-600">− {cbPeso(data.depositDeducted)}</CbRow>
                   )}
+                  {(data.discountCredit || 0) > 0 && (
+                    <CbRow label="Discount credit (returns with the deposit)" tone="text-green-700">+ {cbPeso(data.discountCredit)}</CbRow>
+                  )}
 
                   {held && (
                     <>

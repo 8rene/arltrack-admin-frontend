@@ -76,6 +76,8 @@ const ROUTE_BY_COLLECTION = {
   // requester themself, not staff) — nothing to deep-link into beyond
   // their own Account page.
   account: "/account",
+  // "Terms & Conditions Updated" — sent to every user when a new version is published.
+  terms: "/terms",
 };
 
 const META_BY_TYPE = {
@@ -108,6 +110,8 @@ const META_BY_TYPE = {
   profile_edit_rejected: { bg: "bg-red-100",   emoji: "❌", title: "Profile Update" },
   id_resubmit_approved:  { bg: "bg-green-100", emoji: "✅", title: "Document/License Update" },
   id_resubmit_rejected:  { bg: "bg-red-100",   emoji: "❌", title: "Document/License Update" },
+  // Sent to every user when an Owner/Admin publishes a new Terms & Conditions version.
+  terms_updated:         { bg: "bg-blue-100",  emoji: "📄", title: "Terms & Conditions Updated" },
 };
 
 /* ── Notification Row ── */
@@ -328,6 +332,10 @@ export default function Header({ title = "Dashboard" }) {
     // exact trip when the notification points at a booking). An unassigned
     // trip is no longer in their list, so just open the page.
     if (user?.role === "Driver") {
+      if (n.type === "terms_updated") {
+        navigate("/terms");
+        return;
+      }
       if (n.type === "license_expired" || n.type === "license_expiring" || n.refCollection === "account" || n.refCollection === "user") {
         navigate("/account");
       } else if (n.refCollection === "bookings" && n.refID && n.type !== "driver_unassigned" && n.type !== "booking_cancelled") {

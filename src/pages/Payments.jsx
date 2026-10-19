@@ -266,7 +266,8 @@ export default function Payments() {
   const [applyingDiscount, setApplyingDiscount] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
   const [discountReasonInput, setDiscountReasonInput] = useState("");
-  // The discount is given ONCE and can't be edited afterwards, so it goes through an "are you sure?" first.
+  // A discount can't be edited or taken back once given (a discount that was too small is fixed by giving another),
+  // so it goes through an "are you sure?" first.
   const [confirmDiscount, setConfirmDiscount] = useState(false);
   const [notifying, setNotifying] = useState(false);
   // In-store receipts (Supervisor / Admin / Owner): payment mode + reference number on record.
@@ -438,13 +439,16 @@ export default function Payments() {
     finally { setUpdating(false); }
   };
 
-  // How much a discount can be at most: the remaining balance while the payment is partial,
-  // otherwise what the customer has paid (capped at the total fee). The server enforces the same rule.
-  const discountMax = (p) => (p.balance > 0 ? p.balance : Math.min(p.totalFee || 0, p.amountPaid || 0));
+  // How much MORE discount can be given right now. The server works it out (the remaining balance while the payment is
+  // partial; otherwise what the customer paid, less the discounts already given) and enforces the same rule.
+  const discountMax = (p) => (typeof p.discountMax === "number" ? p.discountMax : (p.balance > 0 ? p.balance : Math.min(p.totalFee || 0, p.amountPaid || 0)));
+  // Where the next discount would go: "balance" (still partial: comes off what is owed) or "credit" (fully paid: held
+  // for the customer and returned with the security deposit).
+  const discountKindOf = (p) => p.discountKind || (p.balance > 0 ? "balance" : "credit");
 
-  // One discount per booking: no editing, no re-sending. Partial payment -> comes off the remaining
-  // balance. Fully paid -> PayMongo refunds it. The drawer re-opens afterwards so the new balance and
-  // the refund line show straight away.
+  // More than one discount can be given. Partial payment -> comes off the remaining balance. Fully paid -> it is held
+  // for the customer and goes back with the security deposit (nothing is refunded now). The drawer re-opens afterwards
+  // so the new balance and the discount card show straight away.
   const submitDiscount = async () => {
     if (!selected) return;
     const amount = Number(discountInput);
@@ -458,11 +462,10 @@ export default function Payments() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      const how = data.data?.refundedVia;
       showToast(
-        how === "paymongo" ? "Discount given — PayMongo is processing the refund (can take up to 24 hours)."
-        : how === "in_store" ? "Discount given — return the amount in store, then record it here."
-        : "Discount given — deducted from the remaining balance."
+        data.data?.kind === "credit"
+          ? "Discount given — held for the customer and returned with the security deposit after the trip."
+          : "Discount given — deducted from the remaining balance."
       );
       await openDetail(selected.id);
       await fetchPayments(true);
@@ -470,7 +473,7 @@ export default function Payments() {
     finally { setApplyingDiscount(false); setConfirmDiscount(false); }
   };
 
-  // Checks first, then asks "are you sure?" -- the discount can't be changed once it's given.
+  // Checks first, then asks "are you sure?" -- a discount can't be changed once it's given.
   const handleApplyDiscount = () => {
     if (!selected) return;
     const amount = Number(discountInput);
@@ -801,9 +804,16 @@ export default function Payments() {
                           <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
                           {selected.discountAmount > 0 ? (
                             <>
-                              <Row label="Discount Given" value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
-                              {selected.discountReason && <Row label="Discount Reason" value={selected.discountReason} />}
-                              {selected.discountAt && <Row label="Discount Given On" value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
+                              {(() => {
+                                const several = (selected.discount?.events || []).filter((e) => e.kind === "balance" || e.kind === "credit").length > 1;
+                                return (
+                                  <>
+                                    <Row label={several ? "Discounts Given (total)" : "Discount Given"} value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
+                                    {selected.discountReason && <Row label={several ? "Latest Discount Reason" : "Discount Reason"} value={selected.discountReason} />}
+                                    {selected.discountAt && <Row label={several ? "Latest Discount Given On" : "Discount Given On"} value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
+                                  </>
+                                );
+                              })()}
                             </>
                           ) : (
                             <Row label="Discount Given" value={peso(0, fmtCurrency)} color="text-gray-400" />
@@ -916,15 +926,20 @@ export default function Payments() {
                 {/* sticky footer: Give Discount + Close stay put while the rest scrolls */}
                 <div className="shrink-0 border-t bg-white px-6 py-4 rounded-b-2xl space-y-3">
                   {(() => {
-                    const canGiveDiscount =
-                      !(selected.discountAmount > 0) && selected.status === "Approved" && !selected.refundRequestID &&
+                    // More than one discount is allowed (the server caps all of them together). It is hidden when the server
+                    // says none can be given: a legacy discount, a settled deposit, or nothing left to discount.
+                    const stageOk = selected.status === "Approved" && !selected.refundRequestID &&
                       !["For Refund", "Refunded", "Cancelled"].includes(stageOf(selected));
+                    const canGiveDiscount = stageOk && !selected.discountBlocked && discountMax(selected) > 0;
+                    if (stageOk && selected.discountBlocked && !(selected.discountAmount > 0)) {
+                      return <p className="text-[11px] text-gray-400">{selected.discountBlocked}</p>;
+                    }
                     // An open refund request (shown in "Money Back to Customer" above) means no new discount.
                     if (selected.refundRequestID) return null;
                     if (!canGiveDiscount) return null;
                     return (
                       <div className="space-y-2">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Give Discount</p>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{selected.discountAmount > 0 ? "Give Another Discount" : "Give Discount"}</p>
                         <div className="flex items-center gap-2">
                           <div className="relative w-28 shrink-0">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
@@ -950,13 +965,13 @@ export default function Payments() {
                           </button>
                         </div>
                         {Number(discountInput) > discountMax(selected) ? (
-                          <p className="text-xs text-red-500">The discount can't be more than {peso(discountMax(selected), fmtCurrency)}.</p>
+                          <p className="text-xs text-red-500">The discount can't be more than {peso(discountMax(selected), fmtCurrency)}{selected.discountAmount > 0 ? " more" : ""}.</p>
                         ) : (
                           <p className="text-[11px] text-gray-400">
-                            {selected.balance > 0
-                              ? `Comes off the remaining balance (up to ${peso(selected.balance, fmtCurrency)}).`
-                              : `Payment is complete, so PayMongo refunds it to the customer (up to ${peso(discountMax(selected), fmtCurrency)}).`}
-                            {" "}One discount only — you'll confirm first.
+                            {discountKindOf(selected) === "balance"
+                              ? `Comes off the remaining balance (up to ${peso(discountMax(selected), fmtCurrency)}).`
+                              : `Payment is complete, so it is held for the customer and returned with the security deposit after the trip (up to ${peso(discountMax(selected), fmtCurrency)} more). Nothing is refunded now.`}
+                            {" "}You'll confirm first.
                           </p>
                         )}
                       </div>
@@ -970,26 +985,27 @@ export default function Payments() {
         </div>
       )}
 
-      {/* Confirm the one-time discount. There is no editing or re-sending afterwards, and on a fully paid
-          booking the refund goes out through PayMongo straight away, so this restates exactly what will happen. */}
+      {/* Confirm the discount. There is no editing afterwards, so this restates exactly what will happen: off the balance
+          on a partial payment, otherwise held for the customer and returned with the security deposit. */}
       {confirmDiscount && selected && (
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
             <div>
               <h3 className="font-bold text-arl-dark text-lg">Give this discount?</h3>
               <p className="text-sm text-gray-600 mt-2">
-                {selected.balance > 0 ? (
+                {discountKindOf(selected) === "balance" ? (
                   <>
                     <span className="font-semibold">{peso(Number(discountInput) || 0, fmtCurrency)}</span> will be deducted from the remaining balance
                     ({peso(selected.balance, fmtCurrency)} → {peso(Math.max(0, selected.balance - (Number(discountInput) || 0)), fmtCurrency)}).
                   </>
                 ) : (
                   <>
-                    <span className="font-semibold">{peso(Number(discountInput) || 0, fmtCurrency)}</span> will be refunded to the customer through PayMongo.
+                    <span className="font-semibold">{peso(Number(discountInput) || 0, fmtCurrency)}</span> will be held for the customer, since they have already paid in full.
+                    It is returned together with the security deposit after the trip. Nothing is refunded now.
                   </>
                 )}
               </p>
-              <p className="text-xs text-red-500 mt-2">A discount can only be given once. After you confirm, it can't be edited, corrected or given again.</p>
+              <p className="text-xs text-red-500 mt-2">After you confirm, this discount can't be edited or taken back. If it turns out too small, you can give another.</p>
             </div>
             <div className="flex gap-3">
               <button onClick={() => setConfirmDiscount(false)} disabled={applyingDiscount}
@@ -1198,40 +1214,59 @@ function StatCard({ icon, value, label, color, onClick, active }) {
 
 // A flat block of the detail modal: a heading, then its rows, separated from the previous block by a hairline
 // (no grey boxes). `action` is an optional link / button shown at the right of the heading.
-// ─── DISCOUNT REFUND (shared vocabulary with the Refund Requests page) ───────────────────────────────────────
-// A discount given on a fully paid booking is money going back to the customer, and PayMongo takes time to confirm it
-// (up to ~24h), exactly like an approved refund request. These are the same stages, so staff read both the same way.
+// ─── DISCOUNT (shared vocabulary with the Refund Requests page) ──────────────────────────────────────────────
+// A discount given on a fully paid booking is HELD for the customer and goes back with the security deposit; PayMongo then
+// takes time to confirm that payout (up to ~24h), exactly like an approved refund request. A LEGACY discount (given before
+// this) was refunded on the spot, with the same stages. Staff read them all the same way.
 const DISCOUNT_REFUND_STAGE = {
   processing:        { label: "Waiting for PayMongo",  dot: "bg-blue-500",   box: "border-blue-200 bg-blue-50",     text: "text-blue-800" },
   awaiting_handback: { label: "Waiting for hand-back", dot: "bg-orange-500", box: "border-orange-200 bg-orange-50", text: "text-orange-800" },
   failed:            { label: "Refund failed",         dot: "bg-red-500",    box: "border-red-200 bg-red-50",       text: "text-red-800" },
   refunded:          { label: "Refunded",              dot: "bg-green-500",  box: "border-green-200 bg-green-50",   text: "text-green-800" },
   deducted:          { label: "Taken off the balance", dot: "bg-gray-400",   box: "border-gray-200 bg-gray-50",     text: "text-gray-700" },
+  held:              { label: "Held for customer",     dot: "bg-purple-500", box: "border-purple-200 bg-purple-50", text: "text-purple-800" },
+  returned:          { label: "Returned with deposit", dot: "bg-green-500",  box: "border-green-200 bg-green-50",   text: "text-green-800" },
 };
 
 // Only the states that need someone's attention get a badge in the table; settled ones stay quiet.
 function DiscountRefundBadge({ state }) {
-  if (!["processing", "awaiting_handback", "failed"].includes(state)) return null;
+  if (!["processing", "awaiting_handback", "failed", "held"].includes(state)) return null;
   const st = DISCOUNT_REFUND_STAGE[state];
   return (
     <span className="flex items-center gap-1 text-[10px] font-semibold text-gray-700 whitespace-nowrap">
       <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
-      {state === "processing" ? "Refund processing" : state === "failed" ? "Refund failed" : "Hand back"}
+      {state === "processing" ? "Refund processing" : state === "failed" ? "Refund failed" : state === "held" ? "Credit held" : "Hand back"}
     </span>
   );
 }
+
+const DISCOUNT_EVENT_LABEL = { balance: "Taken off the balance", credit: "Held for the customer", penalty: "Used for a penalty", return: "Returned with the deposit" };
 
 function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children }) {
   const dr = payment.discountRefund;
   if (!dr) return null;
   const st = DISCOUNT_REFUND_STAGE[dr.state] || DISCOUNT_REFUND_STAGE.deducted;
-  const copy = {
+  const d = payment.discount;
+  const ledger = !!(d && d.ledger);   // a discount given with the ledger (held credit); otherwise a legacy one
+  const copy = ledger ? {
+    deducted: d.appliedPenalty > 0 && !(d.appliedBalance > 0)
+      ? "Fully used: it paid penalties the security deposit could not cover, so nothing is owed back."
+      : "The discount came off the remaining balance, so no money moved.",
+    held: `${peso(d.credit, fmt)} is held for the customer: they already paid it. It goes back together with the security deposit when the trip is settled. Nothing is refunded now.`,
+    processing: `The deposit return that carries ${peso(dr.amount, fmt)} of this discount is being processed by PayMongo. This can take up to 24 hours.`,
+    returned: dr.via === "in_store" ? `${peso(dr.amount, fmt)} of discount credit was handed back in store with the security deposit.` : `${peso(dr.amount, fmt)} of discount credit went back to the customer with the security deposit.`,
+    failed: `The deposit return that carries ${peso(dr.amount, fmt)} of this discount did not go through, so the customer has NOT received it yet.${dr.errorNote ? ` (${dr.errorNote})` : ""} Retry the deposit return.`,
+  }[dr.state] : {
     deducted: "The discount came off the remaining balance, so no money moved.",
     processing: `PayMongo has accepted the ${peso(dr.amount, fmt)} refund and is processing it. This can take up to 24 hours — nothing else is needed from you. The customer is notified once it is confirmed.`,
     refunded: dr.via === "in_store" ? `${peso(dr.amount, fmt)} was handed back to the customer in store.` : `PayMongo confirmed the ${peso(dr.amount, fmt)} refund to the customer.`,
     failed: `PayMongo could not complete the ${peso(dr.amount, fmt)} refund, so the customer has NOT received it yet.${dr.errorNote ? ` (${dr.errorNote})` : ""} Retry to send it again; the failed attempt stays on record.`,
     awaiting_handback: `A discount was given on money the customer paid in store, so it can't go back through PayMongo. Return ${peso(dr.amount, fmt)} in store, then record how it was returned.`,
   }[dr.state];
+  const parts = ledger ? [
+    ["Taken off the balance", d.appliedBalance], ["Used for penalties", d.appliedPenalty],
+    ["Held for customer", d.credit], ["Returned", d.returned],
+  ].filter(([, v]) => v > 0) : [];
   return (
     <div className={`rounded-xl border p-4 space-y-3 ${st.box}`}>
       <div className="flex items-center justify-between gap-3 text-sm">
@@ -1241,10 +1276,30 @@ function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children 
           {st.label}
         </span>
       </div>
-      {payment.discountReason && <p className="text-xs text-gray-600">Reason: {payment.discountReason}</p>}
+      {payment.discountReason && <p className="text-xs text-gray-600">{(d?.events || []).filter((e) => e.kind === "balance" || e.kind === "credit").length > 1 ? "Latest reason" : "Reason"}: {payment.discountReason}</p>}
       <p className={`text-xs ${st.text}`}>{copy}</p>
+      {ledger && parts.length > 1 && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-700">
+          {parts.map(([label, v]) => <span key={label}>{label} <span className="font-semibold">{peso(v, fmt)}</span></span>)}
+        </div>
+      )}
+      {ledger && (d.events || []).length > 1 && (
+        <ul className="text-[11px] text-gray-600 divide-y divide-black/5 border-t border-black/5">
+          {d.events.map((e) => (
+            <li key={e.id} className="flex justify-between gap-3 py-1">
+              <span>{DISCOUNT_EVENT_LABEL[e.kind] || "Discount"}{e.byName ? ` · ${e.byName}` : ""}{e.at ? ` · ${fmtDate(e.at)}` : ""}</span>
+              <span className="font-semibold whitespace-nowrap">{peso(e.amount, fmt)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {ledger && d.consistent === false && (
+        <p className="text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5">
+          The saved discount figures don't match its history ({(d.problems || []).join(" ")}). Please tell the developer before changing anything on this payment.
+        </p>
+      )}
       {dr.referenceNumber && dr.via === "paymongo" && <p className="text-[11px] text-gray-500 font-mono">PayMongo ref {dr.referenceNumber}</p>}
-      {dr.state === "failed" && (canAct ? (
+      {!ledger && dr.state === "failed" && (canAct ? (
         <button onClick={onRetry} disabled={retrying}
           className="px-4 py-2 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition disabled:opacity-50">
           {retrying ? "Sending…" : `Retry ${peso(dr.amount, fmt)} refund`}

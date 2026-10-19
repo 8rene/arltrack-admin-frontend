@@ -180,9 +180,22 @@ export default function ReturnChecklistModal({
                 </ul>
               )}
               <div className="flex justify-between"><span className="text-gray-500">Deducted from deposit <span className="text-[11px] text-gray-400">(deposit settled)</span></span><span className="font-medium text-red-600">− {peso(data.depositDeducted || 0)}</span></div>
+              {/* Discount credit: a discount given on a fully paid booking is held for the customer and goes back in the SAME payout. */}
+              {(data.discountCredit > 0 || data.discountCreditReturn > 0) && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">
+                    Discount credit <span className="text-[11px] text-gray-400">
+                      ({data.depositSettled ? "returned with the deposit" : data.discountCreditUsed > 0 ? `${peso(data.discountCreditUsed)} covers what the deposit can't; the rest returns` : "held for the customer, returns with the deposit"})
+                    </span>
+                  </span>
+                  <span className="font-medium text-green-700">+ {peso(data.depositSettled ? data.discountCreditReturn : data.discountCredit)}</span>
+                </div>
+              )}
               <div className="flex justify-between border-t border-gray-200 pt-1 mt-1">
                 <span className="font-semibold text-arl-dark">
-                  {data.depositSettled ? (owes ? "Settled — customer owed" : "Settled — deposit returned") : (owes ? "Customer will owe" : "Deposit to return")}
+                  {data.depositSettled
+                    ? (owes ? "Settled — customer owed" : "Settled — returned to customer")
+                    : (owes ? "Customer will owe" : (data.discountCredit > 0 ? "Deposit + discount to return" : "Deposit to return"))}
                 </span>
                 <span className={`font-bold ${owes ? "text-red-600" : "text-green-700"}`}>{peso(Math.abs(data.amountToReturn))}</span>
               </div>
