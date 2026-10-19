@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import TripMapModal from "../components/TripMapModal";
+import TripMapCard from "../components/TripMapCard";
+import { InspectionMediaGallery } from "../components/InspectionMedia";
 import DriverPenaltyModal from "../components/DriverPenaltyModal";
 import TripDetailModal from "../components/TripDetailModal";
 import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
@@ -72,12 +74,6 @@ const fmtTime = (val) => {
   const d = new Date(val);
   if (isNaN(d)) return null;
   return d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
-};
-
-const STATUS_STYLE = {
-  completed: "bg-blue-50 text-blue-700 border border-blue-200",
-  cancelled: "bg-red-50 text-red-600 border border-red-200",
-  stolen:    "bg-red-900 text-white",
 };
 
 // Shared: turn a trip's pickupLocation/dropoffLocation into the `stops`
@@ -165,6 +161,216 @@ function InspectionPanel({ inspection, phase, remaining, sending, onRemind }) {
   );
 }
 
+const IconShield = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6l7-3z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4" />
+  </svg>
+);
+
+const hasPin = (p) => !!p && typeof p.lat === "number" && typeof p.lng === "number";
+const peso = (n) => `₱${Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
+const isPaymentReady = (t) =>
+  ["approved", "paid"].includes((t.payment?.paymentStatus || "").toLowerCase()) && (t.payment?.balance ?? 0) <= 0;
+
+// ── Same look as the staff Refund Requests page: clickable summary card,
+// dot-pill status badge, and bordered label/value blocks. ──
+function StatCard({ icon, value, label, sub, color, onClick, active }) {
+  const bgColors = {
+    teal:   "bg-teal-50 text-teal-600",
+    yellow: "bg-yellow-50 text-yellow-600",
+    purple: "bg-purple-50 text-purple-600",
+    green:  "bg-green-50 text-green-600",
+    blue:   "bg-blue-50 text-blue-600",
+    red:    "bg-red-50 text-red-600",
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!!active}
+      className={`bg-white rounded-2xl shadow-soft p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-left w-full transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-arl-light ${active ? "ring-2 ring-arl-light" : ""}`}
+    >
+      <div className={`w-10 h-10 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>{icon}</div>
+      <div className="min-w-0">
+        <div className="text-xl font-bold text-arl-dark">{value}</div>
+        <div className="text-xs text-gray-500">{label}</div>
+        {sub && <div className="text-[11px] text-orange-600 font-semibold">{sub}</div>}
+      </div>
+    </button>
+  );
+}
+
+const STATUS_PILL = {
+  upcoming:  { dot: "bg-yellow-500", bg: "bg-yellow-50 border border-yellow-200", label: "Upcoming" },
+  ongoing:   { dot: "bg-green-500",  bg: "bg-green-50 border border-green-200",   label: "Ongoing" },
+  completed: { dot: "bg-blue-500",   bg: "bg-blue-50 border border-blue-200",     label: "Completed" },
+  cancelled: { dot: "bg-red-500",    bg: "bg-red-50 border border-red-200",       label: "Cancelled" },
+  stolen:    { dot: "bg-red-900",    bg: "bg-red-100 border border-red-300",      label: "Stolen" },
+};
+function StatusPill({ status }) {
+  const b = STATUS_PILL[status] || { dot: "bg-gray-400", bg: "bg-gray-50 border border-gray-200", label: (status || "—").replace("_", " ") };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${b.bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${b.dot}`} />{b.label}
+    </span>
+  );
+}
+
+const Line = ({ label, children }) => (
+  <div className="flex items-start justify-between gap-4 py-1.5 text-sm">
+    <span className="text-gray-500 shrink-0">{label}</span>
+    <span className="text-right text-gray-800 min-w-0 break-words">{children}</span>
+  </div>
+);
+const Block = ({ title, children }) => (
+  <div className="rounded-xl border border-gray-100 p-4">
+    {title && <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">{title}</p>}
+    {children}
+  </div>
+);
+const Eyebrow = ({ children }) => (
+  <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{children}</p>
+);
+
+// Simple full-screen viewer for one photo or video (read-only).
+function ProofLightbox({ photo, onClose }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className={`bg-white rounded-2xl overflow-hidden w-full shadow-2xl ${photo.type === "video" ? "max-w-3xl" : "max-w-lg"}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-800">{photo.label}</p>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+        </div>
+        {photo.type === "video" ? (
+          <div className="w-full bg-black">
+            <video src={photo.url} controls autoPlay playsInline className="w-full max-h-[70vh]" />
+          </div>
+        ) : failed ? (
+          <div className="w-full h-[50vh] flex flex-col items-center justify-center gap-2 bg-gray-50 text-gray-400">
+            <p className="text-xs">Photo failed to load.</p>
+            <a href={photo.url} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 font-semibold">Open original link</a>
+          </div>
+        ) : (
+          <div className="w-full h-[60vh] bg-gray-50">
+            <img src={photo.url} alt={photo.label} className="w-full h-full object-contain" onError={() => setFailed(true)} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Read-only inspection proof (Before / After) for one of the driver's own
+// trips. Fetches only for the trip being shown. `refreshKey` changes when
+// staff finish an inspection phase, so new photos appear without a reload.
+function TripInspectionProof({ tripID, refreshKey, authedFetch }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+  const [phase, setPhase]     = useState("before");
+  const [viewing, setViewing] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await authedFetch(`/api/driver-dispatch/my-trips/${tripID}/inspection`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Couldn't load the inspection.");
+        if (!cancelled) { setData(json.data); setError(null); }
+      } catch (e) {
+        if (!cancelled) setError(e.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tripID, refreshKey, authedFetch]);
+
+  const hasAny = (r) => !!r && (r.exterior.length || r.partPhotos.length || r.videos.length || r.extraPhotos.length || r.parts.recorded);
+  const rec = data?.[phase];
+
+  const renderTile = (item) => (
+    <button key={item.key} type="button" onClick={() => setViewing({ url: item.url, label: item.label, type: "image" })}
+      className="rounded-xl overflow-hidden border border-gray-100 bg-gray-50 text-left">
+      <div className="aspect-square">
+        <img src={item.url} alt={item.label} loading="lazy" className="w-full h-full object-cover" />
+      </div>
+      <p className="px-2 py-1 text-[10px] font-semibold text-gray-500 truncate">{item.label}</p>
+    </button>
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-1.5">
+        {[["before", "Before pickup"], ["after", "After return"]].map(([key, label]) => (
+          <button key={key} onClick={() => setPhase(key)}
+            className={`flex-1 px-3 py-2 rounded-xl text-xs font-semibold border transition-colors ${
+              phase === key ? "bg-arl-dark text-white border-arl-dark" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+            }`}>
+            {label}{hasAny(data?.[key]) ? " ✓" : ""}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-gray-400 py-4 text-center">Loading inspection…</p>
+      ) : error ? (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+      ) : !hasAny(rec) ? (
+        <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-4 text-center">
+          {phase === "before"
+            ? "The pickup inspection hasn't been recorded yet."
+            : "The return inspection is recorded after the trip ends."}
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {rec.exterior.length > 0 && (
+            <div className="space-y-1.5">
+              <Eyebrow>Exterior</Eyebrow>
+              <div className="grid grid-cols-3 gap-2">{rec.exterior.map(renderTile)}</div>
+            </div>
+          )}
+
+          <InspectionMediaGallery doc={{ videos: rec.videos, extraPhotos: rec.extraPhotos }} onView={setViewing} />
+
+          {rec.partPhotos.length > 0 && (
+            <div className="space-y-1.5">
+              <Eyebrow>Part photos ({rec.partPhotos.length})</Eyebrow>
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">{rec.partPhotos.map(renderTile)}</div>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Eyebrow>Parts condition</Eyebrow>
+            {!rec.parts.recorded ? (
+              <p className="text-xs text-gray-400">Not recorded yet.</p>
+            ) : rec.parts.damageParts.length === 0 ? (
+              <p className="text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">All parts recorded as Good</p>
+            ) : (
+              <ul className="rounded-lg border border-red-200 bg-red-50 divide-y divide-red-100">
+                {rec.parts.damageParts.map((d, i) => (
+                  <li key={`${d.carPartName}-${i}`} className="flex items-center justify-between px-3 py-1.5 text-xs">
+                    <span className="text-gray-700">{d.carPartName}</span>
+                    <span className="font-semibold text-red-600">{d.status}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
+      {viewing && <ProofLightbox photo={viewing} onClose={() => setViewing(null)} />}
+    </div>
+  );
+}
+
 // ─── ACTIVE TRIPS TAB (upcoming + ongoing, with pickup/dropoff actions) ──
 function ActiveTripsTab() {
   const token = localStorage.getItem("token");
@@ -177,6 +383,11 @@ function ActiveTripsTab() {
   const [busyID, setBusyID]   = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
   const [penaltyTrip, setPenaltyTrip] = useState(null);  // driver "Note a penalty" form
+  // One trip at a time (Previous / Next). Tracked by ID — not position — so
+  // the background refresh reordering/removing trips never swaps the page
+  // under the driver. lastIdx keeps the position if the current trip vanishes.
+  const [currentID, setCurrentID] = useState(null);
+  const lastIdx = useRef(0);
   // Remind Staff cooldowns: "<tripID>:<phase>" → epoch ms when the button
   // unlocks. Seeded from the server on every fetch (so a page refresh
   // doesn't reset it) and bumped locally right after a reminder is sent.
@@ -267,19 +478,14 @@ function ActiveTripsTab() {
   }, [fetchTrips, trips]);
 
   // Notification deep link (?open=<booking doc id>): once trips have loaded,
-  // scroll to that trip's card and flash it, then drop the param.
+  // open the page on that trip, then drop the param.
   useEffect(() => {
     const openID = searchParams.get("open");
     if (!openID || loading) return;
     // The notification's refID can be the booking doc id OR the business
     // bookingID (payment/refund/penalty ones use the latter) — match both.
     const match = trips.find((t) => t.id === openID || t.bookingID === openID);
-    const el = match ? document.getElementById(`trip-${match.id}`) : null;
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("ring-2", "ring-arl-primary");
-      setTimeout(() => el.classList.remove("ring-2", "ring-arl-primary"), 3000);
-    }
+    if (match) setCurrentID(match.id);
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
   }, [searchParams, setSearchParams, loading, trips]);
 
@@ -400,7 +606,7 @@ function ActiveTripsTab() {
         <button
           onClick={async () => { setRefreshing(true); await fetchTrips({ keepList: true }); setRefreshing(false); }}
           disabled={refreshing}
-          className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
           {refreshing ? "Refreshing…" : "↺ Refresh"}
         </button>
       </div>
@@ -413,132 +619,211 @@ function ActiveTripsTab() {
           <p className="text-sm font-semibold text-arl-dark">No trips assigned right now</p>
           <p className="text-xs text-gray-400 mt-1">Today's and upcoming trips will show here once dispatched.</p>
         </div>
-      ) : (
-        trips.map((trip) => {
-          const isOngoing   = trip.status === "ongoing";
-          const droppedOff  = fmtTime(trip.droppedOffTime);
-          // Number Coding restrictions the customer was warned about when booking (trip.codingWarnings).
-          const codingByCity = warningsByCity(readCodingWarnings(trip.codingWarnings));
-          return (
-            <div key={trip.id} id={`trip-${trip.id}`} className="bg-white rounded-2xl shadow-soft p-4 space-y-3 transition-shadow">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-arl-dark">{trip.customerName}</span>
-                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-lg ${
-                      isOngoing ? "bg-green-50 text-green-700 border border-green-200" : "bg-yellow-50 text-yellow-700 border border-yellow-200"
-                    }`}>{trip.status}</span>
+      ) : (() => {
+        // Trips arrive sorted by start time, so index 0 is the closest one
+        // (an ongoing trip started earlier, so it naturally comes first).
+        const found = trips.findIndex((t) => t.id === currentID);
+        const idx   = found >= 0 ? found : Math.min(lastIdx.current, trips.length - 1);
+        lastIdx.current = idx;
+        const trip = trips[idx];
+        const goTo = (i) => { if (trips[i]) setCurrentID(trips[i].id); };
+
+        const isOngoing   = trip.status === "ongoing";
+        const droppedOff  = fmtTime(trip.droppedOffTime);
+        const codingByCity = warningsByCity(readCodingWarnings(trip.codingWarnings));
+        const paymentReady = isPaymentReady(trip);
+        const balance     = trip.payment?.balance ?? 0;
+        const blocked     = !trip.beforeDocsComplete || !paymentReady;
+        const showPickupMap  = hasPin(trip.pickupLocation);
+        const showDropoffMap = hasPin(trip.dropoffLocation) && !isSameSpot(trip.pickupLocation, trip.dropoffLocation);
+        const extraStops  = tripStops(trip).filter((st) => st.type === "stop");
+        const inspection  = trip.beforeInspection || { photos: false, parts: false, complete: !!trip.beforeDocsComplete };
+
+        // Summary cards — click one to jump to the first trip of that kind.
+        const upcomingTrips = trips.filter((t) => t.status !== "ongoing");
+        const ongoingTrips  = trips.filter((t) => t.status === "ongoing");
+        const readyTrips    = upcomingTrips.filter((t) => t.beforeDocsComplete && isPaymentReady(t));
+        const notReady      = upcomingTrips.length - readyTrips.length;
+        const toDropOff     = ongoingTrips.filter((t) => !t.droppedOffTime).length;
+        const jump = (list) => { if (list[0]) setCurrentID(list[0].id); };
+        const inGroup = (list) => list.some((t) => t.id === trip.id);
+
+        return (
+          <div key={trip.id} id={`trip-${trip.id}`} className="space-y-4">
+            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+              <StatCard icon={<IconClock className="w-5 h-5" />} value={upcomingTrips.length} label="Upcoming" color="yellow"
+                sub={notReady > 0 ? `${notReady} not ready` : null}
+                active={inGroup(upcomingTrips)} onClick={() => jump(upcomingTrips)} />
+              <StatCard icon={<IconSteering className="w-5 h-5" />} value={ongoingTrips.length} label="Ongoing" color="green"
+                sub={toDropOff > 0 ? `${toDropOff} to drop off` : null}
+                active={inGroup(ongoingTrips)} onClick={() => jump(ongoingTrips)} />
+              <StatCard icon={<IconShield />} value={readyTrips.length} label="Ready for pickup" color="teal"
+                active={inGroup(readyTrips)} onClick={() => jump(readyTrips)} />
+            </div>
+
+            {/* Pager */}
+            <div className="bg-white rounded-2xl shadow-soft p-3 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <button onClick={() => goTo(idx - 1)} disabled={idx === 0}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                  ‹ Previous
+                </button>
+                <span className="text-xs text-gray-400">Trip <span className="font-semibold text-arl-dark">{idx + 1}</span> of {trips.length}</span>
+                <button onClick={() => goTo(idx + 1)} disabled={idx === trips.length - 1}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                  Next ›
+                </button>
+              </div>
+              {trips.length > 1 && (
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                  {trips.map((t, i) => (
+                    <button key={t.id} onClick={() => goTo(i)} title={`${t.customerName} — ${t.vehicleName}`}
+                      className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                        i === idx ? "bg-arl-dark text-white" : "text-gray-600 border hover:bg-gray-50"
+                      }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${t.status === "ongoing" ? "bg-green-500" : "bg-yellow-500"}`} />
+                      {fmtDateTime(t.startDateTime)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Booking */}
+            <div className="bg-white rounded-2xl shadow-soft overflow-hidden">
+              <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100">
+                <div className="min-w-0">
+                  <Eyebrow>{isOngoing ? "Ongoing trip" : "Upcoming trip"}{trip.modeOfDriving === "With Chauffeur" ? " · Chauffeur" : ""}</Eyebrow>
+                  <h3 className="font-bold text-arl-dark text-lg truncate">{trip.customerName}</h3>
+                  <div className="mt-1.5"><StatusPill status={trip.status} /></div>
+                </div>
+                <div className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-xl ${isOngoing ? "bg-green-50 text-green-600" : "bg-yellow-50 text-yellow-600"}`}>
+                  <IconSteering className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="px-5 py-4 space-y-3">
+                <Block title="Booking">
+                  <Line label="Vehicle">{trip.vehicleName}</Line>
+                  {trip.customerPhone && trip.customerPhone !== "—" && (
+                    <Line label="Customer phone">
+                      <a href={`tel:${trip.customerPhone}`} className="font-medium text-teal-600 hover:underline">{trip.customerPhone}</a>
+                    </Line>
+                  )}
+                  <Line label="Starts">{fmtDateTimeLong(trip.startDateTime)}</Line>
+                  <Line label="Ends">{fmtDateTimeLong(trip.endDateTime)}</Line>
+                  <Line label="Payment">
+                    <span className={`font-semibold ${paymentReady ? "text-green-700" : "text-amber-600"}`}>
+                      {paymentReady ? "Settled" : (trip.payment?.paymentStatus || "Pending")}
+                      {balance > 0 ? ` · Balance ${peso(balance)}` : ""}
+                    </span>
+                  </Line>
+                </Block>
+
+                {isOngoing && (
+                  <Block title="Trip progress">
+                    <Line label="Picked up"><span className="font-semibold">{fmtTime(trip.startedAt) || "—"}</span></Line>
+                    <Line label="Dropped off"><span className="font-semibold">{droppedOff || "Not recorded"}</span></Line>
+                  </Block>
+                )}
+
+                {codingByCity.length > 0 && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    <p className="font-semibold">⚠️ Number Coding restrictions on this trip</p>
+                    <ul className="mt-1.5 space-y-0.5">
+                      {codingByCity.map((c) => (
+                        <li key={c.city || "city"}>
+                          <span className="font-semibold">{c.city || "City"}</span>
+                          {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
+                          {c.text ? `: ${c.text}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1.5 opacity-80">Plan the route around these days and times to avoid a coding violation.</p>
                   </div>
-                  <p className="text-xs text-gray-400 mt-0.5">{trip.vehicleName}</p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
-                <span className="flex items-center gap-1"><IconClock /> {fmtDateTime(trip.startDateTime)} → {fmtDateTime(trip.endDateTime)}</span>
-                <span className="flex items-center gap-1"><IconPin /> {trip.location}</span>
-              </div>
-
-              {codingByCity.length > 0 && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                  <p className="font-semibold">⚠️ Number Coding restrictions on this trip</p>
-                  <ul className="mt-1.5 space-y-0.5">
-                    {codingByCity.map((c) => (
-                      <li key={c.city || "city"}>
-                        <span className="font-semibold">{c.city || "City"}</span>
-                        {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
-                        {c.text ? `: ${c.text}` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="mt-1.5 opacity-80">Plan the route around these days and times to avoid a coding violation.</p>
-                </div>
-              )}
-
-              {isOngoing && (
-                <div className="flex items-center gap-4 text-xs bg-gray-50 rounded-lg px-3 py-2">
-                  <span className="text-gray-500">Picked up: <span className="font-semibold text-arl-dark">{fmtTime(trip.startedAt) || "—"}</span></span>
-                  <span className="text-gray-500">
-                    Dropped off: <span className="font-semibold text-arl-dark">{droppedOff || "Not recorded"}</span>
-                  </span>
-                </div>
-              )}
-
-              {(() => {
-                // Drivers only do pickup + drop-off now; the after-trip
-                // inspection and completion are staff's job (Car Tracking).
-                if (isOngoing) return null;
-                const phase = "before";
-                const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
-                // Payment is the blocker that matters first for pickup —
-                // no point nudging staff about the inspection until that's
-                // sorted (the server refuses the reminder then too).
-                if (!isOngoing && !paymentReady) {
-                  return <p className="text-[11px] font-medium text-amber-600 mb-1">Waiting for staff to settle payment</p>;
-                }
-                const inspection = trip.beforeInspection
-                  || { photos: false, parts: false, complete: !!trip.beforeDocsComplete };
-                return (
-                  <InspectionPanel
-                    inspection={inspection}
-                    phase={phase}
-                    remaining={remainingFor(trip.id, phase)}
-                    sending={remindingKey === `${trip.id}:${phase}`}
-                    onRemind={() => handleRemindStaff(trip, phase)}
-                  />
-                );
-              })()}
-              <div className="flex flex-wrap gap-2">
-                {!isOngoing ? (
-                  <>
-                    <button
-                      onClick={() => setMapTrip(trip)}
-                      disabled={tripStops(trip).length === 0}
-                      className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                    >
-                      <IconMap className="w-4 h-4" /> Map
-                    </button>
-                    {(() => {
-                      const paymentReady = ["approved", "paid"].includes((trip.payment?.paymentStatus || "").toLowerCase()) && (trip.payment?.balance ?? 0) <= 0;
-                      // "Not Available Yet" covers both blockers (payment or
-                      // inspection) — the card above already says which one;
-                      // the button itself just needs to read as blocked, not
-                      // as a live "Start Pickup" that happens to be greyed out.
-                      const blocked = !trip.beforeDocsComplete || !paymentReady;
-                      return (
-                        <button onClick={() => handlePickup(trip)}
-                          disabled={busyID === trip.id || blocked}
-                          className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 disabled:hover:bg-gray-300">
-                          {busyID === trip.id ? "…" : blocked ? "Not Available Yet" : "▶ Start Pickup"}
-                        </button>
-                      );
-                    })()}
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => setMapTrip(trip)}
-                      disabled={tripStops(trip).length === 0}
-                      className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                    >
-                      <IconMap className="w-4 h-4" /> Map
-                    </button>
-                    <button onClick={() => setPenaltyTrip(trip)}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50 active:scale-[0.99] transition-all">
-                      Penalty
-                    </button>
-                    {!droppedOff && (
-                      <button onClick={() => handleDropoff(trip)} disabled={busyID === trip.id}
-                        className="flex-[1.6] flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold bg-green-600 text-white hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        {busyID === trip.id ? "…" : <><IconPin className="w-3.5 h-3.5" /> Mark Dropped Off</>}
-                      </button>
-                    )}
-                  </>
                 )}
               </div>
             </div>
-          );
-        })
-      )}
+
+            {/* Route */}
+            <div className="bg-white rounded-2xl shadow-soft p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <Eyebrow>Locations</Eyebrow>
+                <button onClick={() => setMapTrip(trip)} disabled={tripStops(trip).length === 0}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                  <IconMap className="w-3.5 h-3.5" /> Full map
+                </button>
+              </div>
+              {!showPickupMap && !showDropoffMap ? (
+                <div className="text-xs bg-gray-50 rounded-xl px-3 py-4 text-center space-y-1">
+                  <p className="text-gray-400">No map pins saved for this trip.</p>
+                  {trip.location && trip.location !== "—" && <p className="font-semibold text-gray-700">{trip.location}</p>}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {showPickupMap && <TripMapCard key={`${trip.id}-pickup`} destination={trip.pickupLocation} label="Pickup" />}
+                  {showDropoffMap && <TripMapCard key={`${trip.id}-dropoff`} destination={trip.dropoffLocation} label="Dropoff" />}
+                  {extraStops.length > 0 && (
+                    <Block title={`Extra stops (${extraStops.length})`}>
+                      {extraStops.map((st, i) => (
+                        <Line key={st.key} label={`Stop ${i + 1}`}>{st.address}</Line>
+                      ))}
+                    </Block>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Vehicle inspection */}
+            <div className="bg-white rounded-2xl shadow-soft p-5 space-y-3">
+              <Eyebrow>Vehicle inspection</Eyebrow>
+              {!isOngoing && (
+                paymentReady ? (
+                  <InspectionPanel
+                    inspection={inspection}
+                    phase="before"
+                    remaining={remainingFor(trip.id, "before")}
+                    sending={remindingKey === `${trip.id}:before`}
+                    onRemind={() => handleRemindStaff(trip, "before")}
+                  />
+                ) : (
+                  <p className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">Waiting for staff to settle payment</p>
+                )
+              )}
+              <TripInspectionProof
+                key={trip.id}
+                tripID={trip.id}
+                authedFetch={authedFetch}
+                refreshKey={`${trip.beforeDocsComplete}:${trip.afterDocsComplete}`}
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="sticky bottom-0 z-10 -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-t border-gray-100 flex gap-2">
+              {!isOngoing ? (
+                <button onClick={() => handlePickup(trip)}
+                  disabled={busyID === trip.id || blocked}
+                  className="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-arl-dark hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                  {busyID === trip.id ? "…" : blocked ? "Not Available Yet" : "▶ Start Pickup"}
+                </button>
+              ) : (
+                <>
+                  <button onClick={() => setPenaltyTrip(trip)}
+                    className="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-red-600 border border-red-200 hover:bg-red-50 active:scale-[0.99] transition-all">
+                    Penalty
+                  </button>
+                  {!droppedOff && (
+                    <button onClick={() => handleDropoff(trip)} disabled={busyID === trip.id}
+                      className="flex-[1.6] inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                      {busyID === trip.id ? "…" : <><IconPin className="w-3.5 h-3.5" /> Mark Dropped Off</>}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <TripMapModal
         open={!!mapTrip}
@@ -567,6 +852,7 @@ function HistoryTab() {
   const [error, setError]     = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
   const [detailTrip, setDetailTrip] = useState(null);
+  const [statusF, setStatusF] = useState("All");   // click a summary card to filter, click again to clear
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
@@ -591,7 +877,7 @@ function HistoryTab() {
     <div className="space-y-3">
       <div className="flex justify-end">
         <button onClick={fetchHistory} disabled={loading}
-          className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
           {loading ? "Refreshing…" : "↺ Refresh"}
         </button>
       </div>
@@ -600,55 +886,69 @@ function HistoryTab() {
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-3">{error}</div>
       )}
 
-      {loading && trips.length === 0 ? (
-        <p className="text-sm text-gray-400 py-16 text-center">Loading…</p>
-      ) : trips.length === 0 ? (
-        <div className="bg-white rounded-2xl shadow-soft p-10 text-center">
-          <IconHistory className="w-8 h-8 mx-auto text-gray-300 mb-2" />
-          <p className="text-sm font-semibold text-arl-dark">No completed trips yet</p>
-          <p className="text-xs text-gray-400 mt-1">Trips you've finished, cancelled, or flagged will show here.</p>
-        </div>
-      ) : (
-        trips.map((trip) => (
-          <div key={trip.id} className="bg-white rounded-2xl shadow-soft p-4 space-y-2">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-bold text-arl-dark">{trip.customerName}</span>
-                  <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-lg ${STATUS_STYLE[trip.status] || "bg-gray-100 text-gray-500"}`}>
-                    {trip.status?.replace("_", " ")}
-                  </span>
-                  {trip.modeOfDriving === "With Chauffeur" && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-lg bg-indigo-600 text-white">
-                      Chauffeur
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-400 mt-0.5">{trip.vehicleName}</p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
-              <span className="flex items-center gap-1"><IconClock /> {fmtDateTimeLong(trip.startDateTime)} → {fmtDateTimeLong(trip.endDateTime)}</span>
-              <span className="flex items-center gap-1"><IconPin /> {trip.location}</span>
-              <button
-                onClick={() => setDetailTrip(trip)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 ml-auto"
-              >
-                <IconEye /> View
-              </button>
-            </div>
-
-            {trip.status === "completed" && (trip.startedAt || trip.droppedOffTime || trip.completedAt) && (
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400 bg-gray-50 rounded-lg px-2.5 py-1.5">
-                <span>Picked up: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.startedAt)}</span></span>
-                <span>Dropped off: <span className="font-semibold text-gray-600">{trip.droppedOffTime ? fmtDateTimeLong(trip.droppedOffTime) : "Not recorded"}</span></span>
-                <span>Completed: <span className="font-semibold text-gray-600">{fmtDateTimeLong(trip.completedAt)}</span></span>
-              </div>
-            )}
+      {(() => {
+        const count = (st) => trips.filter((t) => t.status === st).length;
+        const card = (st, icon, label, color) => (
+          <StatCard icon={icon} value={count(st)} label={label} color={color}
+            active={statusF === st} onClick={() => setStatusF(statusF === st ? "All" : st)} />
+        );
+        return (
+          <div className="grid grid-cols-3 gap-3 sm:gap-4">
+            {card("completed", <IconShield />, "Completed", "blue")}
+            {card("cancelled", <IconClock className="w-5 h-5" />, "Cancelled", "yellow")}
+            {card("stolen", <IconPin className="w-5 h-5" />, "Flagged stolen", "red")}
           </div>
-        ))
-      )}
+        );
+      })()}
+
+      {(() => {
+        const shown = statusF === "All" ? trips : trips.filter((t) => t.status === statusF);
+        if (loading && trips.length === 0) return <p className="text-sm text-gray-400 py-16 text-center">Loading…</p>;
+        if (trips.length === 0) {
+          return (
+            <div className="bg-white rounded-2xl shadow-soft p-10 text-center">
+              <IconHistory className="w-8 h-8 mx-auto text-gray-300 mb-2" />
+              <p className="text-sm font-semibold text-arl-dark">No completed trips yet</p>
+              <p className="text-xs text-gray-400 mt-1">Trips you've finished, cancelled, or flagged will show here.</p>
+            </div>
+          );
+        }
+        if (shown.length === 0) {
+          return <div className="bg-white rounded-2xl shadow-soft p-10 text-center text-sm text-gray-400">No {statusF} trips.</div>;
+        }
+        return shown.map((trip) => (
+          <div key={trip.id} className="bg-white rounded-2xl shadow-soft overflow-hidden transition-shadow hover:shadow-md">
+            <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100">
+              <div className="min-w-0">
+                <Eyebrow>{trip.vehicleName}{trip.modeOfDriving === "With Chauffeur" ? " · Chauffeur" : ""}</Eyebrow>
+                <h3 className="font-bold text-arl-dark text-base truncate">{trip.customerName}</h3>
+              </div>
+              <StatusPill status={trip.status} />
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <Block>
+                <Line label="Starts">{fmtDateTimeLong(trip.startDateTime)}</Line>
+                <Line label="Ends">{fmtDateTimeLong(trip.endDateTime)}</Line>
+                <Line label="Location">{trip.location}</Line>
+                {trip.status === "completed" && (trip.startedAt || trip.droppedOffTime || trip.completedAt) && (
+                  <>
+                    <Line label="Picked up">{fmtDateTimeLong(trip.startedAt)}</Line>
+                    <Line label="Dropped off">{trip.droppedOffTime ? fmtDateTimeLong(trip.droppedOffTime) : "Not recorded"}</Line>
+                    <Line label="Completed">{fmtDateTimeLong(trip.completedAt)}</Line>
+                  </>
+                )}
+              </Block>
+              <div className="flex justify-end">
+                <button onClick={() => setDetailTrip(trip)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold text-teal-700 hover:bg-teal-50">
+                  <IconEye /> View
+                </button>
+              </div>
+            </div>
+          </div>
+        ));
+      })()}
 
       <TripMapModal
         open={!!mapTrip}
@@ -678,24 +978,20 @@ export default function MyTrips() {
 
   return (
     <div className="w-full px-4 space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-arl-dark">My Trips</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Your assigned trips and trip history</p>
+      <div className="pt-2">
+        <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">My Trips</h1>
+        <p className="text-sm text-gray-500">Your assigned trips and trip history</p>
       </div>
 
-      <div className="flex gap-2 border-b border-gray-100">
-        <button onClick={() => setTab("active")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-            tab === "active" ? "border-arl-primary text-arl-primary" : "border-transparent text-gray-400 hover:text-gray-600"
-          }`}>
-          Trips
-        </button>
-        <button onClick={() => setTab("history")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-            tab === "history" ? "border-arl-primary text-arl-primary" : "border-transparent text-gray-400 hover:text-gray-600"
-          }`}>
-          History
-        </button>
+      <div className="flex gap-1 border-b border-gray-100">
+        {[["active", "Trips"], ["history", "History"]].map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+              tab === key ? "border-arl-dark text-arl-dark" : "border-transparent text-gray-400 hover:text-gray-600"
+            }`}>
+            {label}
+          </button>
+        ))}
       </div>
 
       {tab === "active" ? <ActiveTripsTab /> : <HistoryTab />}
