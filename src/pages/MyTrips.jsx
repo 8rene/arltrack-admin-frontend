@@ -144,7 +144,7 @@ function InspectionPanel({ inspection, phase, remaining, sending, onRemind }) {
           <div className="text-[11px] space-y-0.5">
             <Row
               done={inspection.photos}
-              label={`Front, side & back photos${
+              label={`Video, or front, side & back photos${
                 !inspection.photos && inspection.photoSlots && Object.values(inspection.photoSlots).some(Boolean)
                   ? ` (missing: ${["front", "side", "back"].filter((s) => !inspection.photoSlots[s]).join(", ")})`
                   : ""

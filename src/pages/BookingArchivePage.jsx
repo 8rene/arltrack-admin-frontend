@@ -208,10 +208,21 @@ function PhotoGrid({ photos, onOpen }) {
 // One documentation record: its photos as thumbnails, its other fields (ids, dates) as before.
 function PhotoRecord({ row, onOpen }) {
   const photos = Object.entries(row).filter(isPhotoEntry).map(([k, v]) => ({ key: k, label: photoLabel(k), url: v.trim() }));
+  const videos = Array.isArray(row.videos) ? row.videos : [];
+  const extras = Array.isArray(row.extraPhotos) ? row.extraPhotos : [];
+  const extraPhotos = extras.filter((p) => isHttpUrl(p?.url)).map((p, i) => ({ key: p.id || `extra${i}`, label: `Additional photo ${i + 1}`, url: p.url.trim() }));
   return (
     <div className="border border-gray-100 rounded-xl bg-white p-3">
-      <Fields record={row} omit={photos.map((p) => p.key)} />
+      <Fields record={row} omit={[...photos.map((p) => p.key), "videos", "extraPhotos"]} />
       {photos.length > 0 && <PhotoGrid photos={photos} onOpen={onOpen} />}
+      {extraPhotos.length > 0 && <PhotoGrid photos={extraPhotos} onOpen={onOpen} />}
+      {videos.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 mt-3">
+          {videos.map((v) => (
+            <video key={v.id} src={v.url} controls preload="metadata" className="w-full rounded-xl border border-gray-100 bg-black" />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

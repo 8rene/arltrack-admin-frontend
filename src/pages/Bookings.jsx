@@ -1090,6 +1090,12 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   const isChauffeur   = (booking.modeOfDriving || "").toLowerCase().includes("chauffeur");
   const before        = inventoryCheck?.before || null;
   const after         = inventoryCheck?.after || null;
+  // The same before/after checklist the Pickup and Return gates use (it comes with every booking in the list):
+  // { photos, parts, complete, videos } where photos = a video OR the 3 exterior photos. An inspection step is only
+  // green when the parts condition AND that video/photos evidence both exist, so the tracker never says "done"
+  // for something the gate would still block.
+  const beforeChk     = booking.beforeInspection || null;
+  const afterChk      = booking.afterInspection || null;
   const maint         = linkedMaintenance || [];
   const maintAllDone  = maint.length > 0 && maint.every((m) => m.status === "Completed");
   const depStatus     = booking.deposit?.status || (booking.paymentStatus === "Refunded" ? "Refunded" : null);
@@ -1110,6 +1116,19 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   const started       = !!booking.startedAt || status === "ongoing" || status === "completed";
   const droppedOff    = !!booking.droppedOffTime || status === "completed";
   const invLabel      = (rec) => (rec.inventoryOverallStatus === "has damage" ? `Has damage (${rec.damageParts?.length || 0})` : "Good");
+  // Parts confirmed = the saved parts record (fetched just now) or the checklist's flag; evidence = video or 3 photos.
+  const inspectionDone = (rec, chk) => (!!rec || !!chk?.parts) && !!chk?.photos;
+  const inspectionSub  = (rec, chk, emptyText) => {
+    if (inventoryLoading) return "Checking…";
+    const hasParts = !!rec || !!chk?.parts;
+    const hasMedia = !!chk?.photos;
+    const partsText = rec ? invLabel(rec) : "Parts confirmed";
+    const mediaText = chk?.videos > 0 ? `${chk.videos} video${chk.videos > 1 ? "s" : ""}` : "photos";
+    if (hasParts && hasMedia) return `${partsText} · ${mediaText}`;
+    if (hasParts)             return `${partsText} · video or photos missing`;
+    if (hasMedia)             return `${chk?.videos > 0 ? "Video added" : "Photos added"} · parts condition not confirmed`;
+    return emptyText;
+  };
   const pendingMaint  = maint.filter((m) => m.status !== "Completed").length;
   const penaltyCount  = (linkedPenalties || []).length;
 
@@ -1135,7 +1154,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
       key: "driver", title: "Driver assigned", done: !isChauffeur || !!booking.driverID,
       sub: !isChauffeur ? "Self-drive — no driver needed" : booking.driverID ? (booking.driverName || "Assigned") : "No driver yet",
     },
-    { key: "before", title: "Before-trip inspection", done: !!before, sub: inventoryLoading ? "Checking…" : before ? invLabel(before) : "Not recorded" },
+    { key: "before", title: "Before-trip inspection", done: inspectionDone(before, beforeChk), sub: inspectionSub(before, beforeChk, "Not recorded") },
     {
       // One process: pickup → monitor → drop-off. Done once the car is dropped off.
       key: "trip", title: "Pickup, monitor & drop-off", done: droppedOff,
@@ -1154,10 +1173,10 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
       ],
     },
     {
-      // Green once the after-trip inspection has been recorded.
-      key: "after", title: "Post-rental inspection", done: !!after,
+      // Green once the after-trip inspection is complete: parts condition + a video (or the 3 exterior photos).
+      key: "after", title: "Post-rental inspection", done: inspectionDone(after, afterChk),
       warn: after?.inventoryOverallStatus === "has damage",
-      sub: inventoryLoading ? "Checking…" : after ? invLabel(after) : droppedOff ? "Dropped off · not inspected yet" : "Not recorded",
+      sub: inspectionSub(after, afterChk, droppedOff ? "Dropped off · not inspected yet" : "Not recorded"),
     },
     {
       key: "maintenance", title: "Maintenance", done: maintAllDone,

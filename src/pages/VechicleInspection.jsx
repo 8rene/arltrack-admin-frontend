@@ -7,6 +7,7 @@ import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { initializeApp, getApps } from "firebase/app";
 import { db } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
+import { InspectionVideos, InspectionExtraPhotos, InspectionMediaGallery, hasInspectionMedia } from "../components/InspectionMedia";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -28,6 +29,10 @@ const EXTERIOR_SLOTS = [
   { key: "sideViewUrl",  label: "Side View",  icon: "◀️" },
   { key: "backViewUrl",  label: "Back View",  icon: "⬇️" },
 ];
+
+/* A video, or all 3 exterior photos — same rule as the backend's photosComplete. */
+const docHasEvidence = (doc) =>
+  (doc?.videos?.length || 0) > 0 || EXTERIOR_SLOTS.every(sl => !!doc?.[sl.key]);
 
 /* ── Collection & ID field names per trip phase ── */
 const PHASE = {
@@ -80,6 +85,26 @@ const toSec = (val) => {
   }
   if (typeof val?.toDate === "function") return val.toDate().getTime() / 1000;
   return NaN;
+};
+
+/* Fold every photo doc of a booking into one record (oldest → newest, newest non-empty value wins).
+ * `videos` / `extraPhotos` are lists, so they are combined by item id instead of replaced. */
+const mergePhotoDocs = (snap) => {
+  if (snap.empty) return null;
+  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  docs.sort((a, b) => toSec(a.updatedAt || a.createdAt) - toSec(b.updatedAt || b.createdAt));
+  const merged = {};
+  docs.forEach(d => Object.entries(d).forEach(([k, v]) => {
+    if (Array.isArray(v)) {
+      if (!v.length) return;
+      const seen = new Set((merged[k] || []).map(i => i?.id));
+      merged[k] = [...(merged[k] || []), ...v.filter(i => !seen.has(i?.id))];
+      return;
+    }
+    if (v !== "" && v !== null && v !== undefined) merged[k] = v;
+  }));
+  merged.id = docs[docs.length - 1].id;
+  return merged;
 };
 
 // Full part-condition palette — Admin/Owner/Supervisor see all of these
@@ -308,22 +333,11 @@ export default function VehicleDocs() {
         getDocs(query(collection(db, PHASE.before.collection), where("bookingID", "==", bookingID))),
         getDocs(query(collection(db, PHASE.after.collection),  where("bookingID", "==", bookingID))),
       ]);
-      // Merge every doc for the booking (oldest → newest, non-empty wins) —
-      // older saves split the 3 photos across separate docs, and the backend
-      // completeness check merges them the same way.
-      const mergeDocs = (snap) => {
-        if (snap.empty) return null;
-        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        docs.sort((a, b) => toSec(a.updatedAt || a.createdAt) - toSec(b.updatedAt || b.createdAt));
-        const merged = {};
-        docs.forEach(d => Object.entries(d).forEach(([k, v]) => {
-          if (v !== "" && v !== null && v !== undefined) merged[k] = v;
-        }));
-        merged.id = docs[docs.length - 1].id;
-        return merged;
-      };
-      setBeforeDoc(mergeDocs(beforeSnap));
-      setAfterDoc(mergeDocs(afterSnap));
+      // Merge every doc for the booking (see mergePhotoDocs) — older saves split
+      // the 3 photos across separate docs, and the backend completeness check
+      // merges them the same way.
+      setBeforeDoc(mergePhotoDocs(beforeSnap));
+      setAfterDoc(mergePhotoDocs(afterSnap));
     } catch (e) {
       console.error("photo docs fetch error:", e);
     } finally {
@@ -403,8 +417,8 @@ export default function VehicleDocs() {
           loading: false,
           before: pickLatest(beforeSnap),
           after:  pickLatest(afterSnap),
-          beforePhoto: pickLatest(beforePhotoSnap, "updatedAt"),
-          afterPhoto:  pickLatest(afterPhotoSnap, "updatedAt"),
+          beforePhoto: mergePhotoDocs(beforePhotoSnap),
+          afterPhoto:  mergePhotoDocs(afterPhotoSnap),
           userFullName,
         },
       }));
@@ -732,6 +746,37 @@ export default function VehicleDocs() {
     return blob;
   };
 
+  /* ── Videos / additional photos: the components upload + register on their own;
+   * these just fold the result into the open before/after doc so the UI updates. ── */
+  const applyMediaChange = (kind, change) => {
+    const setDoc = tripType === "before" ? setBeforeDoc : setAfterDoc;
+    setDoc(prev => {
+      const list = Array.isArray(prev?.[kind]) ? prev[kind] : [];
+      return {
+        ...(prev || {}),
+        bookingID: activeBooking?.bookingID || activeBooking?.id,
+        carID: selectedCar?.carID || selectedCar?.id,
+        [kind]: change(list),
+      };
+    });
+  };
+  const mediaProps = (kind) => ({
+    storage,
+    apiUrl: API_URL,
+    phase: tripType,
+    bookingID: activeBooking?.bookingID || activeBooking?.id,
+    carID: selectedCar?.carID || selectedCar?.id,
+    items: (tripType === "before" ? beforeDoc : afterDoc)?.[kind] || [],
+    onAdded: (item, recordID) => {
+      applyMediaChange(kind, list => [...list, item]);
+      const setDoc = tripType === "before" ? setBeforeDoc : setAfterDoc;
+      setDoc(prev => (prev && !prev.id && recordID ? { ...prev, id: recordID } : prev));
+    },
+    onRemoved: (mediaID) => applyMediaChange(kind, list => list.filter(i => i.id !== mediaID)),
+    onView: setViewingPhoto,
+    notify: showToast,
+  });
+
   const handleFilePick = (fieldKey, file) => {
     if (!file) return;
     setUploads(prev => ({ ...prev, [fieldKey]: { file, preview: URL.createObjectURL(file) } }));
@@ -855,12 +900,17 @@ export default function VehicleDocs() {
 
       // Commit any staged Good/Damaged edits together with this save —
       // status is never written on toggle, only here.
+      // Hard rule: part statuses are never written without a video or the
+      // 3 exterior photos. Until that evidence exists they stay staged.
       const currentStatusEdits = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
-      if (Object.keys(currentStatusEdits).length) {
+      const evidenceNow = docHasEvidence(updatedDoc);
+      if (Object.keys(currentStatusEdits).length && evidenceNow) {
         await commitStatusEdits(bID, currentStatusEdits);
       }
 
-      showToast(`Photo saved!`);
+      showToast(Object.keys(currentStatusEdits).length && !evidenceNow
+        ? "Photo saved. Part status not saved yet — add a video or the 3 exterior photos first."
+        : `Photo saved!`);
     } catch (e) {
       console.error(e);
       showToast("Upload failed: " + e.message, "error");
@@ -881,6 +931,13 @@ export default function VehicleDocs() {
     // condition" button) when none is saved yet for this trip phase — so it
     // still has work to do even with no photos or toggles staged.
     const needsPartsRecord = !hasPartsRecord;
+    // Hard rule: no parts condition / status is saved without a video or the
+    // 3 exterior photos (already saved, or being uploaded in this same save).
+    const evidenceOk = evidenceAfterSave;
+    if (!pending.length && !evidenceOk) {
+      showToast("Add a video or the front, side and back photos before saving.", "error");
+      return;
+    }
     if (!pending.length && !pendingStatusKeys.length && !needsPartsRecord) {
       showToast("Nothing to save.", "error");
       return;
@@ -951,11 +1008,16 @@ export default function VehicleDocs() {
       // create the parts-condition record if there isn't one yet (force) —
       // anything not flagged Damaged is recorded as Good, exactly like the
       // "Confirm parts condition" button.
-      if (pendingStatusKeys.length || needsPartsRecord) {
+      const writeParts = evidenceOk && (pendingStatusKeys.length || needsPartsRecord);
+      if (writeParts) {
         await commitStatusEdits(bID, currentStatusEdits, { force: true });
       }
 
-      showToast(needsPartsRecord ? "All changes saved — parts condition recorded!" : "All changes saved!");
+      if (!evidenceOk && (pendingStatusKeys.length || needsPartsRecord)) {
+        showToast("Photos saved. Parts condition not saved yet — add a video or the 3 exterior photos first.", "error");
+      } else {
+        showToast(needsPartsRecord ? "All changes saved — parts condition recorded!" : "All changes saved!");
+      }
     } catch (e) {
       console.error(e);
       showToast("Save failed: " + e.message, "error");
@@ -971,6 +1033,10 @@ export default function VehicleDocs() {
   // waits on — see hasPartsRecord below.
   const confirmParts = async () => {
     if (!activeBooking || !selectedCar) return;
+    if (!hasSavedEvidence) {
+      showToast("Add a video or the front, side and back photos first.", "error");
+      return;
+    }
     setConfirmingParts(true);
     try {
       await commitStatusEdits(activeBooking.bookingID || activeBooking.id, {}, { force: true });
@@ -1009,7 +1075,8 @@ export default function VehicleDocs() {
   // (part photos are shown but optional) — matches the same rule the
   // backend enforces in booking.service.js's updateBooking, so a booking
   // can't reach "ongoing" without this being true either way.
-  const hasRequiredBeforePhotos = !!(beforeDoc?.frontViewUrl && beforeDoc?.sideViewUrl && beforeDoc?.backViewUrl);
+  // The 3 exterior photos, OR at least one video (a video can stand in for them) — same rule as the backend's photosComplete.
+  const hasRequiredBeforePhotos = !!(beforeDoc?.frontViewUrl && beforeDoc?.sideViewUrl && beforeDoc?.backViewUrl) || (beforeDoc?.videos?.length || 0) > 0;
   const hasUnsavedUploads       = Object.keys(uploads).length > 0;
   const currentStatusEdits      = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
   const setCurrentStatusEdits   = tripType === "before" ? setBeforeStatusEdits : setAfterStatusEdits;
@@ -1073,6 +1140,16 @@ export default function VehicleDocs() {
   // its own). Photos alone no longer complete an inspection; the backend
   // gate (getPhaseChecklist) requires this record too.
   const hasPartsRecord      = !!currentInv;
+
+  // ── Evidence rule (hard) ──
+  // Nothing about parts may be saved unless there's a video or the 3
+  // exterior photos. `hasSavedEvidence` = already saved on this tab;
+  // `evidenceAfterSave` also counts exterior photos picked but not yet
+  // uploaded, since Save All uploads those first, then records the parts.
+  const hasSavedEvidence = docHasEvidence(currentDoc);
+  const evidenceAfterSave = hasSavedEvidence ||
+    EXTERIOR_SLOTS.every(sl => !!currentDoc?.[sl.key] || !!uploads[sl.key]);
+  const evidenceHint = "Add a video or the front, side and back photos first";
   const canCompletePickup =
     activeBooking?.status?.toLowerCase() === "upcoming" &&
     hasRequiredBeforePhotos &&
@@ -1083,7 +1160,7 @@ export default function VehicleDocs() {
   // for the after-trip set. Matches the server-side guard in
   // booking.service.js's updateBooking, so a booking can't reach
   // "completed" without this being true either way. ──
-  const hasRequiredAfterPhotos = !!(afterDoc?.frontViewUrl && afterDoc?.sideViewUrl && afterDoc?.backViewUrl);
+  const hasRequiredAfterPhotos = !!(afterDoc?.frontViewUrl && afterDoc?.sideViewUrl && afterDoc?.backViewUrl) || (afterDoc?.videos?.length || 0) > 0;
   const canCompleteReturn =
     activeBooking?.status?.toLowerCase() === "ongoing" &&
     hasRequiredAfterPhotos &&
@@ -1466,7 +1543,7 @@ export default function VehicleDocs() {
                           ) : (
                             <>
                               <span className="font-semibold">Pickup requires the vehicle inspection first.</span>{" "}
-                              Fill in the front, side, and back view photos and record the parts condition below, then Save, before this car can be picked up.
+                              Add a video (or the front, side, and back view photos) and record the parts condition below, then Save, before this car can be picked up.
                             </>
                           )}
                         </p>
@@ -1487,7 +1564,7 @@ export default function VehicleDocs() {
                           ) : (
                             <>
                               <span className="font-semibold">Return requires the vehicle inspection first.</span>{" "}
-                              Fill in the front, side, and back view photos and record the parts condition below, then Save, before this car can be marked returned.
+                              Add a video (or the front, side, and back view photos) and record the parts condition below, then Save, before this car can be marked returned.
                             </>
                           )}
                         </p>
@@ -1501,13 +1578,17 @@ export default function VehicleDocs() {
 
                     {!isAfterTripLocked && (
                       <>
+                        {/* Videos (optional) — one walkaround can cover exterior + parts */}
+                        <SectionTitle title="Videos (can replace the 3 exterior photos)" />
+                        <InspectionVideos {...mediaProps("videos")} />
+
                         {/* Exterior Views */}
-                        <SectionTitle title="Exterior Views (Required)" />
+                        <SectionTitle title={(currentDoc?.videos?.length || 0) > 0 ? "Exterior Views (optional — video added)" : "Exterior Views (required unless you add a video)"} />
                         <div className="grid grid-cols-3 gap-4">
                           {EXTERIOR_SLOTS.map(slot => (
                             <PhotoSlot key={slot.key} fieldKey={slot.key} label={slot.label} icon={slot.icon}
                               image={getSlotImage(slot.key)} uploading={uploading[slot.key]} isPending={!!uploads[slot.key]}
-                              onFilePick={f => handleFilePick(slot.key, f)} onUpload={() => uploadSlot(slot.key)} required />
+                              onFilePick={f => handleFilePick(slot.key, f)} onUpload={() => uploadSlot(slot.key)} required={(currentDoc?.videos?.length || 0) === 0} />
                           ))}
                         </div>
 
@@ -1528,9 +1609,9 @@ export default function VehicleDocs() {
                               : canCompletePickup
                                 ? "✅ Inspection complete — pickup can now go ahead."
                                 : !hasRequiredBeforePhotos && !hasPartsRecord
-                                  ? "Still needed: required photos and parts condition"
+                                  ? "Still needed: a video or the 3 exterior photos, and parts condition"
                                   : !hasRequiredBeforePhotos
-                                    ? "Still needed: required photos"
+                                    ? "Still needed: a video or the 3 exterior photos"
                                     : "Still needed: parts condition"}
                           </div>
                         )}
@@ -1546,9 +1627,9 @@ export default function VehicleDocs() {
                               : canCompleteReturn
                                 ? "✅ Inspection complete — the return can now go ahead."
                                 : !hasRequiredAfterPhotos && !hasPartsRecord
-                                  ? "Still needed: required photos and parts condition"
+                                  ? "Still needed: a video or the 3 exterior photos, and parts condition"
                                   : !hasRequiredAfterPhotos
-                                    ? "Still needed: required photos"
+                                    ? "Still needed: a video or the 3 exterior photos"
                                     : "Still needed: parts condition"}
                           </div>
                         )}
@@ -1565,9 +1646,13 @@ export default function VehicleDocs() {
                               <span className="font-semibold">Parts condition not recorded yet.</span>{" "}
                               Review the parts below — anything not flagged Damaged is recorded as Good — then confirm
                               {hasUnsavedUploads ? " (or press Save All, which records it with your photos)." : "."}
+                              {!hasSavedEvidence && (
+                                <span className="block mt-1 font-semibold text-amber-700">Locked until a video or the 3 exterior photos are added.</span>
+                              )}
                             </p>
-                            <button onClick={confirmParts} disabled={confirmingParts || saving}
-                              className="shrink-0 text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
+                            <button onClick={confirmParts} disabled={confirmingParts || saving || !hasSavedEvidence}
+                              title={!hasSavedEvidence ? evidenceHint : undefined}
+                              className="shrink-0 text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed">
                               {confirmingParts ? "Saving…" : "Confirm parts condition"}
                             </button>
                           </div>
@@ -1621,6 +1706,10 @@ export default function VehicleDocs() {
                           </div>
                         )}
 
+                        {/* Additional photos (optional, free-form) */}
+                        <SectionTitle title="Additional Photos (Optional)" />
+                        <InspectionExtraPhotos {...mediaProps("extraPhotos")} />
+
                         {/* Pending changes bar — photos and/or Good/Damaged toggles, whichever's staged */}
                         {hasUnsavedChanges && (
                           <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 gap-3">
@@ -1634,8 +1723,9 @@ export default function VehicleDocs() {
                             <div className="flex gap-2">
                               <button onClick={() => { setUploads({}); setCurrentStatusEdits({}); }}
                                 className="text-xs text-amber-600 hover:underline font-semibold">Discard</button>
-                              <button onClick={saveAll} disabled={saving}
-                                className="text-xs bg-teal-600 text-white px-3 py-1 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
+                              <button onClick={saveAll} disabled={saving || (!hasUnsavedUploads && !evidenceAfterSave)}
+                                title={!hasUnsavedUploads && !evidenceAfterSave ? evidenceHint : undefined}
+                                className="text-xs bg-teal-600 text-white px-3 py-1 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed">
                                 {saving ? "Saving…" : "Save All ↑"}
                               </button>
                             </div>
@@ -2325,7 +2415,7 @@ function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPho
   };
   const hasExteriorPhoto = !!(photoDoc?.frontViewUrl || photoDoc?.sideViewUrl || photoDoc?.backViewUrl);
   const hasPartPhoto = photoDoc ? parts.some(p => !!photoDoc[getPartFieldKey(p)]) : false;
-  const hasAnyPhoto = hasExteriorPhoto || hasPartPhoto;
+  const hasAnyPhoto = hasExteriorPhoto || hasPartPhoto || hasInspectionMedia(photoDoc);
 
   if (!record && !hasAnyPhoto && !revealEmpty) {
     return (
@@ -2364,6 +2454,9 @@ function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPho
           <p className="text-xs text-gray-400">Recorded: {fmtDateShort(record.recordedAt)}</p>
         )}
       </div>
+
+      {/* Videos + additional photos (only rendered when the trip has any) */}
+      <InspectionMediaGallery doc={photoDoc} onView={onViewPhoto} />
 
       {/* Exterior shots (front/side/back) — these are the required photos
           taken every trip, but were previously never shown in history at
@@ -2482,7 +2575,7 @@ function PhotoLightbox({ photo, onClose }) {
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl overflow-hidden max-w-lg w-full shadow-2xl"
+        className={`bg-white rounded-2xl overflow-hidden w-full shadow-2xl ${photo.type === "video" ? "max-w-3xl" : "max-w-lg"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
@@ -2492,7 +2585,11 @@ function PhotoLightbox({ photo, onClose }) {
             className="text-gray-400 hover:text-gray-600 text-lg leading-none"
           >✕</button>
         </div>
-        {failed ? (
+        {photo.type === "video" ? (
+          <div className="w-full bg-black">
+            <video src={photo.url} controls autoPlay playsInline className="w-full max-h-[70vh]" />
+          </div>
+        ) : failed ? (
           <div className="w-full h-[60vh] flex flex-col items-center justify-center gap-2 bg-gray-50 text-gray-400">
             <span className="text-2xl">🖼️</span>
             <p className="text-xs">Photo failed to load.</p>
