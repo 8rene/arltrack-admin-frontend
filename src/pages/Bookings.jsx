@@ -583,7 +583,7 @@ function EditModal({ booking, onClose, onSave }) {
               {booking.status?.toLowerCase() === "upcoming" ? (
                 <><option value="ongoing">Ongoing (Picked Up)</option><option value="cancelled">Cancelled</option></>
               ) : (
-                <><option value="completed">Completed</option><option value="cancelled">Cancelled</option></>
+                <><option value="completed">Completed</option>{booking.status?.toLowerCase() === "to pay" && <option value="cancelled">Cancelled</option>}</>
               )}
             </select>
           </label>
