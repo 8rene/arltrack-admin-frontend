@@ -265,7 +265,6 @@ export default function Payments() {
   const [updating, setUpdating]           = useState(false);
   const [applyingDiscount, setApplyingDiscount] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
-  const [discountReasonInput, setDiscountReasonInput] = useState("");
   // A discount can't be edited or taken back once given (a discount that was too small is fixed by giving another),
   // so it goes through an "are you sure?" first.
   const [confirmDiscount, setConfirmDiscount] = useState(false);
@@ -386,7 +385,6 @@ export default function Payments() {
       if (!res.ok) throw new Error(data.message);
       setSelected(data.data);
       setDiscountInput("");
-      setDiscountReasonInput("");
       setInStoreOpen(false); setInStoreMethod("Cash"); setInStoreRef("");
       setRefundMethod("Cash"); setRefundRef("");
     } catch (e) { showToast(e.message, "error"); }
@@ -458,14 +456,16 @@ export default function Payments() {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ amount, reason: discountReasonInput.trim() }),
+        body: JSON.stringify({ amount }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       showToast(
-        data.data?.kind === "credit"
-          ? "Discount given — held for the customer and returned with the security deposit after the trip."
-          : "Discount given — deducted from the remaining balance."
+        data.data?.kind !== "credit"
+          ? "Discount given — deducted from the remaining balance."
+          : data.data?.creditPaidPenalties > 0
+            ? `Discount given — ${peso(data.data.creditPaidPenalties, fmtCurrency)} went toward the customer's unpaid penalty${data.data.creditHeld > 0 ? `; ${peso(data.data.creditHeld, fmtCurrency)} is held and returned with the deposit.` : "."}`
+            : "Discount given — held for the customer and returned with the security deposit after the trip, less any penalties."
       );
       await openDetail(selected.id);
       await fetchPayments(true);
@@ -945,7 +945,7 @@ export default function Payments() {
                       <div className="space-y-2">
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{selected.discountAmount > 0 ? "Give Another Discount" : "Give Discount"}</p>
                         <div className="flex items-center gap-2">
-                          <div className="relative w-28 shrink-0">
+                          <div className="relative flex-1 min-w-0">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
                             <input
                               type="number" min="1" max={discountMax(selected)} step="1" placeholder="0"
@@ -954,12 +954,6 @@ export default function Payments() {
                               className="w-full pl-7 pr-2 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
                             />
                           </div>
-                          <input
-                            type="text" placeholder="Reason (optional)"
-                            value={discountReasonInput}
-                            onChange={(e) => setDiscountReasonInput(e.target.value)}
-                            className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light"
-                          />
                           <button
                             onClick={handleApplyDiscount}
                             disabled={applyingDiscount || !(Number(discountInput) > 0) || Number(discountInput) > discountMax(selected)}
