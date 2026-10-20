@@ -30,10 +30,6 @@ const EXTERIOR_SLOTS = [
   { key: "backViewUrl",  label: "Back View",  icon: "⬇️" },
 ];
 
-/* A video, or all 3 exterior photos — same rule as the backend's photosComplete. */
-const docHasEvidence = (doc) =>
-  (doc?.videos?.length || 0) > 0 || EXTERIOR_SLOTS.every(sl => !!doc?.[sl.key]);
-
 /* ── Collection & ID field names per trip phase ── */
 const PHASE = {
   before: {
@@ -86,6 +82,10 @@ const toSec = (val) => {
   if (typeof val?.toDate === "function") return val.toDate().getTime() / 1000;
   return NaN;
 };
+
+/* Is there inspection evidence on this record: at least one video, or all 3 exterior photos? Same rule as the backend. */
+const docHasEvidence = (doc) =>
+  !!(doc?.frontViewUrl && doc?.sideViewUrl && doc?.backViewUrl) || (doc?.videos?.length || 0) > 0;
 
 /* Fold every photo doc of a booking into one record (oldest → newest, newest non-empty value wins).
  * `videos` / `extraPhotos` are lists, so they are combined by item id instead of replaced. */
@@ -900,17 +900,15 @@ export default function VehicleDocs() {
 
       // Commit any staged Good/Damaged edits together with this save —
       // status is never written on toggle, only here.
-      // Hard rule: part statuses are never written without a video or the
-      // 3 exterior photos. Until that evidence exists they stay staged.
+      // Only once the phase has evidence (a video or all 3 exterior photos) — otherwise the staged
+      // statuses stay staged and are saved later, so the parts are never recorded "with nothing".
       const currentStatusEdits = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
-      const evidenceNow = docHasEvidence(updatedDoc);
-      if (Object.keys(currentStatusEdits).length && evidenceNow) {
+      const statusHeldBack = Object.keys(currentStatusEdits).length > 0 && !docHasEvidence(updatedDoc);
+      if (Object.keys(currentStatusEdits).length && !statusHeldBack) {
         await commitStatusEdits(bID, currentStatusEdits);
       }
 
-      showToast(Object.keys(currentStatusEdits).length && !evidenceNow
-        ? "Photo saved. Part status not saved yet — add a video or the 3 exterior photos first."
-        : `Photo saved!`);
+      showToast(statusHeldBack ? "Photo saved — part statuses will save once a video or all 3 exterior photos are added." : `Photo saved!`);
     } catch (e) {
       console.error(e);
       showToast("Upload failed: " + e.message, "error");
@@ -921,6 +919,7 @@ export default function VehicleDocs() {
 
   const saveAll = async () => {
     if (!activeBooking) { showToast("No active booking to link photos to.", "error"); return; }
+    if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return; }
     const pending = Object.keys(uploads);
     const currentStatusEdits = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
     const pendingStatusKeys  = Object.keys(currentStatusEdits);
@@ -931,13 +930,6 @@ export default function VehicleDocs() {
     // condition" button) when none is saved yet for this trip phase — so it
     // still has work to do even with no photos or toggles staged.
     const needsPartsRecord = !hasPartsRecord;
-    // Hard rule: no parts condition / status is saved without a video or the
-    // 3 exterior photos (already saved, or being uploaded in this same save).
-    const evidenceOk = evidenceAfterSave;
-    if (!pending.length && !evidenceOk) {
-      showToast("Add a video or the front, side and back photos before saving.", "error");
-      return;
-    }
     if (!pending.length && !pendingStatusKeys.length && !needsPartsRecord) {
       showToast("Nothing to save.", "error");
       return;
@@ -1008,16 +1000,11 @@ export default function VehicleDocs() {
       // create the parts-condition record if there isn't one yet (force) —
       // anything not flagged Damaged is recorded as Good, exactly like the
       // "Confirm parts condition" button.
-      const writeParts = evidenceOk && (pendingStatusKeys.length || needsPartsRecord);
-      if (writeParts) {
+      if (pendingStatusKeys.length || needsPartsRecord) {
         await commitStatusEdits(bID, currentStatusEdits, { force: true });
       }
 
-      if (!evidenceOk && (pendingStatusKeys.length || needsPartsRecord)) {
-        showToast("Photos saved. Parts condition not saved yet — add a video or the 3 exterior photos first.", "error");
-      } else {
-        showToast(needsPartsRecord ? "All changes saved — parts condition recorded!" : "All changes saved!");
-      }
+      showToast(needsPartsRecord ? "All changes saved — parts condition recorded!" : "All changes saved!");
     } catch (e) {
       console.error(e);
       showToast("Save failed: " + e.message, "error");
@@ -1033,10 +1020,7 @@ export default function VehicleDocs() {
   // waits on — see hasPartsRecord below.
   const confirmParts = async () => {
     if (!activeBooking || !selectedCar) return;
-    if (!hasSavedEvidence) {
-      showToast("Add a video or the front, side and back photos first.", "error");
-      return;
-    }
+    if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return; }
     setConfirmingParts(true);
     try {
       await commitStatusEdits(activeBooking.bookingID || activeBooking.id, {}, { force: true });
@@ -1082,6 +1066,12 @@ export default function VehicleDocs() {
   const setCurrentStatusEdits   = tripType === "before" ? setBeforeStatusEdits : setAfterStatusEdits;
   const currentInv              = tripType === "before" ? beforeInv : afterInv;
   const hasUnsavedStatusEdits   = Object.keys(currentStatusEdits).length > 0;
+  // HARD RULE: nothing about the parts condition is saved until the trip phase has a video or all 3 exterior photos.
+  // Videos upload the moment they're picked, so they count as saved; exterior photos count once saved OR staged
+  // (Save All uploads them first, then records the parts).
+  const canSaveInspection = (currentDoc?.videos?.length || 0) > 0
+    || EXTERIOR_SLOTS.every(slot => !!currentDoc?.[slot.key] || !!uploads[slot.key]);
+  const NEEDS_EVIDENCE_MSG = "Add a video, or all 3 exterior photos (front, side, back), before the parts condition can be saved.";
   const hasUnsavedChanges       = hasUnsavedUploads || hasUnsavedStatusEdits;
   const pendingChangeCount      = Object.keys(uploads).length + Object.keys(currentStatusEdits).length;
 
@@ -1140,16 +1130,6 @@ export default function VehicleDocs() {
   // its own). Photos alone no longer complete an inspection; the backend
   // gate (getPhaseChecklist) requires this record too.
   const hasPartsRecord      = !!currentInv;
-
-  // ── Evidence rule (hard) ──
-  // Nothing about parts may be saved unless there's a video or the 3
-  // exterior photos. `hasSavedEvidence` = already saved on this tab;
-  // `evidenceAfterSave` also counts exterior photos picked but not yet
-  // uploaded, since Save All uploads those first, then records the parts.
-  const hasSavedEvidence = docHasEvidence(currentDoc);
-  const evidenceAfterSave = hasSavedEvidence ||
-    EXTERIOR_SLOTS.every(sl => !!currentDoc?.[sl.key] || !!uploads[sl.key]);
-  const evidenceHint = "Add a video or the front, side and back photos first";
   const canCompletePickup =
     activeBooking?.status?.toLowerCase() === "upcoming" &&
     hasRequiredBeforePhotos &&
@@ -1646,13 +1626,11 @@ export default function VehicleDocs() {
                               <span className="font-semibold">Parts condition not recorded yet.</span>{" "}
                               Review the parts below — anything not flagged Damaged is recorded as Good — then confirm
                               {hasUnsavedUploads ? " (or press Save All, which records it with your photos)." : "."}
-                              {!hasSavedEvidence && (
-                                <span className="block mt-1 font-semibold text-amber-700">Locked until a video or the 3 exterior photos are added.</span>
-                              )}
+                              {!canSaveInspection && <span className="block mt-1 font-semibold text-amber-700">{NEEDS_EVIDENCE_MSG}</span>}
                             </p>
-                            <button onClick={confirmParts} disabled={confirmingParts || saving || !hasSavedEvidence}
-                              title={!hasSavedEvidence ? evidenceHint : undefined}
-                              className="shrink-0 text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <button onClick={confirmParts} disabled={confirmingParts || saving || !canSaveInspection}
+                              title={canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
+                              className="shrink-0 text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
                               {confirmingParts ? "Saving…" : "Confirm parts condition"}
                             </button>
                           </div>
@@ -1719,13 +1697,18 @@ export default function VehicleDocs() {
                                 {pendingChangeCount} unsaved change{pendingChangeCount !== 1 ? "s" : ""}
                                 {hasUnsavedUploads && hasUnsavedStatusEdits ? " (photos + status)" : hasUnsavedStatusEdits ? " (status)" : ""}
                               </p>
+                              {!canSaveInspection && (
+                                <p className="text-[11px] text-amber-700 mt-0.5">
+                                  Save All is locked: {NEEDS_EVIDENCE_MSG} You can still save each photo with its own Save button.
+                                </p>
+                              )}
                             </div>
                             <div className="flex gap-2">
                               <button onClick={() => { setUploads({}); setCurrentStatusEdits({}); }}
                                 className="text-xs text-amber-600 hover:underline font-semibold">Discard</button>
-                              <button onClick={saveAll} disabled={saving || (!hasUnsavedUploads && !evidenceAfterSave)}
-                                title={!hasUnsavedUploads && !evidenceAfterSave ? evidenceHint : undefined}
-                                className="text-xs bg-teal-600 text-white px-3 py-1 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                              <button onClick={saveAll} disabled={saving || !canSaveInspection}
+                                title={canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
+                                className="text-xs bg-teal-600 text-white px-3 py-1 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
                                 {saving ? "Saving…" : "Save All ↑"}
                               </button>
                             </div>
