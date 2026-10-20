@@ -433,6 +433,10 @@ function ActiveTripsTab() {
         const secs = t.inspectionReminder?.[ph]?.retryAfterSeconds || 0;
         if (secs > 0) until[`${t.id}:${ph}`] = t0 + secs * 1000;
       }));
+      json.data.forEach((t) => {
+        const bSecs = t.balanceReminder?.retryAfterSeconds || 0;
+        if (bSecs > 0) until[`${t.id}:balance`] = t0 + bSecs * 1000;
+      });
       setRemindUntil(until);
       setNow(t0);
     } catch (e) {
@@ -545,6 +549,47 @@ function ActiveTripsTab() {
     } finally {
       setRemindingKey(null);
     }
+  };
+
+  // Driver rings the CUSTOMER's bell about the balance still owed. Same server-side
+  // 10-minute cooldown idea as Remind Staff (key "<trip>:balance").
+  const handleRemindCustomer = async (trip) => {
+    const key = `${trip.id}:balance`;
+    setRemindingKey(key);
+    try {
+      const res  = await authedFetch(`/api/driver-dispatch/my-trips/${trip.id}/remind-balance`, { method: "POST" });
+      const json = await res.json();
+      const t0 = Date.now();
+      if (res.status === 429) {
+        setRemindUntil((prev) => ({ ...prev, [key]: t0 + (json.retryAfterSeconds || 600) * 1000 }));
+        setNow(t0);
+        showToast("The customer was just reminded — you can remind them again shortly.", "error");
+        return;
+      }
+      if (!res.ok) throw new Error(json.message || "Could not send the reminder.");
+      setRemindUntil((prev) => ({ ...prev, [key]: t0 + 600 * 1000 }));
+      setNow(t0);
+      showToast("The customer has been reminded of their balance.");
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally {
+      setRemindingKey(null);
+    }
+  };
+
+  // "On my way" = heading to the customer's pickup location. NOT Start Pickup (that's
+  // when the customer has been received). Same readiness checks as pickup; the server re-checks.
+  const handleOnMyWay = (trip) => {
+    const paymentReady = isPaymentReady(trip);
+    if (!paymentReady) {
+      showToast("Payment isn't settled yet — staff need to settle it before you head out.", "error");
+      return;
+    }
+    if (!trip.beforeDocsComplete) {
+      showToast("The vehicle inspection isn't complete yet — a supervisor needs to finish it first.", "error");
+      return;
+    }
+    completeTripAction(trip, "on-my-way", "The customer has been told you're on the way.");
   };
 
   const completeTripAction = async (trip, action, successMsg) => {
@@ -712,6 +757,13 @@ function ActiveTripsTab() {
                   )}
                   <Line label="Starts">{fmtDateTimeLong(trip.startDateTime)}</Line>
                   <Line label="Ends">{fmtDateTimeLong(trip.endDateTime)}</Line>
+                  {!isOngoing && (
+                    <Line label="Heading to pickup">
+                      {trip.enRouteAt
+                        ? <span className="font-semibold text-green-700">On the way · since {fmtTime(trip.enRouteAt)}</span>
+                        : <span className="text-gray-400">Not yet</span>}
+                    </Line>
+                  )}
                   <Line label="Payment">
                     <span className={`font-semibold ${paymentReady ? "text-green-700" : "text-amber-600"}`}>
                       {paymentReady ? "Settled" : (trip.payment?.paymentStatus || "Pending")}
@@ -787,7 +839,23 @@ function ActiveTripsTab() {
                     onRemind={() => handleRemindStaff(trip, "before")}
                   />
                 ) : (
-                  <p className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">Waiting for staff to settle payment</p>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                      Waiting for staff to settle payment{balance > 0 ? ` · Balance ${peso(balance)}` : ""}
+                    </p>
+                    {balance > 0 && (
+                      <button
+                        onClick={() => handleRemindCustomer(trip)}
+                        disabled={remainingFor(trip.id, "balance") > 0 || remindingKey === `${trip.id}:balance`}
+                        className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold border text-teal-700 hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                        {remindingKey === `${trip.id}:balance`
+                          ? "Sending…"
+                          : remainingFor(trip.id, "balance") > 0
+                            ? `Remind again in ${fmtCountdown(remainingFor(trip.id, "balance"))}`
+                            : "🔔 Remind customer about the balance"}
+                      </button>
+                    )}
+                  </div>
                 )
               )}
               <TripInspectionProof
@@ -801,11 +869,20 @@ function ActiveTripsTab() {
             {/* Actions */}
             <div className="sticky bottom-0 z-10 -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-t border-gray-100 flex gap-2">
               {!isOngoing ? (
-                <button onClick={() => handlePickup(trip)}
-                  disabled={busyID === trip.id || blocked}
-                  className="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-arl-dark hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                  {busyID === trip.id ? "…" : blocked ? "Not Available Yet" : "▶ Start Pickup"}
-                </button>
+                <>
+                  {!trip.enRouteAt && (
+                    <button onClick={() => handleOnMyWay(trip)}
+                      disabled={busyID === trip.id || blocked}
+                      className="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-teal-700 border border-teal-200 hover:bg-teal-50 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                      🚗 On my way
+                    </button>
+                  )}
+                  <button onClick={() => handlePickup(trip)}
+                    disabled={busyID === trip.id || blocked}
+                    className="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-arl-dark hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                    {busyID === trip.id ? "…" : blocked ? "Not Available Yet" : "▶ Start Pickup"}
+                  </button>
+                </>
               ) : (
                 <>
                   <button onClick={() => setPenaltyTrip(trip)}
