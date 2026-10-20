@@ -205,6 +205,9 @@ const DISCOUNT_STATES = { processing: "paymongo", awaiting_handback: "handback",
 // `refund` object, so every place that handles `isDiscount` handles both. isDeposit tells them apart for wording and actions.
 const isDeposit  = (r) => !!r && r.kind === "deposit";
 const isDiscount = (r) => !!r && (r.kind === "discount" || r.kind === "deposit");
+// A discount whose credit went back as its OWN payout (a ledger discount) is retried / handed back through the deposit-return
+// routes, which act on whichever payout of the booking failed (the deposit's, the discount's, or both).
+const viaDepositRoutes = (r) => isDeposit(r) || !!(r && r.ledger);
 // Which tab an item belongs to.
 const tabOf = (r) => {
   if (isDiscount(r)) return r.refund.state === "refunded" ? "history" : "processing";
@@ -378,7 +381,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             <Line label="Requested">{stampText(toDate(r.createdAt))}</Line>
             <Line label="Updated">{stampText(updatedOf(r))}</Line>
             {w && <Line label="Waiting"><span className={w.late ? "font-semibold text-amber-600" : ""}>{w.text}{w.late ? " — worth checking" : ""}</span></Line>}
-            <Line label={isDeposit(r) ? "Reason" : disc ? "Discount reason" : "Reason"}>{isDeposit(r) ? "Security deposit returned after the trip" : disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
+            <Line label={isDeposit(r) ? "Reason" : disc ? "Discount reason" : "Reason"}>{isDeposit(r) ? "Security deposit returned after the trip" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
             {!disc && r.notes && <Line label="Notes">{r.notes}</Line>}
             {!disc && r.status === "Rejected" && r.rejectReason && <Line label="Rejected because"><span className="text-red-600">{r.rejectReason}</span></Line>}
           </Block>
@@ -390,7 +393,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               {r.refund.referenceNumber && r.refund.via === "paymongo" && <Line label="PayMongo ref"><span className="font-mono text-xs">{r.refund.referenceNumber}</span></Line>}
               {r.refund.state === "failed" && <p className="text-xs text-red-600 mt-2">PayMongo could not complete this refund, so the customer has not received it.{r.refund.errorNote ? ` (${r.refund.errorNote})` : ""}</p>}
               {r.refund.state === "processing" && <p className="text-xs text-blue-700 mt-2">PayMongo is processing this refund. It can take up to 24 hours.</p>}
-              {isDeposit(r) && r.refund.state === "failed" && <p className="text-xs text-gray-500 mt-1">The deposit is already settled. Retry the PayMongo refund, or hand the money back in store and record it here. Check your PayMongo payout balance if it keeps failing.</p>}
+              {viaDepositRoutes(r) && r.refund.state === "failed" && <p className="text-xs text-gray-500 mt-1">{isDeposit(r) ? "The deposit is" : "The trip is"} already settled. Retry the PayMongo refund, or hand the money back in store and record it here. Check your PayMongo payout balance if it keeps failing.</p>}
               {r.refund.state === "awaiting_handback" && <p className="text-xs text-orange-700 mt-2">Paid in store, so it can't go through PayMongo. Return it in store, then record it on the payment.</p>}
             </Block>
           ) : (
@@ -487,7 +490,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               </>
             )}
             {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">Needs manual follow-up</span>}
-            {isDeposit(r) && r.refund.state === "failed" && (
+            {viaDepositRoutes(r) && r.refund.state === "failed" && (
               <>
                 <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm">
                   <option>Cash</option><option>GCash</option><option>Maya</option><option>Bank Transfer</option>
@@ -873,11 +876,11 @@ export default function RefundRequests() {
             r={v} fmt={fmt} navigate={navigate} onClose={() => setViewId(null)}
             onApprove={() => startApprove(v)}
             onReject={() => { setRejectTarget(v); setRejectReason(""); }}
-            onHandback={() => (isDeposit(v) ? handBackDeposit(v) : markHandedBack(v))}
+            onHandback={() => (viaDepositRoutes(v) ? handBackDeposit(v) : markHandedBack(v))}
             handbackMethod={handbackMethod[v.refundRequestID]}
             setHandbackMethod={(m) => setHandbackMethod((x) => ({ ...x, [v.refundRequestID]: m }))}
             busy={busyId === v.refundRequestID}
-            onRetry={() => (isDeposit(v) ? retryDeposit(v) : retryDiscount(v))} retrying={retryingId === v.refundRequestID}
+            onRetry={() => (viaDepositRoutes(v) ? retryDeposit(v) : retryDiscount(v))} retrying={retryingId === v.refundRequestID}
           />
         );
       })()}
@@ -1106,7 +1109,7 @@ export default function RefundRequests() {
                       )}
                       <td className="px-5 py-4">
                         <p className="text-gray-700 max-w-[240px] truncate" title={isDeposit(r) ? "Security deposit return" : disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason)}>
-                          {isDeposit(r) ? "Security deposit return" : disc ? (r.discountReason || "Staff discount") : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}
+                          {isDeposit(r) ? "Security deposit return" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}
                         </p>
                       </td>
                       <td className="px-5 py-4 font-semibold text-arl-dark whitespace-nowrap">

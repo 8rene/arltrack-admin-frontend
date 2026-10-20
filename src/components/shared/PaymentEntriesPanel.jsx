@@ -35,7 +35,7 @@ const fmtDate = (iso) => {
 
 const METHOD = { gcash: "GCash", maya: "Maya", qrph: "QR Ph", cash: "Cash", bank_transfer: "Bank transfer" };
 const PHASE_IN = { deposit: "Deposit paid", balance: "Balance paid", penalty: "Penalty payment" };
-const PHASE_OUT = { deposit: "Refund of deposit", balance: "Refund of balance", penalty: "Refund of penalty", discount: "Discount refund", deposit_return: "Security deposit returned" };
+const PHASE_OUT = { deposit: "Refund of deposit", balance: "Refund of balance", penalty: "Refund of penalty", discount: "Discount refund", deposit_return: "Security deposit returned", discount_return: "Discount credit returned" };
 
 // A small dot + plain text (same dot colours as the status badges on the Payments page), not a coloured pill.
 const STATUS_DOT = {
@@ -51,7 +51,7 @@ const titleOf = (e) => {
   if (e.status === "unrefundable") return "Could not be refunded online";
   if (e.direction === "out") {
     const base = PHASE_OUT[e.phase] || "Refund";
-    return e.phase === "deposit_return" ? base : `${base} (${e.source === "in_person" ? "handed back in person" : "online"})`;
+    return e.phase === "deposit_return" || e.phase === "discount_return" ? base : `${base} (${e.source === "in_person" ? "handed back in person" : "online"})`;
   }
   return PHASE_IN[e.phase] || "Payment";
 };
@@ -64,7 +64,6 @@ const ADJ_NOTE = {
   discount_applied_balance: "No money moved. The amount owed was reduced.",
   discount_credit: "No money moved. The customer had already paid this, so it is held and goes back with the security deposit.",
   discount_applied_penalty: "No money moved. The deposit didn't cover the penalty, so the discount credit held for the customer paid it.",
-  discount_return: "No money moved here. It went back to the customer in the same payout as the security deposit.",
 };
 // "internal" entries (direction "internal") are a discount moving between its parts. No cash, so they are listed like the
 // other no-cash lines: no number, no receipt, no colour, and never in the totals.
@@ -72,7 +71,6 @@ const INTERNAL_LABEL = {
   discount_applied_balance: "Discount taken off the balance",
   discount_credit: "Discount held for the customer",
   discount_applied_penalty: "Discount credit used for a penalty",
-  discount_return: "Discount returned with the deposit",
 };
 
 const TONE = { green: "text-green-700", purple: "text-purple-700", amber: "text-amber-700", red: "text-red-600", gray: "text-gray-800" };

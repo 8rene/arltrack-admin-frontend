@@ -554,18 +554,22 @@ export default function Payments() {
     finally { setMarkingRefund(false); }
   };
 
-  // The discount's PayMongo refund failed after PayMongo accepted it: send it again. The failed attempt stays on the
-  // ledger as history; the server refuses this while a refund is still processing or after it succeeded.
+  // The discount's PayMongo refund failed: send it again. The failed attempt stays on the ledger as history; the server
+  // refuses this while a refund is still processing or after it succeeded. A LEDGER discount's credit is its own payout,
+  // retried through the deposit-return route (it retries whichever payout of the booking failed); a legacy one has its own.
   const handleRetryDiscountRefund = async () => {
     if (!selected) return;
     setRetryingRefund(true);
     try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount-refund/retry`, {
+      const url = selected.discount?.ledger
+        ? `${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(selected.bookingID)}/deposit-return/retry`
+        : `${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount-refund/retry`;
+      const res = await fetch(url, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
+      if (!res.ok || data.success === false) throw new Error(data.message);
       showToast("Refund sent to PayMongo again.");
       await openDetail(selected.id);
       await fetchPayments(true);
@@ -1240,7 +1244,8 @@ function DiscountRefundBadge({ state }) {
   );
 }
 
-const DISCOUNT_EVENT_LABEL = { balance: "Taken off the balance", credit: "Held for the customer", penalty: "Used for a penalty", return: "Returned with the deposit" };
+const DISCOUNT_EVENT_LABEL = { balance: "Taken off the balance", credit: "Held for the customer", penalty: "Used for a penalty", return: "Returned to the customer" };
+const EVENT_STATUS = { pending: " (processing)", failed: " (failed)" };
 
 function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children }) {
   const dr = payment.discountRefund;
@@ -1252,10 +1257,10 @@ function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children 
     deducted: d.appliedPenalty > 0 && !(d.appliedBalance > 0)
       ? "Fully used: it paid penalties the security deposit could not cover, so nothing is owed back."
       : "The discount came off the remaining balance, so no money moved.",
-    held: `${peso(d.credit, fmt)} is held for the customer: they already paid it. It goes back together with the security deposit when the trip is settled. Nothing is refunded now.`,
-    processing: `The deposit return that carries ${peso(dr.amount, fmt)} of this discount is being processed by PayMongo. This can take up to 24 hours.`,
-    returned: dr.via === "in_store" ? `${peso(dr.amount, fmt)} of discount credit was handed back in store with the security deposit.` : `${peso(dr.amount, fmt)} of discount credit went back to the customer with the security deposit.`,
-    failed: `The deposit return that carries ${peso(dr.amount, fmt)} of this discount did not go through, so the customer has NOT received it yet.${dr.errorNote ? ` (${dr.errorNote})` : ""} Retry the deposit return.`,
+    held: `${peso(d.credit, fmt)} is held for the customer: they already paid it. It goes back when the trip is settled, as its own return next to the security deposit. Nothing is refunded now.`,
+    processing: `The ${peso(dr.amount, fmt)} discount return is being processed by PayMongo. This can take up to 24 hours.`,
+    returned: dr.via === "in_store" ? `${peso(dr.amount, fmt)} of discount credit was handed back in store when the deposit was settled.` : `${peso(dr.amount, fmt)} of discount credit went back to the customer through PayMongo when the deposit was settled.`,
+    failed: `The ${peso(dr.amount, fmt)} discount return did not go through, so the customer has NOT received it yet.${dr.errorNote ? ` (${dr.errorNote})` : ""} Retry it below, or hand it back in store from the Refund Requests page.`,
   }[dr.state] : {
     deducted: "The discount came off the remaining balance, so no money moved.",
     processing: `PayMongo has accepted the ${peso(dr.amount, fmt)} refund and is processing it. This can take up to 24 hours — nothing else is needed from you. The customer is notified once it is confirmed.`,
@@ -1283,11 +1288,11 @@ function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children 
           {parts.map(([label, v]) => <span key={label}>{label} <span className="font-semibold">{peso(v, fmt)}</span></span>)}
         </div>
       )}
-      {ledger && (d.events || []).length > 1 && (
+      {ledger && (d.events || []).length > 0 && (
         <ul className="text-[11px] text-gray-600 divide-y divide-black/5 border-t border-black/5">
           {d.events.map((e) => (
             <li key={e.id} className="flex justify-between gap-3 py-1">
-              <span>{DISCOUNT_EVENT_LABEL[e.kind] || "Discount"}{e.byName ? ` · ${e.byName}` : ""}{e.at ? ` · ${fmtDate(e.at)}` : ""}</span>
+              <span>{DISCOUNT_EVENT_LABEL[e.kind] || "Discount"}{e.kind === "return" ? (EVENT_STATUS[e.status] || "") : ""}{e.byName ? ` · ${e.byName}` : ""}{e.at ? ` · ${fmtDate(e.at)}` : ""}</span>
               <span className="font-semibold whitespace-nowrap">{peso(e.amount, fmt)}</span>
             </li>
           ))}
@@ -1299,7 +1304,7 @@ function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children 
         </p>
       )}
       {dr.referenceNumber && dr.via === "paymongo" && <p className="text-[11px] text-gray-500 font-mono">PayMongo ref {dr.referenceNumber}</p>}
-      {!ledger && dr.state === "failed" && (canAct ? (
+      {dr.state === "failed" && (canAct ? (
         <button onClick={onRetry} disabled={retrying}
           className="px-4 py-2 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition disabled:opacity-50">
           {retrying ? "Sending…" : `Retry ${peso(dr.amount, fmt)} refund`}

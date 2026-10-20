@@ -79,11 +79,16 @@ export default function ReturnChecklistModal({
       method: refundDue && !goOnline ? refundMethod : undefined,
       referenceNumber: goOnline ? "" : refundRef.trim(),
     });
+    // The deposit and the discount credit are two separate PayMongo refunds: online.state is "processing" (both sent),
+    // "failed" (both refused) or "partial" (one of them refused).
     const o = result?.online;
-    if (o?.state === "failed") {
-      setNotice({ type: "warn", text: `Deposit settled, but PayMongo refused the refund${o.error ? ` (${o.error})` : ""}. Retry it or hand it back in store from the Refunds page.` });
+    const both = result?.creditReturn > 0 && result?.depositReturn > 0;
+    if (o?.state === "failed" || o?.state === "partial") {
+      const err = o.deposit?.error || o.credit?.error;
+      const which = o.state === "partial" ? (o.deposit?.state === "failed" ? "the deposit" : "the discount credit") : (both ? "both returns" : result?.creditReturn > 0 && !(result?.depositReturn > 0) ? "the discount credit" : "the deposit");
+      setNotice({ type: "warn", text: `Deposit settled, but PayMongo refused ${which}${err ? ` (${err})` : ""}. Retry it or hand it back in store from the Refunds page.${o.state === "partial" ? " The other return went through." : ""}` });
     } else if (o?.state === "processing") {
-      setNotice({ type: "info", text: `Deposit settled. PayMongo is returning ${peso(result.net)} to the customer's ${channelName}. This can take up to 24 hours; track it on the Refunds page under Under Process.` });
+      setNotice({ type: "info", text: `Deposit settled. PayMongo is returning ${peso(result.net)}${both ? ` (${peso(result.depositReturn)} deposit + ${peso(result.creditReturn)} discount, as two refunds)` : ""} to the customer's ${channelName}. This can take up to 24 hours; track it on the Refunds page under Under Process.` });
     }
     await refresh();
   });
@@ -180,12 +185,13 @@ export default function ReturnChecklistModal({
                 </ul>
               )}
               <div className="flex justify-between"><span className="text-gray-500">Deducted from deposit <span className="text-[11px] text-gray-400">(deposit settled)</span></span><span className="font-medium text-red-600">− {peso(data.depositDeducted || 0)}</span></div>
-              {/* Discount credit: a discount given on a fully paid booking is held for the customer and goes back in the SAME payout. */}
+              {/* Discount credit: a discount given on a fully paid booking is held for the customer and goes back at settlement as its OWN
+                  return, next to the deposit's (same way of returning, separate record). */}
               {(data.discountCredit > 0 || data.discountCreditReturn > 0) && (
                 <div className="flex justify-between">
                   <span className="text-gray-500">
                     Discount credit <span className="text-[11px] text-gray-400">
-                      ({data.depositSettled ? "returned with the deposit" : data.discountCreditUsed > 0 ? `${peso(data.discountCreditUsed)} covers what the deposit can't; the rest returns` : "held for the customer, returns with the deposit"})
+                      ({data.depositSettled ? "returned separately from the deposit" : data.discountCreditUsed > 0 ? `${peso(data.discountCreditUsed)} covers what the deposit can't; the rest returns` : "held for the customer, returned next to the deposit"})
                     </span>
                   </span>
                   <span className="font-medium text-green-700">+ {peso(data.depositSettled ? data.discountCreditReturn : data.discountCredit)}</span>
