@@ -420,6 +420,9 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                   {pv && (
                     <>
                       <Line label="Customer paid">{fmt(pv.bookingPaid ?? pv.grossPaid)}</Line>
+                      {Number(pv.heldCredit) > 0 && (
+                        <p className="text-[11px] text-gray-500 mb-1">Includes {fmt(pv.heldCredit)} of discount credit the customer had already paid. It goes back with this refund; nothing is deducted for the discount.</p>
+                      )}
                       {pv.forfeit > 0 && <Line label="Deposit kept"><span className="text-amber-700">−{fmt(pv.forfeit)}</span></Line>}
                       <Line label="Via PayMongo">{fmt(pv.onlineAmount)}</Line>
                       {pv.manualAmount > 0 && <Line label="Hand back in person"><span className="text-orange-600 font-semibold">{fmt(pv.manualAmount)}</span></Line>}
