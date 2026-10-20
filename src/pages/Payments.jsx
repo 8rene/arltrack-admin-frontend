@@ -1489,6 +1489,17 @@ function GatewayBreakdown({ payment, fmt }) {
           PayMongo's own fee isn't recorded for this payment (cash payment, or paid before fee tracking started).
         </p>
       )}
+
+      {/* PayMongo keeps its fee on a charge that is refunded. Its own line, NOT part of the gateway total or sale above
+          (those stay "charges only"). Shown only once a refund / return row has recorded a share of the fee. */}
+      {Number(payment?.paymongoFee?.keptOnRefunds) > 0 && (
+        <Row
+          label="PayMongo fee kept on refunds"
+          hint="Fee PayMongo kept on charges that were refunded or returned"
+          value={peso(Number(payment.paymongoFee.keptOnRefunds), fmt)}
+          color="text-red-400"
+        />
+      )}
     </Section>
   );
 }
