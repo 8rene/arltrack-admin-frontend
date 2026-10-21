@@ -569,7 +569,6 @@ export default function Dashboard() {
   const REQUEST_STALE_DAYS = 5;
   const requestAgeDays = (r) => (Date.now() - r._due.getTime()) / (24 * 60 * 60 * 1000);
   const staleRequests = pendingRequestWarnings.filter((r) => requestAgeDays(r) > REQUEST_STALE_DAYS);
-  const freshRequests = pendingRequestWarnings.filter((r) => requestAgeDays(r) <= REQUEST_STALE_DAYS);
 
   // Maintenance still not done, past its own due date — mirrors the
   // booking pickup_overdue/return_overdue pattern: no separate "Overdue"
@@ -594,7 +593,7 @@ export default function Dashboard() {
         _type: "refund_followup", id: `rr-${r.id}`, _due: r._due,
         urgent: failed || ageDays > APPROVED_REFUND_STALE_DAYS,
         title: failed ? "Refund Failed" : ageDays > APPROVED_REFUND_STALE_DAYS ? "Refund Not Completed" : "Refund In Progress",
-        line1: r.name,
+        line1: r.bookingID ? `Booking ${r.bookingID}` : r.name,
         line2: failed ? `${peso0(r.amount)} — customer has NOT received it` : `${peso0(r.amount)} — ${Math.floor(ageDays)} day${Math.floor(ageDays) === 1 ? "" : "s"} since approved`,
         link: `/refund-requests?search=${encodeURIComponent(r.bookingID || "")}`,
       };
@@ -630,16 +629,8 @@ export default function Dashboard() {
     return tb - ta;
   });
 
-  // Pending requests get their own list now, separate from the time-based
-  // countdown items below — previously they were interleaved into `warnings`
-  // using their createdAt as a fake "_due" date, which meant an old pending
-  // request could rank above a booking that's actually starting in minutes,
-  // just because "createdAt" and "starts at" were being sorted as if they
-  // meant the same thing. Sorted oldest-first: the most-neglected (but not
-  // yet stale enough to be an Alert) request should surface first.
-  const pendingRequests = freshRequests
-    .map((r) => ({ ...r, _type: "request", daysWaiting: Math.floor(requestAgeDays(r)) }))
-    .sort((a, b) => a._due - b._due);
+  // Pending requests and refunds in progress are NOT listed here: they are counted in the cards above the Alerts / Warning boxes.
+  // (The ones that sit too long, or fail, are listed under Alerts.)
 
   const warnings = [
     ...upcomingBookings
@@ -650,9 +641,6 @@ export default function Dashboard() {
       .filter((m) => withinHours(m._due, MAINTENANCE_WARNING_HOURS)),
     ...licenseWarnings.map((l) => ({ ...l, _type: "license" })),
   ].sort((a, b) => a._due - b._due); // soonest first — this list is a countdown, not a feed
-  // Pending requests (edit/ID-resubmit/refund) are no longer mixed in here —
-  // see `pendingRequests` below, which keeps its own oldest-first ordering
-  // instead of borrowing this countdown's "soonest first" semantics.
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -702,16 +690,34 @@ export default function Dashboard() {
       )}
 
       {/* STATS ROW */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard title="Total Vehicles"       value={metrics?.totalVehicles ?? "—"}   icon={<IconCar className="w-6 h-6" />}      color="bg-blue-50 text-blue-600"    loading={loading}
           onClick={() => navigate("/fleet")} />
         <StatCard title="Upcoming Bookings"    value={metrics?.activeBookings ?? "—"}  icon={<IconCheck className="w-6 h-6" />}    color="bg-green-50 text-green-600"  loading={loading}
           onClick={() => navigate("/bookings?tab=Upcoming")} />
-        <StatCard title="Cancellation Requests" value={metrics?.pendingBookings ?? "—"} icon={<IconClock className="w-6 h-6" />}    color="bg-yellow-50 text-yellow-600" loading={loading}
-          onClick={() => navigate("/bookings?tab=All")} />
         <StatCard title="Vehicles In Use"      value={metrics?.vehiclesInUse ?? "—"}   icon={<IconKey className="w-6 h-6" />}      color="bg-purple-50 text-purple-600" loading={loading}
           onClick={() => navigate("/car-tracking")} />
       </div>
+
+      {/* WAITING ON STAFF — counts only. The ones that failed or are late are listed under Alerts. */}
+      {(() => {
+        const refundReqs   = pendingRequestWarnings.filter((r) => r.kind === "refundRequest");
+        const lateRefundReqs = refundReqs.filter((r) => requestAgeDays(r) > REQUEST_STALE_DAYS).length;
+        const profileReqs  = pendingRequestWarnings.filter((r) => r.kind !== "refundRequest").length;
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <StatCard title={lateRefundReqs > 0 ? `Refund Requests (${lateRefundReqs} overdue)` : "Refund Requests"} value={refundReqs.length}
+              icon={<IconBell className="w-6 h-6" />} color="bg-blue-50 text-blue-600" loading={false}
+              onClick={() => navigate("/refund-requests")} />
+            <StatCard title="Refunds In Progress" value={followupWarnings.length}
+              icon={<IconClock className="w-6 h-6" />} color="bg-amber-50 text-amber-600" loading={false}
+              onClick={() => navigate("/refund-requests")} />
+            <StatCard title="Profile / ID Requests" value={profileReqs}
+              icon={<IconFileText className="w-6 h-6" />} color="bg-gray-100 text-gray-600" loading={false}
+              onClick={() => navigate("/users?role=driver&tab=editRequests")} />
+          </div>
+        );
+      })()}
 
       {/* BOTTOM: ALERTS + WARNING */}
       <div className="grid lg:grid-cols-2 gap-4">
@@ -909,9 +915,9 @@ export default function Dashboard() {
           <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
             <IconClock className="w-4 h-4 text-gray-600" />
             Warning
-            {(warnings.length + pendingRequests.length + followupWarnings.length) > 0 && (
+            {warnings.length > 0 && (
               <span className="bg-yellow-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                {warnings.length + pendingRequests.length + followupWarnings.length}
+                {warnings.length}
               </span>
             )}
             <HelpTip label="What counts as a warning" title="Warnings: coming up soon, or waiting but not late yet"
@@ -919,8 +925,7 @@ export default function Dashboard() {
                 "A booking whose pickup is within " + BOOKING_WARNING_HOURS + " hours",
                 "Maintenance due within " + MAINTENANCE_WARNING_HOURS + " hours",
                 "A driver's license expiring within " + LICENSE_WARNING_DAYS + " days",
-                "A profile edit, ID resubmit or refund request waiting for review (it becomes an alert after " + REQUEST_STALE_DAYS + " days)",
-                "A refund or a deposit / discount return that is still in progress and not late yet",
+                "Requests waiting for review and refunds in progress are counted in the cards above, not listed here (they move to Alerts when late or failed)",
               ]} />
           </h2>
 
@@ -928,7 +933,7 @@ export default function Dashboard() {
               about to expire. Kept separate from the pending-requests list
               below since "starts in 20 minutes" and "submitted 3 days ago"
               aren't the same kind of "soon" and shouldn't be sorted together. */}
-          <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
             {warnings.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-20 text-gray-400 text-sm gap-1">
                 <IconClock className="w-6 h-6 text-gray-300" />
@@ -1003,74 +1008,6 @@ export default function Dashboard() {
           {/* Pending requests — status-based, not time-based. Sorted oldest
               first so the most-neglected one surfaces at the top; anything
               older than REQUEST_STALE_DAYS has already moved up to Alerts. */}
-          {followupWarnings.length > 0 && (
-            <div className="mt-3 pt-3 border-t">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Refunds In Progress</p>
-              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                {followupWarnings.map((f) => (
-                  <div
-                    key={f.id}
-                    onClick={() => navigate(f.link)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(f.link); } }}
-                    className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-amber-50 border-amber-100 hover:bg-amber-100"
-                  >
-                    <span className="shrink-0 mt-0.5 text-amber-600"><IconClock className="w-5 h-5" /></span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-gray-800 leading-snug">{f.title}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{f.line1}</p>
-                      <p className="text-xs text-gray-400">{f.line2}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-3 pt-3 border-t">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Pending Requests</p>
-            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-              {pendingRequests.length === 0 ? (
-                <div className="flex items-center justify-center h-12 text-gray-400 text-xs">
-                  No requests awaiting review
-                </div>
-              ) : (
-                pendingRequests.map((w) => {
-                  const isRefund = w.kind === "refundRequest";
-                  const isIdReq  = w.kind === "idResubmit";
-                  const goTo = () => {
-                    if (isRefund) navigate("/refund-requests");
-                    else navigate(`/users?role=${w.role}&tab=${isIdReq ? "documents" : "editRequests"}&open=${w.userID}`);
-                  };
-                  return (
-                    <div
-                      key={`request-${w.id}`}
-                      onClick={goTo}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
-                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-blue-50 border-blue-100 hover:bg-blue-100"
-                    >
-                      <span className="shrink-0 mt-0.5 text-blue-500">
-                        <IconBell className="w-5 h-5" />
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800 leading-snug">
-                          {isRefund ? "Refund Request" : isIdReq ? "ID Resubmit Request" : "Profile Edit Request"}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
-                        <p className="text-xs text-gray-400">
-                          {isRefund ? `₱${Number(w.amount).toLocaleString()} — ` : ""}
-                          Waiting {w.daysWaiting} day{w.daysWaiting === 1 ? "" : "s"}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
         </div>
       </div>
 
