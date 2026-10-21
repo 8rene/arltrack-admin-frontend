@@ -1328,7 +1328,6 @@ function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, edits = [
                 <div className="flex justify-between gap-3">
                   <span>
                     {DISCOUNT_EVENT_LABEL[e.kind] || "Discount"}{e.kind === "return" ? (EVENT_STATUS[e.status] || "") : ""}{e.byName ? ` · ${e.byName}` : ""}{e.at ? ` · ${fmtDate(e.at)}` : ""}
-                    {e.originalAmount != null && e.originalAmount !== e.amount ? <span className="text-gray-400"> · edited, was {peso(e.originalAmount, fmt)}</span> : null}
                   </span>
                   <span className="whitespace-nowrap">
                     <span className="font-semibold">{peso(e.amount, fmt)}</span>
