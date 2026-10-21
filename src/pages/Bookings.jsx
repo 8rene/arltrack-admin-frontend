@@ -614,6 +614,8 @@ function RefundCancelModal({ booking, onClose, onDone }) {
   const [reason, setReason]     = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]       = useState(null);
+  const [notice, setNotice]     = useState(null); // set when part of the money has to be settled by staff after the cancel went through
+  const navigate = useNavigate();
   const api = `${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`;
 
   useEffect(() => {
@@ -648,6 +650,9 @@ function RefundCancelModal({ booking, onClose, onDone }) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Request failed.");
+      // The booking IS cancelled and the online part is on its way. If some money can't go back online, keep the
+      // modal open with what staff still have to do instead of closing on a toast they might miss.
+      if (json.data?.followUp) { setNotice({ message: json.message || "Booking cancelled.", ...json.data.followUp }); return; }
       onDone(json.message || "Booking cancelled.");
     } catch (e) { setError(e.message); }
     finally { setSubmitting(false); }
@@ -662,6 +667,42 @@ function RefundCancelModal({ booking, onClose, onDone }) {
       </div>
     </label>
   );
+
+  // Partial refund: amber notice (not a red error) with what is left to do and a way straight to the payment.
+  if (notice) {
+    const finish = () => onDone(notice.message);
+    const toPayments = () => { finish(); navigate(notice.paymentID ? `/payments?paymentID=${encodeURIComponent(notice.paymentID)}` : "/payments"); };
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+          <div>
+            <h2 className="font-bold text-lg text-gray-800">{notice.onlineAmount > 0 ? "Partial refund sent" : "Booking cancelled"}</h2>
+            <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
+          </div>
+          <div className="text-sm bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-xl space-y-2">
+            {notice.onlineAmount > 0 && (
+              <div className="flex justify-between gap-4"><span>Going back through PayMongo</span><span className="font-semibold">{fmt(notice.onlineAmount)}</span></div>
+            )}
+            {notice.inStoreAmount > 0 && (
+              <div className="flex justify-between gap-4"><span>Can't be refunded online, settle in store</span><span className="font-semibold text-orange-700">{fmt(notice.inStoreAmount)}</span></div>
+            )}
+            {notice.unrefundableAmount > 0 && (
+              <div className="flex justify-between gap-4"><span>Paid online, no PayMongo payment ID</span><span className="font-semibold text-red-600">{fmt(notice.unrefundableAmount)}</span></div>
+            )}
+          </div>
+          <p className="text-sm text-gray-600">
+            {notice.inStoreAmount > 0
+              ? "The booking is cancelled. Please settle the in-store amount with the customer, then record it on the payment."
+              : "The booking is cancelled. Refund the remaining amount from the PayMongo dashboard."}
+          </p>
+          <div className="flex gap-3 justify-end pt-1">
+            <button onClick={finish} className="px-4 py-2 border rounded-xl text-sm">Done</button>
+            <button onClick={toPayments} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700 transition-colors">Continue to Payments &rarr;</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
