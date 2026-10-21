@@ -94,7 +94,10 @@ const WAIT_STAGE = {
 const stageOf = (r) => {
   if (!r || r.status !== "Approved") return null;
   const parts = Array.isArray(r.parts) ? r.parts : [];
-  const onlinePending = parts.length === 0 || parts.some((x) => x.status !== "succeeded"); // older requests without parts → assume PayMongo
+  // No parts + a pending in-person amount + nothing sent to PayMongo (e.g. QR Ph, which PayMongo can't refund) = hand-back only.
+  // Only an older request with neither parts nor a manual amount is assumed to be waiting on PayMongo.
+  const handbackOnly = parts.length === 0 && !!r.manualRefund && !(Number(r.onlineAmount) > 0) && !r.paymongoRefundID;
+  const onlinePending = handbackOnly ? false : (parts.length === 0 || parts.some((x) => x.status !== "succeeded"));
   const handbackPending = !!(r.manualRefund && !r.manualRefund.issued);
   if (onlinePending) return "paymongo";
   return handbackPending ? "handback" : "paymongo";
@@ -349,7 +352,7 @@ const Block = ({ title, children }) => (
 
 // Everything about one refund / discount refund. The table stays simple; the detail, the money movements and the
 // actions (approve, reject, hand back, retry) all live here.
-function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, busy, onRetry, retrying }) {
+function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, handbackRef, setHandbackRef, busy, onRetry, retrying }) {
   const disc = isDiscount(r);
   const pv = !disc && r.status === "Pending" ? r.planPreview : null;
   const { tier, kept, hours } = disc ? {} : policyOf(r);
@@ -442,11 +445,32 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                   {r.manualRefund && (
                     <Line label={`In person ${fmt(r.manualRefund.amount)}`}>
                       <span className={r.manualRefund.issued ? "text-green-600" : "text-orange-600 font-semibold"}>
-                        {r.manualRefund.issued ? `handed back${r.manualRefund.method ? ` (${r.manualRefund.method})` : ""}` : "not yet handed back"}
+                        {r.manualRefund.issued ? `handed back${r.manualRefund.method ? ` (${r.manualRefund.method})` : ""}${r.manualRefund.referenceNumber ? ` · ref ${r.manualRefund.referenceNumber}` : ""}` : "not yet handed back"}
                       </span>
                     </Line>
                   )}
                   {!pv && Number(r.unrefundableAmount) > 0 && <Line label="Not refunded"><span className="text-red-600 font-semibold">{fmt(r.unrefundableAmount)} — Payment ID does not exist</span></Line>}
+                </Block>
+              )}
+
+              {!disc && due > 0 && (
+                <Block title="Hand back in person">
+                  <p className="text-[11px] text-gray-500 mb-2">Give {fmt(due)} to the customer, then record it here. The reference number is optional (e.g. a GCash or bank transfer reference).</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="text-xs text-gray-500">Method
+                      <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-2 text-sm text-gray-800">
+                        <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-gray-500">Reference no. <span className="text-gray-400">(optional)</span>
+                      <input type="text" value={handbackRef || ""} onChange={(e) => setHandbackRef(e.target.value)} maxLength={100} placeholder="e.g. GCash ref"
+                        className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-2 text-sm text-gray-800 font-mono" />
+                    </label>
+                  </div>
+                  <button onClick={onHandback} disabled={busy} title="Confirm you handed this amount back to the customer in person"
+                    className="mt-3 w-full inline-flex items-center justify-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
+                    <IconCheck /> {busy ? "…" : `Handed back ${fmt(due)}`}
+                  </button>
                 </Block>
               )}
 
@@ -481,17 +505,6 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               </>
             )}
             {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
-            {!disc && due > 0 && (
-              <>
-                <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm">
-                  <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
-                </select>
-                <button onClick={onHandback} disabled={busy} title="Confirm you handed this amount back to the customer in person"
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
-                  <IconCheck /> {busy ? "…" : `Handed back ${fmt(due)}`}
-                </button>
-              </>
-            )}
             {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">Needs manual follow-up</span>}
             {viaDepositRoutes(r) && r.refund.state === "failed" && (
               <>
@@ -620,6 +633,8 @@ export default function RefundRequests() {
   // Which method staff picked when handing the in-person part of a refund back, per request id.
   // Method staff pick when they hand the in-person part of a refund back, per request id (default Cash).
   const [handbackMethod, setHandbackMethod] = useState({});
+  // Optional reference number staff type when recording an in-person hand-back, per request id.
+  const [handbackRef, setHandbackRef] = useState({});
   const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
   const [sortDir, setSortDir] = useState("asc");
   const items = [...requests, ...discounts.map(toDiscountItem), ...depositReturns.map(toDepositItem)];
@@ -729,7 +744,7 @@ export default function RefundRequests() {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/${id}/manual-issued`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ method: handbackMethod[id] || "Cash" }),
+        body: JSON.stringify({ method: handbackMethod[id] || "Cash", referenceNumber: (handbackRef[id] || "").trim() || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to mark the refund as handed back.");
@@ -882,6 +897,8 @@ export default function RefundRequests() {
             onHandback={() => (viaDepositRoutes(v) ? handBackDeposit(v) : markHandedBack(v))}
             handbackMethod={handbackMethod[v.refundRequestID]}
             setHandbackMethod={(m) => setHandbackMethod((x) => ({ ...x, [v.refundRequestID]: m }))}
+            handbackRef={handbackRef[v.refundRequestID]}
+            setHandbackRef={(m) => setHandbackRef((x) => ({ ...x, [v.refundRequestID]: m }))}
             busy={busyId === v.refundRequestID}
             onRetry={() => (viaDepositRoutes(v) ? retryDeposit(v) : retryDiscount(v))} retrying={retryingId === v.refundRequestID}
           />
