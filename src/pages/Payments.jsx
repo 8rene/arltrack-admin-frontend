@@ -404,11 +404,11 @@ export default function Payments() {
     return json.data;
   }, [selected, token]);
 
-  const settleDepositFromPayments = async ({ method, referenceNumber, online }) => {
+  const settleDepositFromPayments = async ({ method, referenceNumber, online, completeBooking }) => {
     const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(selected.bookingID)}/settle-deposit`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ method, referenceNumber, online: online === true }),
+      body: JSON.stringify({ method, referenceNumber, online: online === true, completeBooking: completeBooking === true }),
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.message || "Couldn't settle the deposit.");
@@ -597,6 +597,24 @@ export default function Payments() {
       const res = await fetch(url, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.message);
+      showToast("Refund sent to PayMongo again.");
+      await openDetail(selected.id);
+      await fetchPayments(true);
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setRetryingRefund(false); }
+  };
+
+  // The security deposit's failed online return. The server retries whichever payout of the booking failed (the deposit's,
+  // the discount credit's, or both), so this is the same call the discount card makes for a held-credit discount.
+  const handleRetryDepositReturn = async () => {
+    if (!selected) return;
+    setRetryingRefund(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(selected.bookingID)}/deposit-return/retry`, {
+        method: "PATCH", headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok || data.success === false) throw new Error(data.message);
@@ -877,9 +895,43 @@ export default function Payments() {
                       {/* ONE place for money going back to the customer. A discount and a refund request both do that, and both
                           wait on PayMongo, so they share the same stages as the Refund Requests page:
                           Waiting for PayMongo -> Refunded, or Failed (retry) / Waiting for hand-back (in store). */}
-                      {(selected.discountRefund || selected.refundRequestID) && (
+                      {(selected.discountRefund || selected.refundRequestID || (["failed", "processing"].includes(selected.depositReturn?.state) && selected.depositReturn?.via === "paymongo")) && (
                         <Section title="Money Back to Customer">
                           <div className="space-y-3">
+                            {/* The security deposit's own payout. It is a separate PayMongo refund from the discount's, so it
+                                gets its own card: before this, a failed deposit return looked like it had been returned. */}
+                            {selected.depositReturn?.via === "paymongo" && ["failed", "processing"].includes(selected.depositReturn.state) && (() => {
+                              const dr = selected.depositReturn;
+                              const failed = dr.state === "failed";
+                              return (
+                                <div className={`rounded-xl border p-4 space-y-2 ${failed ? "border-red-200 bg-red-50" : "border-blue-200 bg-blue-50"}`}>
+                                  <div className="flex items-center justify-between gap-3 text-sm">
+                                    <span className={`font-semibold ${failed ? "text-red-800" : "text-blue-800"}`}>Security deposit return {peso(dr.amount, fmtCurrency)}</span>
+                                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-white/70 border border-white text-black">
+                                      <span className={`w-2 h-2 rounded-full ${failed ? "bg-red-500" : "bg-blue-500"}`} />
+                                      {failed ? "Refund failed" : "Processing"}
+                                    </span>
+                                  </div>
+                                  <p className={`text-xs ${failed ? "text-red-800" : "text-blue-800"}`}>
+                                    {failed
+                                      ? `The ${peso(dr.amount, fmtCurrency)} deposit return did not go through, so the customer has NOT received it yet.${dr.errorNote ? ` (${dr.errorNote})` : ""} Retry it, or hand it back in store from the Refund Requests page.`
+                                      : `PayMongo is returning the ${peso(dr.amount, fmtCurrency)} deposit. This can take up to 24 hours.`}
+                                  </p>
+                                  {failed && canRecordInStore && (
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                      <button type="button" onClick={handleRetryDepositReturn} disabled={retryingRefund}
+                                        className="px-4 py-2 rounded-full text-sm font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+                                        {retryingRefund ? "Retrying…" : `Retry ${peso(dr.amount, fmtCurrency)} refund`}
+                                      </button>
+                                      <button type="button" onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(selected.bookingID || "")}`)}
+                                        className="px-4 py-2 rounded-full text-sm font-semibold border border-red-300 text-red-700 bg-white hover:bg-red-50">
+                                        Hand back in store
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             {selected.discountRefund && (
                               <DiscountRefundCard
                                 payment={selected} fmt={fmtCurrency}
@@ -929,13 +981,60 @@ export default function Payments() {
                           <Row label="Security Deposit" value={peso(selected.securityDeposit, fmtCurrency)} />
                           {selected.depositStatus && <Row label="Deposit Status" value={selected.depositStatus} />}
                           <Row label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />
-                          <Row label="Deposit Returned" value={peso(selected.depositReturned, fmtCurrency)} />
-                          {canRecordInStore && selected.depositStatus === "Held" && String(selected.bookingStatus || "").toLowerCase() === "ongoing" && (
-                            <p className="border-t border-gray-100 mt-2 pt-3 text-xs text-gray-500">The deposit is still held. It can be returned here once the booking is completed in Car Tracking.</p>
-                          )}
-                          {canRecordInStore && selected.depositStatus === "Held" && String(selected.bookingStatus || "").toLowerCase() === "completed" && (
+                          {(() => {
+                            // depositReturned is what settlement decided to hand back. Only count it as returned once the money
+                            // really went (in store, or PayMongo confirmed). A failed / still-processing online return is NOT returned.
+                            const dr = selected.depositReturn;
+                            const notYet = dr && ["failed", "processing"].includes(dr.state) ? Math.min(Number(dr.amount) || 0, selected.depositReturned || 0) : 0;
+                            return (
+                              <>
+                                <Row label="Deposit Returned" value={peso(Math.max(0, (selected.depositReturned || 0) - notYet), fmtCurrency)} />
+                                {notYet > 0 && (
+                                  <div className={`flex justify-between text-sm ${dr.state === "failed" ? "text-red-600" : "text-blue-600"}`}>
+                                    <span>{dr.state === "failed" ? "Deposit return failed (not received)" : "Deposit return processing"}</span>
+                                    <span className="font-medium">{peso(notYet, fmtCurrency)}</span>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
+                          {/* The discount held for the customer goes back WITH the deposit, so it is part of this breakdown. */}
+                          {(() => {
+                            const held = Number(selected.discount?.credit) || 0;        // still held for the customer
+                            const settledBack = Number(selected.discount?.returned) || 0;   // settled to go back (not always received yet)
+                            const dRef = selected.discountRefund;
+                            const dNotYet = dRef && ["failed", "processing"].includes(dRef.state) ? Math.min(Number(dRef.amount) || 0, settledBack) : 0;
+                            const back = Math.max(0, settledBack - dNotYet);              // actually received by the customer
+                            const dep = selected.depositReturn;
+                            const depNotYet = dep && ["failed", "processing"].includes(dep.state) ? Math.min(Number(dep.amount) || 0, selected.depositReturned || 0) : 0;
+                            if (!(held > 0 || settledBack > 0)) return null;
+                            const stillHeld = selected.depositStatus === "Held";
+                            const depositLeft = Math.max(0, (selected.securityDeposit || 0) - (selected.depositSettled || 0));
+                            return (
+                              <>
+                                <Row label="Discount Held for Customer" value={peso(held, fmtCurrency)} />
+                                {settledBack > 0 && <Row label="Discount Returned" value={peso(back, fmtCurrency)} />}
+                                {dNotYet > 0 && (
+                                  <div className={`flex justify-between text-sm ${dRef.state === "failed" ? "text-red-600" : "text-blue-600"}`}>
+                                    <span>{dRef.state === "failed" ? "Discount return failed (not received)" : "Discount return processing"}</span>
+                                    <span className="font-medium">{peso(dNotYet, fmtCurrency)}</span>
+                                  </div>
+                                )}
+                                <div className="border-t border-gray-100 mt-2 pt-2">
+                                  <Row label={stillHeld ? "To Return (deposit + discount)" : "Total Returned"}
+                                    value={peso(stillHeld ? depositLeft + held : Math.max(0, (selected.depositReturned || 0) - depNotYet) + back, fmtCurrency)} />
+                                </div>
+                                {stillHeld && <p className="text-[11px] text-gray-400 mt-1">Any penalty still unpaid comes off this first. The exact amount is shown when you return it.</p>}
+                              </>
+                            );
+                          })()}
+                          {canRecordInStore && selected.depositStatus === "Held" && ["ongoing", "completed"].includes(String(selected.bookingStatus || "").toLowerCase()) && (
                             <div className="border-t border-gray-100 mt-2 pt-3 space-y-1.5">
-                              <p className="text-xs text-gray-500">The booking is completed and the deposit is still held. Return it here — penalties are deducted first.</p>
+                              <p className="text-xs text-gray-500">
+                                {String(selected.bookingStatus || "").toLowerCase() === "ongoing"
+                                  ? "The trip is still ongoing. Returning the deposit here also marks the booking completed."
+                                  : "The booking is completed and the deposit is still held. Return it here — penalties are deducted first."}
+                              </p>
                               <button onClick={() => setReturnDepositOpen(true)}
                                 className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700">
                                 Return deposit

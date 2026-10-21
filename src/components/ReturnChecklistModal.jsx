@@ -66,6 +66,13 @@ export default function ReturnChecklistModal({
   const item = (key) => data?.items?.find((i) => i.key === key);
   const compact = !!onOpenPayments && !depositOnly;   // Car Tracking: no money section here, just a pointer to Payments
   const depositHeldNow = data?.depositStatus === "Held" && !data?.depositSettled;
+  // Return deposit (Payments) on a booking that is still ongoing: confirming completes the booking first, then returns the
+  // deposit. A completed booking has nothing to warn about, and a stolen one can't be completed at all.
+  const bookingState = String(data?.bookingStatus || "").toLowerCase();
+  const completing = depositOnly && bookingState === "ongoing";
+  const stolen = depositOnly && bookingState === "stolen";
+  // Unfinished Car Tracking steps (drop-off, inspection, GPS) are only a warning when completing from here.
+  const canConfirm = completing ? !!data?.canCompleteAndSettle : !!data?.canSettle;
   const refundDue = (data?.amountToReturn ?? 0) > 0;
   const owes = (data?.amountToReturn ?? 0) < 0;
   const onlineOpt = data?.onlineReturn || null;                 // { available, channel?, reason? } from the server
@@ -75,6 +82,7 @@ export default function ReturnChecklistModal({
 
   const settle = () => run(async () => {
     const result = await onSettleDeposit({
+      completeBooking: completing,
       online: goOnline,
       method: refundDue && !goOnline ? refundMethod : undefined,
       referenceNumber: goOnline ? "" : refundRef.trim(),
@@ -115,8 +123,19 @@ export default function ReturnChecklistModal({
 
         {data && (
           <>
+            {completing && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <span className="font-semibold">Heads up:</span> this booking is still ongoing. Confirming marks it <span className="font-semibold">completed</span> first, then returns the deposit.
+                Completing can't be undone.{data.items?.some((i) => !i.complete) ? " Some Car Tracking steps are not done yet (listed below). They won't stop you." : ""}
+              </p>
+            )}
+            {stolen && (
+              <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                This booking was flagged as stolen, so it can't be completed and its deposit can't be returned here.
+              </p>
+            )}
             <ul className="space-y-2">
-              {data.items.filter((i) => !depositOnly || i.key === "droppedOff").map((i) => (
+              {data.items.filter((i) => !depositOnly || completing || i.key === "droppedOff").map((i) => (
                 <li key={i.key} className="flex gap-2 items-start">
                   <span className={`mt-0.5 w-4 h-4 shrink-0 rounded-full text-[10px] font-bold flex items-center justify-center ${i.complete ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
                     {i.complete ? "✓" : "!"}
@@ -224,7 +243,7 @@ export default function ReturnChecklistModal({
               </button>
             )}
 
-            {!compact && (depositOnly ? (data.depositStatus === "Held" && !data.depositSettled) : data.canSettle) && (
+            {!compact && !stolen && (depositOnly ? (data.depositStatus === "Held" && !data.depositSettled) : data.canSettle) && (
               <div className="border border-gray-200 rounded-xl p-3 space-y-2">
                 <p className="text-sm font-semibold text-arl-dark">Settle security deposit</p>
                 {data.underReviewCount > 0 && (
@@ -266,10 +285,10 @@ export default function ReturnChecklistModal({
                       className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm" />
                   </>
                 )}
-                <button disabled={busy || !data.canSettle}
+                <button disabled={busy || !canConfirm}
                   onClick={settle}
                   className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40">
-                  {busy ? "…" : goOnline ? `Refund ${peso(data.amountToReturn)} online` : refundDue ? "Confirm deposit returned" : "Confirm settlement"}
+                  {busy ? "…" : goOnline ? `${completing ? "Complete booking & refund" : "Refund"} ${peso(data.amountToReturn)} online` : refundDue ? (completing ? "Complete booking & confirm deposit returned" : "Confirm deposit returned") : (completing ? "Complete booking & confirm settlement" : "Confirm settlement")}
                 </button>
               </div>
             )}
