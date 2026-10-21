@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../fireabase";
@@ -159,6 +159,38 @@ function SkeletonRow() {
         </td>
       ))}
     </tr>
+  );
+}
+
+// "?" button that lists what counts as an alert / warning. Opens on click or keyboard focus and closes on an outside click,
+// so it works on touch screens as well as with a mouse.
+function HelpTip({ title, items, label }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  return (
+    <span ref={ref} className="relative inline-flex">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-label={label} aria-expanded={open}
+        className="w-5 h-5 rounded-full border border-gray-300 text-gray-500 text-[11px] font-bold leading-none flex items-center justify-center hover:bg-gray-100 hover:text-gray-700 transition-colors">
+        ?
+      </button>
+      {open && (
+        <div role="dialog" aria-label={title}
+          className="absolute left-0 top-7 z-30 w-72 sm:w-80 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-left font-normal">
+          <p className="text-xs font-semibold text-gray-700 mb-2">{title}</p>
+          <ul className="space-y-1.5 text-xs text-gray-600 list-disc pl-4">
+            {items.map((t) => <li key={t}>{t}</li>)}
+          </ul>
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -431,6 +463,19 @@ export default function Dashboard() {
   // booking, just not time-bound. onSnapshot since these are quick, low-
   // volume writes and benefit from showing up live without a page reload.
   const [pendingRequestWarnings, setPendingRequestWarnings] = useState([]);
+  // Refunds that are no longer "waiting for review" but still aren't finished: a refund request that FAILED, or one that is
+  // Approved and not yet Refunded (online part still at PayMongo, or an in-store hand-back not recorded).
+  const [refundFollowups, setRefundFollowups] = useState([]);
+  // Security deposit / discount returns that PayMongo refused or hasn't confirmed (from the backend).
+  const [payoutAlerts, setPayoutAlerts] = useState([]);
+  const loadPayoutAlerts = async () => {
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/dashboard/return-alerts`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      const json = await res.json();
+      if (res.ok && json.success) setPayoutAlerts(json.data || []);
+    } catch { /* an alert list that can't load just stays as it was */ }
+  };
+  usePolling(loadPayoutAlerts, 2 * 60 * 1000);
   useEffect(() => {
     const userMapRef = { current: {} };
     getDocs(collection(db, "user")).then((snap) => {
@@ -497,7 +542,24 @@ export default function Dashboard() {
         setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "refundRequest"), ...rows]);
       }
     );
-    return () => { unsubEdit(); unsubId(); unsubRefund(); };
+    const unsubFollow = onSnapshot(
+      query(collection(db, "refundRequests"), where("status", "in", ["Failed", "Approved"])),
+      (snap) => {
+        setRefundFollowups(snap.docs.map((d) => {
+          const data = d.data();
+          const u = userMapRef.current[data.userID] || {};
+          return {
+            id: d.id,
+            status: data.status,
+            name: u.username || u.email || data.userID || "—",
+            amount: data.toRefundAmount ?? data.amount ?? 0,
+            bookingID: data.bookingID || null,
+            _due: toJsDate(data.processedAt) || toJsDate(data.updatedAt) || toJsDate(data.createdAt) || new Date(),
+          };
+        }));
+      }
+    );
+    return () => { unsubEdit(); unsubId(); unsubRefund(); unsubFollow(); };
   }, []);
 
   // How long a pending edit/ID-resubmit/refund request can sit untouched
@@ -518,7 +580,45 @@ export default function Dashboard() {
     .map((m) => ({ ...m, _type: "maintenance_overdue", _due: toJsDate(m.maintenanceDate) }))
     .filter((m) => m._due && m._due.getTime() < Date.now());
 
+  // Refund follow-ups, one shape for both sources (refund requests + deposit/discount returns).
+  //   Alert  : failed (the customer has NOT received the money), or still not finished after a while.
+  //   Warning: in progress and still within the normal time (PayMongo can take up to 24 hours).
+  const APPROVED_REFUND_STALE_DAYS = 2;
+  const PAYOUT_PROCESSING_STALE_HOURS = 24;
+  const peso0 = (n) => `₱${Number(n || 0).toLocaleString()}`;
+  const followups = [
+    ...refundFollowups.map((r) => {
+      const ageDays = (Date.now() - r._due.getTime()) / (24 * 60 * 60 * 1000);
+      const failed = r.status === "Failed";
+      return {
+        _type: "refund_followup", id: `rr-${r.id}`, _due: r._due,
+        urgent: failed || ageDays > APPROVED_REFUND_STALE_DAYS,
+        title: failed ? "Refund Failed" : ageDays > APPROVED_REFUND_STALE_DAYS ? "Refund Not Completed" : "Refund In Progress",
+        line1: r.name,
+        line2: failed ? `${peso0(r.amount)} — customer has NOT received it` : `${peso0(r.amount)} — ${Math.floor(ageDays)} day${Math.floor(ageDays) === 1 ? "" : "s"} since approved`,
+        link: `/refund-requests?search=${encodeURIComponent(r.bookingID || "")}`,
+      };
+    }),
+    ...payoutAlerts.map((p) => {
+      const at = toJsDate(p.at) || new Date();
+      const ageHours = (Date.now() - at.getTime()) / (60 * 60 * 1000);
+      const failed = p.state === "failed";
+      const what = p.kind === "discount" ? "Discount" : "Deposit";
+      return {
+        _type: "refund_followup", id: `po-${p.paymentID}-${p.kind}`, _due: at,
+        urgent: failed || ageHours > PAYOUT_PROCESSING_STALE_HOURS,
+        title: failed ? `${what} Return Failed` : ageHours > PAYOUT_PROCESSING_STALE_HOURS ? `${what} Return Still Processing` : `${what} Return Processing`,
+        line1: `Booking ${p.bookingID || "—"}`,
+        line2: failed ? `${peso0(p.amount)} — customer has NOT received it${p.errorNote ? ` (${p.errorNote})` : ""}` : `${peso0(p.amount)} — waiting for PayMongo`,
+        link: `/refund-requests?search=${encodeURIComponent(p.bookingID || "")}`,
+      };
+    }),
+  ];
+  const followupAlerts = followups.filter((f) => f.urgent);
+  const followupWarnings = followups.filter((f) => !f.urgent).sort((a, b) => a._due - b._due);
+
   const alerts = [
+    ...followupAlerts,
     ...cancelBookings,
     ...damagedParts,
     ...licenseAlerts.map((l) => ({ ...l, _type: "license" })),
@@ -626,6 +726,16 @@ export default function Dashboard() {
                 {alerts.length}
               </span>
             )}
+            <HelpTip label="What counts as an alert" title="Alerts: something is wrong or overdue and needs action"
+              items={[
+                "A refund that failed, or an approved refund still not finished after " + APPROVED_REFUND_STALE_DAYS + " days",
+                "A security deposit or discount return that PayMongo refused, or is still processing after " + PAYOUT_PROCESSING_STALE_HOURS + " hours",
+                "A cancellation request waiting for review",
+                "A car part that is damaged, stolen or missing (until a maintenance job fixes it)",
+                "A driver's license that has already expired",
+                "A profile edit, ID resubmit or refund request waiting more than " + REQUEST_STALE_DAYS + " days",
+                "Maintenance past its due date and still not completed",
+              ]} />
           </h2>
           <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
             {alerts.length === 0 ? (
@@ -651,6 +761,26 @@ export default function Dashboard() {
                   else if (isRequest) navigate(`/users?role=${a.role}&tab=${a.kind === "idResubmit" ? "documents" : "editRequests"}&open=${a.userID}`);
                   else navigate(`/bookings?open=${a.bookingID || a.id}`);
                 };
+
+                if (a._type === "refund_followup") {
+                  return (
+                    <div
+                      key={a.id}
+                      onClick={() => navigate(a.link)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(a.link); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-red-50 border-red-100 hover:bg-red-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-red-500"><IconWarning className="w-5 h-5" /></span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">{a.title}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{a.line1}</p>
+                        <p className="text-xs text-gray-400">{a.line2}</p>
+                      </div>
+                    </div>
+                  );
+                }
 
                 if (isOverdueMaint) {
                   const daysOverdue = Math.max(0, Math.floor((Date.now() - a._due.getTime()) / (24 * 60 * 60 * 1000)));
@@ -779,11 +909,19 @@ export default function Dashboard() {
           <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
             <IconClock className="w-4 h-4 text-gray-600" />
             Warning
-            {(warnings.length + pendingRequests.length) > 0 && (
+            {(warnings.length + pendingRequests.length + followupWarnings.length) > 0 && (
               <span className="bg-yellow-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                {warnings.length + pendingRequests.length}
+                {warnings.length + pendingRequests.length + followupWarnings.length}
               </span>
             )}
+            <HelpTip label="What counts as a warning" title="Warnings: coming up soon, or waiting but not late yet"
+              items={[
+                "A booking whose pickup is within " + BOOKING_WARNING_HOURS + " hours",
+                "Maintenance due within " + MAINTENANCE_WARNING_HOURS + " hours",
+                "A driver's license expiring within " + LICENSE_WARNING_DAYS + " days",
+                "A profile edit, ID resubmit or refund request waiting for review (it becomes an alert after " + REQUEST_STALE_DAYS + " days)",
+                "A refund or a deposit / discount return that is still in progress and not late yet",
+              ]} />
           </h2>
 
           {/* Time-based countdown — bookings/maintenance coming up, licenses
@@ -865,6 +1003,31 @@ export default function Dashboard() {
           {/* Pending requests — status-based, not time-based. Sorted oldest
               first so the most-neglected one surfaces at the top; anything
               older than REQUEST_STALE_DAYS has already moved up to Alerts. */}
+          {followupWarnings.length > 0 && (
+            <div className="mt-3 pt-3 border-t">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Refunds In Progress</p>
+              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                {followupWarnings.map((f) => (
+                  <div
+                    key={f.id}
+                    onClick={() => navigate(f.link)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(f.link); } }}
+                    className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-amber-50 border-amber-100 hover:bg-amber-100"
+                  >
+                    <span className="shrink-0 mt-0.5 text-amber-600"><IconClock className="w-5 h-5" /></span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 leading-snug">{f.title}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{f.line1}</p>
+                      <p className="text-xs text-gray-400">{f.line2}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mt-3 pt-3 border-t">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Pending Requests</p>
             <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
