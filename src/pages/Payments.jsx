@@ -265,9 +265,12 @@ export default function Payments() {
   const [updating, setUpdating]           = useState(false);
   const [applyingDiscount, setApplyingDiscount] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
-  // A discount can't be edited or taken back once given (a discount that was too small is fixed by giving another),
-  // so it goes through an "are you sure?" first.
+  // A discount can be changed only until it is used (a penalty is paid from it, it is returned, or the deposit is
+  // settled), and never taken back, so giving one goes through an "are you sure?" first.
   const [confirmDiscount, setConfirmDiscount] = useState(false);
+  // The discount being changed: { id, value } while its inline form is open, null otherwise.
+  const [editingDiscount, setEditingDiscount] = useState(null);
+  const [savingDiscountEdit, setSavingDiscountEdit] = useState(false);
   const [notifying, setNotifying] = useState(false);
   // In-store receipts (Supervisor / Admin / Owner): payment mode + reference number on record.
   const [inStoreOpen, setInStoreOpen] = useState(false);
@@ -384,7 +387,7 @@ export default function Payments() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       setSelected(data.data);
-      setDiscountInput("");
+      setDiscountInput(""); setEditingDiscount(null);
       setInStoreOpen(false); setInStoreMethod("Cash"); setInStoreRef("");
       setRefundMethod("Cash"); setRefundRef("");
     } catch (e) { showToast(e.message, "error"); }
@@ -473,7 +476,34 @@ export default function Payments() {
     finally { setApplyingDiscount(false); setConfirmDiscount(false); }
   };
 
-  // Checks first, then asks "are you sure?" -- a discount can't be changed once it's given.
+  // Changes ONE discount that has not been used yet. The server decides (and checks again when it saves), so a screen that
+  // was open too long just gets the reason back. The drawer re-opens afterwards so the figures and history are fresh.
+  const submitDiscountEdit = async () => {
+    if (!selected || !editingDiscount) return;
+    const amount = Number(editingDiscount.value);
+    if (!Number.isFinite(amount) || amount <= 0) { showToast("Enter a discount greater than ₱0.", "error"); return; }
+    setSavingDiscountEdit(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount/${editingDiscount.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast(
+        data.data?.kind === "balance"
+          ? `Discount changed to ${peso(amount, fmtCurrency)} — the remaining balance is now ${peso(data.data.balanceAfter, fmtCurrency)}.`
+          : `Discount changed to ${peso(amount, fmtCurrency)} — still held and returned with the security deposit.`
+      );
+      setEditingDiscount(null);
+      await openDetail(selected.id);
+      await fetchPayments(true);
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setSavingDiscountEdit(false); }
+  };
+
+  // Checks first, then asks "are you sure?" before a NEW discount is given.
   const handleApplyDiscount = () => {
     if (!selected) return;
     const amount = Number(discountInput);
@@ -855,6 +885,9 @@ export default function Payments() {
                                 payment={selected} fmt={fmtCurrency}
                                 canAct={canRecordInStore}
                                 onRetry={handleRetryDiscountRefund} retrying={retryingRefund}
+                                edits={selected.discountEdits || []}
+                                editing={editingDiscount} onEditChange={setEditingDiscount}
+                                onEditSave={submitDiscountEdit} savingEdit={savingDiscountEdit}
                               >
                                 {selected.discountRefund.state === "awaiting_handback" && (canRecordInStore ? (
                                   <InStoreForm
@@ -983,7 +1016,7 @@ export default function Payments() {
         </div>
       )}
 
-      {/* Confirm the discount. There is no editing afterwards, so this restates exactly what will happen: off the balance
+      {/* Confirm a NEW discount. This restates exactly what will happen: off the balance
           on a partial payment, otherwise held for the customer and returned with the security deposit. */}
       {confirmDiscount && selected && (
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
@@ -1003,7 +1036,7 @@ export default function Payments() {
                   </>
                 )}
               </p>
-              <p className="text-xs text-red-500 mt-2">After you confirm, this discount can't be edited or taken back. If it turns out too small, you can give another.</p>
+              <p className="text-xs text-red-500 mt-2">After you confirm, you can still change this amount until it is used (a penalty is paid from it, it is returned, or the deposit is settled). It can't be taken back.</p>
             </div>
             <div className="flex gap-3">
               <button onClick={() => setConfirmDiscount(false)} disabled={applyingDiscount}
@@ -1241,7 +1274,7 @@ function DiscountRefundBadge({ state }) {
 const DISCOUNT_EVENT_LABEL = { balance: "Taken off the balance", credit: "Held for the customer", penalty: "Used for a penalty", return: "Returned to the customer" };
 const EVENT_STATUS = { pending: " (processing)", failed: " (failed)" };
 
-function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children }) {
+function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, edits = [], editing = null, onEditChange, onEditSave, savingEdit = false, children }) {
   const dr = payment.discountRefund;
   if (!dr) return null;
   const st = DISCOUNT_REFUND_STAGE[dr.state] || DISCOUNT_REFUND_STAGE.deducted;
@@ -1284,12 +1317,52 @@ function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, children 
       )}
       {ledger && (d.events || []).length > 0 && (
         <ul className="text-[11px] text-gray-600 divide-y divide-black/5 border-t border-black/5">
-          {d.events.map((e) => (
-            <li key={e.id} className="flex justify-between gap-3 py-1">
-              <span>{DISCOUNT_EVENT_LABEL[e.kind] || "Discount"}{e.kind === "return" ? (EVENT_STATUS[e.status] || "") : ""}{e.byName ? ` · ${e.byName}` : ""}{e.at ? ` · ${fmtDate(e.at)}` : ""}</span>
-              <span className="font-semibold whitespace-nowrap">{peso(e.amount, fmt)}</span>
-            </li>
-          ))}
+          {d.events.map((e) => {
+            // Only a discount nothing has used yet is offered for editing; the server sends exactly which ones, and how high.
+            const edit = canAct ? edits.find((x) => x.id === e.id) : null;
+            const open = !!edit && editing && editing.id === e.id;
+            const typed = open ? Number(editing.value) : 0;
+            const bad = open && (!(typed > 0) || typed > edit.max || typed === edit.current);
+            return (
+              <li key={e.id} className="py-1">
+                <div className="flex justify-between gap-3">
+                  <span>
+                    {DISCOUNT_EVENT_LABEL[e.kind] || "Discount"}{e.kind === "return" ? (EVENT_STATUS[e.status] || "") : ""}{e.byName ? ` · ${e.byName}` : ""}{e.at ? ` · ${fmtDate(e.at)}` : ""}
+                    {e.originalAmount != null && e.originalAmount !== e.amount ? <span className="text-gray-400"> · edited, was {peso(e.originalAmount, fmt)}</span> : null}
+                  </span>
+                  <span className="whitespace-nowrap">
+                    <span className="font-semibold">{peso(e.amount, fmt)}</span>
+                    {edit && !open && (
+                      <button type="button" onClick={() => onEditChange({ id: e.id, value: String(edit.current) })}
+                        className="ml-2 text-[11px] font-semibold text-arl-dark underline underline-offset-2 hover:opacity-70">Edit</button>
+                    )}
+                  </span>
+                </div>
+                {open && (
+                  <div className="mt-1.5 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <input type="number" min="1" max={edit.max} step="1" autoFocus value={editing.value}
+                        onChange={(ev) => onEditChange({ id: e.id, value: ev.target.value })}
+                        className="w-28 border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white text-black" />
+                      <button type="button" onClick={onEditSave} disabled={savingEdit || bad}
+                        className="px-3 py-1 text-xs font-semibold rounded-lg bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+                        {savingEdit ? "Saving…" : "Save"}
+                      </button>
+                      <button type="button" onClick={() => onEditChange(null)} disabled={savingEdit}
+                        className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-white disabled:opacity-50">Cancel</button>
+                    </div>
+                    <p className={`text-[11px] ${typed > edit.max ? "text-red-500" : "text-gray-500"}`}>
+                      {typed > edit.max
+                        ? `It can't be more than ${peso(edit.max, fmt)}.`
+                        : edit.kind === "balance"
+                          ? `Up to ${peso(edit.max, fmt)}. The remaining balance changes with it.`
+                          : `Up to ${peso(edit.max, fmt)}. It stays held and returns with the security deposit.`}
+                    </p>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
       {ledger && d.consistent === false && (
