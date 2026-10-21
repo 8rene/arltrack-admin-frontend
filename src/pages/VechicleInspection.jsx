@@ -1037,15 +1037,24 @@ export default function VehicleDocs() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Could not confirm the inspection.");
       const setDoc = tripType === "before" ? setBeforeDoc : setAfterDoc;
-      setDoc(prev => ({ ...(prev || {}), inspectionConfirmed: { at: new Date(), damagedPartCount: json.data?.damagedPartCount ?? 0 } }));
-      if (json.data?.notified) showToast("Inspection confirmed. The customer was notified.");
-      else showToast("Inspection confirmed, but the customer could not be notified.", "error");
+      setDoc(prev => ({ ...(prev || {}), inspectionConfirmed: { at: new Date(), damagedPartCount: json.data?.damagedPartCount ?? 0, notifiedTo: json.data?.notifiedTo || null } }));
+      if (json.data?.notifiedTo === "driver") showToast("Inspection confirmed. The assigned driver was notified.");
+      else if (json.data?.notifiedTo === "customer") showToast("Inspection confirmed. The customer was notified.");
+      else showToast("Inspection confirmed, but nobody could be notified.", "error");
     } catch (e) {
       console.error(e);
       showToast("Could not confirm the inspection: " + e.message, "error");
     } finally {
       setConfirmingInspection(false);
     }
+  };
+
+  // One Save button: saves everything staged, and the first time also confirms the inspection (which notifies).
+  // Once confirmed, later saves just save -- the backend rejects a second confirm.
+  const handleSave = async () => {
+    const currentDoc = tripType === "before" ? beforeDoc : afterDoc;
+    if (currentDoc?.inspectionConfirmed) await saveAll();
+    else await confirmInspection();
   };
 
   const getSlotImage = (fieldKey) => {
@@ -1578,8 +1587,15 @@ export default function VehicleDocs() {
                                 : hasPartsRecord ? "All changes saved" : "Nothing saved yet"}
                             </p>
                             <p className="text-[11px] text-gray-400">
-                              {currentDoc?.updatedAt ? `Last saved: ${fmtDate(currentDoc.updatedAt)} \u00B7 ` : ""}Videos and additional photos upload as soon as you add them.
+                              {currentDoc?.inspectionConfirmed
+                                ? `\u2713 Confirmed${currentDoc.inspectionConfirmed.at ? ` ${fmtDate(currentDoc.inspectionConfirmed.at)}` : ""} \u00B7 `
+                                : currentDoc?.updatedAt ? `Last saved: ${fmtDate(currentDoc.updatedAt)} \u00B7 ` : ""}Videos and additional photos upload as soon as you add them.
                             </p>
+                            {!currentDoc?.inspectionConfirmed && (
+                              <p className="text-[11px] text-gray-400">
+                                Saving also confirms the inspection and notifies the driver (or the customer if there is no driver).
+                              </p>
+                            )}
                             {hasUnsavedChanges && !canSaveInspection && (
                               <p className="text-[11px] text-amber-700 mt-0.5">
                                 Save All is locked: {NEEDS_EVIDENCE_MSG} You can still save each photo with its own Save button.
@@ -1591,11 +1607,11 @@ export default function VehicleDocs() {
                               <button onClick={() => { setUploads({}); setCurrentStatusEdits({}); }}
                                 className="text-xs text-amber-600 hover:underline font-semibold">Discard</button>
                             )}
-                            <button onClick={saveAll}
-                              disabled={saving || confirmingInspection || !canSaveInspection || (!hasUnsavedChanges && hasPartsRecord)}
+                            <button onClick={handleSave}
+                              disabled={saving || confirmingInspection || !canSaveInspection || (!hasUnsavedChanges && hasPartsRecord && !!currentDoc?.inspectionConfirmed)}
                               title={canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
                               className="text-sm bg-teal-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-50">
-                              {saving ? "Saving..." : "Save All"}
+                              {saving || confirmingInspection ? "Saving..." : currentDoc?.inspectionConfirmed ? "Save" : "Save & confirm"}
                             </button>
                           </div>
                         </div>
@@ -1674,93 +1690,6 @@ export default function VehicleDocs() {
 
                         </SectionBox>
 
-                        {/* 5. Confirm -- the car and its parts were checked and are in the recorded condition */}
-                        <SectionBox title="Confirm inspection" hint="Final step, once everything above is added.">
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                            {[
-                              { ok: docHasEvidence(currentDoc), label: "Video or 3 exterior photos" },
-                              { ok: hasPartsRecord, label: "Car parts condition recorded" },
-                              { ok: !hasUnsavedChanges, label: "No unsaved changes" },
-                            ].map(c => (
-                              <div key={c.label} className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${c.ok ? "bg-green-50 border-green-200 text-green-800" : "bg-gray-50 border-gray-200 text-gray-500"}`}>
-                                <span className="font-bold">{c.ok ? "\u2713" : "\u2022"}</span><span>{c.label}</span>
-                              </div>
-                            ))}
-                          </div>
-
-                        {/* Pickup/Return are no longer completed from this page. This
-                            page is documentation-only now — the actual status change
-                            (with payment + driver-assignment checks) happens back on
-                            Car Tracking (staff) or My Trips (driver), which have that
-                            data available and this page doesn't. Once required photos
-                            are saved, send the person back to finish there. */}
-                        {tripType === "before" && activeBooking.status?.toLowerCase() === "upcoming" && (
-                          <div className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-center ${
-                            canCompletePickup
-                              ? "bg-green-50 border border-green-200 text-green-800"
-                              : "bg-gray-100 text-gray-400"
-                          }`}>
-                            {hasUnsavedChanges
-                              ? "Save changes to continue"
-                              : canCompletePickup
-                                ? "✅ Inspection complete — pickup can now go ahead."
-                                : !hasRequiredBeforePhotos && !hasPartsRecord
-                                  ? "Still needed: a video or the 3 exterior photos, and parts condition"
-                                  : !hasRequiredBeforePhotos
-                                    ? "Still needed: a video or the 3 exterior photos"
-                                    : "Still needed: parts condition"}
-                          </div>
-                        )}
-
-                        {tripType === "after" && activeBooking.status?.toLowerCase() === "ongoing" && (
-                          <div className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-center ${
-                            canCompleteReturn
-                              ? "bg-green-50 border border-green-200 text-green-800"
-                              : "bg-gray-100 text-gray-400"
-                          }`}>
-                            {hasUnsavedChanges
-                              ? "Save changes to continue"
-                              : canCompleteReturn
-                                ? "✅ Inspection complete — the return can now go ahead."
-                                : !hasRequiredAfterPhotos && !hasPartsRecord
-                                  ? "Still needed: a video or the 3 exterior photos, and parts condition"
-                                  : !hasRequiredAfterPhotos
-                                    ? "Still needed: a video or the 3 exterior photos"
-                                    : "Still needed: parts condition"}
-                          </div>
-                        )}
-
-
-                          {currentDoc?.inspectionConfirmed ? (
-                            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3">
-                              <p className="text-sm font-semibold text-green-800">
-                                {"\u2713"} Inspection confirmed{currentDoc.inspectionConfirmed.at ? ` on ${fmtDate(currentDoc.inspectionConfirmed.at)}` : ""}
-                              </p>
-                              <p className="text-[11px] text-green-700 mt-0.5">The customer was notified. Changing something afterwards does not send another notification.</p>
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
-                              <p className="text-xs text-blue-800 min-w-0 flex-1">
-                                {(() => {
-                                  const flagged = carParts.filter(p => !["Good", "New"].includes(getEffectivePartStatus(p))).length;
-                                  return (
-                                    <>
-                                      <span className="font-semibold">Confirm that the car and all car parts have been checked and are in the condition recorded above</span>
-                                      {carParts.length > 0 ? ` (${carParts.length} part${carParts.length !== 1 ? "s" : ""}, ${flagged} flagged).` : "."}{" "}
-                                      The customer gets a notification.
-                                    </>
-                                  );
-                                })()}
-                                {!canSaveInspection && <span className="block mt-1 font-semibold text-amber-700">{NEEDS_EVIDENCE_MSG}</span>}
-                              </p>
-                              <button onClick={confirmInspection} disabled={confirmingInspection || saving || !canSaveInspection}
-                                title={canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
-                                className="shrink-0 text-sm bg-teal-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-50">
-                                {confirmingInspection ? "Confirming..." : (hasUnsavedChanges || !hasPartsRecord) ? "Save & confirm inspection" : "Confirm inspection"}
-                              </button>
-                            </div>
-                          )}
-                        </SectionBox>
                       </>
                     )}
                   </div>

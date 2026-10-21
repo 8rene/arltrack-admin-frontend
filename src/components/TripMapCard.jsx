@@ -138,7 +138,7 @@ export default function TripMapCard({ destination, label = "Location" }) {
   if (!hasDest) return null;
 
   return (
-    <div className="rounded-xl overflow-hidden border border-gray-100">
+    <div className="relative z-0 rounded-xl overflow-hidden border border-gray-100">
       <div ref={mapElRef} className="w-full h-36" />
 
       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50 text-xs">

@@ -237,7 +237,7 @@ const Eyebrow = ({ children }) => (
 function ProofLightbox({ photo, onClose }) {
   const [failed, setFailed] = useState(false);
   return (
-    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/70 z-[1100] flex items-center justify-center p-4" onClick={onClose}>
       <div
         className={`bg-white rounded-2xl overflow-hidden w-full shadow-2xl ${photo.type === "video" ? "max-w-3xl" : "max-w-lg"}`}
         onClick={(e) => e.stopPropagation()}
@@ -292,7 +292,7 @@ function TripInspectionProof({ tripID, refreshKey, authedFetch }) {
     return () => { cancelled = true; };
   }, [tripID, refreshKey, authedFetch]);
 
-  const hasAny = (r) => !!r && (r.exterior.length || r.partPhotos.length || r.videos.length || r.extraPhotos.length || r.parts.recorded);
+  const hasAny = (r) => !!r && (r.exterior.length || r.videos.length || r.extraPhotos.length);
   const rec = data?.[phase];
 
   const renderTile = (item) => (
@@ -338,31 +338,6 @@ function TripInspectionProof({ tripID, refreshKey, authedFetch }) {
           )}
 
           <InspectionMediaGallery doc={{ videos: rec.videos, extraPhotos: rec.extraPhotos }} onView={setViewing} />
-
-          {rec.partPhotos.length > 0 && (
-            <div className="space-y-1.5">
-              <Eyebrow>Part photos ({rec.partPhotos.length})</Eyebrow>
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">{rec.partPhotos.map(renderTile)}</div>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <Eyebrow>Parts condition</Eyebrow>
-            {!rec.parts.recorded ? (
-              <p className="text-xs text-gray-400">Not recorded yet.</p>
-            ) : rec.parts.damageParts.length === 0 ? (
-              <p className="text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">All parts recorded as Good</p>
-            ) : (
-              <ul className="rounded-lg border border-red-200 bg-red-50 divide-y divide-red-100">
-                {rec.parts.damageParts.map((d, i) => (
-                  <li key={`${d.carPartName}-${i}`} className="flex items-center justify-between px-3 py-1.5 text-xs">
-                    <span className="text-gray-700">{d.carPartName}</span>
-                    <span className="font-semibold text-red-600">{d.status}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
         </div>
       )}
 
@@ -748,6 +723,31 @@ function ActiveTripsTab() {
               </div>
 
               <div className="px-5 py-4 space-y-3">
+                {/* Quick actions: remind the customer to pay (left) and tell them you're on the way (right) */}
+                {!isOngoing && (balance > 0 || !trip.enRouteAt) && (
+                  <div className="flex gap-2">
+                    {balance > 0 && (
+                      <button
+                        onClick={() => handleRemindCustomer(trip)}
+                        disabled={remainingFor(trip.id, "balance") > 0 || remindingKey === `${trip.id}:balance`}
+                        className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-sm font-semibold border border-amber-200 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                        {remindingKey === `${trip.id}:balance`
+                          ? "Sending…"
+                          : remainingFor(trip.id, "balance") > 0
+                            ? `Remind again in ${fmtCountdown(remainingFor(trip.id, "balance"))}`
+                            : "🔔 Remind to pay"}
+                      </button>
+                    )}
+                    {!trip.enRouteAt && (
+                      <button onClick={() => handleOnMyWay(trip)}
+                        disabled={busyID === trip.id || blocked}
+                        className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-sm font-semibold text-teal-700 border border-teal-200 hover:bg-teal-50 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                        🚗 On my way
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <Block title="Booking">
                   <Line label="Vehicle">{trip.vehicleName}</Line>
                   {trip.customerPhone && trip.customerPhone !== "—" && (
@@ -843,18 +843,6 @@ function ActiveTripsTab() {
                     <p className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
                       Waiting for staff to settle payment{balance > 0 ? ` · Balance ${peso(balance)}` : ""}
                     </p>
-                    {balance > 0 && (
-                      <button
-                        onClick={() => handleRemindCustomer(trip)}
-                        disabled={remainingFor(trip.id, "balance") > 0 || remindingKey === `${trip.id}:balance`}
-                        className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold border text-teal-700 hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                        {remindingKey === `${trip.id}:balance`
-                          ? "Sending…"
-                          : remainingFor(trip.id, "balance") > 0
-                            ? `Remind again in ${fmtCountdown(remainingFor(trip.id, "balance"))}`
-                            : "🔔 Remind customer about the balance"}
-                      </button>
-                    )}
                   </div>
                 )
               )}
@@ -870,13 +858,6 @@ function ActiveTripsTab() {
             <div className="sticky bottom-0 z-10 -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-t border-gray-100 flex gap-2">
               {!isOngoing ? (
                 <>
-                  {!trip.enRouteAt && (
-                    <button onClick={() => handleOnMyWay(trip)}
-                      disabled={busyID === trip.id || blocked}
-                      className="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-teal-700 border border-teal-200 hover:bg-teal-50 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                      🚗 On my way
-                    </button>
-                  )}
                   <button onClick={() => handlePickup(trip)}
                     disabled={busyID === trip.id || blocked}
                     className="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-arl-dark hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">

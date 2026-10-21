@@ -296,3 +296,10 @@ main.flex-1 > * {
   background: #ffffff;
   display: inline-block;
 }
+
+/* Leaflet's panes use z-index 200-700 and its controls up to 1000. Without this, a map on the page paints OVER modals
+   and lightboxes (e.g. the inspection video viewer). isolation: isolate makes each map its own stacking context,
+   without changing its position or any z-index class set on it. */
+.leaflet-container {
+  isolation: isolate;
+}
