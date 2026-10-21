@@ -87,12 +87,12 @@ const uploadWithProgress = (storage, path, blob, contentType, onProgress) =>
 
 /* POST the uploaded file's URL to the backend. If the backend refuses it, the file
  * is deleted again so a rejected upload never leaves an orphan in Storage. */
-const registerMedia = async ({ apiUrl, segment, phase, bookingID, carID, url, mimeType, sizeBytes, durationSec, fileRef }) => {
+const registerMedia = async ({ apiUrl, segment, phase, bookingID, carID, url, mimeType, sizeBytes, durationSec, caption, fileRef }) => {
   const token = localStorage.getItem("token");
   const res = await fetch(`${apiUrl}/api/vehicle-docs/${phase}/${segment}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ bookingID, carID, url, mimeType, sizeBytes, durationSec }),
+    body: JSON.stringify({ bookingID, carID, url, mimeType, sizeBytes, durationSec, caption }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.success) {
@@ -102,10 +102,10 @@ const registerMedia = async ({ apiUrl, segment, phase, bookingID, carID, url, mi
   return json.data; // { item, recordID, isNewRecord, count }
 };
 
-const removeMedia = async ({ apiUrl, segment, phase, bookingID, mediaID }) => {
+const removeMedia = async ({ apiUrl, segment, phase, bookingID, url }) => {
   const token = localStorage.getItem("token");
   const res = await fetch(
-    `${apiUrl}/api/vehicle-docs/${phase}/${segment}/${encodeURIComponent(mediaID)}?bookingID=${encodeURIComponent(bookingID)}`,
+    `${apiUrl}/api/vehicle-docs/${phase}/${segment}?bookingID=${encodeURIComponent(bookingID)}&url=${encodeURIComponent(url)}`,
     { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
   );
   const json = await res.json().catch(() => ({}));
@@ -131,10 +131,6 @@ function VideoTile({ item, onView, onRemove, removing }) {
       >
         <span className="w-11 h-11 rounded-full bg-white/90 text-gray-800 flex items-center justify-center text-lg shadow">▶</span>
       </button>
-      <div className="absolute bottom-1.5 left-1.5 flex gap-1">
-        {item.durationSec ? <span className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] font-semibold">{fmtDuration(item.durationSec)}</span> : null}
-        {item.sizeBytes ? <span className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px]">{fmtSize(item.sizeBytes)}</span> : null}
-      </div>
       {onRemove && (
         <button
           type="button"
@@ -154,7 +150,7 @@ function VideoTile({ item, onView, onRemove, removing }) {
  * Videos — up to MAX_VIDEOS. Props:
  *   storage, apiUrl, phase ("before"|"after"), bookingID, carID
  *   items            current videos from the record
- *   onAdded(item, recordID)   /   onRemoved(mediaID)
+ *   onAdded(item, recordID)   /   onRemoved(url)
  *   onView({url,label,type})  opens the lightbox
  *   notify(msg, type)         toast
  * ───────────────────────────────────────────────────────────── */
@@ -198,10 +194,10 @@ export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, ite
 
   const handleRemove = async (item) => {
     if (!window.confirm("Remove this video? The file will be deleted.")) return;
-    setRemovingID(item.id);
+    setRemovingID(item.url);
     try {
-      await removeMedia({ apiUrl, segment: "videos", phase, bookingID, mediaID: item.id });
-      onRemoved(item.id);
+      await removeMedia({ apiUrl, segment: "videos", phase, bookingID, url: item.url });
+      onRemoved(item.url);
     } catch (err) {
       notify(err.message, "error");
     } finally {
@@ -213,8 +209,8 @@ export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, ite
     <div className="space-y-2">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         {items.map((item) => (
-          <VideoTile key={item.id} item={item} onView={onView}
-            onRemove={disabled ? null : () => handleRemove(item)} removing={removingID === item.id} />
+          <VideoTile key={item.url} item={item} onView={onView}
+            onRemove={disabled ? null : () => handleRemove(item)} removing={removingID === item.url} />
         ))}
 
         {busy && (
@@ -254,7 +250,10 @@ export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, ite
  * Additional photos — up to MAX_EXTRA_PHOTOS, any number selected at once.
  * Same props as InspectionVideos.
  * ───────────────────────────────────────────────────────────── */
-export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID, items = [], onAdded, onRemoved, onView, notify = () => {}, disabled }) {
+// labelOptions: optional suggestions for the label box (e.g. "Front view", a part name). The label is never required:
+// a photo added with the box empty is simply an additional photo.
+export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID, items = [], onAdded, onRemoved, onView, notify = () => {}, disabled, labelOptions = [] }) {
+  const [caption, setCaption] = useState("");
   const [uploadingCount, setUploadingCount] = useState(0);
   const [removingID, setRemovingID] = useState(null);
   const inputID = `inspection-extra-${phase}`;
@@ -270,6 +269,8 @@ export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID
     const files = picked.slice(0, Math.max(room, 0));
     if (picked.length > files.length) notify(`Only ${files.length} of ${picked.length} photos added — the limit is ${MAX_EXTRA_PHOTOS}.`, "error");
 
+    const label = caption.trim();   // applies to the photos picked together; empty = no label
+    setCaption("");
     setUploadingCount(files.length);
     for (const file of files) {
       try {
@@ -279,7 +280,7 @@ export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID
         const { url, fileRef } = await uploadWithProgress(storage, path, blob, "image/jpeg");
         const data = await registerMedia({
           apiUrl, segment: "extra-photos", phase, bookingID, carID, url,
-          mimeType: "image/jpeg", sizeBytes: blob.size, fileRef,
+          mimeType: "image/jpeg", sizeBytes: blob.size, caption: label || undefined, fileRef,
         });
         onAdded(data.item, data.recordID);
       } catch (err) {
@@ -293,10 +294,10 @@ export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID
 
   const handleRemove = async (item) => {
     if (!window.confirm("Remove this photo? The file will be deleted.")) return;
-    setRemovingID(item.id);
+    setRemovingID(item.url);
     try {
-      await removeMedia({ apiUrl, segment: "extra-photos", phase, bookingID, mediaID: item.id });
-      onRemoved(item.id);
+      await removeMedia({ apiUrl, segment: "extra-photos", phase, bookingID, url: item.url });
+      onRemoved(item.url);
     } catch (err) {
       notify(err.message, "error");
     } finally {
@@ -304,20 +305,37 @@ export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID
     }
   };
 
+  const listID = `${inputID}-labels`;
+  const uniqueOptions = [...new Set((labelOptions || []).map((o) => String(o || "").trim()).filter(Boolean))];
+
   return (
     <div className="space-y-2">
+      {!full && !disabled && (
+        <div>
+          <input type="text" value={caption} onChange={(e) => setCaption(e.target.value)} maxLength={60}
+            list={uniqueOptions.length ? listID : undefined}
+            placeholder="Label for the next photos (optional) - e.g. Front view, Left mirror"
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-teal-400" />
+          {uniqueOptions.length > 0 && (
+            <datalist id={listID}>{uniqueOptions.map((o) => <option key={o} value={o} />)}</datalist>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-3">
         {items.map((item) => (
-          <div key={item.id} className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50 aspect-square">
+          <div key={item.url} className="relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50 aspect-square">
             <button type="button" className="w-full h-full"
-              onClick={() => onView({ url: item.url, label: "Additional photo", type: "image" })}>
-              <img src={item.url} alt="Additional" loading="lazy" className="w-full h-full object-cover" />
+              onClick={() => onView({ url: item.url, label: item.caption || "Additional photo", type: "image" })}>
+              <img src={item.url} alt={item.caption || "Additional"} loading="lazy" className="w-full h-full object-cover" />
             </button>
+            {item.caption && (
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/55 text-white text-[10px] font-semibold px-1.5 py-0.5 truncate">{item.caption}</span>
+            )}
             {!disabled && (
-              <button type="button" onClick={() => handleRemove(item)} disabled={removingID === item.id}
+              <button type="button" onClick={() => handleRemove(item)} disabled={removingID === item.url}
                 className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 text-red-500 text-[10px] font-bold shadow hover:bg-white disabled:opacity-50"
                 aria-label="Remove photo">
-                {removingID === item.id ? "…" : "✕"}
+                {removingID === item.url ? "…" : "✕"}
               </button>
             )}
           </div>
@@ -369,7 +387,7 @@ export function InspectionMediaGallery({ doc, onView }) {
         <div className="space-y-1.5">
           <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Videos ({videos.length})</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {videos.map((v) => <VideoTile key={v.id} item={v} onView={onView} />)}
+            {videos.map((v) => <VideoTile key={v.url} item={v} onView={onView} />)}
           </div>
         </div>
       )}
@@ -378,9 +396,9 @@ export function InspectionMediaGallery({ doc, onView }) {
           <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Additional photos ({photos.length})</p>
           <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
             {photos.map((p) => (
-              <button key={p.id} type="button" className="rounded-lg overflow-hidden border border-gray-100 aspect-square"
-                onClick={() => onView({ url: p.url, label: "Additional photo", type: "image" })}>
-                <img src={p.url} alt="Additional" loading="lazy" className="w-full h-full object-cover" />
+              <button key={p.url} type="button" className="rounded-lg overflow-hidden border border-gray-100 aspect-square"
+                onClick={() => onView({ url: p.url, label: p.caption || "Additional photo", type: "image" })}>
+                <img src={p.url} alt={p.caption || "Additional"} loading="lazy" className="w-full h-full object-cover" />
               </button>
             ))}
           </div>

@@ -97,8 +97,9 @@ const mergePhotoDocs = (snap) => {
   docs.forEach(d => Object.entries(d).forEach(([k, v]) => {
     if (Array.isArray(v)) {
       if (!v.length) return;
-      const seen = new Set((merged[k] || []).map(i => i?.id));
-      merged[k] = [...(merged[k] || []), ...v.filter(i => !seen.has(i?.id))];
+      const keyOf = (i) => i?.url || i?.id;   // entries are identified by their url (older ones may also carry an id)
+      const seen = new Set((merged[k] || []).map(keyOf));
+      merged[k] = [...(merged[k] || []), ...v.filter(i => !seen.has(keyOf(i)))];
       return;
     }
     if (v !== "" && v !== null && v !== undefined) merged[k] = v;
@@ -248,7 +249,7 @@ export default function VehicleDocs() {
   const [uploads, setUploads]     = useState({});
   const [uploading, setUploading] = useState({});
   const [saving, setSaving]       = useState(false);
-  const [confirmingParts, setConfirmingParts] = useState(false);
+  const [confirmingInspection, setConfirmingInspection] = useState(false);
   const [toast, setToast]         = useState(null);
 
   const showToast = (msg, type = "success") => {
@@ -772,7 +773,7 @@ export default function VehicleDocs() {
       const setDoc = tripType === "before" ? setBeforeDoc : setAfterDoc;
       setDoc(prev => (prev && !prev.id && recordID ? { ...prev, id: recordID } : prev));
     },
-    onRemoved: (mediaID) => applyMediaChange(kind, list => list.filter(i => i.id !== mediaID)),
+    onRemoved: (url) => applyMediaChange(kind, list => list.filter(i => i.url !== url)),
     onView: setViewingPhoto,
     notify: showToast,
   });
@@ -918,8 +919,8 @@ export default function VehicleDocs() {
   };
 
   const saveAll = async () => {
-    if (!activeBooking) { showToast("No active booking to link photos to.", "error"); return; }
-    if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return; }
+    if (!activeBooking) { showToast("No active booking to link photos to.", "error"); return false; }
+    if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return false; }
     const pending = Object.keys(uploads);
     const currentStatusEdits = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
     const pendingStatusKeys  = Object.keys(currentStatusEdits);
@@ -932,7 +933,7 @@ export default function VehicleDocs() {
     const needsPartsRecord = !hasPartsRecord;
     if (!pending.length && !pendingStatusKeys.length && !needsPartsRecord) {
       showToast("Nothing to save.", "error");
-      return;
+      return false;
     }
 
     setSaving(true);
@@ -1005,31 +1006,45 @@ export default function VehicleDocs() {
       }
 
       showToast(needsPartsRecord ? "All changes saved — parts condition recorded!" : "All changes saved!");
+      return true;
     } catch (e) {
       console.error(e);
       showToast("Save failed: " + e.message, "error");
+      return false;
     } finally {
       setUploading(prev => { const n = { ...prev }; pending.forEach(k => n[k] = false); return n; });
       setSaving(false);
     }
   };
 
-  // Records the parts condition as-is (Good unless flagged Damaged; on the
-  // After tab, damage carried over from Before stays flagged) without
-  // touching any photos. Part of the inspection the driver's pickup/return
-  // waits on — see hasPartsRecord below.
-  const confirmParts = async () => {
+  // Final step of an inspection: staff confirm the car (exterior) and every car part were checked and are in the
+  // condition recorded above. Anything still staged -- or a parts record that doesn't exist yet -- is saved first, so
+  // the confirmation always covers exactly what is on screen. The backend then stamps the record and notifies the customer.
+  const confirmInspection = async () => {
     if (!activeBooking || !selectedCar) return;
     if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return; }
-    setConfirmingParts(true);
+    setConfirmingInspection(true);
     try {
-      await commitStatusEdits(activeBooking.bookingID || activeBooking.id, {}, { force: true });
-      showToast("Parts condition recorded.");
+      if (hasUnsavedChanges || !hasPartsRecord) {
+        const saved = await saveAll();
+        if (!saved) return;
+      }
+      const res = await fetch(`${API_URL}/api/vehicle-docs/${tripType}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ bookingID: activeBooking.bookingID || activeBooking.id, carID: selectedCar.carID || selectedCar.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Could not confirm the inspection.");
+      const setDoc = tripType === "before" ? setBeforeDoc : setAfterDoc;
+      setDoc(prev => ({ ...(prev || {}), inspectionConfirmed: { at: new Date(), damagedPartCount: json.data?.damagedPartCount ?? 0 } }));
+      if (json.data?.notified) showToast("Inspection confirmed. The customer was notified.");
+      else showToast("Inspection confirmed, but the customer could not be notified.", "error");
     } catch (e) {
       console.error(e);
-      showToast("Could not record parts condition: " + e.message, "error");
+      showToast("Could not confirm the inspection: " + e.message, "error");
     } finally {
-      setConfirmingParts(false);
+      setConfirmingInspection(false);
     }
   };
 
@@ -1551,26 +1566,127 @@ export default function VehicleDocs() {
                       </div>
                     )}
 
-                    {/* Last saved */}
-                    {currentDoc?.updatedAt && (
-                      <p className="text-xs text-gray-400">Last saved: {fmtDate(currentDoc.updatedAt)}</p>
-                    )}
-
                     {!isAfterTripLocked && (
                       <>
-                        {/* Videos (optional) — one walkaround can cover exterior + parts */}
-                        <SectionTitle title="Videos (can replace the 3 exterior photos)" />
-                        <InspectionVideos {...mediaProps("videos")} />
-
-                        {/* Exterior Views */}
-                        <SectionTitle title={(currentDoc?.videos?.length || 0) > 0 ? "Exterior Views (optional — video added)" : "Exterior Views (required unless you add a video)"} />
-                        <div className="grid grid-cols-3 gap-4">
-                          {EXTERIOR_SLOTS.map(slot => (
-                            <PhotoSlot key={slot.key} fieldKey={slot.key} label={slot.label} icon={slot.icon}
-                              image={getSlotImage(slot.key)} uploading={uploading[slot.key]} isPending={!!uploads[slot.key]}
-                              onFilePick={f => handleFilePick(slot.key, f)} onUpload={() => uploadSlot(slot.key)} required={(currentDoc?.videos?.length || 0) === 0} />
-                          ))}
+{/* Save All -- first thing on the page, above the video. Videos and additional photos upload the moment they are
+                            added; this saves the exterior photos and the parts condition. */}
+                        <div className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${hasUnsavedChanges ? "bg-amber-50 border-amber-200" : "bg-white border-gray-100 shadow-sm"}`}>
+                          <div className="min-w-0">
+                            <p className={`text-sm font-semibold ${hasUnsavedChanges ? "text-amber-800" : "text-gray-700"}`}>
+                              {hasUnsavedChanges
+                                ? `${pendingChangeCount} unsaved change${pendingChangeCount !== 1 ? "s" : ""}${hasUnsavedUploads && hasUnsavedStatusEdits ? " (photos + status)" : hasUnsavedStatusEdits ? " (status)" : ""}`
+                                : hasPartsRecord ? "All changes saved" : "Nothing saved yet"}
+                            </p>
+                            <p className="text-[11px] text-gray-400">
+                              {currentDoc?.updatedAt ? `Last saved: ${fmtDate(currentDoc.updatedAt)} \u00B7 ` : ""}Videos and additional photos upload as soon as you add them.
+                            </p>
+                            {hasUnsavedChanges && !canSaveInspection && (
+                              <p className="text-[11px] text-amber-700 mt-0.5">
+                                Save All is locked: {NEEDS_EVIDENCE_MSG} You can still save each photo with its own Save button.
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {hasUnsavedChanges && (
+                              <button onClick={() => { setUploads({}); setCurrentStatusEdits({}); }}
+                                className="text-xs text-amber-600 hover:underline font-semibold">Discard</button>
+                            )}
+                            <button onClick={saveAll}
+                              disabled={saving || confirmingInspection || !canSaveInspection || (!hasUnsavedChanges && hasPartsRecord)}
+                              title={canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
+                              className="text-sm bg-teal-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-50">
+                              {saving ? "Saving..." : "Save All"}
+                            </button>
+                          </div>
                         </div>
+
+                        {/* 1. Video -- free-form: it is not tied to the exterior or to any part */}
+                        <SectionBox title="Video" hint="Optional. One walkaround can show the exterior and the parts together, and it can stand in for the 3 exterior photos.">
+                          <InspectionVideos {...mediaProps("videos")} />
+                        </SectionBox>
+
+                        {/* 2. Additional photos -- free-form, a label is optional */}
+                        <SectionBox title="Additional photos" hint="Optional. Add any photo you want to keep. Give it a label (a view or a part) if you like, or leave it unlabelled.">
+                          <InspectionExtraPhotos {...mediaProps("extraPhotos")}
+                            labelOptions={["Front view", "Side view", "Back view", ...carParts.map(p => p.carPartName)]} />
+                        </SectionBox>
+
+                        {/* 3. Car exterior */}
+                        <SectionBox title="Car exterior"
+                          hint={(currentDoc?.videos?.length || 0) > 0 ? "Optional, because a video was added." : "Required unless you add a video."}>
+                          <div className="grid grid-cols-3 gap-4">
+                            {EXTERIOR_SLOTS.map(slot => (
+                              <PhotoSlot key={slot.key} fieldKey={slot.key} label={slot.label} icon={slot.icon}
+                                image={getSlotImage(slot.key)} uploading={uploading[slot.key]} isPending={!!uploads[slot.key]}
+                                onFilePick={f => handleFilePick(slot.key, f)} onUpload={() => uploadSlot(slot.key)} required={(currentDoc?.videos?.length || 0) === 0} />
+                            ))}
+                          </div>
+                        </SectionBox>
+
+                        {/* 4. Car parts */}
+                        <SectionBox title={`Car parts${carParts.length ? ` (${carParts.length})` : ""}`}
+                          hint="Anything not flagged Damaged is recorded as Good.">
+                                                {partsLoading ? (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                            {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-48 rounded-2xl bg-gray-100 animate-pulse" />)}
+                          </div>
+                        ) : carParts.length > 0 ? (
+                          <>
+                                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                              {carParts.map(part => {
+                                const fieldKey = getPartFieldKey(part);
+                                const effectiveStatus = getEffectivePartStatus(part);
+                                return (
+                                  <div key={part.id} className="space-y-1.5">
+                                    <PhotoSlot fieldKey={fieldKey} label={part.carPartName || "Part"}
+                                      sub={partTypes[part.carPartTypeID] || ""} image={getSlotImage(fieldKey)}
+                                      uploading={uploading[fieldKey]} isPending={!!uploads[fieldKey]}
+                                      onFilePick={f => handleFilePick(fieldKey, f)} onUpload={() => uploadSlot(fieldKey)} />
+                                    {isDriver ? (
+                                      <StatusToggle
+                                        status={effectiveStatus}
+                                        isDirty={currentStatusEdits[part.id] !== undefined}
+                                        onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
+                                      />
+                                    ) : (
+                                      <div className="flex items-center justify-between gap-1.5">
+                                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                          PART_STATUS_STYLE[effectiveStatus] || "bg-gray-100 text-gray-500"
+                                        }`}>
+                                          {effectiveStatus}
+                                        </span>
+                                        <PartEditDropdown
+                                          currentStatus={effectiveStatus}
+                                          onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="p-6 text-center text-gray-400 text-sm">
+                            🔧 No parts found in inventory for this vehicle.
+                          </div>
+                        )}
+
+                        </SectionBox>
+
+                        {/* 5. Confirm -- the car and its parts were checked and are in the recorded condition */}
+                        <SectionBox title="Confirm inspection" hint="Final step, once everything above is added.">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                            {[
+                              { ok: docHasEvidence(currentDoc), label: "Video or 3 exterior photos" },
+                              { ok: hasPartsRecord, label: "Car parts condition recorded" },
+                              { ok: !hasUnsavedChanges, label: "No unsaved changes" },
+                            ].map(c => (
+                              <div key={c.label} className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${c.ok ? "bg-green-50 border-green-200 text-green-800" : "bg-gray-50 border-gray-200 text-gray-500"}`}>
+                                <span className="font-bold">{c.ok ? "\u2713" : "\u2022"}</span><span>{c.label}</span>
+                              </div>
+                            ))}
+                          </div>
 
                         {/* Pickup/Return are no longer completed from this page. This
                             page is documentation-only now — the actual status change
@@ -1614,106 +1730,37 @@ export default function VehicleDocs() {
                           </div>
                         )}
 
-                        {/* No parts-condition record saved yet for this trip phase.
-                            Good is the implicit default, so an all-Good car never
-                            stages anything to Save — this explicit confirm is what
-                            creates the record the pickup/return gate requires.
-                            (Staged toggles + Save All create it too, hence hidden
-                            while those are pending.) */}
-                        {!hasPartsRecord && !hasUnsavedStatusEdits && (
-                          <div className="flex items-center justify-between gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-                            <p className="text-xs text-blue-800">
-                              <span className="font-semibold">Parts condition not recorded yet.</span>{" "}
-                              Review the parts below — anything not flagged Damaged is recorded as Good — then confirm
-                              {hasUnsavedUploads ? " (or press Save All, which records it with your photos)." : "."}
-                              {!canSaveInspection && <span className="block mt-1 font-semibold text-amber-700">{NEEDS_EVIDENCE_MSG}</span>}
-                            </p>
-                            <button onClick={confirmParts} disabled={confirmingParts || saving || !canSaveInspection}
-                              title={canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
-                              className="shrink-0 text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
-                              {confirmingParts ? "Saving…" : "Confirm parts condition"}
-                            </button>
-                          </div>
-                        )}
 
-                        {/* Parts */}
-                        {partsLoading ? (
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                            {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-48 rounded-2xl bg-gray-100 animate-pulse" />)}
-                          </div>
-                        ) : carParts.length > 0 ? (
-                          <>
-                            <SectionTitle title={`Parts Documentation (${carParts.length})`} />
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                              {carParts.map(part => {
-                                const fieldKey = getPartFieldKey(part);
-                                const effectiveStatus = getEffectivePartStatus(part);
-                                return (
-                                  <div key={part.id} className="space-y-1.5">
-                                    <PhotoSlot fieldKey={fieldKey} label={part.carPartName || "Part"}
-                                      sub={partTypes[part.carPartTypeID] || ""} image={getSlotImage(fieldKey)}
-                                      uploading={uploading[fieldKey]} isPending={!!uploads[fieldKey]}
-                                      onFilePick={f => handleFilePick(fieldKey, f)} onUpload={() => uploadSlot(fieldKey)} />
-                                    {isDriver ? (
-                                      <StatusToggle
-                                        status={effectiveStatus}
-                                        isDirty={currentStatusEdits[part.id] !== undefined}
-                                        onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
-                                      />
-                                    ) : (
-                                      <div className="flex items-center justify-between gap-1.5">
-                                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                                          PART_STATUS_STYLE[effectiveStatus] || "bg-gray-100 text-gray-500"
-                                        }`}>
-                                          {effectiveStatus}
-                                        </span>
-                                        <PartEditDropdown
-                                          currentStatus={effectiveStatus}
-                                          onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center text-gray-400 text-sm">
-                            🔧 No parts found in inventory for this vehicle.
-                          </div>
-                        )}
-
-                        {/* Additional photos (optional, free-form) */}
-                        <SectionTitle title="Additional Photos (Optional)" />
-                        <InspectionExtraPhotos {...mediaProps("extraPhotos")} />
-
-                        {/* Pending changes bar — photos and/or Good/Damaged toggles, whichever's staged */}
-                        {hasUnsavedChanges && (
-                          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 gap-3">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm">⚠️</span>
-                              <p className="text-xs font-semibold text-amber-800">
-                                {pendingChangeCount} unsaved change{pendingChangeCount !== 1 ? "s" : ""}
-                                {hasUnsavedUploads && hasUnsavedStatusEdits ? " (photos + status)" : hasUnsavedStatusEdits ? " (status)" : ""}
+                          {currentDoc?.inspectionConfirmed ? (
+                            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3">
+                              <p className="text-sm font-semibold text-green-800">
+                                {"\u2713"} Inspection confirmed{currentDoc.inspectionConfirmed.at ? ` on ${fmtDate(currentDoc.inspectionConfirmed.at)}` : ""}
                               </p>
-                              {!canSaveInspection && (
-                                <p className="text-[11px] text-amber-700 mt-0.5">
-                                  Save All is locked: {NEEDS_EVIDENCE_MSG} You can still save each photo with its own Save button.
-                                </p>
-                              )}
+                              <p className="text-[11px] text-green-700 mt-0.5">The customer was notified. Changing something afterwards does not send another notification.</p>
                             </div>
-                            <div className="flex gap-2">
-                              <button onClick={() => { setUploads({}); setCurrentStatusEdits({}); }}
-                                className="text-xs text-amber-600 hover:underline font-semibold">Discard</button>
-                              <button onClick={saveAll} disabled={saving || !canSaveInspection}
+                          ) : (
+                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                              <p className="text-xs text-blue-800 min-w-0 flex-1">
+                                {(() => {
+                                  const flagged = carParts.filter(p => !["Good", "New"].includes(getEffectivePartStatus(p))).length;
+                                  return (
+                                    <>
+                                      <span className="font-semibold">Confirm that the car and all car parts have been checked and are in the condition recorded above</span>
+                                      {carParts.length > 0 ? ` (${carParts.length} part${carParts.length !== 1 ? "s" : ""}, ${flagged} flagged).` : "."}{" "}
+                                      The customer gets a notification.
+                                    </>
+                                  );
+                                })()}
+                                {!canSaveInspection && <span className="block mt-1 font-semibold text-amber-700">{NEEDS_EVIDENCE_MSG}</span>}
+                              </p>
+                              <button onClick={confirmInspection} disabled={confirmingInspection || saving || !canSaveInspection}
                                 title={canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
-                                className="text-xs bg-teal-600 text-white px-3 py-1 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
-                                {saving ? "Saving…" : "Save All ↑"}
+                                className="shrink-0 text-sm bg-teal-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-50">
+                                {confirmingInspection ? "Confirming..." : (hasUnsavedChanges || !hasPartsRecord) ? "Save & confirm inspection" : "Confirm inspection"}
                               </button>
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </SectionBox>
                       </>
                     )}
                   </div>
@@ -1760,12 +1807,15 @@ export default function VehicleDocs() {
   );
 }
 
-function SectionTitle({ title }) {
+function SectionBox({ title, hint, children }) {
   return (
-    <div className="flex items-center gap-3">
-      <h2 className="font-bold text-gray-700 text-sm uppercase tracking-wider">{title}</h2>
-      <div className="flex-1 h-px bg-gray-100" />
-    </div>
+    <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+      <div>
+        <h2 className="font-bold text-gray-700 text-sm uppercase tracking-wider">{title}</h2>
+        {hint && <p className="text-[11px] text-gray-400 mt-0.5">{hint}</p>}
+      </div>
+      {children}
+    </section>
   );
 }
 
