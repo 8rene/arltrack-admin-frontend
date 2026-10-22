@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
-
 const fmtDateTimeLong = (val) => {
   if (!val) return "—";
   const d = new Date(val);
@@ -120,17 +118,9 @@ export default function TripDetailModal({ open, onClose, trip, sections = [] }) 
               </div>
             </Section>
 
-            {/* Payment breakdown — read-only; this trip has already ended. */}
+            {/* Payment: a driver only needs to know whether any balance is still owed, not the amounts or how it was paid. */}
             <Section title="Payment" open={isOpen("payment")} onToggle={() => toggle("payment")}>
-              <div className="space-y-2.5">
-                <Row label="Total Fee" value={peso(p.totalFee)} />
-                {p.discountAmount > 0 && <Row label="Discount" value={`-${peso(p.discountAmount)}`} color="text-red-500" />}
-                <Row label="Amount Paid" value={peso(p.amountPaid)} />
-                <Row label="Balance" value={p.balance > 0 ? peso(p.balance) : "Fully Paid"} color={p.balance > 0 ? "text-amber-600" : "text-green-600"} bold />
-                <div className="h-px bg-gray-200" />
-                <Row label="Mode of Payment" value={p.paymentMethod || "—"} />
-                <Row label="Status" value={p.paymentStatus || "—"} />
-              </div>
+              <Row label="Balance" value={p.balance > 0 ? "Balance remaining" : "No balance remaining"} color={p.balance > 0 ? "text-amber-600" : "text-green-600"} bold />
             </Section>
           </div>
 
