@@ -16,22 +16,22 @@ const IconChevronDown = ({ className = "w-4 h-4" }) => (
     <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
-const IconUndo = ({ className = "w-5 h-5" }) => (
+const IconClock = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M9 14L4 9l5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M4 9h10a6 6 0 010 12h-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
   </svg>
 );
-const IconShield = ({ className = "w-5 h-5" }) => (
+const IconHourglass = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6l8-3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M7 4h10M7 20h10M8 4v3a4 4 0 0 0 1.6 3.2L12 12l2.4-1.8A4 4 0 0 0 16 7V4M8 20v-3a4 4 0 0 1 1.6-3.2L12 12l2.4 1.8A4 4 0 0 1 16 17v3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
-const IconTag = ({ className = "w-5 h-5" }) => (
+const IconAlertCircle = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3 13V3h10l7.6 7.6a2 2 0 010 2.8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" />
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <line x1="12" y1="8" x2="12" y2="12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="16" x2="12.01" y2="16" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
   </svg>
 );
 
@@ -41,6 +41,8 @@ function StatCard({ icon, value, label, sub, color, onClick, active }) {
     teal:   "bg-teal-50 text-teal-600",
     yellow: "bg-yellow-50 text-yellow-600",
     purple: "bg-purple-50 text-purple-600",
+    blue:   "bg-blue-50 text-blue-600",
+    red:    "bg-red-50 text-red-500",
   };
   return (
     <button
@@ -104,6 +106,10 @@ const stageOf = (r) => {
   return handbackPending ? "handback" : "paymongo";
 };
 const handbackDue = (r) => (r && r.status === "Approved" && r.manualRefund && !r.manualRefund.issued ? Number(r.manualRefund.amount) || 0 : 0);
+// A Failed request: PayMongo refused part of it. That part is still owed to the customer, and staff pay it back themselves.
+const failedDue = (r) => (r && r.status === "Failed" && Array.isArray(r.parts)
+  ? r.parts.filter((x) => x.status === "failed").reduce((s, x) => s + (Number(x.amount) || 0), 0)
+  : 0);
 
 // A staff discount on the same payment is money going back to the customer too, and it waits on PayMongo like this
 // refund does. While it is still processing (or failed) the server refuses to approve, so the button says why.
@@ -226,9 +232,14 @@ const waitKeyOf = (r) => {
   if (r.status === "Approved") return stageOf(r);
   return null;
 };
-// Which KIND of money an item is, for the Type filter. Cancellation = a customer's refund request (or a staff cancel);
-// the other two are outcomes with no approval step: a deposit handed back, or a discount that overpaid.
-const typeOf = (r) => (isDeposit(r) ? "deposit" : r.kind === "discount" ? "discount" : "cancellation");
+// What KIND of item it is: the type buttons in Under Process filter on this.
+const typeKeyOf = (r) => (isDeposit(r) ? "deposit" : isDiscount(r) ? "discount" : r.source === "staff" ? "staff" : "refund");
+const TYPE_BUTTONS = [
+  { key: "refund",   label: "Refunds" },
+  { key: "staff",    label: "Staff cancels" },
+  { key: "deposit",  label: "Deposit returns" },
+  { key: "discount", label: "Discounts" },
+];
 const TABS = [
   { key: "pending",    label: "Request Pending", chips: [] },
   { key: "processing", label: "Under Process",   chips: [
@@ -361,6 +372,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
   const { tier, kept, hours } = disc ? {} : policyOf(r);
   const w = (disc ? r.refund.state !== "refunded" : r.status === "Approved") ? fmtWaiting(r) : null;
   const due = disc ? 0 : handbackDue(r);
+  const failedOwed = disc ? 0 : failedDue(r);
   const blocked = !disc && discountBlocksApproval(r);
   const when = hours !== null && hours !== undefined ? `${Math.max(0, Math.round(hours * 10) / 10)} hours before pickup` : null;
 
@@ -439,10 +451,13 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                   {Array.isArray(r.parts) && r.parts.map((pt, i) => (
                     <Line key={i} label={`${pt.kind === "balance" ? "Balance" : "Deposit"} ${fmt(pt.amount)}`}>
                       <span className={pt.status === "succeeded" ? "text-green-600" : pt.status === "failed" ? "text-red-600" : "text-blue-600"}>
-                        {pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed" : "processing at PayMongo"}
+                        {pt.handedBack
+                          ? `handed back${pt.handedBack.method ? ` (${pt.handedBack.method})` : ""}${pt.handedBack.referenceNumber ? ` · ref ${pt.handedBack.referenceNumber}` : ""}`
+                          : pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed" : "processing at PayMongo"}
                       </span>
                       {pt.paymongoRefundID && <span className="block font-mono text-[11px] text-gray-400">{pt.paymongoRefundID}</span>}
                       {pt.status === "failed" && pt.error && <span className="block text-[11px] text-red-600">{pt.error}</span>}
+                      {pt.handedBack && <span className="block text-[11px] text-gray-400">PayMongo could not refund this part, so it was paid back by hand.</span>}
                     </Line>
                   ))}
                   {r.manualRefund && (
@@ -453,27 +468,13 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                     </Line>
                   )}
                   {!pv && Number(r.unrefundableAmount) > 0 && <Line label="Not refunded"><span className="text-red-600 font-semibold">{fmt(r.unrefundableAmount)} — Payment ID does not exist</span></Line>}
-                </Block>
-              )}
-
-              {!disc && due > 0 && (
-                <Block title="Hand back in person">
-                  <p className="text-[11px] text-gray-500 mb-2">Give {fmt(due)} to the customer, then record it here. The reference number is optional (e.g. a GCash or bank transfer reference).</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <label className="text-xs text-gray-500">Method
-                      <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-2 text-sm text-gray-800">
-                        <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
-                      </select>
-                    </label>
-                    <label className="text-xs text-gray-500">Reference no. <span className="text-gray-400">(optional)</span>
-                      <input type="text" value={handbackRef || ""} onChange={(e) => setHandbackRef(e.target.value)} maxLength={100} placeholder="e.g. GCash ref"
-                        className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-2 text-sm text-gray-800 font-mono" />
-                    </label>
-                  </div>
-                  <button onClick={onHandback} disabled={busy} title="Confirm you handed this amount back to the customer in person"
-                    className="mt-3 w-full inline-flex items-center justify-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
-                    <IconCheck /> {busy ? "…" : `Handed back ${fmt(due)}`}
-                  </button>
+                  {r.paymentID && (
+                    <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
+                      title="Open this payment — receipts, slips and every money movement are there"
+                      className="mt-2 px-3 py-1.5 rounded-xl border text-xs font-semibold text-teal-700 hover:bg-teal-50">
+                      View in Payments →
+                    </button>
+                  )}
                 </Block>
               )}
 
@@ -492,8 +493,34 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
 
         </div>
 
+        {/* Hand-back form: pinned with the buttons below, so it never scrolls out of view. */}
+        {!disc && (failedOwed > 0 || due > 0) && (
+          <div className="shrink-0 border-t border-orange-100 bg-orange-50/60 px-6 py-3">
+            <p className="text-xs font-semibold text-orange-800">
+              {failedOwed > 0 ? `Pay back the failed part — ${fmt(failedOwed)}` : `Hand back in person — ${fmt(due)}`}
+            </p>
+            <p className="text-[11px] text-gray-500 mb-2">
+              {failedOwed > 0
+                ? "PayMongo could not refund this, so the customer has not received it. Give it to them yourself, then record it here. A retry would not help."
+                : "Give this to the customer, then record it here."} The reference number is optional.
+            </p>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-xs text-gray-500">Method
+                <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="mt-1 block rounded-lg border border-gray-200 bg-white px-2 py-2 text-sm text-gray-800">
+                  <option>Cash</option><option>GCash</option>{failedOwed > 0 && <option>Maya</option>}<option>Bank Transfer</option>
+                </select>
+              </label>
+              <label className="text-xs text-gray-500 flex-1 min-w-[140px]">Reference no. <span className="text-gray-400">(optional)</span>
+                <input type="text" value={handbackRef || ""} onChange={(e) => setHandbackRef(e.target.value)} maxLength={100} placeholder="e.g. GCash ref"
+                  className="mt-1 block w-full rounded-lg border border-gray-200 bg-white px-2 py-2 text-sm text-gray-800 font-mono" />
+              </label>
+            </div>
+          </div>
+        )}
+
         <div className="shrink-0 border-t border-gray-100 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50">Close</button>
+          <div className="flex items-center justify-end gap-2 flex-wrap">
             {!disc && r.status === "Pending" && (
               <>
                 <button onClick={onApprove} disabled={busy || blocked}
@@ -508,7 +535,13 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               </>
             )}
             {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
-            {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">Needs manual follow-up</span>}
+            {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">{failedOwed > 0 ? "Needs manual follow-up — record the hand-back" : "Needs manual follow-up"}</span>}
+            {!disc && (failedOwed > 0 || due > 0) && (
+              <button onClick={onHandback} disabled={busy} title="Confirm you handed this amount back to the customer"
+                className="inline-flex items-center justify-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
+                <IconCheck /> {busy ? "…" : `Handed back ${fmt(failedOwed > 0 ? failedOwed : due)}`}
+              </button>
+            )}
             {canDepositReturn && viaDepositRoutes(r) && r.refund.state === "failed" && (
               <>
                 <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm">
@@ -530,16 +563,6 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                 Record hand-back →
               </button>
             )}
-          </div>
-          <div className="flex items-center gap-2">
-            {r.paymentID && (
-              <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
-                title="Open this payment — receipts, slips and every money movement are there"
-                className="px-4 py-2 rounded-xl border text-sm font-semibold text-teal-700 hover:bg-teal-50">
-                View in Payments →
-              </button>
-            )}
-            <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50">Close</button>
           </div>
         </div>
       </div>
@@ -622,7 +645,7 @@ export default function RefundRequests() {
   const [retryingId, setRetryingId] = useState(null);
   const [viewId, setViewId]   = useState(null);   // refundRequestID of the item open in the View modal
   const [statusF, setStatusF]   = useState("All");
-  const [typeF, setTypeF]       = useState("All");   // All | cancellation | deposit | discount
+  const [typeF, setTypeF]       = useState("all");   // Under Process + History: all | refund | staff | deposit | discount
   const [search, setSearch]     = useState("");
   const [toast, setToast]       = useState(null);
   const [busyId, setBusyId]     = useState(null);
@@ -647,7 +670,7 @@ export default function RefundRequests() {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
-      setSortDir("asc");
+      setSortDir(key === "customer" ? "asc" : "desc");   // dates and amounts: newest / biggest first
     }
   };
 
@@ -675,6 +698,7 @@ export default function RefundRequests() {
   const switchTab = (key) => {
     setTab(key);
     setStatusF("All"); // reset the sub-filter so switching tabs doesn't hide everything
+    setTypeF("all");
   };
 
   const showToast = (msg, type = "success") => {
@@ -758,6 +782,26 @@ export default function RefundRequests() {
     finally { setBusyId(null); }
   };
 
+  // PayMongo refused part of a refund request: staff paid that part back themselves and record it. The backend moves the
+  // request to Refunded (History) once nothing else is outstanding.
+  const markFailedHandedBack = async (r) => {
+    const id = r.refundRequestID;
+    setBusyId(id);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/${id}/failed-handback`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ method: handbackMethod[id] || "Cash", referenceNumber: (handbackRef[id] || "").trim() || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to record the hand-back.");
+      showToast(data.message || "Marked as handed back.");
+      setViewId(null);
+      fetchRequests();
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setBusyId(null); }
+  };
+
   // A discount's PayMongo refund failed: send it again (the failed attempt stays on record).
   const retryDiscount = async (r) => {
     setRetryingId(r.refundRequestID);
@@ -828,6 +872,7 @@ export default function RefundRequests() {
     finally { setBusyId(null); }
   };
 
+  const hasTypeFilter = tabKey === "processing" || tabKey === "history";   // type buttons show on these two tabs
   const filtered = items.filter((r) => {
     const q = search.toLowerCase();
     const matchQ = !q
@@ -837,7 +882,7 @@ export default function RefundRequests() {
       || (r.paymentID || "").toLowerCase().includes(q);
     const matchTab = tabOf(r) === tabKey;
     const matchS = chipMatches(tabKey, statusF, r);
-    const matchT = typeF === "All" || typeOf(r) === typeF;
+    const matchT = !hasTypeFilter || typeF === "all" || typeKeyOf(r) === typeF;
     return matchQ && matchTab && matchS && matchT;
   });
 
@@ -845,20 +890,28 @@ export default function RefundRequests() {
   // clamps the page if approving/rejecting shrinks the list underneath us.
   // Sort after search/tab/status filtering, before pagination, so Page 1 is the
   // top of whatever sort is active.
+  const activeSort = tabKey === "pending" && sortKey === "updated" ? null : sortKey;   // no Updated column on Pending
   const sorted = [...filtered].sort((a, b) => {
-    if (!sortKey) {
-      // Under Process: longest-waiting first, so stuck ones are on top
-      if (tabKey === "processing") return waitStartMs(a) - waitStartMs(b);
+    if (!activeSort) {
+      // Under Process: Failed ones first (they need a person), then the most recently updated on top.
+      // (The "Waiting" column still shows how long each has been stuck; click Updated to sort oldest first.)
+      if (tabKey === "processing") {
+        const fa = waitKeyOf(a) === "failed" ? 1 : 0, fb = waitKeyOf(b) === "failed" ? 1 : 0;
+        if (fa !== fb) return fb - fa;
+        return waitStartMs(b) - waitStartMs(a);
+      }
+      // History: most recently finished on top
+      if (tabKey === "history") { const x = toMillis(updatedOf(a)), y = toMillis(updatedOf(b)); return x === y ? 0 : y > x ? 1 : -1; }
       return 0;
     }
-    if (sortKey === "customer") {
+    if (activeSort === "customer") {
       const c = (a.customerName || "").localeCompare(b.customerName || "", undefined, { sensitivity: "base" });
       return sortDir === "asc" ? c : -c;
     }
     let av, bv;
-    if (sortKey === "amount")         { av = Number(a.amount) || 0;             bv = Number(b.amount) || 0; }
-    else if (sortKey === "requested") { av = toMillis(toDate(a.createdAt));     bv = toMillis(toDate(b.createdAt)); }
-    else if (sortKey === "updated")   { av = toMillis(updatedOf(a));            bv = toMillis(updatedOf(b)); }
+    if (activeSort === "amount")         { av = Number(a.amount) || 0;             bv = Number(b.amount) || 0; }
+    else if (activeSort === "requested") { av = toMillis(toDate(a.createdAt));     bv = toMillis(toDate(b.createdAt)); }
+    else if (activeSort === "updated")   { av = toMillis(updatedOf(a));            bv = toMillis(updatedOf(b)); }
     else return 0;
     return sortDir === "asc" ? av - bv : bv - av;
   });
@@ -871,6 +924,9 @@ export default function RefundRequests() {
   const processingItems = items.filter((r) => tabOf(r) === "processing");
   const processingCount = processingItems.length;
   const failedCount     = processingItems.filter((r) => waitKeyOf(r) === "failed").length;
+  const tabItems        = items.filter((r) => tabOf(r) === tabKey);   // what the type buttons count
+  const filtersActive   = !!search || statusF !== "All" || typeF !== "all";
+  const clearFilters    = () => { setSearch(""); setStatusF("All"); setTypeF("all"); };
 
   // Open on the tab that needs someone: requests to review first, otherwise what is still in flight.
   useEffect(() => {
@@ -897,7 +953,7 @@ export default function RefundRequests() {
             r={v} fmt={fmt} navigate={navigate} onClose={() => setViewId(null)}
             onApprove={() => startApprove(v)}
             onReject={() => { setRejectTarget(v); setRejectReason(""); }}
-            onHandback={() => (viaDepositRoutes(v) ? handBackDeposit(v) : markHandedBack(v))}
+            onHandback={() => (viaDepositRoutes(v) ? handBackDeposit(v) : v.status === "Failed" ? markFailedHandedBack(v) : markHandedBack(v))}
             handbackMethod={handbackMethod[v.refundRequestID]}
             setHandbackMethod={(m) => setHandbackMethod((x) => ({ ...x, [v.refundRequestID]: m }))}
             handbackRef={handbackRef[v.refundRequestID]}
@@ -1005,32 +1061,29 @@ export default function RefundRequests() {
           <p className="text-sm text-gray-500">
             {pendingCount > 0 ? `${pendingCount} request${pendingCount > 1 ? "s" : ""} to review` : "No requests to review"}
             {processingCount > 0 && <> · {processingCount} under process</>}
-            {failedCount > 0 && <span className="text-red-600 font-semibold"> · {failedCount} failed — needs you</span>}
           </p>
         </div>
       </div>
 
-      {/* The three kinds of money going back. Click a card to show only that kind (click again to clear). Each card
-          counts every item of its kind, in all tabs; the orange line is how many of them still need someone. */}
-      {(() => {
-        const of = (t) => items.filter((r) => typeOf(r) === t);
-        const open = (t) => of(t).filter((r) => tabOf(r) !== "history").length;
-        const card = (t, icon, label, color) => (
-          <StatCard
-            icon={icon} value={of(t).length} label={label} color={color}
-            sub={open(t) > 0 ? `${open(t)} not finished` : null}
-            active={typeF === t}
-            onClick={() => setTypeF(typeF === t ? "All" : t)}
-          />
-        );
-        return (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {card("cancellation", <IconUndo />,   "Cancellation refunds", "yellow")}
-            {card("deposit",      <IconShield />, "Deposit returns",      "teal")}
-            {card("discount",     <IconTag />,    "Discount refunds",     "purple")}
-          </div>
-        );
-      })()}
+      {/* Status cards, same look as Payments / Penalties. Click one to jump to that list (click the active one to go back
+          to all statuses). Failed is the one that needs a person, so it is a card of its own instead of a line of text. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <StatCard
+          icon={<IconClock className="w-5 h-5" />} value={pendingCount} label="Request pending" color="yellow"
+          active={tabKey === "pending"}
+          onClick={() => switchTab("pending")}
+        />
+        <StatCard
+          icon={<IconHourglass className="w-5 h-5" />} value={processingCount - failedCount} label="Under process" color="blue"
+          active={tabKey === "processing" && statusF !== "failed"}
+          onClick={() => { switchTab("processing"); }}
+        />
+        <StatCard
+          icon={<IconAlertCircle className="w-5 h-5" />} value={failedCount} label="Failed — needs you" color="red"
+          active={tabKey === "processing" && statusF === "failed"}
+          onClick={() => { switchTab("processing"); setStatusF("failed"); }}
+        />
+      </div>
 
       {/* Request Pending / Under Process / History */}
       <div className="flex gap-1 border-b border-gray-100">
@@ -1043,23 +1096,30 @@ export default function RefundRequests() {
             }`}
           >
             {t.label}
-            {t.key === "pending" && pendingCount > 0 && (
-              <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-yellow-100 text-yellow-700 text-[11px] font-bold" title="Needs review">{pendingCount}</span>
-            )}
-            {t.key === "processing" && processingCount > 0 && (
-              <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-blue-100 text-blue-700 text-[11px] font-bold" title="Money on its way back, or needing follow-up">{processingCount}</span>
-            )}
+            {(() => {
+              const n = t.key === "pending" ? pendingCount : t.key === "processing" ? processingCount : 0;
+              if (n <= 0) return null;
+              return (
+                <span
+                  className={`ml-2 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[11px] font-bold ${
+                    tabKey === t.key ? "bg-arl-dark text-white" : "bg-gray-100 text-gray-500"
+                  }`}
+                  title={t.key === "pending" ? "Needs review" : "Money on its way back, or needing follow-up"}
+                >{n}</span>
+              );
+            })()}
             {t.key === "processing" && failedCount > 0 && (
-              <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-red-100 text-red-600 text-[11px] font-bold" title="Failed — needs follow-up">{failedCount}!</span>
+              <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-red-500 align-middle" title={`${failedCount} failed — needs follow-up`} />
             )}
           </button>
         ))}
       </div>
 
       {/* What this tab means, in one line */}
-      <p className="text-xs text-gray-400 -mt-2">
+      <p className="text-sm text-gray-500 -mt-2 max-w-3xl leading-relaxed">
         {tabKey === "pending" && "Customers asking for a refund. Approve or reject each one. (Deposit returns and discount refunds need no approval, so they never wait here.)"}
         {tabKey === "processing" && "Approved refunds, deposit returns and discount refunds whose money isn't back with the customer yet. PayMongo can take up to 24 hours; anything marked Failed needs a person."}
+        {tabKey === "processing" && failedCount > 0 && <span className="ml-1 font-semibold text-red-600">{failedCount} failed.</span>}
         {tabKey === "history" && "Finished: the money went back (online or in store), or the request was rejected."}
       </p>
 
@@ -1085,6 +1145,24 @@ export default function RefundRequests() {
           className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
           {loading ? "…" : "Refresh"}
         </button>
+        {filtersActive && (
+          <button onClick={clearFilters} className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50">Clear filters</button>
+        )}
+        {hasTypeFilter && (
+          <div className="basis-full flex flex-wrap items-center gap-2">
+            {[{ key: "all", label: "All" }, ...TYPE_BUTTONS].map((b) => {
+              const n = b.key === "all" ? tabItems.length : tabItems.filter((r) => typeKeyOf(r) === b.key).length;
+              if (b.key !== "all" && n === 0 && typeF !== b.key) return null;   // nothing of that kind on this tab
+              const on = typeF === b.key;
+              return (
+                <button key={b.key} type="button" onClick={() => setTypeF(b.key)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${on ? "bg-arl-dark text-white border-arl-dark" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}>
+                  {b.label} <span className={on ? "text-white/70" : "text-gray-400"}>{n}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -1096,7 +1174,7 @@ export default function RefundRequests() {
             <div className="p-10 text-center text-sm text-red-500">{error}</div>
           ) : filtered.length === 0 ? (
             <div className="p-10 text-center text-sm text-gray-400">
-              {tabKey === "history" ? "No finished refunds yet." : tabKey === "processing" ? "Nothing is waiting on PayMongo or on a hand-back." : "No requests waiting for review."}
+              {filtersActive ? "Nothing matches these filters." : tabKey === "history" ? "No finished refunds yet." : tabKey === "processing" ? "Nothing is waiting on PayMongo or on a hand-back." : "No requests waiting for review."}
             </div>
           ) : (
             <table className="w-full text-sm">
@@ -1104,13 +1182,13 @@ export default function RefundRequests() {
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
                   <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  {tabKey !== "processing" && <th className="px-5 py-3 font-semibold">Booking</th>}
+                  {tabKey === "pending" && <th className="px-5 py-3 font-semibold">Booking</th>}
                   <th className="px-5 py-3 font-semibold">Reason</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Type</th>
                   <th className="px-5 py-3 font-semibold">Paid with</th>
-                  <th className="px-5 py-3 font-semibold">Via</th>
-                  <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  {tabKey !== "pending" && <th className="px-5 py-3 font-semibold">Via</th>}
+                  {tabKey !== "pending" && <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />}
                   <th className="px-5 py-3 font-semibold">Status</th>
                   <th className="px-5 py-3 font-semibold text-right">Actions</th>
                 </tr>
@@ -1122,7 +1200,7 @@ export default function RefundRequests() {
                     <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                       <td className="px-5 py-4"><Stamp date={toDate(r.createdAt)} /></td>
                       <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
-                      {tabKey !== "processing" && (
+                      {tabKey === "pending" && (
                         <td className="px-5 py-4">
                           {r.bookingID ? (
                             <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
@@ -1131,17 +1209,21 @@ export default function RefundRequests() {
                         </td>
                       )}
                       <td className="px-5 py-4">
-                        <p className="text-gray-700 max-w-[240px] truncate" title={isDeposit(r) ? "Security deposit return" : disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason)}>
-                          {isDeposit(r) ? "Security deposit return" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}
-                        </p>
+                        {(() => {
+                          const note = isDeposit(r) ? "Security deposit return" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—");
+                          const full = isDeposit(r) ? "Security deposit return" : disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason);
+                          // Under Process: only the first 12 letters (the whole note is in View)
+                          const shown = tabKey === "processing" && note.length > 12 ? `${note.slice(0, 12).trimEnd()}…` : note;
+                          return <p className="text-gray-700 max-w-[240px] truncate" title={full || note}>{shown}</p>;
+                        })()}
                       </td>
                       <td className="px-5 py-4 font-semibold text-arl-dark whitespace-nowrap">
                         {fmt(disc ? r.refund.amount : (r.planPreview ? r.planPreview.total : r.amount))}
                       </td>
                       <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /></td>
                       <td className="px-5 py-4"><PaidWithBadge r={r} /></td>
-                      <td className="px-5 py-4 whitespace-nowrap"><ViaBadge r={r} /></td>
-                      <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>
+                      {tabKey !== "pending" && <td className="px-5 py-4 whitespace-nowrap"><ViaBadge r={r} /></td>}
+                      {tabKey !== "pending" && <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>}
                       <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
                       <td className="px-5 py-4 text-right">
                         <button onClick={() => setViewId(r.refundRequestID)}
