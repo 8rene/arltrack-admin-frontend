@@ -261,8 +261,8 @@ export default function Payments() {
   // Giving a discount: Admin / Owner. Editing one that was given: Owner only (mirrors payments.routes.js).
   const canGiveDiscountRole = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);
   const canEditDiscountRole  = effectiveRole === ROLES.OWNER;
-  // Returning the security deposit: Admin / Owner (mirrors booking.routes.js).
-  const canReturnDepositRole = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);
+  // Returning the security deposit: Supervisor / Admin / Owner (mirrors booking.routes.js).
+  const canReturnDepositRole = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
   const [detailLoading, setDetailLoading] = useState(false);
   // "Return deposit": the hand-back of the security deposit (after penalties) for the open payment's booking.
   const [returnDepositOpen, setReturnDepositOpen] = useState(false);
@@ -898,6 +898,8 @@ export default function Payments() {
                         onNotePenalty={canRecordInStore && selected.bookingID && selected.bookingID !== "—"
                           ? () => navigate(`/penalties?bookingID=${encodeURIComponent(selected.bookingID)}`)
                           : null}
+                        // Opens that one penalty's details on the Penalties page (it opens from ?open=<penaltyID>).
+                        onViewPenalty={(penaltyID) => navigate(`/penalties?open=${encodeURIComponent(penaltyID)}`)}
                       />
 
                       {/* ONE place for money going back to the customer. A discount and a refund request both do that, and both
@@ -1706,7 +1708,7 @@ function penaltyState(p) {
   return { label: "Unpaid", color: "text-red-500" };
 }
 
-function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null }) {
+function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null, onViewPenalty = null }) {
   const list = Array.isArray(penalties) ? penalties : [];
   const hasDeposit = Number(payment?.securityDeposit) > 0;
   const live = list.filter((p) => p.status === "Confirmed");
@@ -1725,7 +1727,15 @@ function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null }) {
         return (
           <Row
             key={p.penaltyID}
-            label={<><span className="text-gray-400 mr-1.5">{i + 1}</span>{p.description} · <span className={st.color}>{st.label}</span></>}
+            label={<>
+              <span className="text-gray-400 mr-1.5">{i + 1}</span>{p.description} · <span className={st.color}>{st.label}</span>
+              {onViewPenalty && p.penaltyID && (
+                <button type="button" onClick={() => onViewPenalty(p.penaltyID)}
+                  className="ml-2 text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap">
+                  View →
+                </button>
+              )}
+            </>}
             hint={gone
               ? p.status === "UnderReview"
                 ? `Noted ${fmtDate(p.createdAt)} — waiting for a supervisor's review on the Penalties page. The customer hasn't been notified. Not counted as owed yet.`

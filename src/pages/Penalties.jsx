@@ -2,10 +2,14 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
-import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 import { useCurrency } from "../context/CurrencyContext";
 
 const API_URL = process.env.REACT_APP_API_URL;
+// "Failed to fetch" is the browser's wording when the server never answered (asleep, offline, blocked). Say that plainly.
+const netMsg = (e, fallback) =>
+  e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : (e?.message || fallback);
+
+
 const PAGE_SIZE = 15;
 
 // ─── PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Maintenance.jsx) ───
@@ -88,6 +92,12 @@ const IconX = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+const IconLayers = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 3l9 5-9 5-9-5 9-5z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
+    <path d="M3 13l9 5 9-5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 const IconPlus = ({ className = "w-4 h-4" }) => (
@@ -336,9 +346,10 @@ function DepositNotice({ deposit, amount = 0, acknowledged = false, onAcknowledg
 // Submitting this confirms the penalty immediately and notifies the
 // customer — there's no Draft step to review it first anymore, so double-
 // check the amount before hitting Create.
-function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }) {
+function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", existingPenalties = [], onReviewPenalty = null }) {
   const [bookingID, setBookingID] = useState(initialBookingID);
-  const [showMaintenance, setShowMaintenance] = useState(false);
+  const [showPrevious, setShowPrevious] = useState(false); // the "Already on this booking" list is collapsed by default so staff can focus on the new charges
+  const [showMaintenance, setShowMaintenance] = useState(true); // on by default: the panel appears by itself once the booking is found; the X / Hide button turns it off
   const { fmt } = useCurrency();
   // Opened via Bookings.jsx's "Note a Penalty" button (see goToNotePenalty
   // there) — the bookingID arrives pre-filled via ?bookingID= and is kept
@@ -360,6 +371,28 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
   const depositInfo = preview?.deposit || null;
   // Only a deposit that is still held can be deducted from; that needs a tick before the penalty is created.
   const needsAck = !!depositInfo && !depositInfo.returned && Math.min(penaltyAmount, Number(depositInfo.availableForNew) || 0) > 0;
+
+  // The booking exists once its lookup came back (a typed ID is only trusted after that, so half-typed IDs show nothing).
+  const bookingFound = !!bookingID.trim() && (linkedFromBooking || !!preview);
+
+  // Penalties already on this booking — so staff can see what's been charged before adding another one.
+  const sameBooking = bookingID.trim()
+    ? existingPenalties
+        .filter((x) => x.bookingID === bookingID.trim())
+        .sort((a, b) => (toDate(b.createdAt)?.getTime() || 0) - (toDate(a.createdAt)?.getTime() || 0))
+    : [];
+  // A booking with a penalty still under review can't get another one: that one has to be confirmed or discarded first.
+  const reviewPending = sameBooking.filter((x) => x.status === "UnderReview");
+  const blockedByReview = reviewPending.length > 0;
+  // A charge typed here that matches one already on a live (under review / confirmed) penalty of this booking.
+  const typedCharges = lineItems.map((li) => li.description.trim().toLowerCase()).filter(Boolean);
+  const duplicates = [];
+  sameBooking.filter((x) => x.status === "UnderReview" || x.status === "Confirmed").forEach((x) =>
+    (x.lineItems || []).forEach((li) => {
+      if (typedCharges.includes((li.description || "").trim().toLowerCase())) {
+        duplicates.push({ key: `${x.id}-${li.description}`, description: li.description, amount: li.amount, status: x.settlementStatus });
+      }
+    }));
 
   const updateLineItem = (i, field, value) =>
     setLineItems((items) => items.map((li, idx) => (idx === i ? { ...li, [field]: value } : li)));
@@ -394,6 +427,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
   const handleSubmit = async () => {
     setError("");
     if (!bookingID.trim()) { setError("Booking ID is required."); return; }
+    if (blockedByReview) { setError("This booking still has a penalty under review. Confirm or discard it first."); return; }
     const cleanItems = lineItems
       .map((li) => ({ description: li.description.trim(), amount: Number(li.amount) || 0 }))
       .filter((li) => li.description);
@@ -439,16 +473,16 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative flex flex-col md:flex-row items-stretch justify-center gap-3 w-full max-h-[90vh] overflow-y-auto md:overflow-visible px-4">
-        {showMaintenance && bookingID.trim() && (
+        {showMaintenance && bookingFound && (
           <MaintenanceSidePanel bookingID={bookingID.trim()} token={token} fmt={fmt} onClose={() => setShowMaintenance(false)} />
         )}
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 pb-0 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
         <div className="flex items-center justify-between">
           <h3 className="font-bold text-arl-dark">New Penalty</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
         </div>
 
-        {bookingID.trim() && (
+        {bookingFound && (
           <ModalActions maintenanceOpen={showMaintenance} onToggleMaintenance={() => setShowMaintenance((v) => !v)} />
         )}
 
@@ -471,6 +505,53 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
             <div className="mt-2">
               <DepositNotice deposit={depositInfo} amount={penaltyAmount} acknowledged={ackDeduction} onAcknowledge={setAckDeduction} />
             </div>
+          )}
+          {blockedByReview && (
+            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 space-y-1.5">
+              <p className="text-xs font-semibold text-red-700">Can't add a new penalty yet</p>
+              <p className="text-xs text-red-600">
+                This booking has {reviewPending.length} penalt{reviewPending.length === 1 ? "y" : "ies"} still under review.
+                Confirm or discard {reviewPending.length === 1 ? "it" : "them"} first, then add the new one.
+              </p>
+              {onReviewPenalty && (
+                <button type="button" onClick={() => onReviewPenalty(reviewPending[0])}
+                  className="text-xs font-semibold text-red-700 hover:underline">
+                  Review {reviewPending.length === 1 ? "it" : "now"} →
+                </button>
+              )}
+            </div>
+          )}
+          {sameBooking.length > 0 ? (
+            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2">
+              <button type="button" onClick={() => setShowPrevious((v) => !v)}
+                className="w-full flex items-center justify-between gap-2 text-left">
+                <span className="text-xs font-semibold text-amber-800">
+                  Already on this booking ({sameBooking.length})
+                  {!showPrevious && <span className="font-normal text-amber-700"> — check before adding a new one</span>}
+                </span>
+                <span className="text-xs font-semibold text-amber-800 whitespace-nowrap">{showPrevious ? "Hide ▴" : "Show ▾"}</span>
+              </button>
+              {showPrevious && <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1 mt-2">
+                {sameBooking.map((x) => (
+                  <div key={x.id} className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-100 px-2.5 py-1.5">
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-gray-800 truncate" title={(x.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>
+                        {(x.lineItems || []).map((li) => li.description).join(", ") || "—"}
+                      </div>
+                      <div className="text-[10px] text-gray-400">
+                        {toDate(x.createdAt) ? toDate(x.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-semibold text-gray-700">{fmt(x.amount)}</span>
+                      <SettlementBadge status={x.settlementStatus} />
+                    </div>
+                  </div>
+                ))}
+              </div>}
+            </div>
+          ) : bookingFound && (
+            <p className="mt-2 text-[11px] text-gray-400">No penalties on this booking yet.</p>
           )}
         </div>
 
@@ -517,14 +598,24 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "" }
           </div>
         )}
 
+        {duplicates.length > 0 && (
+          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 space-y-0.5">
+            <p className="font-semibold">Possible duplicate</p>
+            {duplicates.map((d) => (
+              <p key={d.key}>“{d.description}” is already on this booking ({fmt(d.amount)} · {d.status}).</p>
+            ))}
+          </div>
+        )}
+
         {error && <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>}
 
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
             Cancel
           </button>
-          <button onClick={handleSubmit} disabled={submitting}
-            className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50">
+          <button onClick={handleSubmit} disabled={submitting || blockedByReview}
+            title={blockedByReview ? "Confirm or discard the penalty under review first" : undefined}
+            className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? "Creating…" : "Create & Notify Customer"}
           </button>
         </div>
@@ -833,7 +924,7 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
         {showMaintenance && bookingID && (
           <MaintenanceSidePanel bookingID={bookingID} token={token} fmt={fmt} onClose={() => setShowMaintenance(false)} />
         )}
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 pb-0 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="font-bold text-arl-dark">Penalties on this booking</h3>
@@ -917,7 +1008,7 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
   );
 }
 
-function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClose, onViewBookingPage, onMarkPaid, onWaive, onVoid, onConfirm, onSaveEdit, onAddPenalty }) {
+function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClose, onViewBookingPage, onViewPayments, onMarkPaid, onWaive, onVoid, onConfirm, onSaveEdit, onAddPenalty }) {
   const { fmt } = useCurrency();
   const [showMaintenance, setShowMaintenance] = useState(false);
 
@@ -1010,7 +1101,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             onClose={() => setShowMaintenance(false)}
           />
         )}
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 pb-0 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-bold text-arl-dark">Penalty Details</h3>
@@ -1019,12 +1110,21 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
           </div>
 
-          {p.bookingID && (
-            <ModalActions
-              maintenanceOpen={showMaintenance}
-              onToggleMaintenance={canRecordInStore ? () => setShowMaintenance((v) => !v) : null}
-              onViewBooking={onViewBookingPage}
-            />
+          {/* Details — first thing you see */}
+          <div className="rounded-xl border border-gray-100 p-3 space-y-0.5">
+            <DetailRow label="Customer" value={p.customerName} />
+            <DetailRow label="Car" value={p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName} (${p.plateNumber})` : p.plateNumber} />
+            <DetailRow label="Noted by" value={p.createdByName} />
+            <DetailRow label="Created" value={fmtDate(p.createdAt)} />
+            <DetailRow label="Last edited" value={fmtDate(p.editedAt)} />
+            <DetailRow label="Confirmed" value={isReview ? "Not yet" : fmtDate(p.confirmedAt)} />
+          </div>
+
+          {p.bookingID && onViewBookingPage && (
+            <button type="button" onClick={onViewBookingPage}
+              className="w-full px-3 py-2 rounded-xl text-xs font-semibold text-center border border-teal-200 text-teal-700 bg-teal-50/50 hover:bg-teal-50">
+              View Booking →
+            </button>
           )}
 
           <div className="flex items-center gap-2">
@@ -1124,7 +1224,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             <DetailRow label="Amount charged" value={fmt(p.amount)} />
             {isOverridden && <DetailRow label="Override reason" value={p.overrideReason || "—"} />}
             <DetailRow label="Paid so far" value={fmt(p.paidAmount)} />
-            {p.gatewayFeeRate != null && p.gatewayFeeRate > 0 && (
+            {!isReview && p.gatewayFeeRate != null && p.gatewayFeeRate > 0 && (
               <DetailRow label="Online payment fee" value={`${p.gatewayFeeRate}% on top, only if paid online`} />
             )}
             {p.gatewayFeePaid > 0 && <DetailRow label="Online fee paid" value={fmt(p.gatewayFeePaid)} />}
@@ -1136,8 +1236,13 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             <DetailRow label="Paid at" value={fmtDate(p.paidAt)} />
           </div>
 
-          {/* Every payment made on this penalty (each instalment: how, ref, who) — the penalty itself only keeps the running total. */}
-          <PaymentEntriesPanel query={{ penaltyID: p.penaltyID }} title="Payments on this penalty" />
+          {/* Opens the Payments page for this penalty's payment. Nothing can be paid on a penalty still under review. */}
+          {!isReview && onViewPayments && (
+            <button type="button" onClick={onViewPayments}
+              className="w-full px-3 py-2 rounded-xl text-xs font-semibold text-center border border-teal-200 text-teal-700 bg-teal-50/50 hover:bg-teal-50">
+              Check Payments →
+            </button>
+          )}
 
           {(p.status === "Voided" || p.status === "Waived" || p.status === "Discarded") && p.statusReason && (
             <div className="rounded-xl bg-purple-50 border border-purple-100 p-3">
@@ -1146,89 +1251,87 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             </div>
           )}
 
-          {/* Who / when */}
-          <div className="rounded-xl border border-gray-100 p-3 space-y-0.5">
-            <DetailRow label="Customer" value={p.customerName} />
-            <DetailRow label="Car" value={p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName} (${p.plateNumber})` : p.plateNumber} />
-            <DetailRow label="Noted by" value={p.createdByName} />
-            <DetailRow label="Created" value={fmtDate(p.createdAt)} />
-            <DetailRow label="Last edited" value={fmtDate(p.editedAt)} />
-            <DetailRow label="Confirmed" value={isReview ? "Not yet" : fmtDate(p.confirmedAt)} />
-          </div>
-
-          {/* Actions — moved here from the table. Hidden while editing, so an unsaved edit can't be lost by a stray click. */}
-          {hasActions && !editing && (
-            <div className="rounded-xl border border-gray-100 p-3 space-y-2">
-              <p className="text-xs font-semibold text-gray-500">Actions</p>
-              {armConfirm ? (
-                <div className="rounded-xl bg-green-50 border border-green-200 p-3 space-y-2">
-                  <p className="text-xs text-green-800">
-                    Confirm {fmt(p.amount)} and notify {p.customerName && p.customerName !== "—" ? p.customerName : "the customer"}? They'll see the charge
-                    right away, and it can't be edited after this.
-                  </p>
-                  <DepositNotice deposit={depositInfo} amount={p.amount} />
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => setArmConfirm(false)} disabled={busy}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white disabled:opacity-40">
-                      Back
-                    </button>
-                    <button onClick={onConfirm} disabled={busy}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50">
-                      {busy ? "Confirming…" : "Yes, confirm & notify"}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-              <div className="flex items-center gap-2 flex-wrap">
-                {canConfirm && (
-                  <button onClick={() => setArmConfirm(true)} disabled={busy}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 font-semibold">
-                    Confirm penalty
-                  </button>
-                )}
-                {canEdit && (
-                  <button onClick={startEdit} disabled={busy}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-teal-300 hover:text-teal-700 disabled:opacity-40 font-medium">
-                    Edit
-                  </button>
-                )}
-                {canPayInStore && (
-                  <button onClick={onMarkPaid} disabled={busy}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-40 font-medium">
-                    In-store payment
-                  </button>
-                )}
-                {canWaive && (
-                  <button onClick={onWaive} disabled={busy}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-purple-300 hover:text-purple-600 disabled:opacity-40 font-medium">
-                    Waive
-                  </button>
-                )}
-                {canVoid && (
-                  <button onClick={onVoid} disabled={busy}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-red-300 hover:text-red-600 disabled:opacity-40 font-medium">
-                    {isReview ? "Discard" : "Void"}
-                  </button>
-                )}
-              </div>
-              )}
-              {isConfirmed && p.paidAmount > 0 && (
-                <p className="text-[11px] text-gray-400">Waive and Void aren't available once a payment has been recorded.</p>
-              )}
-            </div>
+          {isConfirmed && p.paidAmount > 0 && (
+            <p className="text-[11px] text-gray-400">Waive and Void aren't available once a payment has been recorded.</p>
           )}
 
-          <div className="flex justify-end gap-2 pt-1">
-            <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
-              Close
-            </button>
-            {canRecordInStore && p.bookingID && onAddPenalty && !editing && (
-              <button onClick={onAddPenalty}
-                className="px-4 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">
-                + New penalty
-              </button>
+          {/* Sticky footer: the actions and Close stay in view while the rest scrolls. Actions are hidden while editing,
+              so an unsaved edit can't be lost by a stray click. */}
+          <div className="sticky bottom-0 -mx-6 px-6 py-3 bg-white border-t border-gray-100 rounded-b-2xl space-y-2 z-10">
+            {hasActions && !editing && armConfirm ? (
+              <div className="rounded-xl bg-green-50 border border-green-200 p-3 space-y-2">
+                <p className="text-xs text-green-800">
+                  Confirm {fmt(p.amount)} and notify {p.customerName && p.customerName !== "—" ? p.customerName : "the customer"}? They'll see the charge
+                  right away, and it can't be edited after this.
+                </p>
+                <DepositNotice deposit={depositInfo} amount={p.amount} />
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setArmConfirm(false)} disabled={busy}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white disabled:opacity-40">
+                    Back
+                  </button>
+                  <button onClick={onConfirm} disabled={busy}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50">
+                    {busy ? "Confirming…" : "Yes, confirm & notify"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap">
+                {hasActions && !editing && (
+                  <>
+                    {canConfirm && (
+                      <button onClick={() => setArmConfirm(true)} disabled={busy}
+                        className="text-sm px-4 py-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 font-semibold">
+                        Confirm penalty
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button onClick={startEdit} disabled={busy}
+                        className="text-sm px-4 py-2 rounded-xl border border-gray-200 text-gray-600 hover:border-teal-300 hover:text-teal-700 disabled:opacity-40 font-medium">
+                        Edit
+                      </button>
+                    )}
+                    {canPayInStore && (
+                      <button onClick={onMarkPaid} disabled={busy}
+                        className="text-sm px-4 py-2 rounded-xl bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-40 font-medium">
+                        In-store payment
+                      </button>
+                    )}
+                    {canWaive && (
+                      <button onClick={onWaive} disabled={busy}
+                        className="text-sm px-4 py-2 rounded-xl border border-gray-200 text-gray-600 hover:border-purple-300 hover:text-purple-600 disabled:opacity-40 font-medium">
+                        Waive
+                      </button>
+                    )}
+                    {canVoid && (
+                      <button onClick={onVoid} disabled={busy}
+                        className="text-sm px-4 py-2 rounded-xl border border-gray-200 text-gray-600 hover:border-red-300 hover:text-red-600 disabled:opacity-40 font-medium">
+                        {isReview ? "Discard" : "Void"}
+                      </button>
+                    )}
+                    {/* Adding another penalty is hidden while this one is being reviewed or edited — finish that first. */}
+                    {canRecordInStore && p.bookingID && onAddPenalty && !isReview && (
+                      <button onClick={onAddPenalty}
+                        className="text-sm px-4 py-2 rounded-xl text-white bg-teal-600 hover:bg-teal-700 font-semibold">
+                        + New penalty
+                      </button>
+                    )}
+                  </>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                  {p.bookingID && canRecordInStore && (
+                    <button onClick={() => setShowMaintenance((v) => !v)}
+                      className="px-4 py-2 rounded-xl text-sm font-medium border border-teal-200 text-teal-700 bg-teal-50/50 hover:bg-teal-50">
+                      {showMaintenance ? "Hide Maintenance" : "View Maintenance"}
+                    </button>
+                  )}
+                  <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
+                    Close
+                  </button>
+                </div>
+              </div>
             )}
-
           </div>
         </div>
 
@@ -1256,6 +1359,7 @@ export default function Penalties() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState("");
+  const [reviewOnly, setReviewOnly] = useState(false); // checkbox: list only penalties still under review
   const [toast, setToast]     = useState(null);
   const [activeStatFilter, setActiveStatFilter] = useState(null); // null | "review" | "pending" | "settled" | "voidedWaived"
   const [showCreate, setShowCreate] = useState(false);
@@ -1316,7 +1420,7 @@ export default function Penalties() {
       setReasonModal(null);
       fetchAll();
     } catch (e) {
-      showToast(e.message || `Failed to ${action.toLowerCase()} penalty.`);
+      showToast(netMsg(e, `Failed to ${action.toLowerCase()} penalty.`));
     } finally {
       setBusyId(null);
     }
@@ -1336,7 +1440,7 @@ export default function Penalties() {
       setDetailsModal(null);
       fetchAll();
     } catch (e) {
-      showToast(e.message || "Failed to confirm penalty.");
+      showToast(netMsg(e, "Failed to confirm penalty."));
       fetchAll();   // it may have been confirmed / discarded by someone else meanwhile
     } finally {
       setBusyId(null);
@@ -1450,6 +1554,7 @@ export default function Penalties() {
   });
 
   const filtered = sorted.filter((p) => {
+    if (reviewOnly && p.status !== "UnderReview") return false;
     const q = search.toLowerCase();
     if (!q) return true;
     return (
@@ -1501,7 +1606,6 @@ export default function Penalties() {
               {chargesText || "—"}
             </div>
           </td>
-          <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap">{p.bookingID || "—"}</td>
           <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-xs">{p.customerName || "—"}</div></td>
           <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
             {p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName}` : "—"}
@@ -1553,39 +1657,42 @@ export default function Penalties() {
     const d = g.latest ? new Date(g.latest) : null;
     return (
       <tr key={g.key} onClick={() => setBookingModalID(g.first.bookingID)}
-        className={`border-b border-gray-100 cursor-pointer hover:bg-arl-light/30 transition-colors ${g.reviewCount > 0 ? "bg-amber-50/50" : "bg-gray-50/70"}`}>
+        className={`border-b border-gray-100 border-l-4 cursor-pointer hover:bg-arl-light/30 transition-colors ${g.reviewCount > 0 ? "bg-amber-50/60 border-l-amber-400" : "bg-teal-50/40 border-l-teal-500"}`}>
         <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-500">
           {d ? d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "--"}
         </td>
         <td className="px-4 py-3 text-xs">
-          <span className="font-semibold text-gray-800">{g.items.length} penalties</span>
-          {g.reviewCount > 0 && (
-            <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-              {g.reviewCount} under review
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full bg-teal-600 text-white" title="Several penalties on the same booking">
+              <IconLayers className="w-3 h-3" /> {g.items.length} penalties
             </span>
-          )}
+          </div>
+          <div className="mt-1 text-[11px] text-gray-500 max-w-[220px] truncate"
+            title={g.items.flatMap((x) => (x.lineItems || []).map((li) => li.description)).join(", ")}>
+            {[...new Set(g.items.flatMap((x) => (x.lineItems || []).map((li) => li.description)))].join(", ") || "—"}
+          </div>
         </td>
-        <td className="px-4 py-3 text-xs text-gray-700 font-mono whitespace-nowrap">{g.first.bookingID || "--"}</td>
         <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-xs">{g.first.customerName || "--"}</div></td>
         <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
           {g.first.brandName !== "--" || g.first.modelName !== "--" ? `${g.first.brandName} ${g.first.modelName}` : "--"}
         </td>
         <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">
-          {fmt(g.amount)}
-          {g.reviewAmount > 0 && <div className="text-[10px] font-medium text-amber-700">+ {fmt(g.reviewAmount)} under review</div>}
+          {g.amount === 0 && g.reviewAmount > 0
+            ? <span className="text-amber-700">{fmt(g.reviewAmount)}</span>
+            : fmt(g.amount)}
         </td>
         <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(g.paid)}</td>
-        <td className="px-4 py-3 text-xs text-gray-300">—</td>
+        <td className="px-4 py-3"><SettlementBadge status={g.worst} /></td>
         <td className="px-4 py-3">
           <button onClick={(e) => { e.stopPropagation(); setBookingModalID(g.first.bookingID); }}
-            className="px-3 py-1 border rounded-lg text-xs hover:bg-white">View</button>
+            className="px-3 py-1 border border-teal-300 text-teal-700 rounded-lg text-xs font-semibold hover:bg-white whitespace-nowrap">View all ›</button>
         </td>
       </tr>
     );
   };
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(groupByBooking ? groups : filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, activeStatFilter, sortKey, sortDir, groupByBooking]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, activeStatFilter, sortKey, sortDir, groupByBooking, reviewOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   return (
@@ -1616,6 +1723,8 @@ export default function Penalties() {
         <CreatePenaltyModal
           token={token}
           initialBookingID={prefillBookingID}
+          existingPenalties={records}
+          onReviewPenalty={(pen) => { setShowCreate(false); setPrefillBookingID(""); setDetailsModal(pen); }}
           onClose={() => { setShowCreate(false); setPrefillBookingID(""); }}
           onCreated={() => { setShowCreate(false); setPrefillBookingID(""); showToast("Penalty created — customer notified.", "success"); fetchAll(); }}
         />
@@ -1651,6 +1760,12 @@ export default function Penalties() {
           busy={busyId === detailsModal.id}
           onClose={() => setDetailsModal(null)}
           onViewBookingPage={() => { setDetailsModal(null); viewBooking(detailsModal.bookingID); }}
+          // Payments.jsx opens from ?paymentID= (exact) or ?bookingID= (looser) and goes straight into the payment's details.
+          onViewPayments={() => {
+            const q = detailsModal.paymentID ? `paymentID=${encodeURIComponent(detailsModal.paymentID)}` : `bookingID=${encodeURIComponent(detailsModal.bookingID)}`;
+            setDetailsModal(null);
+            navigate(`/payments?${q}`);
+          }}
           onMarkPaid={() => { setMarkPaidModal(detailsModal); setDetailsModal(null); }}
           onWaive={() => { setReasonModal({ penaltyID: detailsModal.id, action: "Waived" }); setDetailsModal(null); }}
           onVoid={() => { setReasonModal({ penaltyID: detailsModal.id, action: detailsModal.status === "UnderReview" ? "Discarded" : "Voided", underReview: detailsModal.status === "UnderReview" }); setDetailsModal(null); }}
@@ -1710,6 +1825,13 @@ export default function Penalties() {
         <input type="text" placeholder="Search by customer, booking, charges…"
           value={search} onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+        <label className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm cursor-pointer select-none transition-colors ${
+          reviewOnly ? "border-amber-300 bg-amber-50 text-amber-800" : "border-gray-200 text-gray-600 hover:bg-gray-50"
+        }`}>
+          <input type="checkbox" checked={reviewOnly} onChange={(e) => setReviewOnly(e.target.checked)} className="accent-amber-500" />
+          Under review
+          <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{review}</span>
+        </label>
         <button onClick={fetchAll} disabled={loading}
           className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
           {loading ? "…" : "Refresh"}
@@ -1741,7 +1863,6 @@ export default function Penalties() {
             <tr className="bg-gray-50 border-b border-gray-100">
               <SortableTh label="Created At" sortKey="date"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Charges"    sortKey="charges"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Booking ID" sortKey="booking"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Customer"   sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Car"        sortKey="car"      sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Amount"     sortKey="amount"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -1754,14 +1875,14 @@ export default function Penalties() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 9 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={9} className="text-center py-16 text-gray-400 text-sm">
-                {search || activeStatFilter ? "No penalties match your filters." : "No penalties found."}
+              <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">
+                {search || activeStatFilter || reviewOnly ? "No penalties match your filters." : "No penalties found."}
               </td></tr>
             ) : groupByBooking
               ? paginated.map((g, gi) => renderGroup(g, gi))

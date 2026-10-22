@@ -355,7 +355,7 @@ const Block = ({ title, children }) => (
 // actions (approve, reject, hand back, retry) all live here.
 function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, handbackRef, setHandbackRef, busy, onRetry, retrying }) {
   const { effectiveRole } = useAuth();
-  const canDepositReturn = ["Owner", "Admin"].includes(effectiveRole);   // deposit retry / hand-back: Admin / Owner only
+  const canDepositReturn = ["Owner", "Admin", "Supervisor"].includes(effectiveRole);   // deposit retry / hand-back: Supervisor / Admin / Owner
   const disc = isDiscount(r);
   const pv = !disc && r.status === "Pending" ? r.planPreview : null;
   const { tier, kept, hours } = disc ? {} : policyOf(r);
