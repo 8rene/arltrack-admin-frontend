@@ -261,6 +261,8 @@ export default function Payments() {
   // Giving a discount: Admin / Owner. Editing one that was given: Owner only (mirrors payments.routes.js).
   const canGiveDiscountRole = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);
   const canEditDiscountRole  = effectiveRole === ROLES.OWNER;
+  // Returning the security deposit: Admin / Owner (mirrors booking.routes.js).
+  const canReturnDepositRole = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);
   const [detailLoading, setDetailLoading] = useState(false);
   // "Return deposit": the hand-back of the security deposit (after penalties) for the open payment's booking.
   const [returnDepositOpen, setReturnDepositOpen] = useState(false);
@@ -1032,7 +1034,7 @@ export default function Payments() {
                               </>
                             );
                           })()}
-                          {canRecordInStore && selected.depositStatus === "Held" && ["ongoing", "completed"].includes(String(selected.bookingStatus || "").toLowerCase()) && (
+                          {canReturnDepositRole && selected.depositStatus === "Held" && ["ongoing", "completed"].includes(String(selected.bookingStatus || "").toLowerCase()) && (
                             <div className="border-t border-gray-100 mt-2 pt-3 space-y-1.5">
                               <p className="text-xs text-gray-500">
                                 {String(selected.bookingStatus || "").toLowerCase() === "ongoing"

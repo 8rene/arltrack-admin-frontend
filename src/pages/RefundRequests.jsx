@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
+import { useAuth } from "../context/AuthContext";
 
 // ─── SVG ICONS ─────────────────────────────────────────────────────────────
 
@@ -353,6 +354,8 @@ const Block = ({ title, children }) => (
 // Everything about one refund / discount refund. The table stays simple; the detail, the money movements and the
 // actions (approve, reject, hand back, retry) all live here.
 function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, handbackRef, setHandbackRef, busy, onRetry, retrying }) {
+  const { effectiveRole } = useAuth();
+  const canDepositReturn = ["Owner", "Admin"].includes(effectiveRole);   // deposit retry / hand-back: Admin / Owner only
   const disc = isDiscount(r);
   const pv = !disc && r.status === "Pending" ? r.planPreview : null;
   const { tier, kept, hours } = disc ? {} : policyOf(r);
@@ -506,7 +509,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             )}
             {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
             {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">Needs manual follow-up</span>}
-            {viaDepositRoutes(r) && r.refund.state === "failed" && (
+            {canDepositReturn && viaDepositRoutes(r) && r.refund.state === "failed" && (
               <>
                 <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm">
                   <option>Cash</option><option>GCash</option><option>Maya</option><option>Bank Transfer</option>
@@ -517,7 +520,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                 </button>
               </>
             )}
-            {disc && r.refund.state === "failed" && (
+            {disc && r.refund.state === "failed" && (!viaDepositRoutes(r) || canDepositReturn) && (
               <button onClick={onRetry} disabled={retrying} className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
                 {retrying ? "…" : `Retry ${fmt(r.refund.amount)} refund`}
               </button>
