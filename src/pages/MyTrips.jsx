@@ -5,6 +5,7 @@ import TripMapCard from "../components/TripMapCard";
 import { InspectionMediaGallery } from "../components/InspectionMedia";
 import DriverPenaltyModal from "../components/DriverPenaltyModal";
 import TripDetailModal from "../components/TripDetailModal";
+import TripTermsModal from "../components/TripTermsModal";
 import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -400,6 +401,7 @@ function ActiveTripsTab() {
   const [busyID, setBusyID]   = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
   const [penaltyTrip, setPenaltyTrip] = useState(null);  // driver "Note a penalty" form
+  const [termsTrip, setTermsTrip] = useState(null);      // read-only "terms the customer accepted" modal
   const [editPenaltyCtx, setEditPenaltyCtx] = useState(null); // { penalty, trip } — editing one still under review
   // One trip at a time (Previous / Next). Tracked by ID — not position — so
   // the background refresh reordering/removing trips never swaps the page
@@ -779,6 +781,10 @@ function ActiveTripsTab() {
               </div>
 
               <div className="px-5 py-4 space-y-3">
+                <button onClick={() => setTermsTrip(trip)}
+                  className="text-xs font-semibold text-teal-600 hover:underline">
+                  View accepted terms
+                </button>
                 {/* Quick actions: remind the customer to pay (left) and tell them you're on the way (right) */}
                 {!isOngoing && (balance > 0 || !trip.enRouteAt) && (
                   <div className="flex gap-2">
@@ -947,6 +953,7 @@ function ActiveTripsTab() {
         title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
         stops={mapTrip ? tripStops(mapTrip) : []}
       />
+      <TripTermsModal open={!!termsTrip} onClose={() => setTermsTrip(null)} trip={termsTrip} token={token} />
       <DriverPenaltyModal
         open={!!penaltyTrip}
         onClose={() => setPenaltyTrip(null)}
@@ -976,6 +983,7 @@ function HistoryTab() {
   const [error, setError]     = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
   const [detailTrip, setDetailTrip] = useState(null);
+  const [termsTrip, setTermsTrip] = useState(null);
   const [editPenaltyCtx, setEditPenaltyCtx] = useState(null); // { penalty, trip } — editing one still under review
   const [statusF, setStatusF] = useState("All");   // click a summary card to filter, click again to clear
 
@@ -1079,7 +1087,11 @@ function HistoryTab() {
                 )}
               </Block>
               <TripPenalties penalties={trip.penalties} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setTermsTrip(trip)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                  Terms
+                </button>
                 <button onClick={() => setDetailTrip(trip)}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold text-teal-700 hover:bg-teal-50">
                   <IconEye /> View
@@ -1096,6 +1108,7 @@ function HistoryTab() {
         title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
         stops={mapTrip ? tripStops(mapTrip) : []}
       />
+      <TripTermsModal open={!!termsTrip} onClose={() => setTermsTrip(null)} trip={termsTrip} token={token} />
       <TripDetailModal
         open={!!detailTrip}
         onClose={() => setDetailTrip(null)}
