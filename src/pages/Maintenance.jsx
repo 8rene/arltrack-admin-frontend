@@ -272,7 +272,7 @@ export default function Maintenance() {
   const [saving, setSaving]               = useState(false);
   const [viewing, setViewing]             = useState(false); // the open modal is read-only until "Edit" is clicked
   const [toast, setToast]                 = useState(null);
-  const [view, setView]                   = useState("table");
+  const [selectedDay, setSelectedDay]     = useState(null); // "YYYY-MM-DD" picked on the calendar; filters the table below
   const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [damagedParts, setDamagedParts]   = useState([]);
   const [partNames, setPartNames]         = useState({}); // carPartID -> name, fallback for parts missing from the catalog
@@ -742,12 +742,13 @@ export default function Maintenance() {
       || (r.description || "").toLowerCase().includes(q)
       || serviceNames.includes(q);
     const matchS = statusFilter === "All" || r.status === statusFilter;
-    return matchQ && matchS;
+    const matchD = !selectedDay || (toDate(r.maintenanceDate) && localISODate(toDate(r.maintenanceDate)) === selectedDay);
+    return matchQ && matchS && matchD;
   });
 
-  // Table view only — the calendar and stat cards keep reading all records.
+  // The table is paginated and day-filtered; the calendar and stat cards keep reading all records.
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, statusFilter, sortKey, sortDir, activeStatFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, statusFilter, sortKey, sortDir, activeStatFilter, selectedDay]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -775,16 +776,6 @@ export default function Maintenance() {
           </select>
           <button onClick={fetchAll} disabled={loading}
             className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">↺</button>
-          <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
-            <button onClick={() => setView("table")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${view === "table" ? "bg-white text-arl-dark shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
-              <IconClipboard className="w-3.5 h-3.5" /> Table
-            </button>
-            <button onClick={() => setView("calendar")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${view === "calendar" ? "bg-white text-arl-dark shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
-              <IconCalendar className="w-3.5 h-3.5" /> Calendar
-            </button>
-          </div>
           <button onClick={openAdd}
             className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 font-semibold">
             + Schedule
@@ -864,18 +855,30 @@ export default function Maintenance() {
         </div>
       )}
 
-      {/* CALENDAR VIEW */}
-      {view === "calendar" && (
-        <MaintenanceCalendar
-          records={records}
-          calMonth={calMonth}
-          setCalMonth={setCalMonth}
-          onEditRecord={openView}
-        />
+      {/* CALENDAR — always visible; clicking a day filters the table below */}
+      <MaintenanceCalendar
+        records={records}
+        calMonth={calMonth}
+        setCalMonth={setCalMonth}
+        selectedDay={selectedDay}
+        onSelectDay={setSelectedDay}
+      />
+
+      {/* Day filter chip */}
+      {selectedDay && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="inline-flex items-center gap-2 bg-teal-50 text-teal-700 border border-teal-200 rounded-full pl-3 pr-1.5 py-1 text-xs font-semibold">
+            Showing {fmtDate(selectedDay + "T00:00:00")} · {count} record{count === 1 ? "" : "s"}
+            <button onClick={() => setSelectedDay(null)} title="Show all records"
+              className="w-5 h-5 rounded-full hover:bg-teal-100 flex items-center justify-center">
+              <IconX className="w-3 h-3" />
+            </button>
+          </span>
+        </div>
       )}
 
-      {/* TABLE VIEW */}
-      {view === "table" && <div className="flex gap-5 items-start">
+      {/* TABLE */}
+      <div className="flex gap-5 items-start">
         <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
           <table className="w-full text-sm table-fixed">
             <colgroup>
@@ -903,7 +906,7 @@ export default function Maintenance() {
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">No maintenance records found.</td></tr>
+                <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">{selectedDay ? "No maintenance records on this day." : "No maintenance records found."}</td></tr>
               ) : paginated.map((r, i) => {
                 const isEditing = editRecord?.id === r.id;
                 const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(r);
@@ -971,7 +974,7 @@ export default function Maintenance() {
           <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
         </div>
 
-      </div>}
+      </div>
 
       {/* Schedule / Edit modal */}
       {modalOpen && (
@@ -1425,7 +1428,7 @@ function MaintenanceModal({
 
 // ─── MAINTENANCE CALENDAR ────────────────────────────────────────────────────
 
-function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
+function MaintenanceCalendar({ records, calMonth, setCalMonth, selectedDay, onSelectDay }) {
   const { y, m } = calMonth;
   const monthName = new Date(y, m, 1).toLocaleString("en-PH", { month: "long", year: "numeric" });
 
@@ -1450,14 +1453,14 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
     Cancelled:    "bg-gray-400",
     Overdue:      "bg-red-500",
   };
+  // A Scheduled job whose date has passed shows as Overdue (matches the table + stat card).
+  const dotOf = (r) => (isOverdueJob(r) ? DOT.Overdue : DOT[r.status] || "bg-gray-300");
 
   const prevMonth = () => { if (m === 0) setCalMonth({ y: y - 1, m: 11 }); else setCalMonth({ y, m: m - 1 }); };
   const nextMonth = () => { if (m === 11) setCalMonth({ y: y + 1, m: 0 }); else setCalMonth({ y, m: m + 1 }); };
 
   const cells = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
   while (cells.length % 7 !== 0) cells.push(null);
-
-  const [selected, setSelected] = useState(null);
 
   return (
     <div className="space-y-4">
@@ -1480,18 +1483,21 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
             const isToday  = today.getDate() === day && today.getMonth() === m && today.getFullYear() === y;
             const dayRecs  = dayMap[day] || [];
             const hasRecs  = dayRecs.length > 0;
+            const iso      = localISODate(new Date(y, m, day));
+            const isSel    = selectedDay === iso;
             return (
               <button key={i}
-                onClick={() => setSelected(hasRecs ? { day, recs: dayRecs } : null)}
+                onClick={() => onSelectDay(isSel ? null : iso)}
                 className={`relative min-h-[60px] p-1.5 rounded-xl text-left transition-all border ${
-                  isToday ? "border-teal-500 bg-teal-50"
+                  isSel ? "border-teal-600 bg-teal-100 ring-2 ring-teal-300"
+                  : isToday ? "border-teal-500 bg-teal-50"
                   : hasRecs ? "border-gray-200 hover:border-teal-300 hover:bg-gray-50"
                   : "border-transparent hover:bg-gray-50"
                 }`}>
                 <span className={`text-xs font-semibold ${isToday ? "text-teal-600" : "text-gray-700"}`}>{day}</span>
                 <div className="flex flex-wrap gap-0.5 mt-1">
                   {dayRecs.slice(0, 3).map((r, ri) => (
-                    <span key={ri} className={`w-2 h-2 rounded-full ${DOT[r.status] || "bg-gray-300"}`} title={`${r.basis} — ${r.status}`} />
+                    <span key={ri} className={`w-2 h-2 rounded-full ${dotOf(r)}`} title={`${r.basis} — ${r.status}`} />
                   ))}
                   {dayRecs.length > 3 && (
                     <span className="text-xs text-gray-400 leading-none">+{dayRecs.length - 3}</span>
@@ -1510,37 +1516,6 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, onEditRecord }) {
         </div>
       </div>
 
-      {selected && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-gray-800 text-sm">
-              {new Date(y, m, selected.day).toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-            </h3>
-            <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
-              <IconX className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="space-y-2">
-            {selected.recs.map((r, i) => (
-              <div key={i}
-                className="flex items-center justify-between p-3 rounded-xl border cursor-pointer hover:border-teal-300 transition-colors border-gray-100 bg-gray-50"
-                onClick={() => { onEditRecord(r); setSelected(null); }}>
-                <div className="flex items-center gap-3">
-                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${DOT[r.status] || "bg-gray-300"}`}/>
-                  <div>
-                    <p className="text-xs font-semibold text-gray-800">{r.carLabel}</p>
-                    <p className="text-xs text-gray-500">{r.basis}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <MainStatusBadge status={r.status} />
-                  <span className="text-xs text-teal-500 font-medium">Edit →</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
