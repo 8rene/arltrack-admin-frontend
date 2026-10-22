@@ -238,7 +238,7 @@ const Eyebrow = ({ children }) => (
 function ProofLightbox({ photo, onClose }) {
   const [failed, setFailed] = useState(false);
   return (
-    <div className="fixed inset-0 bg-black/70 z-[1100] flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/70 z-[2100] flex items-center justify-center p-4" onClick={onClose}>
       <div
         className={`bg-white rounded-2xl overflow-hidden w-full shadow-2xl ${photo.type === "video" ? "max-w-3xl" : "max-w-lg"}`}
         onClick={(e) => e.stopPropagation()}
@@ -386,6 +386,41 @@ function TripPenalties({ penalties, onEdit }) {
         ))}
       </div>
     </Block>
+  );
+}
+
+// The "Locations" section of the History View modal: pickup / dropoff map cards and any extra stops.
+function TripLocationsSection({ trip, onFullMap }) {
+  const showPickupMap  = hasPin(trip.pickupLocation);
+  const showDropoffMap = hasPin(trip.dropoffLocation) && !isSameSpot(trip.pickupLocation, trip.dropoffLocation);
+  const extraStops     = tripStops(trip).filter((st) => st.type === "stop");
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <button onClick={onFullMap} disabled={tripStops(trip).length === 0}
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed">
+          <IconMap className="w-3.5 h-3.5" /> Full map
+        </button>
+      </div>
+      {!showPickupMap && !showDropoffMap ? (
+        <div className="text-xs bg-gray-50 rounded-xl px-3 py-4 text-center space-y-1">
+          <p className="text-gray-400">No map pins saved for this trip.</p>
+          {trip.location && trip.location !== "—" && <p className="font-semibold text-gray-700">{trip.location}</p>}
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {showPickupMap && <TripMapCard key={`${trip.id}-pickup`} destination={trip.pickupLocation} label="Pickup" />}
+          {showDropoffMap && <TripMapCard key={`${trip.id}-dropoff`} destination={trip.dropoffLocation} label="Dropoff" />}
+        </div>
+      )}
+      {extraStops.length > 0 && (
+        <Block title={`Extra stops (${extraStops.length})`}>
+          {extraStops.map((st, i) => (
+            <Line key={st.key} label={`Stop ${i + 1}`}>{st.address}</Line>
+          ))}
+        </Block>
+      )}
+    </div>
   );
 }
 
@@ -987,9 +1022,6 @@ function HistoryTab() {
   const [editPenaltyCtx, setEditPenaltyCtx] = useState(null); // { penalty, trip } — editing one still under review
   const [statusF, setStatusF] = useState("All");   // click a summary card to filter, click again to clear
 
-  const [openPanel, setOpenPanel] = useState({});   // { [tripID]: "map" | "inspection" } -- expands under that card
-  const togglePanel = (id, which) => setOpenPanel((o) => ({ ...o, [id]: o[id] === which ? null : which }));
-
   const authedFetch = useCallback((path, options = {}) => fetch(`${API_URL}${path}`, {
     ...options,
     headers: { Authorization: `Bearer ${token}`, ...options.headers },
@@ -1096,57 +1128,7 @@ function HistoryTab() {
               </Block>
               <TripPenalties penalties={trip.penalties} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
 
-              {openPanel[trip.id] === "map" && (() => {
-                const showPickupMap  = hasPin(trip.pickupLocation);
-                const showDropoffMap = hasPin(trip.dropoffLocation) && !isSameSpot(trip.pickupLocation, trip.dropoffLocation);
-                const extraStops     = tripStops(trip).filter((st) => st.type === "stop");
-                return (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Eyebrow>Locations</Eyebrow>
-                      <button onClick={() => setMapTrip(trip)} disabled={tripStops(trip).length === 0}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed">
-                        <IconMap className="w-3.5 h-3.5" /> Full map
-                      </button>
-                    </div>
-                    {!showPickupMap && !showDropoffMap ? (
-                      <div className="text-xs bg-gray-50 rounded-xl px-3 py-4 text-center space-y-1">
-                        <p className="text-gray-400">No map pins saved for this trip.</p>
-                        {trip.location && trip.location !== "—" && <p className="font-semibold text-gray-700">{trip.location}</p>}
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {showPickupMap && <TripMapCard key={`${trip.id}-pickup`} destination={trip.pickupLocation} label="Pickup" />}
-                        {showDropoffMap && <TripMapCard key={`${trip.id}-dropoff`} destination={trip.dropoffLocation} label="Dropoff" />}
-                        {extraStops.length > 0 && (
-                          <Block title={`Extra stops (${extraStops.length})`}>
-                            {extraStops.map((st, i) => (
-                              <Line key={st.key} label={`Stop ${i + 1}`}>{st.address}</Line>
-                            ))}
-                          </Block>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {openPanel[trip.id] === "inspection" && (
-                <div className="space-y-2">
-                  <Eyebrow>Vehicle inspection</Eyebrow>
-                  <TripInspectionProof key={trip.id} tripID={trip.id} authedFetch={authedFetch} refreshKey="history" />
-                </div>
-              )}
-
-              <div className="flex flex-wrap justify-end gap-2">
-                <button onClick={() => togglePanel(trip.id, "map")}
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold ${openPanel[trip.id] === "map" ? "bg-teal-50 text-teal-700 border-teal-200" : "text-gray-600 hover:bg-gray-50"}`}>
-                  <IconMap className="w-4 h-4" /> Map
-                </button>
-                <button onClick={() => togglePanel(trip.id, "inspection")}
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold ${openPanel[trip.id] === "inspection" ? "bg-teal-50 text-teal-700 border-teal-200" : "text-gray-600 hover:bg-gray-50"}`}>
-                  <IconShield className="w-4 h-4" /> Inspection
-                </button>
+              <div className="flex justify-end gap-2">
                 <button onClick={() => setTermsTrip(trip)}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold text-gray-600 hover:bg-gray-50">
                   Terms
@@ -1169,10 +1151,18 @@ function HistoryTab() {
       />
       <TripTermsModal open={!!termsTrip} onClose={() => setTermsTrip(null)} trip={termsTrip} token={token} />
       <TripDetailModal
+        key={detailTrip?.id || "none"}
         open={!!detailTrip}
         onClose={() => setDetailTrip(null)}
         trip={detailTrip}
-        onShowMap={() => { setMapTrip(detailTrip); setDetailTrip(null); }}
+        sections={detailTrip ? [
+          { key: "map", title: "Locations", render: () => (
+            <TripLocationsSection trip={detailTrip} onFullMap={() => { setMapTrip(detailTrip); setDetailTrip(null); }} />
+          ) },
+          { key: "inspection", title: "Vehicle inspection", render: () => (
+            <TripInspectionProof key={detailTrip.id} tripID={detailTrip.id} authedFetch={authedFetch} refreshKey="history" />
+          ) },
+        ] : []}
         // No "View Full Inspection" link: Vehicle Inspections is staff-only.
       />
       <DriverPenaltyModal

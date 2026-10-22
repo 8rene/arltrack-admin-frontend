@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
@@ -22,6 +23,25 @@ const IconMap = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+// One show / hide block. The body is only rendered while open, so heavy content (maps, inspection photos) loads on demand.
+function Section({ title, open, onToggle, children }) {
+  return (
+    <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{title}</span>
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700">
+          {open ? "Hide" : "Show"}
+          <svg className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+          </svg>
+        </span>
+      </button>
+      {open && <div className="px-4 pb-4 pt-1">{children}</div>}
+    </div>
+  );
+}
+
 function Row({ label, value, bold, color }) {
   return (
     <div className="flex items-center justify-between text-sm">
@@ -42,19 +62,23 @@ function Row({ label, value, bold, color }) {
  * @param {boolean} open
  * @param {() => void} onClose
  * @param {object} trip - shaped trip object from /my-trips/history
- * @param {() => void} onShowMap - opens TripMapModal for this trip
+ * @param {Array<{key:string,title:string,render:() => any}>} sections - extra show/hide sections (locations, inspection)
  */
-export default function TripDetailModal({ open, onClose, trip, onShowMap }) {
+export default function TripDetailModal({ open, onClose, trip, sections = [] }) {
+  // Booking info + payment start open; the extra sections (locations, inspection) start hidden until asked for.
+  const [openKeys, setOpenKeys] = useState({ info: true, payment: true });
+  const isOpen = (k) => !!openKeys[k];
+  const toggle = (k) => setOpenKeys((o) => ({ ...o, [k]: !o[k] }));
+
   if (!open || !trip) return null;
 
   const p = trip.payment || {};
-  const hasStops = !!(trip.pickupLocation || trip.dropoffLocation);
-  const codingByCity = warningsByCity(readCodingWarnings(trip.codingWarnings));
+    const codingByCity = warningsByCity(readCodingWarnings(trip.codingWarnings));
 
   return (
     <div className="fixed inset-0 z-[2000] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
@@ -67,19 +91,7 @@ export default function TripDetailModal({ open, onClose, trip, onShowMap }) {
           </button>
         </div>
 
-        <div className="p-6 space-y-5 overflow-y-auto">
-          {/* Booking info — who booked it and when, distinct from the trip's
-              own start/end dates. */}
-          <div className="space-y-2.5 bg-gray-50 rounded-xl p-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Booking Info</p>
-            <Row label="Booked by" value={trip.customerName || "—"} />
-            <Row label="Phone" value={trip.customerPhone || "—"} />
-            <Row label="Booked on" value={fmtDateTimeLong(trip.bookingCreatedAt)} />
-            <div className="h-px bg-gray-200" />
-            <Row label="Trip dates" value={`${fmtDateTimeLong(trip.startDateTime)} → ${fmtDateTimeLong(trip.endDateTime)}`} />
-            <Row label="Vehicle" value={trip.vehicleName || "—"} />
-          </div>
-
+        <div className="p-6 space-y-4 overflow-y-auto">
           {codingByCity.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
               <p className="font-semibold">⚠️ Number Coding restrictions on this trip</p>
@@ -95,28 +107,38 @@ export default function TripDetailModal({ open, onClose, trip, onShowMap }) {
             </div>
           )}
 
-          {/* Payment breakdown — same numbers as PaymentStatusModal, plus
-              the mode of payment, read-only (no confirm/collect actions
-              here; this trip has already completed). */}
-          <div className="space-y-2.5 bg-gray-50 rounded-xl p-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Payment</p>
-            <Row label="Total Fee" value={peso(p.totalFee)} />
-            {p.discountAmount > 0 && <Row label="Discount" value={`−${peso(p.discountAmount)}`} color="text-red-500" />}
-            <Row label="Amount Paid" value={peso(p.amountPaid)} />
-            <Row label="Balance" value={p.balance > 0 ? peso(p.balance) : "Fully Paid"} color={p.balance > 0 ? "text-amber-600" : "text-green-600"} bold />
-            <div className="h-px bg-gray-200" />
-            <Row label="Mode of Payment" value={p.paymentMethod || "—"} />
-            <Row label="Status" value={p.paymentStatus || "—"} />
+          <div className="grid gap-4 md:grid-cols-2 items-start">
+            {/* Booking info — who booked it and when, distinct from the trip's own start/end dates. */}
+            <Section title="Booking Info" open={isOpen("info")} onToggle={() => toggle("info")}>
+              <div className="space-y-2.5">
+                <Row label="Booked by" value={trip.customerName || "—"} />
+                <Row label="Phone" value={trip.customerPhone || "—"} />
+                <Row label="Booked on" value={fmtDateTimeLong(trip.bookingCreatedAt)} />
+                <div className="h-px bg-gray-200" />
+                <Row label="Trip dates" value={`${fmtDateTimeLong(trip.startDateTime)} → ${fmtDateTimeLong(trip.endDateTime)}`} />
+                <Row label="Vehicle" value={trip.vehicleName || "—"} />
+              </div>
+            </Section>
+
+            {/* Payment breakdown — read-only; this trip has already ended. */}
+            <Section title="Payment" open={isOpen("payment")} onToggle={() => toggle("payment")}>
+              <div className="space-y-2.5">
+                <Row label="Total Fee" value={peso(p.totalFee)} />
+                {p.discountAmount > 0 && <Row label="Discount" value={`-${peso(p.discountAmount)}`} color="text-red-500" />}
+                <Row label="Amount Paid" value={peso(p.amountPaid)} />
+                <Row label="Balance" value={p.balance > 0 ? peso(p.balance) : "Fully Paid"} color={p.balance > 0 ? "text-amber-600" : "text-green-600"} bold />
+                <div className="h-px bg-gray-200" />
+                <Row label="Mode of Payment" value={p.paymentMethod || "—"} />
+                <Row label="Status" value={p.paymentStatus || "—"} />
+              </div>
+            </Section>
           </div>
 
-          {hasStops && (
-            <button
-              onClick={onShowMap}
-              className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 active:scale-[0.99] transition-all"
-            >
-              <IconMap /> Show Map
-            </button>
-          )}
+          {sections.map((sec) => (
+            <Section key={sec.key} title={sec.title} open={isOpen(sec.key)} onToggle={() => toggle(sec.key)}>
+              {sec.render()}
+            </Section>
+          ))}
         </div>
       </div>
     </div>
