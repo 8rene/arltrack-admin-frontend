@@ -118,6 +118,12 @@ const fmtDate = (val) => {
   if (!d || isNaN(d)) return "—";
   return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
 };
+// Time-of-day only (e.g. "3:45 PM") — shown after the date, same "date | time" style as the Bookings table.
+const fmtTime = (val) => {
+  const d = toDate(val);
+  if (!d || isNaN(d)) return "—";
+  return d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
+};
 // Today as YYYY-MM-DD in the browser's local timezone. isoDate() goes through
 // toISOString() (UTC), which returns *yesterday* between 12:00am and 8:00am in PH.
 const localISODate = (d = new Date()) => {
@@ -195,17 +201,6 @@ function MainStatusBadge({ status }) {
   );
 }
 
-// Damage enlisted on a maintenance record: parts on the job that were listed as Damaged / Stolen / Missing when it
-// was set up (conditionBefore), plus parts a finished job still left Damaged (conditionAfter). Returns null when none.
-const DAMAGE_BEFORE = ["Damaged", "Stolen", "Missing"];
-const damageOf = (r) => {
-  const parts = Array.isArray(r?.partsAddressed) ? r.partsAddressed : [];
-  const listed = parts.filter((p) => DAMAGE_BEFORE.includes(p.conditionBefore) || p.conditionAfter === "Damaged");
-  if (listed.length === 0) return null;
-  const stillDamaged = parts.filter((p) => p.conditionAfter === "Damaged").length;
-  return { count: listed.length, stillDamaged };
-};
-
 // Emoji shown next to each basis option — purely cosmetic, not stored.
 const BASIS_ICON = {
   "Post-Rental":      "🔄",
@@ -257,6 +252,7 @@ export default function Maintenance() {
   const [saving, setSaving]               = useState(false);
   const [viewing, setViewing]             = useState(false); // the open modal is read-only until "Edit" is clicked
   const [toast, setToast]                 = useState(null);
+  const [showAllParts, setShowAllParts]   = useState(false); // attention strip: collapsed shows the first few flagged parts
   const [selectedDay, setSelectedDay]     = useState(null); // "YYYY-MM-DD" picked on the calendar; filters the table below
   const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [damagedParts, setDamagedParts]   = useState([]);
@@ -572,7 +568,7 @@ export default function Maintenance() {
       partsAddressed:       (r.partsAddressed || []).map(p => ({
         carPartID:       p.carPartID,
         carPartName:     p.carPartName || "",
-        conditionBefore: p.conditionBefore || "Good",
+        conditionBefore: p.conditionBefore || undefined, // keep unknown (older records) unknown — never overwrite with "Good"
         conditionAfter:  p.conditionAfter === "Damaged" ? "Damaged" : "Good",
         description:     p.description || "",
         price:           p.price ?? 0,
@@ -697,7 +693,11 @@ export default function Maintenance() {
     if (sortKey === "vehicle") {
       const c = (a.carLabel || "").localeCompare(b.carLabel || "");
       return sortDir === "asc" ? c : -c;
-    } else if (sortKey === "date") { av = toDate(a.maintenanceDate)?.getTime() || 0; bv = toDate(b.maintenanceDate)?.getTime() || 0; }
+    } else if (sortKey === "plate") {
+      const c = (a.plateNumber || "").localeCompare(b.plateNumber || "");
+      return sortDir === "asc" ? c : -c;
+    } else if (sortKey === "created") { av = toDate(a.createdAt)?.getTime() || 0; bv = toDate(b.createdAt)?.getTime() || 0; }
+    else if (sortKey === "date") { av = toDate(a.maintenanceDate)?.getTime() || 0; bv = toDate(b.maintenanceDate)?.getTime() || 0; }
     else if (sortKey === "cost")   { av = a.totalCost || 0; bv = b.totalCost || 0; }
     return sortDir === "asc" ? av - bv : bv - av;
   }) : [...records].sort((a, b) => {
@@ -761,10 +761,6 @@ export default function Maintenance() {
           </select>
           <button onClick={fetchAll} disabled={loading}
             className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">↺</button>
-          <button onClick={openAdd}
-            className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 font-semibold">
-            + Schedule
-          </button>
         </div>
       </div>
 
@@ -780,65 +776,59 @@ export default function Maintenance() {
           onClick={() => toggleStatFilter("completed")} active={activeStatFilter === "completed"} />
       </div>
 
-      {/* Parts Attention Panel */}
-      {damagedParts.length > 0 && (
-        <div className="space-y-3">
-          {(() => {
-            const damagedOnly = damagedParts.filter(p => p.status === "Damaged" || p.status === "Missing");
-            const stolenOnly  = damagedParts.filter(p => p.status === "Stolen");
-            return (
-              <>
-                {damagedOnly.length > 0 && (
-                  <div className="bg-red-50 border border-red-200 rounded-2xl p-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <IconAlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                      <span className="text-red-500 font-bold text-sm">Damaged Parts Require Attention</span>
-                      <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">{damagedOnly.length}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {damagedOnly.map(p => (
-                        <div key={p.id} className="flex items-center gap-1.5 bg-red-100 text-red-700 px-3 py-1.5 rounded-xl text-xs font-medium">
-                          <span>{p.carPartName} — {p.carLabel}</span>
-                          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${p.status === "Missing" ? "bg-orange-200 text-orange-800" : "bg-red-200 text-red-800"}`}>{p.status}</span>
-                          <span className="text-red-400 text-[10px]">({SOURCE_LABEL[p.source] || "before trip"})</span>
-                          <button onClick={() => openScheduleForPart(p)}
-                            className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
-                            🔧 Schedule Fix
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-xs text-red-500">Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part already added.</p>
+      {/* Parts Attention strip — one compact card; first few parts shown, the rest expand */}
+      {damagedParts.length > 0 && (() => {
+        const PREVIEW = 4;
+        const stolen  = damagedParts.filter(p => p.status === "Stolen");
+        const damaged = damagedParts.filter(p => p.status === "Damaged" || p.status === "Missing");
+        const ordered = [...stolen, ...damaged]; // stolen first — most urgent
+        const visible = showAllParts ? ordered : ordered.slice(0, PREVIEW);
+        const hidden  = ordered.length - visible.length;
+        const hasStolen = stolen.length > 0;
+        return (
+          <div className={`bg-white rounded-2xl border shadow-soft p-4 space-y-3 ${hasStolen ? "border-purple-200" : "border-red-200"}`}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <IconAlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+              <span className="text-gray-800 font-bold text-sm">Parts Need Attention</span>
+              {damaged.length > 0 && (
+                <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">{damaged.length} damaged / missing</span>
+              )}
+              {hasStolen && (
+                <span className="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full font-semibold">
+                  <IconSiren className="w-3 h-3" />{stolen.length} stolen
+                </span>
+              )}
+              <span className="text-xs text-gray-400 ml-auto hidden sm:inline">
+                {hasStolen ? "File a police report for stolen parts. " : ""}Schedule Fix opens a job with the part already added.
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {visible.map(p => {
+                const isStolen = p.status === "Stolen";
+                const box   = isStolen ? "bg-purple-50 text-purple-700" : "bg-red-50 text-red-700";
+                const badge = isStolen ? "bg-purple-200 text-purple-800" : p.status === "Missing" ? "bg-orange-200 text-orange-800" : "bg-red-200 text-red-800";
+                return (
+                  <div key={p.id} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium ${box}`}>
+                    <span>{p.carPartName} — {p.carLabel}</span>
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${badge}`}>{p.status}</span>
+                    <span className="opacity-60 text-[10px]">({SOURCE_LABEL[p.source] || "before trip"})</span>
+                    <button onClick={() => openScheduleForPart(p)}
+                      className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
+                      🔧 Schedule Fix
+                    </button>
                   </div>
-                )}
-                {stolenOnly.length > 0 && (
-                  <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <IconSiren className="w-4 h-4 text-purple-600 shrink-0" />
-                      <span className="text-purple-600 font-bold text-sm">Stolen Parts Require Attention</span>
-                      <span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full font-semibold">{stolenOnly.length}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {stolenOnly.map(p => (
-                        <div key={p.id} className="flex items-center gap-1.5 bg-purple-100 text-purple-700 px-3 py-1.5 rounded-xl text-xs font-medium">
-                          <span>{p.carPartName} — {p.carLabel}</span>
-                          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-200 text-purple-800">Stolen</span>
-                          <span className="text-purple-400 text-[10px]">({SOURCE_LABEL[p.source] || "before trip"})</span>
-                          <button onClick={() => openScheduleForPart(p)}
-                            className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
-                            🔧 Schedule Fix
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-xs text-purple-500">File a police report if needed. Click <strong>Schedule Fix</strong> to open a maintenance job for the affected vehicle with this part already added.</p>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-        </div>
-      )}
+                );
+              })}
+              {ordered.length > PREVIEW && (
+                <button onClick={() => setShowAllParts(v => !v)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+                  {showAllParts ? "Show less" : `+${hidden} more`}
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* CALENDAR — always visible; clicking a day filters the table below */}
       <MaintenanceCalendar
@@ -849,32 +839,39 @@ export default function Maintenance() {
         onSelectDay={setSelectedDay}
       />
 
-      {/* Day filter chip */}
-      {selectedDay && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="inline-flex items-center gap-2 bg-teal-50 text-teal-700 border border-teal-200 rounded-full pl-3 pr-1.5 py-1 text-xs font-semibold">
-            Showing {fmtDate(selectedDay + "T00:00:00")} · {count} record{count === 1 ? "" : "s"}
-            <button onClick={() => setSelectedDay(null)} title="Show all records"
-              className="w-5 h-5 rounded-full hover:bg-teal-100 flex items-center justify-center">
-              <IconX className="w-3 h-3" />
-            </button>
-          </span>
+      {/* Under the calendar: day filter chip (left) + Schedule button (right) */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          {selectedDay && (
+            <span className="inline-flex items-center gap-2 bg-teal-50 text-teal-700 border border-teal-200 rounded-full pl-3 pr-1.5 py-1 text-xs font-semibold">
+              Showing {fmtDate(selectedDay + "T00:00:00")} · {count} record{count === 1 ? "" : "s"}
+              <button onClick={() => setSelectedDay(null)} title="Show all records"
+                className="w-5 h-5 rounded-full hover:bg-teal-100 flex items-center justify-center">
+                <IconX className="w-3 h-3" />
+              </button>
+            </span>
+          )}
         </div>
-      )}
+        <button onClick={openAdd}
+          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 font-semibold">
+          + Schedule
+        </button>
+      </div>
 
       {/* TABLE */}
       <div className="flex gap-5 items-start">
         <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
           <table className="w-full text-sm table-fixed">
             <colgroup>
-              <col style={{width:"20%"}} /><col style={{width:"15%"}} /><col style={{width:"13%"}} /><col style={{width:"13%"}} />
-              <col style={{width:"10%"}} /><col style={{width:"14%"}} /><col style={{width:"15%"}} />
+              <col style={{width:"15%"}} /><col style={{width:"15%"}} /><col style={{width:"10%"}} /><col style={{width:"13%"}} />
+              <col style={{width:"12%"}} /><col style={{width:"9%"}} /><col style={{width:"12%"}} /><col style={{width:"14%"}} />
             </colgroup>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
+                <SortableTh label="Created" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Vehicle" sortKey="vehicle" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Plate No." sortKey="plate" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left font-semibold">Basis</th>
-                <th className="px-4 py-3 text-left font-semibold">Damage</th>
                 <SortableTh label="Date" sortKey="date" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Cost" sortKey="cost" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left font-semibold">Status</th>
@@ -885,13 +882,13 @@ export default function Maintenance() {
               {loading ? (
                 Array.from({length:5}).map((_,i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    {Array.from({length:7}).map((_,j) => (
+                    {Array.from({length:8}).map((_,j) => (
                       <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4"/></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-16 text-gray-400 text-sm">{selectedDay ? "No maintenance records on this day." : "No maintenance records found."}</td></tr>
+                <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">{selectedDay ? "No maintenance records on this day." : "No maintenance records found."}</td></tr>
               ) : paginated.map((r, i) => {
                 const isEditing = editRecord?.id === r.id;
                 const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(r);
@@ -903,26 +900,17 @@ export default function Maintenance() {
                 return (
                 <tr key={r.id} onClick={() => openView(r)}
                   className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-teal-50/30 transition-colors ${rowClass}`}>
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    <span className="text-gray-700">{fmtDate(r.createdAt)}</span>
+                    <span className="mx-1.5 text-gray-300">|</span>
+                    <span className="text-gray-500">{fmtTime(r.createdAt)}</span>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="font-semibold text-gray-800 text-xs truncate">{r.carLabel}</div>
-                    <div className="text-xs text-gray-400">{r.plateNumber}</div>
                   </td>
+                  <td className="px-4 py-3 text-xs font-medium text-gray-600 whitespace-nowrap truncate">{r.plateNumber || "—"}</td>
                   <td className="px-4 py-3 text-xs text-gray-700 truncate">
                     {r.basis ? `${BASIS_ICON[r.basis] || ""} ${r.basis}` : "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    {(() => {
-                      const dmg = damageOf(r);
-                      if (!dmg) return <span className="text-xs text-gray-300">—</span>;
-                      return (
-                        <span
-                          title={`${dmg.count} part${dmg.count > 1 ? "s" : ""} listed as damaged, stolen or missing${dmg.stillDamaged ? ` — ${dmg.stillDamaged} still damaged after the job` : ""}`}
-                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 whitespace-nowrap">
-                          <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                          {dmg.count} part{dmg.count > 1 ? "s" : ""}
-                        </span>
-                      );
-                    })()}
                   </td>
                   <td className={`px-4 py-3 text-xs whitespace-nowrap ${isOverdueJob(r) ? "text-red-500 font-semibold" : "text-gray-500"}`}>
                     <span className="inline-flex items-center gap-1">
