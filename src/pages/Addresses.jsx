@@ -312,7 +312,11 @@ export default function Addresses() {
     const regionName = Object.fromEntries(bundle.regions.map((r) => [r.regionID, r.regionName]));
     const provinceById = Object.fromEntries(bundle.provinces.map((p) => [p.provinceID, p]));
     const municipalityById = Object.fromEntries(bundle.municipalities.map((m) => [m.municipalityID, m]));
-    const count = (list, field) => list.reduce((acc, x) => ((acc[x[field]] = (acc[x[field]] || 0) + 1), acc), {});
+    const count = (list, field) =>
+      list.reduce((acc, x) => {
+        acc[x[field]] = (acc[x[field]] || 0) + 1;
+        return acc;
+      }, {});
     return {
       regionName, provinceById, municipalityById,
       provincesPerRegion: count(bundle.provinces, "regionID"),
@@ -685,7 +689,8 @@ function resolveRoot(bundle, levelKey, row) {
   const chain = [cur];
   while (LEVEL[cur.levelKey].parent) {
     const pl = LEVEL[cur.levelKey].parent;
-    const pRow = bundle[pl.key].find((x) => x[LEVEL[pl.key].idField] === cur.row[pl.field]);
+    const childRow = cur.row; // fixed for this pass, so the callback below doesn't close over the changing `cur`
+    const pRow = bundle[pl.key].find((x) => x[LEVEL[pl.key].idField] === childRow[pl.field]);
     if (!pRow) break; // orphan — this row becomes the top of the tree
     cur = { levelKey: pl.key, row: pRow };
     chain.unshift(cur);
