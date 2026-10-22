@@ -604,7 +604,7 @@ export default function Users() {
 
   const RefreshBtn = () => (
     <button onClick={fetchUsers}
-      className="flex items-center gap-2 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 transition-colors">
+      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 transition-colors">
       <Icons.Refresh className="w-4 h-4" />
       Refresh
     </button>

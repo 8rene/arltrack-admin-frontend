@@ -404,7 +404,7 @@ export default function DriverDispatch() {
           </p>
         </div>
         <button onClick={fetchBoard} disabled={loading}
-          className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 self-start sm:self-auto">
+          className="px-3 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 self-start sm:self-auto">
           ↺ Refresh
         </button>
       </div>

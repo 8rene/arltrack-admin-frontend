@@ -584,7 +584,7 @@ export default function Reports() {
         )}
 
         <button onClick={() => load({ force: true })} disabled={loading}
-          className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+          className="px-4 py-2 rounded-xl text-sm bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
           Refresh
         </button>
       </div>

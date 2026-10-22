@@ -1244,7 +1244,7 @@ export default function CarTracking() {
             {tab === "live" && (
               <button
                 onClick={() => { fetchLocations(); fetchGpsDevices(); fetchBookings(); }}
-                className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800"
               >
                 <Icons.Refresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
                 Refresh
@@ -1253,7 +1253,7 @@ export default function CarTracking() {
             {tab !== "live" && tab !== "review" && tab !== "simulate" && (
               <button
                 onClick={() => setRefreshTick(t => t + 1)}
-                className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800"
               >
                 <Icons.Refresh className="w-3.5 h-3.5" />
                 Refresh

@@ -1218,7 +1218,7 @@ export default function Payments() {
           </div>
         )}
         <button onClick={fetchPayments} disabled={loading}
-          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
           {loading ? "…" : "Refresh"}
         </button>
       </div>

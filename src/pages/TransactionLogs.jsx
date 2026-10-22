@@ -258,7 +258,7 @@ export default function TransactionLogs() {
         <button
           onClick={fetchLogs}
           disabled={loading}
-          className="px-3 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50 ml-auto"
+          className="px-3 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 ml-auto"
         >
           {loading ? "…" : "Refresh"}
         </button>

@@ -374,6 +374,11 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
   const due = disc ? 0 : handbackDue(r);
   const failedOwed = disc ? 0 : failedDue(r);
   const blocked = !disc && discountBlocksApproval(r);
+  // Failed discount / deposit refunds get the same hand-back form and button as a failed refund request.
+  const discHandback = disc && viaDepositRoutes(r) && r.refund.state === "failed" && canDepositReturn;
+  const showHandback = (!disc && (failedOwed > 0 || due > 0)) || discHandback;
+  const handbackAmt  = disc ? r.refund.amount : (failedOwed > 0 ? failedOwed : due);
+  const handbackFailed = disc ? true : failedOwed > 0;
   const when = hours !== null && hours !== undefined ? `${Math.max(0, Math.round(hours * 10) / 10)} hours before pickup` : null;
 
   return (
@@ -395,7 +400,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               {r.bookingID ? (
                 <span className="inline-flex items-center gap-2">
                   <span className="font-medium text-gray-700">{r.bookingID}</span>
-                  <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)} className="text-xs text-teal-600 hover:underline">Open</button>
+                  <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)} className="text-xs text-teal-600 hover:underline">View in Bookings →</button>
                 </span>
               ) : "—"}
             </Line>
@@ -499,20 +504,22 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
         </div>
 
         {/* Hand-back form: pinned with the buttons below, so it never scrolls out of view. */}
-        {!disc && (failedOwed > 0 || due > 0) && (
+        {showHandback && (
           <div className="shrink-0 border-t border-orange-100 bg-orange-50/60 px-6 py-3">
             <p className="text-xs font-semibold text-orange-800">
-              {failedOwed > 0 ? `Pay back the failed part — ${fmt(failedOwed)}` : `Hand back in person — ${fmt(due)}`}
+              {disc ? `Refund failed — ${fmt(handbackAmt)}` : failedOwed > 0 ? `Pay back the failed part — ${fmt(failedOwed)}` : `Hand back in person — ${fmt(due)}`}
             </p>
             <p className="text-[11px] text-gray-500 mb-2">
-              {failedOwed > 0
+              {disc
+                ? "PayMongo could not complete this refund, so the customer has not received it. Retry it, or hand the money back in store and record it here."
+                : failedOwed > 0
                 ? "PayMongo could not refund this, so the customer has not received it. Give it to them yourself, then record it here. A retry would not help."
                 : "Give this to the customer, then record it here."} The reference number is optional.
             </p>
             <div className="flex flex-wrap items-end gap-2">
               <label className="text-xs text-gray-500">Method
                 <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="mt-1 block rounded-lg border border-gray-200 bg-white px-2 py-2 text-sm text-gray-800">
-                  <option>Cash</option><option>GCash</option>{failedOwed > 0 && <option>Maya</option>}<option>Bank Transfer</option>
+                  <option>Cash</option><option>GCash</option>{handbackFailed && <option>Maya</option>}<option>Bank Transfer</option>
                 </select>
               </label>
               <label className="text-xs text-gray-500 flex-1 min-w-[140px]">Reference no. <span className="text-gray-400">(optional)</span>
@@ -541,22 +548,11 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             )}
             {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
             {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">{failedOwed > 0 ? "Needs manual follow-up — record the hand-back" : "Needs manual follow-up"}</span>}
-            {!disc && (failedOwed > 0 || due > 0) && (
-              <button onClick={onHandback} disabled={busy} title="Confirm you handed this amount back to the customer"
+            {showHandback && (
+              <button onClick={onHandback} disabled={busy || retrying} title="Confirm you handed this amount back to the customer"
                 className="inline-flex items-center justify-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
-                <IconCheck /> {busy ? "…" : `Handed back ${fmt(failedOwed > 0 ? failedOwed : due)}`}
+                <IconCheck /> {busy ? "..." : `Handed back ${fmt(handbackAmt)}`}
               </button>
-            )}
-            {canDepositReturn && viaDepositRoutes(r) && r.refund.state === "failed" && (
-              <>
-                <select value={handbackMethod || "Cash"} onChange={(e) => setHandbackMethod(e.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm">
-                  <option>Cash</option><option>GCash</option><option>Maya</option><option>Bank Transfer</option>
-                </select>
-                <button onClick={onHandback} disabled={busy || retrying} title="Confirm you handed the deposit back to the customer in store"
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
-                  <IconCheck /> {busy ? "…" : `Handed back ${fmt(r.refund.amount)}`}
-                </button>
-              </>
             )}
             {disc && r.refund.state === "failed" && (!viaDepositRoutes(r) || canDepositReturn) && (
               <button onClick={onRetry} disabled={retrying} className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
@@ -847,7 +843,7 @@ export default function RefundRequests() {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${encodeURIComponent(r.bookingID)}/deposit-return/handback`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ method: handbackMethod[id] || "Cash" }),
+        body: JSON.stringify({ method: handbackMethod[id] || "Cash", referenceNumber: (handbackRef[id] || "").trim() || null }),
       });
       const data = await res.json();
       if (!res.ok || data.success === false) throw new Error(data.message || "Could not record the hand-back.");
@@ -1147,7 +1143,7 @@ export default function RefundRequests() {
           </div>
         )}
         <button onClick={fetchRequests} disabled={loading}
-          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
           {loading ? "…" : "Refresh"}
         </button>
         {filtersActive && (
@@ -1187,7 +1183,7 @@ export default function RefundRequests() {
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
                   <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  {tabKey !== "history" && <th className="px-5 py-3 font-semibold">Booking</th>}
+                  {tabKey === "pending" && <th className="px-5 py-3 font-semibold">Booking</th>}
                   <th className="px-5 py-3 font-semibold">Reason</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Type</th>
@@ -1205,7 +1201,7 @@ export default function RefundRequests() {
                     <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                       <td className="px-5 py-4"><Stamp date={toDate(r.createdAt)} /></td>
                       <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
-                      {tabKey !== "history" && <td className="px-5 py-4 whitespace-nowrap font-medium text-gray-700">{r.bookingID || "—"}</td>}
+                      {tabKey === "pending" && <td className="px-5 py-4 whitespace-nowrap font-medium text-gray-700">{r.bookingID || "—"}</td>}
                       <td className="px-5 py-4">
                         {(() => {
                           const note = isDeposit(r) ? "Security deposit return" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—");

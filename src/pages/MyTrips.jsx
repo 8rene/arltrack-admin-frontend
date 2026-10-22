@@ -684,7 +684,7 @@ function ActiveTripsTab() {
         <button
           onClick={async () => { setRefreshing(true); await fetchTrips({ keepList: true }); setRefreshing(false); }}
           disabled={refreshing}
-          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
           {refreshing ? "Refreshing…" : "↺ Refresh"}
         </button>
       </div>
@@ -1024,7 +1024,7 @@ function HistoryTab() {
     <div className="space-y-3">
       <div className="flex justify-end">
         <button onClick={fetchHistory} disabled={loading}
-          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
           {loading ? "Refreshing…" : "↺ Refresh"}
         </button>
       </div>

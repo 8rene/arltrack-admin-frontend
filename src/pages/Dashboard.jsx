@@ -1018,7 +1018,7 @@ export default function Dashboard() {
             <IconFileText className="w-4 h-4 text-gray-600" />
             All Bookings
           </h2>
-          <button onClick={fetchMetrics} className="text-xs text-teal-600 font-medium hover:underline flex items-center gap-1">
+          <button onClick={fetchMetrics} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1">
             <IconRefresh className="w-3.5 h-3.5" />
             Refresh
           </button>

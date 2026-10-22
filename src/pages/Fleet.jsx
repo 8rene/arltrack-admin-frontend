@@ -318,7 +318,7 @@ export default function Fleet() {
             Brands & Models
           </button>
           <button onClick={fetchAll}
-            className="flex items-center gap-2 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800">
             <Icons.Refresh className="w-4 h-4" />
             Refresh
           </button>

@@ -1833,7 +1833,7 @@ export default function Penalties() {
           <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{review}</span>
         </label>
         <button onClick={fetchAll} disabled={loading}
-          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
+          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
           {loading ? "…" : "Refresh"}
         </button>
       </div>
