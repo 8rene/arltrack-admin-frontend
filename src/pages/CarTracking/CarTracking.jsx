@@ -841,7 +841,7 @@ export default function CarTracking() {
           ? `<span style="color:#6b7280;font-size:11px;font-weight:600">⛔ Inactive</span><br>`
           : "";
       // The address comes from the car's CURRENT coordinates (Nominatim, cached + rate-limited in reverseGeocode).
-      // The `lastLocation` text stored on the gpsLocation document is never refreshed by the backend, so it can be
+      // The `lastLocation` text stored on the gpsLocations document is never refreshed by the backend, so it can be
       // a stale label from a previous position -- it is not used here.
       const placeKey = roundKey(loc.lat, loc.lng);
       const buildPopup = (place) => `<b>${getCarLabel(car)}</b><br>
