@@ -485,3 +485,18 @@ userss dont search using userID
 
 
 REFUND AND DISCOUNT DEDUCTION ON TRANSACTION PAYMENT ENTRIES
+
+
+
+ARCHIVES notificationArchives what for
+models not written in model
+archives plural
+
+permissions
+receiptEmails
+termsSnapshots
+
+
+owner get notified when the a booking was picup
+penalty on driver  put it in the under booering information instead of sticking button
+driver ain seeing the penalty one
