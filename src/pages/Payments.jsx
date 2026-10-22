@@ -258,6 +258,9 @@ export default function Payments() {
   const [selected, setSelected]           = useState(null);
   const { effectiveRole } = useAuth();
   const canRecordInStore = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
+  // Giving a discount: Admin / Owner. Editing one that was given: Owner only (mirrors payments.routes.js).
+  const canGiveDiscountRole = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);
+  const canEditDiscountRole  = effectiveRole === ROLES.OWNER;
   const [detailLoading, setDetailLoading] = useState(false);
   // "Return deposit": the hand-back of the security deposit (after penalties) for the open payment's booking.
   const [returnDepositOpen, setReturnDepositOpen] = useState(false);
@@ -936,6 +939,7 @@ export default function Payments() {
                               <DiscountRefundCard
                                 payment={selected} fmt={fmtCurrency}
                                 canAct={canRecordInStore}
+                                canEdit={canEditDiscountRole}
                                 onRetry={handleRetryDiscountRefund} retrying={retryingRefund}
                                 edits={selected.discountEdits || []}
                                 editing={editingDiscount} onEditChange={setEditingDiscount}
@@ -1066,7 +1070,7 @@ export default function Payments() {
                     // says none can be given: a legacy discount, a settled deposit, or nothing left to discount.
                     const stageOk = selected.status === "Approved" && !selected.refundRequestID &&
                       !["For Refund", "Refunded", "Cancelled"].includes(stageOf(selected));
-                    const canGiveDiscount = stageOk && !selected.discountBlocked && discountMax(selected) > 0;
+                    const canGiveDiscount = canGiveDiscountRole && stageOk && !selected.discountBlocked && discountMax(selected) > 0;
                     if (stageOk && selected.discountBlocked && !(selected.discountAmount > 0)) {
                       return <p className="text-[11px] text-gray-400">{selected.discountBlocked}</p>;
                     }
@@ -1373,7 +1377,7 @@ function DiscountRefundBadge({ state }) {
 const DISCOUNT_EVENT_LABEL = { balance: "Taken off the balance", credit: "Held for the customer", penalty: "Used for a penalty", return: "Returned to the customer" };
 const EVENT_STATUS = { pending: " (processing)", failed: " (failed)" };
 
-function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, edits = [], editing = null, onEditChange, onEditSave, savingEdit = false, children }) {
+function DiscountRefundCard({ payment, fmt, canAct, canEdit = false, onRetry, retrying, edits = [], editing = null, onEditChange, onEditSave, savingEdit = false, children }) {
   const dr = payment.discountRefund;
   if (!dr) return null;
   const st = DISCOUNT_REFUND_STAGE[dr.state] || DISCOUNT_REFUND_STAGE.deducted;
@@ -1418,7 +1422,7 @@ function DiscountRefundCard({ payment, fmt, canAct, onRetry, retrying, edits = [
         <ul className="text-[11px] text-gray-600 divide-y divide-black/5 border-t border-black/5">
           {d.events.map((e) => {
             // Only a discount nothing has used yet is offered for editing; the server sends exactly which ones, and how high.
-            const edit = canAct ? edits.find((x) => x.id === e.id) : null;
+            const edit = canEdit ? edits.find((x) => x.id === e.id) : null;
             const open = !!edit && editing && editing.id === e.id;
             const typed = open ? Number(editing.value) : 0;
             const bad = open && (!(typed > 0) || typed > edit.max || typed === edit.current);
