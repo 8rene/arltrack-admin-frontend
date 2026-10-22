@@ -72,8 +72,11 @@ function LateFeeSuggestion({ info, loading = false }) {
  *   loadLateFee()         -> late-fee preview (end/drop-off times + suggestion) or null
  *   onSubmit(body)        -> POSTs the penalty (throw on error)
  *   needsReview           -> true for the driver's form (changes the wording only; the server decides by role)
+ *   editing               -> { items: [{ description, amount }], ... } to edit a penalty the driver already noted
+ *                            (while it is still under review): the fields start filled in, the late-fee hint is skipped
+ *                            and onSubmit(body) is expected to PATCH instead of POST.
  */
-export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, onSubmit, needsReview = false }) {
+export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, onSubmit, needsReview = false, editing = null }) {
   const [items, setItems] = useState([{ description: "", amount: "" }]);
   const [late, setLate] = useState(null);      // preview payload
   const [lateLoading, setLateLoading] = useState(false);
@@ -82,7 +85,13 @@ export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, 
 
   useEffect(() => {
     if (!open) return;
-    setItems([{ description: "", amount: "" }]); setError(null); setLate(null);
+    setError(null); setLate(null);
+    if (editing) {
+      setItems((editing.items?.length ? editing.items : [{ description: "", amount: "" }])
+        .map((i) => ({ description: i.description || "", amount: i.amount ? String(i.amount) : "" })));
+      return undefined;
+    }
+    setItems([{ description: "", amount: "" }]);
     if (!loadLateFee) return undefined;
     let cancelled = false;
     setLateLoading(true);
@@ -91,7 +100,7 @@ export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, 
       .catch(() => {})
       .finally(() => { if (!cancelled) setLateLoading(false); });
     return () => { cancelled = true; };
-  }, [open, loadLateFee]);
+  }, [open, loadLateFee, editing]);
 
   if (!open) return null;
 
@@ -117,18 +126,20 @@ export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, 
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-3">
         <div className="flex justify-between items-start">
           <div>
-            <h3 className="font-bold text-arl-dark">Note a penalty</h3>
+            <h3 className="font-bold text-arl-dark">{editing ? "Edit penalty" : "Note a penalty"}</h3>
             {title && <p className="text-xs text-gray-400">{title}</p>}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
         </div>
         <p className="text-[11px] text-gray-400">
-          {needsReview
+          {editing
+            ? "A supervisor hasn't reviewed this yet, so you can still change it. Once they accept it, it's locked."
+            : needsReview
             ? "This goes to a supervisor for review first. The customer isn't notified and nothing is deducted from their deposit until it's confirmed."
             : "The customer is notified right away and this is deducted from their deposit."}
         </p>
 
-        <LateFeeSuggestion info={late} loading={lateLoading} />
+        {!editing && <LateFeeSuggestion info={late} loading={lateLoading} />}
 
         {items.map((it, idx) => (
           <div key={idx} className="flex gap-2">
@@ -147,7 +158,7 @@ export default function DriverPenaltyModal({ open, onClose, title, loadLateFee, 
         <div className="flex gap-2">
           <button onClick={onClose} className="flex-1 py-2 rounded-xl text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
           <button onClick={submit} disabled={!valid || busy} className="flex-1 py-2 rounded-xl text-sm font-semibold bg-red-600 text-white disabled:opacity-40">
-            {busy ? "Saving…" : needsReview ? "Submit for review" : "Charge penalty"}
+            {busy ? "Saving…" : editing ? "Save changes" : needsReview ? "Submit for review" : "Charge penalty"}
           </button>
         </div>
       </div>

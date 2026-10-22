@@ -1700,6 +1700,7 @@ function penaltyState(p) {
   if (p.status === "UnderReview") return { label: "Under review", color: "text-amber-600" };
   if (p.status === "Waived") return { label: "Waived", color: "text-amber-600" };
   if (p.status === "Voided") return { label: "Voided", color: "text-gray-400" };
+  if (p.status === "Discarded") return { label: "Discarded", color: "text-gray-400" };
   if (p.paidAmount >= p.amount && p.amount > 0) return { label: "Paid", color: "text-green-600" };
   if (p.paidAmount > 0) return { label: "Partially paid", color: "text-orange-500" };
   return { label: "Unpaid", color: "text-red-500" };
@@ -1714,6 +1715,7 @@ function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null }) {
   const outstanding = round2(Math.max(0, charged - paid));
   const waived = round2(list.filter((p) => p.status === "Waived").reduce((n, p) => n + p.amount, 0));
   const voided = round2(list.filter((p) => p.status === "Voided").reduce((n, p) => n + p.amount, 0));
+  const discarded = round2(list.filter((p) => p.status === "Discarded").reduce((n, p) => n + p.amount, 0));
   return (
     <Section title="Penalty Breakdown">
       {list.length === 0 && <p className="text-xs text-gray-400 py-1.5">No penalties have been charged on this booking.</p>}
@@ -1745,6 +1747,7 @@ function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null }) {
           color={waived > 0 ? "text-amber-600" : "text-gray-400"}
         />
         {voided > 0 && <Row label="Penalties voided" hint="Removed as a mistake. Not counted as owed." value={`−${peso(voided, fmt)}`} color="text-gray-400" />}
+        {discarded > 0 && <Row label="Penalties discarded" hint="Rejected in review before being charged. The customer was never told. Not counted as owed." value={`−${peso(discarded, fmt)}`} color="text-gray-400" />}
         {hasDeposit && (
           <>
             <Row

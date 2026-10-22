@@ -136,7 +136,7 @@ function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, classN
 }
 
 // Order used when sorting the Status column — most urgent first when ascending.
-const SETTLEMENT_RANK = { "Under Review": -1, Pending: 0, "Partially Paid": 1, Paid: 2, Waived: 3, Voided: 4 };
+const SETTLEMENT_RANK = { "Under Review": -1, Pending: 0, "Partially Paid": 1, Paid: 2, Waived: 3, Voided: 4, Discarded: 5 };
 
 // One predicate per stat card, shared by the card's count AND the row
 // highlight/default sort, so the number on a card can never silently
@@ -154,11 +154,11 @@ const STAT_FILTERS = {
   review:        { predicate: (p) => p.status === "UnderReview" },
   pending:       { predicate: (p) => p.status === "Confirmed" && (p.paidAmount || 0) < (p.amount || 0) },
   settled:       { predicate: (p) => p.status === "Confirmed" && (p.paidAmount || 0) >= (p.amount || 0) },
-  voidedWaived:  { predicate: (p) => p.status === "Voided" || p.status === "Waived" },
+  voidedWaived:  { predicate: (p) => p.status === "Voided" || p.status === "Waived" || p.status === "Discarded" },
 };
 
 // Badge for the computed `settlementStatus` field (Pending / Partially
-// Paid / Paid / Voided / Waived) — same dot + pill look as Payments.jsx's
+// Paid / Paid / Voided / Waived / Discarded) — same dot + pill look as Payments.jsx's
 // StatusBadge. The raw lifecycle status (Confirmed/Voided/Waived) still
 // drives which actions the View modal offers; it just isn't its own badge.
 const SETTLEMENT_DOT = {
@@ -167,6 +167,7 @@ const SETTLEMENT_DOT = {
   "Partially Paid": "bg-orange-400",
   Paid:             "bg-green-500",
   Voided:           "bg-gray-400",
+  Discarded:        "bg-slate-400",
   Waived:           "bg-purple-500",
 };
 const SETTLEMENT_BG = {
@@ -175,6 +176,7 @@ const SETTLEMENT_BG = {
   "Partially Paid": "bg-orange-50 border border-orange-200",
   Paid:             "bg-green-50 border border-green-200",
   Voided:           "bg-gray-100 border border-gray-200",
+  Discarded:        "bg-slate-100 border border-slate-200",
   Waived:           "bg-purple-50 border border-purple-200",
 };
 
@@ -822,6 +824,7 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
   const reviewAmount = inReview.reduce((n, p) => n + (p.amount || 0), 0);
   const voidedAmount = list.filter((p) => p.status === "Voided").reduce((n, p) => n + (p.amount || 0), 0);
   const waivedAmount = list.filter((p) => p.status === "Waived").reduce((n, p) => n + (p.amount || 0), 0);
+  const discardedAmount = list.filter((p) => p.status === "Discarded").reduce((n, p) => n + (p.amount || 0), 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -860,13 +863,16 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
           {reviewAmount > 0 && (
             <p className="text-amber-700 pt-1">+ {fmt(reviewAmount)} still under review — not counted until a supervisor confirms it.</p>
           )}
-          {(voidedAmount > 0 || waivedAmount > 0) && (
+          {(voidedAmount > 0 || waivedAmount > 0 || discardedAmount > 0) && (
             <div className="border-t border-gray-100 pt-1 space-y-1">
               {voidedAmount > 0 && (
                 <div className="flex justify-between"><span className="text-gray-500">Voided</span><span className="font-semibold text-gray-400 line-through">{fmt(voidedAmount)}</span></div>
               )}
               {waivedAmount > 0 && (
                 <div className="flex justify-between"><span className="text-gray-500">Waived</span><span className="font-semibold text-purple-600">{fmt(waivedAmount)}</span></div>
+              )}
+              {discardedAmount > 0 && (
+                <div className="flex justify-between"><span className="text-gray-500">Discarded</span><span className="font-semibold text-gray-400 line-through">{fmt(discardedAmount)}</span></div>
               )}
             </div>
           )}
@@ -981,7 +987,8 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
   //    money has been paid — reversing money needs its own flow, not a status flip)
   //  - Edit / Confirm: only while UnderReview (a driver's penalty nobody has confirmed), Supervisor/Admin/Owner.
   //    Confirming notifies the customer and locks the penalty for good.
-  //  - Void on an UnderReview penalty is "Discard" (silent: the customer never saw it); Waive doesn't apply to it.
+  //  - Void on an UnderReview penalty is "Discard" (silent: the customer never saw it) and is saved as its own
+  //    status, "Discarded"; Waive doesn't apply to it.
   const isConfirmed  = p.status === "Confirmed";
   const isReview     = p.status === "UnderReview";
   const canPayInStore = isConfirmed && p.settlementStatus !== "Paid" && canRecordInStore;
@@ -1132,7 +1139,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
           {/* Every payment made on this penalty (each instalment: how, ref, who) — the penalty itself only keeps the running total. */}
           <PaymentEntriesPanel query={{ penaltyID: p.penaltyID }} title="Payments on this penalty" />
 
-          {(p.status === "Voided" || p.status === "Waived") && p.statusReason && (
+          {(p.status === "Voided" || p.status === "Waived" || p.status === "Discarded") && p.statusReason && (
             <div className="rounded-xl bg-purple-50 border border-purple-100 p-3">
               <p className="text-xs font-semibold text-purple-700">{p.status} — reason</p>
               <p className="text-xs text-purple-600 mt-0.5">{p.statusReason}</p>
@@ -1254,7 +1261,7 @@ export default function Penalties() {
   const [showCreate, setShowCreate] = useState(false);
   const [prefillBookingID, setPrefillBookingID] = useState(""); // set via ?bookingID= (Bookings.jsx's "Note a Penalty" button)
   const [busyId, setBusyId] = useState(null); // penaltyID currently being confirmed/voided/waived
-  const [reasonModal, setReasonModal] = useState(null); // { penaltyID, action: "Voided" | "Waived" }
+  const [reasonModal, setReasonModal] = useState(null); // { penaltyID, action: "Voided" | "Waived" | "Discarded" }
   const [markPaidModal, setMarkPaidModal] = useState(null); // the penalty record being paid off
   const [detailsModal, setDetailsModal] = useState(null); // the penalty record being viewed in detail
   const { effectiveRole } = useAuth();
@@ -1646,7 +1653,7 @@ export default function Penalties() {
           onViewBookingPage={() => { setDetailsModal(null); viewBooking(detailsModal.bookingID); }}
           onMarkPaid={() => { setMarkPaidModal(detailsModal); setDetailsModal(null); }}
           onWaive={() => { setReasonModal({ penaltyID: detailsModal.id, action: "Waived" }); setDetailsModal(null); }}
-          onVoid={() => { setReasonModal({ penaltyID: detailsModal.id, action: "Voided", underReview: detailsModal.status === "UnderReview" }); setDetailsModal(null); }}
+          onVoid={() => { setReasonModal({ penaltyID: detailsModal.id, action: detailsModal.status === "UnderReview" ? "Discarded" : "Voided", underReview: detailsModal.status === "UnderReview" }); setDetailsModal(null); }}
           onConfirm={() => submitConfirm(detailsModal.id)}
           onSaveEdit={(body) => submitEdit(detailsModal.id, body)}
           // Works whether this penalty is under review or not: opens New Penalty with this booking filled in.
@@ -1674,7 +1681,7 @@ export default function Penalties() {
           onClick={() => toggleStatFilter("pending")} active={activeStatFilter === "pending"} />
         <StatCard icon={<IconCheck className="w-5 h-5" />} value={settled} label="Settled" color="green"
           onClick={() => toggleStatFilter("settled")} active={activeStatFilter === "settled"} />
-        <StatCard icon={<IconBan className="w-5 h-5" />} value={voidedWaived} label="Voided / Waived" color="purple"
+        <StatCard icon={<IconBan className="w-5 h-5" />} value={voidedWaived} label="Voided / Waived / Discarded" color="purple"
           onClick={() => toggleStatFilter("voidedWaived")} active={activeStatFilter === "voidedWaived"} />
       </div>
       {review > 0 && activeStatFilter !== "review" && (

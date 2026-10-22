@@ -346,6 +346,48 @@ function TripInspectionProof({ tripID, refreshKey, authedFetch }) {
   );
 }
 
+// ─── PENALTIES NOTED ON A TRIP ───────────────────────────────────────────
+// What the driver sees of a trip's penalties: what it was for, how much, and where it stands with staff. Never what the
+// customer has paid or still owes. A penalty the driver noted can be edited only while it is still "Under review".
+const PENALTY_PILL = {
+  "Under review": "bg-amber-50 text-amber-700 border-amber-200",
+  Accepted:       "bg-green-50 text-green-700 border-green-200",
+  Rejected:       "bg-red-50 text-red-700 border-red-200",
+  Removed:        "bg-gray-100 text-gray-500 border-gray-200",
+};
+function TripPenalties({ penalties, onEdit }) {
+  const list = Array.isArray(penalties) ? penalties : [];
+  if (list.length === 0) return null;
+  return (
+    <Block title="Penalties">
+      <div className="space-y-2 mt-1">
+        {list.map((p) => (
+          <div key={p.penaltyID} className="rounded-lg border border-gray-100 px-3 py-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-arl-dark break-words">{p.items.map((i) => i.description).join(", ")}</p>
+                <p className="text-xs text-gray-400">{peso(p.amount)}{p.mine ? "" : " · added by staff"}</p>
+              </div>
+              <span className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${PENALTY_PILL[p.status] || PENALTY_PILL.Removed}`}>
+                {p.status}
+              </span>
+            </div>
+            {p.status === "Under review" && (
+              <p className="text-[11px] text-gray-400 mt-1">Waiting for a supervisor to review it.</p>
+            )}
+            {(p.status === "Rejected" || p.status === "Removed") && p.reason && (
+              <p className="text-xs text-gray-500 mt-1">Reason: {p.reason}</p>
+            )}
+            {p.canEdit && onEdit && (
+              <button onClick={() => onEdit(p)} className="mt-1.5 text-xs font-semibold text-teal-600 hover:underline">Edit</button>
+            )}
+          </div>
+        ))}
+      </div>
+    </Block>
+  );
+}
+
 // ─── ACTIVE TRIPS TAB (upcoming + ongoing, with pickup/dropoff actions) ──
 function ActiveTripsTab() {
   const token = localStorage.getItem("token");
@@ -358,6 +400,7 @@ function ActiveTripsTab() {
   const [busyID, setBusyID]   = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
   const [penaltyTrip, setPenaltyTrip] = useState(null);  // driver "Note a penalty" form
+  const [editPenaltyCtx, setEditPenaltyCtx] = useState(null); // { penalty, trip } — editing one still under review
   // One trip at a time (Previous / Next). Tracked by ID — not position — so
   // the background refresh reordering/removing trips never swaps the page
   // under the driver. lastIdx keeps the position if the current trip vanishes.
@@ -614,6 +657,19 @@ function ActiveTripsTab() {
     await fetchTrips({ silent: true });
   };
 
+  const submitPenaltyEdit = async (body) => {
+    const res  = await authedFetch(`/api/driver-dispatch/my-penalties/${editPenaltyCtx.penalty.penaltyID}`, {
+      method: "PATCH", body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      await fetchTrips({ silent: true });   // it may have just been accepted/rejected: show where it stands now
+      throw new Error(json.message || "Couldn't update the penalty.");
+    }
+    showToast("Penalty updated — staff have been told it changed.");
+    await fetchTrips({ silent: true });
+  };
+
   return (
     <div className="space-y-3">
       {toast && (
@@ -779,6 +835,8 @@ function ActiveTripsTab() {
                   </Block>
                 )}
 
+                <TripPenalties penalties={trip.penalties} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
+
                 {codingByCity.length > 0 && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                     <p className="font-semibold">⚠️ Number Coding restrictions on this trip</p>
@@ -897,6 +955,14 @@ function ActiveTripsTab() {
         onSubmit={submitPenalty}
         needsReview
       />
+      <DriverPenaltyModal
+        open={!!editPenaltyCtx}
+        onClose={() => setEditPenaltyCtx(null)}
+        title={editPenaltyCtx ? `${editPenaltyCtx.trip.customerName} — ${editPenaltyCtx.trip.vehicleName}` : ""}
+        editing={editPenaltyCtx?.penalty || null}
+        onSubmit={submitPenaltyEdit}
+        needsReview
+      />
     </div>
   );
 }
@@ -910,6 +976,7 @@ function HistoryTab() {
   const [error, setError]     = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
   const [detailTrip, setDetailTrip] = useState(null);
+  const [editPenaltyCtx, setEditPenaltyCtx] = useState(null); // { penalty, trip } — editing one still under review
   const [statusF, setStatusF] = useState("All");   // click a summary card to filter, click again to clear
 
   const fetchHistory = useCallback(async () => {
@@ -930,6 +997,20 @@ function HistoryTab() {
   }, [token]);
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  const submitPenaltyEdit = async (body) => {
+    const res  = await fetch(`${API_URL}/api/driver-dispatch/my-penalties/${editPenaltyCtx.penalty.penaltyID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      await fetchHistory();   // it may have just been accepted/rejected: show where it stands now
+      throw new Error(json.message || "Couldn't update the penalty.");
+    }
+    await fetchHistory();
+  };
 
   return (
     <div className="space-y-3">
@@ -997,6 +1078,7 @@ function HistoryTab() {
                   </>
                 )}
               </Block>
+              <TripPenalties penalties={trip.penalties} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
               <div className="flex justify-end">
                 <button onClick={() => setDetailTrip(trip)}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold text-teal-700 hover:bg-teal-50">
@@ -1020,6 +1102,14 @@ function HistoryTab() {
         trip={detailTrip}
         onShowMap={() => { setMapTrip(detailTrip); setDetailTrip(null); }}
         // No "View Full Inspection" link: Vehicle Inspections is staff-only.
+      />
+      <DriverPenaltyModal
+        open={!!editPenaltyCtx}
+        onClose={() => setEditPenaltyCtx(null)}
+        title={editPenaltyCtx ? `${editPenaltyCtx.trip.customerName} — ${editPenaltyCtx.trip.vehicleName}` : ""}
+        editing={editPenaltyCtx?.penalty || null}
+        onSubmit={submitPenaltyEdit}
+        needsReview
       />
     </div>
   );
