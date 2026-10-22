@@ -1126,7 +1126,6 @@ function MaintenanceModal({
                         ...f,
                         useToday: e.target.checked,
                         maintenanceDate: e.target.checked ? localISODate() : f.maintenanceDate,
-                        status: e.target.checked ? "Completed" : f.status,
                       }))}
                       className="accent-teal-600" />
                     <span className="text-xs text-gray-600">Today</span>
