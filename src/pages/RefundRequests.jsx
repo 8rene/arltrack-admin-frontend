@@ -392,7 +392,12 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
           <Block title="Summary">
             <Line label="Booking">
-              {r.bookingID ? <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)} className="font-medium text-teal-600 hover:underline">{r.bookingID}</button> : "—"}
+              {r.bookingID ? (
+                <span className="inline-flex items-center gap-2">
+                  <span className="font-medium text-gray-700">{r.bookingID}</span>
+                  <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)} className="text-xs text-teal-600 hover:underline">Open</button>
+                </span>
+              ) : "—"}
             </Line>
             <Line label="Type"><TypeBadge r={r} /></Line>
             <Line label="Amount"><span className="font-semibold">{fmt(pv ? pv.total : disc ? r.refund.amount : r.amount)}</span></Line>
@@ -1182,7 +1187,7 @@ export default function RefundRequests() {
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
                   <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  {tabKey === "pending" && <th className="px-5 py-3 font-semibold">Booking</th>}
+                  {tabKey !== "history" && <th className="px-5 py-3 font-semibold">Booking</th>}
                   <th className="px-5 py-3 font-semibold">Reason</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 font-semibold">Type</th>
@@ -1200,21 +1205,14 @@ export default function RefundRequests() {
                     <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                       <td className="px-5 py-4"><Stamp date={toDate(r.createdAt)} /></td>
                       <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
-                      {tabKey === "pending" && (
-                        <td className="px-5 py-4">
-                          {r.bookingID ? (
-                            <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
-                              className="font-medium text-teal-600 hover:text-teal-700 hover:underline" title="Open this booking">{r.bookingID}</button>
-                          ) : "—"}
-                        </td>
-                      )}
+                      {tabKey !== "history" && <td className="px-5 py-4 whitespace-nowrap font-medium text-gray-700">{r.bookingID || "—"}</td>}
                       <td className="px-5 py-4">
                         {(() => {
                           const note = isDeposit(r) ? "Security deposit return" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—");
                           const full = isDeposit(r) ? "Security deposit return" : disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason);
-                          // Under Process: only the first 12 letters (the whole note is in View)
-                          const shown = tabKey === "processing" && note.length > 12 ? `${note.slice(0, 12).trimEnd()}…` : note;
-                          return <p className="text-gray-700 max-w-[240px] truncate" title={full || note}>{shown}</p>;
+                          // Every tab: only the first 16 letters, so the Actions column stays on screen (the whole note is in View)
+                          const shown = note.length > 16 ? `${note.slice(0, 16).trimEnd()}…` : note;
+                          return <p className="text-gray-700 max-w-[140px] truncate" title={full || note}>{shown}</p>;
                         })()}
                       </td>
                       <td className="px-5 py-4 font-semibold text-arl-dark whitespace-nowrap">
