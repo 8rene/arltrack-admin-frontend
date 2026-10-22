@@ -65,14 +65,16 @@ const ADJ_NOTE = {
   discount_credit: "No money moved. The customer had already paid this, so it is held and goes back with the security deposit.",
   discount_applied_penalty: "No money moved. The deposit didn't cover the penalty, so the discount credit held for the customer paid it.",
   discount_in_refund: "No separate payout. The customer had already paid this discount, so it went back inside the cancellation refund.",
+  deposit_forfeited: "No money moved. The business kept this security deposit.",
 };
 // "internal" entries (direction "internal") are a discount moving between its parts. No cash, so they are listed like the
 // other no-cash lines: no number, no receipt, no colour, and never in the totals.
 const INTERNAL_LABEL = {
-  discount_applied_balance: "Discount taken off the balance",
-  discount_credit: "Discount held for the customer",
+  discount_applied_balance: "Discount given (taken off the balance)",
+  discount_credit: "Discount given (held for the customer)",
   discount_applied_penalty: "Discount credit used for a penalty",
   discount_in_refund: "Discount credit returned with the refund",
+  deposit_forfeited: "Security deposit kept (forfeited)",
 };
 
 const TONE = { green: "text-green-700", purple: "text-purple-700", amber: "text-amber-700", red: "text-red-600", gray: "text-gray-800" };
@@ -130,7 +132,7 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
     ...(data?.adjustments || []),   // legacy discounts / deposit offsets: no cash moved
     ...internalEntries.map((e) => ({
       id: e.id, kind: e.phase, label: INTERNAL_LABEL[e.phase] || "Discount", amount: e.amount,
-      date: e.settledAt || e.processedAt || e.createdAt || "", byName: e.processedByName || null, reason: null,
+      date: e.settledAt || e.processedAt || e.createdAt || "", byName: e.processedByName || null, reason: e.reason || null,
     })),
   ];
   const s = data?.summary;
@@ -173,9 +175,9 @@ export default function PaymentEntriesPanel({ query, title = "Money movements", 
           {s.penaltyPaid > 0 && <Stat label="Penalties paid" value={fmt(s.penaltyPaid)} tone="green" />}
           {s.refundedOut > 0 && <Stat label="Refunded" value={fmt(s.refundedOut)} tone="purple" />}
           {s.depositReturned > 0 && <Stat label="Deposit returned" value={fmt(s.depositReturned)} tone="purple" />}
-          {s.refundPending > 0 && <Stat label="Refund pending" value={fmt(s.refundPending)} tone="amber" />}
           {s.unrefundable > 0 && <Stat label="Could not refund" value={fmt(s.unrefundable)} tone="red" />}
           {s.failed > 0 && <Stat label="Failed attempts" value={fmt(s.failed)} tone="red" />}
+          {s.refundPending > 0 && <Stat label="Refund pending" value={fmt(s.refundPending)} tone="amber" />}
           {s.paidIn > 0 && <Stat label="Held after refunds" value={fmt(s.netHeld)} />}
         </div>
       )}

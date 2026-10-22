@@ -270,6 +270,7 @@ export default function Payments() {
   const [updating, setUpdating]           = useState(false);
   const [applyingDiscount, setApplyingDiscount] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
+  const [discountReason, setDiscountReason] = useState("");   // required: why the discount is given
   // A discount can be changed only until it is used (a penalty is paid from it, it is returned, or the deposit is
   // settled), and never taken back, so giving one goes through an "are you sure?" first.
   const [confirmDiscount, setConfirmDiscount] = useState(false);
@@ -392,7 +393,7 @@ export default function Payments() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       setSelected(data.data);
-      setDiscountInput(""); setEditingDiscount(null);
+      setDiscountInput(""); setDiscountReason(""); setEditingDiscount(null);
       setInStoreOpen(false); setInStoreMethod("Cash"); setInStoreRef("");
       setRefundMethod("Cash"); setRefundRef("");
     } catch (e) { showToast(e.message, "error"); }
@@ -459,15 +460,17 @@ export default function Payments() {
     if (!selected) return;
     const amount = Number(discountInput);
     if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!discountReason.trim()) { showToast("Enter the reason for this discount.", "error"); return; }
     setApplyingDiscount(true);
     try {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/discount`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify({ amount, reason: discountReason.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
+      setDiscountReason("");
       showToast(
         data.data?.kind !== "credit"
           ? "Discount given — deducted from the remaining balance."
@@ -1143,12 +1146,18 @@ export default function Payments() {
               </p>
               <p className="text-xs text-red-500 mt-2">After you confirm, you can still change this amount until it is used (a penalty is paid from it, it is returned, or the deposit is settled). It can't be taken back.</p>
             </div>
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Reason for the discount <span className="text-red-500">*</span></label>
+              <textarea value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} maxLength={300} rows={2}
+                placeholder="e.g. Late pickup, goodwill, price match"
+                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500" />
+            </div>
             <div className="flex gap-3">
               <button onClick={() => setConfirmDiscount(false)} disabled={applyingDiscount}
                 className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                 Cancel
               </button>
-              <button onClick={submitDiscount} disabled={applyingDiscount}
+              <button onClick={submitDiscount} disabled={applyingDiscount || !discountReason.trim()}
                 className="flex-1 px-4 py-2 bg-arl-dark text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50">
                 {applyingDiscount ? "Saving…" : `Yes, give ${peso(Number(discountInput) || 0, fmtCurrency)}`}
               </button>
