@@ -107,7 +107,6 @@ export default function TripTermsModal({ open, onClose, trip, token }) {
               <p className="text-xs text-gray-500 mt-1">
                 {data.version != null ? `Version ${Number(data.version).toFixed(2)}` : "Version not recorded"}
                 {accepted ? ` · accepted ${accepted}` : ""}
-                {data.legacy ? " · older booking" : ""}
               </p>
             )}
           </div>

@@ -695,9 +695,7 @@ export default function TermsPage() {
             <div className="mb-3">
               <h3 className="font-bold">Terms &amp; Conditions <span className="text-xs font-normal opacity-60">· v{verLabel(viewing.version)}</span></h3>
               <p className="text-[11px] opacity-60">
-                {viewing.legacy
-                  ? "Older record from before versions were managed here (read-only)"
-                  : <>{fmtDate(viewing.createdAt)}{viewing.createdBy?.name ? ` · ${viewing.createdBy.name}` : ""}</>}
+                {fmtDate(viewing.createdAt)}{viewing.createdBy?.name ? ` · ${viewing.createdBy.name}` : ""}
               </p>
             </div>
             {fromBookingID && (
@@ -713,7 +711,7 @@ export default function TermsPage() {
             <div className="flex-1 overflow-y-auto text-sm mb-4 pr-1"><Markdown source={viewing.content} /></div>
             <div className="flex gap-3 justify-end">
               <button className={ghostBtn} onClick={closeViewing}>Close</button>
-              {canEdit && (viewing.legacy || viewing.version !== current?.version) && (
+              {canEdit && viewing.version !== current?.version && (
                 <button className={primaryBtn} onClick={() => restoreVersion(viewing)}>Restore as new version</button>
               )}
             </div>

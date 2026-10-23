@@ -1482,7 +1482,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                           : "View agreed terms"} →
                       </button>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        Agreed {fmtDateTime(booking.termsAcceptedAt)}{booking.termsLegacy ? " · older record" : ""}
+                        Agreed {fmtDateTime(booking.termsAcceptedAt)}
                       </p>
                     </div>
                   ) : booking.termsAcceptedAt ? (
