@@ -26,41 +26,51 @@ function fmtDateTime(val) {
  *    same data the bottom panel shows, just without the Pickup/Return/
  *    Stolen buttons, which stay put there since those are frequent,
  *    always-visible actions that shouldn't require an extra click to reach.
- *  - Geofence zones, in two modes:
- *     - Active trip: edits THIS session's zones (PATCH /api/gps/:carId/geofence)
- *       — what's saved here only ever applies to the trip in progress.
- *     - No active trip: edits the CAR's standing default zones
- *       (PATCH /api/gps/:carId/geofence-defaults) — these aren't tied to any
- *       session, can be set up anytime, and auto-copy onto the next new
- *       session's own zones at pickup (unless that session already has zones
- *       of its own — see bookingSession.service.js's markSessionActive).
+ *  - Geofence zones of ONE trip. Zones live only on the trip's bookingSessions doc (the car keeps none):
+ *    the customer backend creates them at booking, and this panel is where staff change them afterwards.
+ *    Which trip is being edited is picked by clicking its card above: the current trip (when the car is on
+ *    one) or any upcoming booking. Every save is PATCH /api/gps/:carId/geofence with that trip's
+ *    bookingSessionID. With no active or upcoming trip there is nothing to edit.
  */
 export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKnownPosition, ongoingBooking, upcomingBookings = [], token, onClose, onSaved, onFocusZone, onZonesChange }) {
   const hasActiveSession = !!sessionInfo?.hasActiveSession;
-  const [zones, setZones]     = useState(sessionInfo?.geofenceZones || []);
+  const activeSessionID  = hasActiveSession ? (sessionInfo?.bookingSessionID || null) : null;
+  // Upcoming bookings that have a trip session. The bookings list already carries each one's
+  // bookingSessionID and geofenceZones, so no extra fetch is needed to load their zones.
+  const upcomingTrips = upcomingBookings.filter(b => b.bookingSessionID);
+  const upcomingKey   = upcomingTrips.map(b => b.bookingSessionID).join(",");
+
+  // The trip being edited, as a bookingSessionID: the active trip's, or an upcoming booking's.
+  const [targetID, setTargetID] = useState(null);
+  const [zones, setZones]     = useState([]);
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState(null);
   const [saved, setSaved]     = useState(false);
-  const [loadingDefaults, setLoadingDefaults] = useState(false);
 
-  // Active-trip zones come along with sessionInfo already. Default zones
-  // don't — sessionInfo doesn't carry them — so fetch them ourselves
-  // whenever there's no active trip for this car.
+  // Default to the current trip, else the nearest upcoming one; keep the pick while it is still valid.
+  useEffect(() => {
+    setTargetID(prev => {
+      const stillValid = prev && (prev === activeSessionID || upcomingTrips.some(b => b.bookingSessionID === prev));
+      return stillValid ? prev : (activeSessionID || upcomingTrips[0]?.bookingSessionID || null);
+    });
+  }, [carId, activeSessionID, upcomingKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isActiveTarget = !!targetID && targetID === activeSessionID;
+  const targetBooking  = isActiveTarget ? null : (upcomingTrips.find(b => b.bookingSessionID === targetID) || null);
+  const sourceZones    = isActiveTarget ? (sessionInfo?.geofenceZones || []) : (targetBooking?.geofenceZones || []);
+  const sourceKey      = JSON.stringify(sourceZones);
+  const targetLabel    = isActiveTarget
+    ? "this trip"
+    : targetBooking ? `${targetBooking.customerName || "upcoming booking"}'s trip` : null;
+  const canPickTrip    = (activeSessionID ? 1 : 0) + upcomingTrips.length > 1;
+
+  // Load the picked trip's zones. Keyed on the zones' content, not object identity, so a background
+  // refresh that changes nothing doesn't wipe edits that haven't been saved yet.
   useEffect(() => {
     setSaved(false);
     setError(null);
-    if (hasActiveSession) {
-      setZones(sessionInfo?.geofenceZones || []);
-      return;
-    }
-    if (!carId || !API) return;
-    setLoadingDefaults(true);
-    fetch(`${API}/api/gps/${carId}/geofence-defaults`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => res.json())
-      .then(json => setZones(json?.data?.zones || []))
-      .catch(() => setError("Failed to load this car's default zones."))
-      .finally(() => setLoadingDefaults(false));
-  }, [carId, hasActiveSession, sessionInfo, token]);
+    setZones(sourceZones);
+  }, [carId, targetID, sourceKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Push every edit (drag, type, add, remove) up to the map immediately —
   // this is what makes the circle on the Live map resize in real time as
@@ -91,14 +101,14 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
   }
 
   async function handleSave() {
+    if (!targetID) return;
     setSaving(true);
     setError(null);
     try {
-      const endpoint = hasActiveSession ? "geofence" : "geofence-defaults";
-      const res  = await fetch(`${API}/api/gps/${carId}/${endpoint}`, {
+      const res  = await fetch(`${API}/api/gps/${carId}/geofence`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ zones }),
+        body: JSON.stringify({ zones, bookingSessionID: targetID }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to save geofence.");
@@ -127,7 +137,10 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
             there since they're frequent enough to want always-visible,
             no-extra-click access. */}
         {ongoingBooking ? (
-          <div className="bg-teal-50 border border-teal-100 rounded-xl p-3">
+          <div
+            onClick={() => activeSessionID && setTargetID(activeSessionID)}
+            className={`bg-teal-50 border border-teal-100 rounded-xl p-3 ${activeSessionID ? "cursor-pointer" : ""} ${isActiveTarget ? "ring-2 ring-teal-400" : ""}`}
+          >
             <p className="text-xs font-semibold text-teal-800 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
               Current trip — {ongoingBooking.customerName || "—"}
@@ -141,7 +154,11 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
         ) : (
           <div className="space-y-1.5">
             {upcomingBookings.slice(0, 3).map((b) => (
-              <div key={b.id} className="bg-blue-50 border border-blue-100 rounded-xl p-2.5">
+              <div
+                key={b.id}
+                onClick={() => b.bookingSessionID && setTargetID(b.bookingSessionID)}
+                className={`bg-blue-50 border border-blue-100 rounded-xl p-2.5 ${b.bookingSessionID ? "cursor-pointer" : ""} ${b.bookingSessionID && b.bookingSessionID === targetID ? "ring-2 ring-blue-400" : ""}`}
+              >
                 <p className="text-xs font-semibold text-blue-800 truncate">{b.customerName || "—"}</p>
                 <p className="text-xs text-blue-600 mt-0.5">
                   {fmtDateTime(b.startDateTime)} → {fmtDateTime(b.endDateTime)}
@@ -155,35 +172,31 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
         )}
 
         <p className="text-[11px] font-semibold text-gray-500 pt-1 px-1">
-          {hasActiveSession ? "Geofence zones — this trip" : "Geofence zones — car default"}
+          {targetLabel ? `Geofence zones — ${targetLabel}` : "Geofence zones"}
         </p>
 
-        {!hasActiveSession && (
-          <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700">
-            <p className="font-semibold mb-0.5">No trip in progress</p>
+        {!targetID && (
+          <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs text-gray-500">
+            <p className="font-semibold mb-0.5">No trip to set zones on</p>
             <p className="opacity-80">
-              You're editing this car's default zones instead — they aren't tied to any
-              particular trip, so you can set them up anytime. They'll automatically
-              carry over onto the next trip's own zones the moment it's picked up,
-              unless that trip already has zones set some other way.
+              Zones belong to a trip. Once this car has an upcoming or current booking, it shows up above
+              and you can set its zones here.
             </p>
           </div>
         )}
 
-        {loadingDefaults && (
-          <p className="text-xs text-gray-400 italic px-1">Loading default zones…</p>
+        {targetID && canPickTrip && (
+          <p className="text-[11px] text-gray-400 italic px-1 -mt-1">Tap a booking above to switch which trip you're editing.</p>
         )}
 
-        {!loadingDefaults && zones.length === 0 && (
-          <p className="text-xs text-gray-400 italic px-1">
-            {hasActiveSession ? "No zones set for this trip yet." : "No default zones set for this car yet."}
-          </p>
+        {!!targetID && zones.length === 0 && (
+          <p className="text-xs text-gray-400 italic px-1">No zones set for this trip yet.</p>
         )}
-        {!loadingDefaults && zones.length > 0 && (
+        {!!targetID && zones.length > 0 && (
           <p className="text-[11px] text-gray-400 italic px-1 -mt-1">Tap a zone to focus the map on it.</p>
         )}
 
-        {!loadingDefaults && zones.map((zone, i) => (
+        {!!targetID && zones.map((zone, i) => (
           <div
             key={i}
             onClick={() => onFocusZone?.(zone)}
@@ -218,7 +231,7 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
           </div>
         ))}
 
-        {!loadingDefaults && (
+        {!!targetID && (
           <button
             onClick={addZoneAtCurrentPosition}
             className="w-full py-2 rounded-xl border-2 border-dashed border-gray-200 text-xs font-semibold text-gray-400 hover:border-teal-300 hover:text-teal-600 transition-all"
@@ -233,10 +246,10 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
       <div className="p-3 border-t border-gray-100 shrink-0">
         <button
           onClick={handleSave}
-          disabled={saving || loadingDefaults}
+          disabled={saving || !targetID}
           className="w-full py-2.5 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 active:scale-[0.98] transition-all disabled:opacity-50"
         >
-          {saving ? "Saving…" : saved ? "✓ Saved" : `Save ${hasActiveSession ? "Trip" : "Default"} Zones (${zones.length})`}
+          {saving ? "Saving…" : saved ? "✓ Saved" : `Save Trip Zones (${zones.length})`}
         </button>
       </div>
     </div>

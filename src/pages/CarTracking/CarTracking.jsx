@@ -1524,7 +1524,7 @@ export default function CarTracking() {
               upcomingBookings={bookingsByCar[selected]?.upcoming || []}
               token={token}
               onClose={() => setShowBookingInfo(false)}
-              onSaved={() => fetchCarSession(selected)}
+              onSaved={() => { fetchCarSession(selected); fetchBookings(); }}
               onFocusZone={flyToZone}
               onZonesChange={setDraftZones}
             />
