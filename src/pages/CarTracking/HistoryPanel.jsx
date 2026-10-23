@@ -132,18 +132,25 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
             codingWarnings: parsed.codingWarnings || [],
             // Review details saved with newer history files; older files
             // simply don't have them (null / empty -> "not recorded").
-            droppedOffAt:   parsed.droppedOffAt || null,
-            completedAt:    parsed.completedAt  || null,
+            droppedOffAt:   parsed.droppedOffAt || parsed.session?.droppedOffAt || null,
+            completedAt:    parsed.completedAt  || parsed.session?.completedAt  || null,
+            stolenAt:       parsed.session?.stolenAt || null,
             holidays:       parsed.holidays     || [],
           },
         },
+        // The trip list (database) is the freshest source for status / start / end, so it wins when it has a
+        // value; the file's own `session` block fills in the rest (and is all there is for a downloaded copy,
+        // or once the session record is gone). Older files have no block: item alone, as before.
         sessionMeta: {
           [selectedCar]: {
-            bookingSessionID: item.bookingSessionID,
-            bookingID:        item.bookingID,
-            status:           item.status,
-            startedAt:        item.startedAt,
-            endedAt:          item.endedAt,
+            ...(isLegacyArray ? {} : (parsed.session || {})),
+            ...Object.fromEntries(Object.entries({
+              bookingSessionID: item.bookingSessionID,
+              bookingID:        item.bookingID,
+              status:           item.status,
+              startedAt:        item.startedAt,
+              endedAt:          item.endedAt,
+            }).filter(([, v]) => v !== undefined && v !== null)),
           },
         },
       });

@@ -86,6 +86,7 @@ const META_BY_TYPE = {
   new_user:             { bg: "bg-teal-100",   emoji: "🆕", title: "New User Signup" },
   geofence_alert:       { bg: "bg-red-100",    emoji: "📍", title: "Vehicle Left Zone" },
   coding_alert:         { bg: "bg-red-100",    emoji: "🚫", title: "Coding Restriction" },
+  tracker_silent:       { bg: "bg-amber-100",  emoji: "📡", title: "Tracker Not Reporting" },
   pickup_overdue:       { bg: "bg-orange-100", emoji: "⏰", title: "Pickup Overdue" },
   return_overdue:       { bg: "bg-red-100",    emoji: "⏰", title: "Return Overdue" },
   maintenance_overdue:  { bg: "bg-red-100",    emoji: "🔧", title: "Maintenance Overdue" },

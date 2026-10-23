@@ -13,6 +13,7 @@ import ReviewPanel from "./ReviewPanel";
 import SimulatePanel from "./SimulatePanel";
 import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
+import { readCodingWarnings, warningsByCity } from "../../utils/codingWarnings";
 import ReturnChecklistModal from "../../components/ReturnChecklistModal";
 import DriverPenaltyModal from "../../components/DriverPenaltyModal";
 import GeofenceBanner from "../../components/GeofenceBanner";
@@ -179,6 +180,11 @@ const CAR_SVG_RAW = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
 
 const POLL_MS = 30_000; // was 10s — each poll costs backend Firestore reads
 const API     = process.env.REACT_APP_API_URL;
+
+// A car on an active trip whose tracker has sent nothing for this long is flagged on its card.
+// (The backend sends staff a "Tracker not reporting" notification at the same 10-minute mark.)
+const SILENT_AFTER_MIN = 10;
+const VERY_SILENT_AFTER_MIN = 30;
 
 function timeAgo(iso) {
   if (!iso) return "—";
@@ -697,6 +703,21 @@ export default function CarTracking() {
     return () => unsub();
   }, []);
 
+  // ── Holidays: coding is suspended on a holiday. The backend stops raising new restrictions, but a
+  // restriction logged before midnight stays "open" until a ping logs "cleared" — so the badge, banner and
+  // map area are also hidden here the moment today is a holiday, with no ping needed. Fetched once.
+  const [holidays, setHolidays] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API}/api/holidays`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled && Array.isArray(j.data)) setHolidays(j.data); })
+      .catch((e) => console.error("[CarTracking] holidays fetch error:", e));
+    return () => { cancelled = true; };
+  }, [token]);
+  const todayYmd = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); // Manila calendar day
+  const holidayToday = holidays.find((h) => h.holidayDate === todayYmd) || null;
+
   // ── Real city boundary for whichever city(ies) currently have an active
   // coding restriction — keyed by city name (lowercased), not by car, so two
   // cars restricted in the same city at once share one fetch. Sequential
@@ -709,7 +730,7 @@ export default function CarTracking() {
   useEffect(() => {
     const citiesNeeded = new Set();
     Object.values(liveSessionsByCar).forEach((s) => {
-      const alert = activeCodingAlertNow(s.codingAlerts);
+      const alert = holidayToday ? null : activeCodingAlertNow(s.codingAlerts);
       if (alert?.city) citiesNeeded.add(alert.city);
     });
     const toFetch = [...citiesNeeded].filter((city) => {
@@ -735,7 +756,7 @@ export default function CarTracking() {
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveSessionsByCar]);
+  }, [liveSessionsByCar, holidayToday]);
 
   // ── Active session for the focused car — geofence zones + alert logs ──────
   const fetchCarSession = useCallback(async (carId) => {
@@ -812,7 +833,7 @@ export default function CarTracking() {
   // ── Geofence / coding-restriction badges — from the realtime listener,
   // cheap (only active-trip cars are ever in this map). ─────────────────────
   const isBreached          = (carId) => isGeofenceBreachedNow(liveSessionsByCar[carId]?.geofenceAlerts);
-  const isCodingRestricted  = (carId) => isCodingRestrictedNow(liveSessionsByCar[carId]?.codingAlerts);
+  const isCodingRestricted  = (carId) => !holidayToday && isCodingRestrictedNow(liveSessionsByCar[carId]?.codingAlerts);
 
   // Cars currently breaching a zone right now — feeds the top-center pulsing
   // banner on the map, same "show every breaching car, not just the focused
@@ -963,7 +984,7 @@ export default function CarTracking() {
       // zone). Uses the real city boundary once Nominatim resolves it;
       // falls back to an approximate circle around the car's current
       // position if the boundary fetch failed or hasn't resolved yet. ────
-      const codingAlert = activeCodingAlertNow(session?.codingAlerts);
+      const codingAlert = holidayToday ? null : activeCodingAlertNow(session?.codingAlerts);
       if (codingAlert?.city) {
         const boundary = zoneBoundaries[codingAlert.city.toLowerCase()];
         const style = { color, fillColor: color, fillOpacity: 0.28, weight: 3 };
@@ -1004,7 +1025,7 @@ export default function CarTracking() {
       zoneLayersRef.current[car.id] = entry;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveSessionsByCar, selected, draftZones, tab, allCars, zoneBoundaries, locations, gpsDevices]);
+  }, [liveSessionsByCar, selected, draftZones, tab, allCars, zoneBoundaries, locations, gpsDevices, holidayToday]);
 
   // ── Focus behavior: clicking a car hides the rest and zooms in; clearing shows all ──
   useEffect(() => {
@@ -1229,6 +1250,7 @@ export default function CarTracking() {
             <p className="text-xs text-gray-400 mt-0.5">
               {allCars.length} car{allCars.length !== 1 ? "s" : ""} total
               {lastPoll && ` · Updated ${timeAgo(lastPoll.toISOString())}`}
+              {tab === "live" && holidayToday && ` · 🎌 ${holidayToday.holidayName || "Holiday"} — coding suspended today`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1342,6 +1364,10 @@ export default function CarTracking() {
             const dueNotReturned = isDueNotReturned(car.id);
             const breached = isBreached(car.id);
             const codingRestricted = isCodingRestricted(car.id);
+            // Tracker silence only matters for a car that is out on a trip with a tracker assigned.
+            const sinceMin = loc?.updatedAt ? Math.floor((Date.now() - new Date(loc.updatedAt)) / 60000) : null;
+            const silent = !!(ongoing && device && sinceMin !== null && sinceMin >= SILENT_AFTER_MIN);
+            const veryStale = silent && sinceMin >= VERY_SILENT_AFTER_MIN;
 
             return (
               <button
@@ -1411,10 +1437,15 @@ export default function CarTracking() {
                     {/* Location */}
                     {loc ? (
                       <>
-                        <p className="text-xs text-green-500 mt-0.5 font-medium flex items-center gap-1">
+                        <p className={`text-xs mt-0.5 font-medium flex items-center gap-1 ${silent ? (veryStale ? "text-red-500" : "text-amber-600") : "text-green-500"}`}>
                           <Icons.Clock className="w-3 h-3" />
                           {timeAgo(loc.updatedAt)} · {typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h
                         </p>
+                        {silent && (
+                          <p className={`text-[11px] rounded-lg px-2 py-0.5 mt-1 font-medium inline-flex items-center gap-1 ${veryStale ? "text-red-700 bg-red-50" : "text-amber-700 bg-amber-50"}`}>
+                            📡 No signal for {sinceMin >= 60 ? `${Math.floor(sinceMin / 60)}h ${sinceMin % 60}m` : `${sinceMin} min`} — on an active trip
+                          </p>
+                        )}
                         {loc.offline && (
                           <p className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2 py-0.5 mt-1 font-medium inline-flex items-center gap-1">
                             📦 Offline flush — buffered ping, not live
@@ -1422,7 +1453,9 @@ export default function CarTracking() {
                         )}
                       </>
                     ) : device ? (
-                      <p className="text-xs text-gray-400 mt-0.5 italic">No live location yet</p>
+                      <p className={`text-xs mt-0.5 italic ${ongoing ? "text-amber-600 font-medium not-italic" : "text-gray-400"}`}>
+                        {ongoing ? "📡 No location received yet — on an active trip" : "No live location yet"}
+                      </p>
                     ) : null}
 
                     {/* On-trip / next-booking badge — "due" states override the
@@ -1531,7 +1564,7 @@ export default function CarTracking() {
           )}
 
           {showLogs && (
-            <LogsPanel sessionInfo={sessionInfo} loading={sessionLoading} onClose={() => setShowLogs(false)} />
+            <LogsPanel sessionInfo={sessionInfo} loading={sessionLoading} holidayToday={holidayToday} onClose={() => setShowLogs(false)} />
           )}
 
           {Object.keys(markersRef.current).length === 0 && (
@@ -1577,6 +1610,26 @@ export default function CarTracking() {
                       <PlaceLabel lat={locationForCar(selected).lat} lng={locationForCar(selected).lng} />
                     </p>
                   )}
+
+                  {/* Number-coding warning the customer was shown at booking time — so when a live
+                      "Coding-restricted" alert fires, staff can see at a glance that they were told. */}
+                  {(() => {
+                    const warns = warningsByCity(readCodingWarnings(ongoing.codingWarnings));
+                    if (!warns.length) return null;
+                    return (
+                      <div className="mt-2 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                        <p className="text-[11px] font-semibold text-amber-800">⚠️ Booked with a coding warning</p>
+                        {warns.map((c, i) => (
+                          <p key={i} className="text-[11px] text-amber-700 mt-0.5">
+                            {[c.city, c.plateLastDigit != null ? `plate ending ${c.plateLastDigit}` : "", c.text].filter(Boolean).join(" · ")}
+                          </p>
+                        ))}
+                        {holidayToday && (
+                          <p className="text-[11px] text-blue-700 mt-1">🎌 Today is a holiday — coding is suspended.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Every booking, self-drive and chauffeur alike: the car
                       itself has to be marked physically back before Return

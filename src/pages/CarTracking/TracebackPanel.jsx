@@ -147,7 +147,19 @@ function buildTimeScale(globalStartMs, globalEndMs, allSegmentSets) {
   return { toPct, toMs };
 }
 
-function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focusedCar, globalStartMs, globalEndMs }) {
+// The moments of a trip that are shown as flags on the bar, by TIME -- not as map points. A drop-off at 9:30
+// with the last ping at 9:00 sits 30 minutes along the bar with the gap in between, same for completed / stolen.
+function buildTripEvents(session, za) {
+  const ms = (v) => { const t = v ? new Date(v).getTime() : NaN; return Number.isNaN(t) ? null : t; };
+  return [
+    { key: "pickup",    icon: "🚩", label: "Pickup",         ms: ms(session?.startedAt) },
+    { key: "dropoff",   icon: "📍", label: "Dropped off",    ms: ms(za?.droppedOffAt || session?.droppedOffAt) },
+    { key: "completed", icon: "🏁", label: "Completed",      ms: ms(za?.completedAt  || session?.completedAt) },
+    { key: "stolen",    icon: "🚨", label: "Flagged stolen", ms: ms(za?.stolenAt     || session?.stolenAt) },
+  ].filter((e) => e.ms !== null);
+}
+
+function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focusedCar, globalStartMs, globalEndMs, eventsByCar }) {
   const allSegmentSets = cars
     .filter(car => visible[car.id] && (traceData[car.id] || []).length)
     .map(car => buildSegments(traceData[car.id]));
@@ -183,9 +195,10 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
         const color = colorForCar(idx);
         const isFocused = focusedCar === car.id;
         const segments = buildSegments(records);
+        const evs = eventsByCar?.[car.id] || [];
 
         return (
-          <div key={car.id} className="flex items-center gap-2 mb-1">
+          <div key={car.id} className={`flex items-center gap-2 mb-1 ${evs.length ? "pt-3" : ""}`}>
             <span className={`text-[10px] w-16 shrink-0 truncate ${isFocused ? "font-bold" : "text-gray-400"}`} style={{ color: isFocused ? color : undefined }}>
               {car.name}
             </span>
@@ -208,6 +221,18 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
                   </div>
                 );
               })}
+              {evs.map((ev) => (
+                <button
+                  key={ev.key}
+                  type="button"
+                  title={`${ev.label} · ${new Date(ev.ms).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}
+                  onPointerDown={(e) => { e.stopPropagation(); onScrub(car.id, ev.ms); }}
+                  className="absolute -top-3 -translate-x-1/2 text-[11px] leading-none z-10 hover:scale-125 transition-transform"
+                  style={{ left: `${scale.toPct(ev.ms)}%` }}
+                >
+                  {ev.icon}
+                </button>
+              ))}
             </div>
             <span className="text-[10px] w-14 shrink-0 text-right text-gray-400 font-mono">{fmtTime(records[0])}</span>
           </div>
@@ -318,6 +343,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
           geofenceAlerts: json?.data?.geofenceAlerts || [],
           codingAlerts:   json?.data?.codingAlerts   || [],
           codingWarnings: json?.data?.codingWarnings || [],
+          holidays:       json?.data?.holidays || [],
           session:        json?.data?.session || null,
         };
       })
@@ -334,6 +360,11 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
           geofenceAlerts: r.value.geofenceAlerts,
           codingAlerts:   r.value.codingAlerts,
           codingWarnings: r.value.codingWarnings,
+          // Same review details History shows, now also for a trip still in progress.
+          droppedOffAt:   r.value.session?.droppedOffAt || null,
+          completedAt:    r.value.session?.completedAt  || null,
+          stolenAt:       r.value.session?.stolenAt     || null,
+          holidays:       r.value.holidays,
           available: true,
         };
         sessions[r.value.id] = r.value.session;
@@ -392,8 +423,23 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   const allVisible = buildAllVisible(traceData, visible);
   const hasData = allVisible.length > 0;
   const allGpsTimes = allPoints.map(gpsMs);
-  const globalStartMs = allGpsTimes.length ? Math.min(...allGpsTimes) : 0;
-  const globalEndMs = allGpsTimes.length ? Math.max(...allGpsTimes) : 0;
+  // Flags per car. A Traceback day only shows that day's pings, so only flags inside that day count there
+  // (a pickup three days ago must not stretch today's bar); a saved trip (History / Review) shows the whole
+  // trip, so all of its flags count.
+  const dayStartMs = !isReview && date ? new Date(`${date}T00:00:00+08:00`).getTime() : null;
+  const dayEndMs   = !isReview && date ? new Date(`${date}T23:59:59.999+08:00`).getTime() : null;
+  const eventsByCar = {};
+  effectiveCars.forEach((car) => {
+    if (!visible[car.id]) return;
+    eventsByCar[car.id] = buildTripEvents(sessionByCar[car.id], zonesAlerts[car.id])
+      .filter((e) => dayStartMs === null || (e.ms >= dayStartMs && e.ms <= dayEndMs));
+  });
+  const eventTimes = Object.values(eventsByCar).flat().map((e) => e.ms);
+  // The bar spans the whole booking: first/last ping AND the flags, so a completion an hour after the last ping
+  // shows as an hour of empty bar instead of the bar just stopping at the last ping.
+  const boundsMs = [...allGpsTimes, ...eventTimes];
+  const globalStartMs = boundsMs.length ? Math.min(...boundsMs) : 0;
+  const globalEndMs = boundsMs.length ? Math.max(...boundsMs) : 0;
   const maxLen = focusedCar && traceData[focusedCar]?.length ? traceData[focusedCar].length : allVisible.length;
 
   const focusedRecs = focusedCar ? (traceData[focusedCar] || []) : null;
@@ -442,7 +488,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
       return;
     }
     const label = isReview ? (reviewData.label || "traceback-review") : `traceback-${date}`;
-    const payload = { label, cars: effectiveCars, records: traceData, zonesAlerts };
+    const payload = { label, cars: effectiveCars, records: traceData, zonesAlerts, sessionMeta: sessionByCar };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -814,6 +860,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
                 codingWarnings: zonesAlerts[focusedCar]?.codingWarnings || [],
                 droppedOffAt:   zonesAlerts[focusedCar]?.droppedOffAt   || null,
                 completedAt:    zonesAlerts[focusedCar]?.completedAt    || null,
+                stolenAt:       zonesAlerts[focusedCar]?.stolenAt       || null,
                 holidays:       zonesAlerts[focusedCar]?.holidays       || [],
               }}
               loading={loading}
@@ -839,6 +886,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
               traceData={traceData} visible={visible} cars={effectiveCars}
               currentTimeMs={currentTimeMs} onScrub={handleTimelineScrub}
               focusedCar={focusedCar} globalStartMs={globalStartMs} globalEndMs={globalEndMs}
+              eventsByCar={eventsByCar}
             />
 
             <div className="px-4 py-3 border-t border-gray-100">
