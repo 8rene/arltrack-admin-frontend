@@ -355,18 +355,17 @@ const PENALTY_PILL = {
   Rejected:       "bg-red-50 text-red-700 border-red-200",
   Removed:        "bg-gray-100 text-gray-500 border-gray-200",
 };
-function TripPenalties({ penalties, onEdit }) {
+function TripPenalties({ penalties, onEdit, bare = false }) {
   const list = Array.isArray(penalties) ? penalties : [];
   if (list.length === 0) return null;
-  return (
-    <Block title="Penalties">
+  const body = (
       <div className="space-y-2 mt-1">
         {list.map((p) => (
           <div key={p.penaltyID} className="rounded-lg border border-gray-100 px-3 py-2">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-sm font-medium text-arl-dark break-words">{p.items.map((i) => i.description).join(", ")}</p>
-                <p className="text-xs text-gray-400">{p.status === "Under review" && p.amount != null ? `${peso(p.amount)} · ` : ""}{p.mine ? "Noted by you" : "Added by staff"}</p>
+                <p className="text-xs text-gray-400">{peso(p.amount)} · {p.mine ? "Noted by you" : "Added by staff"}</p>
               </div>
               <span className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${PENALTY_PILL[p.status] || PENALTY_PILL.Removed}`}>
                 {p.status}
@@ -384,8 +383,8 @@ function TripPenalties({ penalties, onEdit }) {
           </div>
         ))}
       </div>
-    </Block>
   );
+  return bare ? body : <Block title="Penalties">{body}</Block>;
 }
 
 // The "Locations" section of the History View modal: pickup / dropoff map cards and any extra stops.
@@ -442,7 +441,7 @@ function ExistingPenalties({ list }) {
           <div className="min-w-0">
             <p className="text-sm text-arl-dark break-words">{(p.items || []).map((i) => i.description).join(", ")}</p>
             <p className="text-[11px] text-gray-400">
-              {p.status === "Under review" && p.amount != null ? `${penaltyPeso(p.amount)} · ` : ""}{p.mine ? "Noted by you" : "Added by staff"}
+              {penaltyPeso(p.amount)} · {p.mine ? "Noted by you" : "Added by staff"}
               {p.status === "Under review" ? " · waiting for a supervisor" : ""}
             </p>
             {(p.status === "Rejected" || p.status === "Removed") && p.reason && (
@@ -1240,6 +1239,9 @@ function HistoryTab() {
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
+  // History shows the penalties the driver himself wrote (with their price and where each one ended up).
+  const minePenalties = (t) => (Array.isArray(t.penalties) ? t.penalties : []).filter((p) => p.mine);
+
   const submitPenaltyEdit = async (body) => {
     const res  = await fetch(`${API_URL}/api/driver-dispatch/my-penalties/${editPenaltyCtx.penalty.penaltyID}`, {
       method: "PATCH",
@@ -1320,7 +1322,7 @@ function HistoryTab() {
                   </>
                 )}
               </Block>
-              <TripPenalties penalties={trip.penalties} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
+              <TripPenalties penalties={minePenalties(trip)} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
 
               <div className="flex justify-end gap-2">
                 <button onClick={() => setTermsTrip(trip)}
@@ -1350,6 +1352,11 @@ function HistoryTab() {
         onClose={() => setDetailTrip(null)}
         trip={detailTrip}
         sections={detailTrip ? [
+          { key: "penalties", title: `Penalties you noted (${minePenalties(detailTrip).length})`, render: () => (
+            minePenalties(detailTrip).length === 0
+              ? <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-4 text-center">You didn't note any penalties on this trip.</p>
+              : <TripPenalties penalties={minePenalties(detailTrip)} bare />
+          ) },
           { key: "map", title: "Locations", render: () => (
             <TripLocationsSection trip={detailTrip} onFullMap={() => { setMapTrip(detailTrip); setDetailTrip(null); }} />
           ) },

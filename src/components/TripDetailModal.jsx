@@ -64,7 +64,7 @@ function Row({ label, value, bold, color }) {
  */
 export default function TripDetailModal({ open, onClose, trip, sections = [] }) {
   // Booking info + payment start open; the extra sections (locations, inspection) start hidden until asked for.
-  const [openKeys, setOpenKeys] = useState({ info: true, payment: true });
+  const [openKeys, setOpenKeys] = useState({ info: true, payment: true, penalties: true });
   const isOpen = (k) => !!openKeys[k];
   const toggle = (k) => setOpenKeys((o) => ({ ...o, [k]: !o[k] }));
 
