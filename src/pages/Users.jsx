@@ -1073,7 +1073,6 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
                 <Field label="Municipality" value={addr.municipality} />
                 <Field label="City"         value={addr.city} />
                 <Field label="Province"     value={addr.province} />
-                <Field label="Postal Code"  value={addr.postalCode} />
                 <Field label="Village"      value={addr.village} />
                 <Field label="Zip Code"     value={addr.zipCode} />
               </Section>

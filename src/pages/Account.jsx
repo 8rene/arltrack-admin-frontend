@@ -244,7 +244,6 @@ const EDITABLE_FIELDS = [
   { key: "province",     label: "Province",     source: "userAddress" },
   { key: "postalCode",   label: "Postal Code",  source: "userAddress" },
   { key: "village",      label: "Village",      source: "userAddress" },
-  { key: "zipCode",      label: "Zip Code",     source: "userAddress" },
 ];
 
 /* ── Edit Profile Modal ── */
