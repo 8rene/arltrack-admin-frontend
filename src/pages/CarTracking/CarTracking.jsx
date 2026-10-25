@@ -10,7 +10,6 @@ import { getCarCatalog } from "../../utils/carCatalog";
 import TracebackPanel from "./TracebackPanel";
 import HistoryPanel from "./HistoryPanel";
 import ReviewPanel from "./ReviewPanel";
-import SimulatePanel from "./SimulatePanel";
 import BookingInfoPanel from "./BookingInfoPanel";
 import LogsPanel from "./LogsPanel";
 import { readCodingWarnings, warningsByCity } from "../../utils/codingWarnings";
@@ -181,8 +180,8 @@ const CAR_SVG_RAW = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
 const POLL_MS = 30_000; // was 10s — each poll costs backend Firestore reads
 const API     = process.env.REACT_APP_API_URL;
 
-// A car on an active trip whose tracker has sent nothing for this long is flagged on its card.
-// (The backend sends staff a "Tracker not reporting" notification at the same 10-minute mark.)
+// A car on an active trip whose tracker has sent nothing for this long is flagged on its card
+// (display only -- worked out in the browser from the last location time; no alert is sent).
 const SILENT_AFTER_MIN = 10;
 const VERY_SILENT_AFTER_MIN = 30;
 
@@ -722,7 +721,7 @@ export default function CarTracking() {
   // coding restriction — keyed by city name (lowercased), not by car, so two
   // cars restricted in the same city at once share one fetch. Sequential
   // with a short pause between requests, same ~1 req/sec courtesy the
-  // Simulate tab already follows for Nominatim's usage policy. A `null`
+  // other Nominatim callers in this app follow for its usage policy. A `null`
   // cache entry means "tried and failed" (falls back to a circle around the
   // car's current position) — never retried in this session.
   const [zoneBoundaries, setZoneBoundaries] = useState({}); // { [cityLower]: {geometry,lat,lng} | null }
@@ -1245,7 +1244,7 @@ export default function CarTracking() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="font-bold text-arl-dark text-sm">
-              Car Tracking — {tab === "live" ? "Live" : tab === "traceback" ? "Traceback" : tab === "history" ? "History" : tab === "simulate" ? "Simulate" : "Review"}
+              Car Tracking — {tab === "live" ? "Live" : tab === "traceback" ? "Traceback" : tab === "history" ? "History" : "Review"}
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
               {allCars.length} car{allCars.length !== 1 ? "s" : ""} total
@@ -1272,7 +1271,7 @@ export default function CarTracking() {
                 Refresh
               </button>
             )}
-            {tab !== "live" && tab !== "review" && tab !== "simulate" && (
+            {tab !== "live" && tab !== "review" && (
               <button
                 onClick={() => setRefreshTick(t => t + 1)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800"
@@ -1291,7 +1290,6 @@ export default function CarTracking() {
             { id: "traceback",  label: "Traceback" },
             { id: "history",    label: "History" },
             { id: "review",     label: "Review" },
-            { id: "simulate",   label: "Simulate" },
           ].map(t => (
             <button
               key={t.id}
@@ -1334,8 +1332,6 @@ export default function CarTracking() {
       {tab === "review" && (
         <ReviewPanel cars={trackingCars} token={token} />
       )}
-
-      {tab === "simulate" && <SimulatePanel />}
 
       {tab === "live" && (
       <div className="flex flex-1 min-h-0 gap-4">

@@ -56,7 +56,7 @@ export default function LogsPanel({ sessionInfo, loading, onClose, holidayToday 
     detail: a.type === "restricted"
       ? [
           formatCodingRule(a.rule) ? [formatCodingRule(a.rule), a.city].filter(Boolean).join(" · ") : (a.reason || "Plate under coding restriction"),
-          a.plate ? `plate ${a.plate}` : null, // masked at the time it was recorded, e.g. P*****2
+          a.plate ? `plate ${a.plate}` : null, // masked at the time it was recorded, e.g. AB****3
         ].filter(Boolean).join(" · ")
       : "Restriction window ended",
   }));

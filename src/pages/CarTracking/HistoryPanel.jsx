@@ -15,6 +15,17 @@ function fmtDateTime(val) {
   } catch { return "—"; }
 }
 
+// Session info for a trip being reviewed. A FINISHED trip (ended / stolen) has a final file -- the last save is made
+// when it ends, and the nightly job retries it if that save failed -- so the file is the record and the trip list
+// only fills what an older file lacks. A trip still going has a file up to a day old, so there the list is fresher.
+function mergeSessionMeta(fileSession, listFields) {
+  const strip = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v !== undefined && v !== null));
+  const fromFile = strip(fileSession);
+  const fromList = strip(listFields);
+  const finished = fromFile.status === "ended" || fromFile.status === "stolen";
+  return finished ? { ...fromList, ...fromFile } : { ...fromFile, ...fromList };
+}
+
 const STATUS_STYLES = {
   ended:     "bg-teal-50 text-teal-700",
   stolen:    "bg-red-50 text-red-700",
@@ -120,8 +131,15 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
       // { lat, lng, at } with no zone/alert data — handle both.
       const isLegacyArray = Array.isArray(parsed);
       const points = isLegacyArray ? parsed : (parsed.points || []);
+      const meta = mergeSessionMeta(isLegacyArray ? null : parsed.session, {
+        bookingSessionID: item.bookingSessionID,
+        bookingID:        item.bookingID,
+        status:           item.status,
+        startedAt:        item.startedAt,
+        endedAt:          item.endedAt,
+      });
       setReviewData({
-        label: `${car?.name || selectedCar} · ${fmtDateTime(item.startedAt)} → ${item.endedAt ? fmtDateTime(item.endedAt) : item.status === "ended" ? "—" : "ongoing"}`,
+        label: `${car?.name || selectedCar} · ${fmtDateTime(meta.startedAt)} → ${meta.endedAt ? fmtDateTime(meta.endedAt) : meta.status === "ended" ? "—" : "ongoing"}`,
         cars: [{ id: selectedCar, name: car?.name || selectedCar }],
         records: { [selectedCar]: points },
         zonesAlerts: isLegacyArray ? undefined : {
@@ -138,21 +156,8 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
             holidays:       parsed.holidays     || [],
           },
         },
-        // The trip list (database) is the freshest source for status / start / end, so it wins when it has a
-        // value; the file's own `session` block fills in the rest (and is all there is for a downloaded copy,
-        // or once the session record is gone). Older files have no block: item alone, as before.
-        sessionMeta: {
-          [selectedCar]: {
-            ...(isLegacyArray ? {} : (parsed.session || {})),
-            ...Object.fromEntries(Object.entries({
-              bookingSessionID: item.bookingSessionID,
-              bookingID:        item.bookingID,
-              status:           item.status,
-              startedAt:        item.startedAt,
-              endedAt:          item.endedAt,
-            }).filter(([, v]) => v !== undefined && v !== null)),
-          },
-        },
+        // See mergeSessionMeta: the file is the record for a finished trip; the list only fills gaps.
+        sessionMeta: { [selectedCar]: meta },
       });
     } catch (e) {
       setError(e.message);
@@ -235,6 +240,12 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                           </span>
                         )}
                       </div>
+                      {(item.droppedOffAt || item.stolenAt) && (
+                        <p className="text-[10px] text-gray-500 mt-0.5 flex flex-wrap gap-x-3">
+                          {item.droppedOffAt && <span>📍 Dropped off {fmtDateTime(item.droppedOffAt)}</span>}
+                          {item.stolenAt && <span className="font-semibold text-red-600">🚨 Flagged stolen {fmtDateTime(item.stolenAt)}</span>}
+                        </p>
+                      )}
                       <p className="text-[10px] text-gray-400 mt-0.5">
                         Archived {fmtDateTime(item.lastArchivedAt)}
                         {typeof item.pointCount === "number" && (
