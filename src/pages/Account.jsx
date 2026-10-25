@@ -175,6 +175,27 @@ function DocSubmitButton({ pending, hasFile, onClick }) {
   );
 }
 
+/* Quick "is it on file?" checker shown at the top of the Document tab, one chip per document:
+   green = on file, blue = submitted and waiting for review, red = nothing on file. */
+function DocStatusChip({ label, hasFile, pending }) {
+  const state = hasFile ? "ok" : pending ? "pending" : "missing";
+  const styles = {
+    ok:      "bg-green-50 border-green-200 text-green-700",
+    pending: "bg-blue-50 border-blue-200 text-blue-700",
+    missing: "bg-red-50 border-red-200 text-red-600",
+  }[state];
+  const text = { ok: "On file", pending: "Pending review", missing: "Not on file" }[state];
+  return (
+    <div className={`flex-1 min-w-[140px] flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${styles}`}>
+      <span className="text-sm font-bold leading-none">{state === "ok" ? "✓" : state === "pending" ? "…" : "✕"}</span>
+      <div className="min-w-0">
+        <p className="font-semibold truncate">{label}</p>
+        <p className="opacity-80">{text}</p>
+      </div>
+    </div>
+  );
+}
+
 function EmptyDocBox({ title, pending, direct }) {
   return (
     <div className="bg-gray-50 border border-dashed rounded-xl p-5 text-center">
@@ -988,10 +1009,10 @@ export default function Account() {
 
   useEffect(() => { fetchProfile(); }, [user?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const expiryDate = tracksLicense ? parseExpiryDate(profile?.driverLicenseExpiry) : null;
+  const expiryDate = parseExpiryDate(profile?.driverLicenseExpiry);
   const daysToExpiry = expiryDate ? Math.ceil((expiryDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000)) : null;
-  const licenseExpired = expiryDate ? daysToExpiry < 0 : false;
-  const licenseExpiringSoon = expiryDate ? (!licenseExpired && daysToExpiry <= LICENSE_WARNING_DAYS) : false;
+  const licenseExpired = tracksLicense && expiryDate ? daysToExpiry < 0 : false;
+  const licenseExpiringSoon = tracksLicense && expiryDate ? (!licenseExpired && daysToExpiry <= LICENSE_WARNING_DAYS) : false;
 
   // Driver/Supervisor accounts are expected to have both on file. Only judged once the profile has loaded, so a slow or
   // failed load never reads as "nothing on file", and not while a submission is already waiting for review.
@@ -1231,33 +1252,38 @@ export default function Account() {
           </div>
         ) : (
           <div className="px-6 py-4 space-y-5">
-            {/* Driver's license — Driver/Supervisor only. Always shown, empty or not, so a missing one is visible and can be submitted. */}
-            {tracksLicense && (
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <p className="text-xs font-semibold text-gray-400 uppercase">Driver's License</p>
-                  <DocSubmitButton pending={pendingIdKinds.license} hasFile={!!profile?.driverLicenseUrl}
-                    onClick={() => setShowResubmit("license")} />
-                </div>
-                {profile?.driverLicenseUrl ? (
-                  <img src={profile.driverLicenseUrl} alt="Driver's License" className="w-full h-48 object-cover rounded-xl border" />
-                ) : (
-                  <EmptyDocBox title="No driver's license on file" pending={pendingIdKinds.license} direct={canEditDirectly} />
-                )}
-                {/* "pending admin review" only makes sense when there is a photo, or a submission, to review */}
-                {(profile?.driverLicenseUrl || pendingIdKinds.license) && (
-                  <DetailRow
-                    icon={<IconWarning />}
-                    label="Expiry Date"
-                    value={expiryDate ? expiryDate.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "Not set — pending admin review"}
-                  />
-                )}
+            {/* Status checker — is each document on file? */}
+            <div className="flex flex-wrap gap-2">
+              <DocStatusChip label="Driver's License" hasFile={!!profile?.driverLicenseUrl} pending={pendingIdKinds.license} />
+              <DocStatusChip label="Valid ID" hasFile={!!profile?.documentImageUrl} pending={pendingIdKinds.document} />
+            </div>
+
+            {/* Driver's license — every role, empty or not, so a missing one is visible and can be submitted.
+                Expiry warnings/locking still only apply to Driver/Supervisor accounts. */}
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <p className="text-xs font-semibold text-gray-400 uppercase">Driver's License</p>
+                <DocSubmitButton pending={pendingIdKinds.license} hasFile={!!profile?.driverLicenseUrl}
+                  onClick={() => setShowResubmit("license")} />
               </div>
-            )}
+              {profile?.driverLicenseUrl ? (
+                <img src={profile.driverLicenseUrl} alt="Driver's License" className="w-full h-48 object-cover rounded-xl border" />
+              ) : (
+                <EmptyDocBox title="No driver's license on file" pending={pendingIdKinds.license} direct={canEditDirectly} />
+              )}
+              {/* "pending admin review" only makes sense when there is a photo, or a submission, to review */}
+              {(profile?.driverLicenseUrl || pendingIdKinds.license) && (
+                <DetailRow
+                  icon={<IconWarning />}
+                  label="Expiry Date"
+                  value={expiryDate ? expiryDate.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : canEditDirectly ? "Not set" : "Not set — pending admin review"}
+                />
+              )}
+            </div>
 
             {/* Valid ID — every role, empty or not (it used to be hidden until one existed, so a missing ID could
                 never be submitted). No expiry tracking here by design; that's scoped to the driver's license. */}
-            <div className={`space-y-3 ${tracksLicense ? "pt-2 border-t" : ""}`}>
+            <div className="space-y-3 pt-2 border-t">
               <div className="flex justify-between items-center">
                 <p className="text-xs font-semibold text-gray-400 uppercase">Valid ID</p>
                 <DocSubmitButton pending={pendingIdKinds.document} hasFile={!!profile?.documentImageUrl}
