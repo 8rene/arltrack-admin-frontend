@@ -208,14 +208,9 @@ function ImageViewerModal({ title, src, onClose }) {
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-4 border-b">
           <h2 className="font-bold text-lg text-gray-800">{title}</h2>
-          <div className="flex items-center gap-3">
-            <a href={src} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-teal-600 hover:text-teal-700">
-              Open in new tab
-            </a>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1" aria-label="Close">
-              <IconClose className="w-5 h-5" />
-            </button>
-          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1" aria-label="Close">
+            <IconClose className="w-5 h-5" />
+          </button>
         </div>
         <div className="p-4 overflow-auto bg-gray-50 rounded-b-2xl flex items-center justify-center">
           <img src={src} alt={title} className="max-w-full max-h-[75vh] object-contain rounded-lg" />
