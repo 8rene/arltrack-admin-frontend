@@ -158,6 +158,36 @@ function DetailRow({ icon, label, value }) {
   );
 }
 
+/* ── Document tab pieces ──
+   DocSubmitButton: "Submit" when nothing is on file yet, "Resubmit" once there is something, and a plain
+   "Pending review" tag (no button) while a submission is already waiting, so one person can't stack up duplicates.
+   EmptyDocBox: what a missing document looks like. */
+function DocSubmitButton({ pending, hasFile, onClick }) {
+  if (pending) {
+    return <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700">Pending review</span>;
+  }
+  return (
+    <button onClick={onClick}
+      className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700">
+      <IconEdit className="w-3.5 h-3.5" />
+      {hasFile ? "Resubmit" : "Submit"}
+    </button>
+  );
+}
+
+function EmptyDocBox({ title, pending, direct }) {
+  return (
+    <div className="bg-gray-50 border border-dashed rounded-xl p-5 text-center">
+      <p className="text-sm font-medium text-gray-600">{title}</p>
+      <p className="text-xs text-gray-400 mt-1">
+        {pending
+          ? "Your submission is waiting for admin review."
+          : direct ? "Submit a photo to add it to your account." : "Submit a photo and an admin will review it."}
+      </p>
+    </div>
+  );
+}
+
 /* ── Editable field (used inside the Edit modal) ── */
 function EditField({ label, value, onChange, type = "text" }) {
   return (
@@ -655,6 +685,10 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
 
   const isLicense = documentKind === "license";
   const currentUrl = isLicense ? current.driverLicenseUrl : current.documentImageUrl;
+  // Nothing on file yet = a first submission, so don't talk about "updated"/"renewed" or "Resubmit".
+  const photoOf = currentUrl
+    ? `your updated ${isLicense ? "(renewed) driver's license" : "document"}`
+    : `your ${isLicense ? "driver's license" : "document"}`;
 
   const handleFile = (e) => {
     const f = e.target.files?.[0];
@@ -722,14 +756,14 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b">
-          <h2 className="font-bold text-lg text-gray-800">Resubmit {isLicense ? "Driver's License" : "Document"}</h2>
+          <h2 className="font-bold text-lg text-gray-800">{currentUrl ? "Resubmit" : "Submit"} {isLicense ? "Driver's License" : "Document"}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><IconClose /></button>
         </div>
         <div className="p-5 space-y-4">
           <p className="text-xs text-gray-500">
             {canEditDirectly
-              ? `Upload a clear photo of your updated ${isLicense ? "(renewed) driver's license" : "document"}. This applies to your account immediately.`
-              : `Upload a clear photo of your updated ${isLicense ? "(renewed) driver's license" : "document"}. An admin will review it${isLicense ? " and confirm the new expiry date" : ""} before it's applied to your account.`}
+              ? `Upload a clear photo of ${photoOf}. This applies to your account immediately.`
+              : `Upload a clear photo of ${photoOf}. An admin will review it${isLicense ? ` and confirm the ${currentUrl ? "new " : ""}expiry date` : ""} before it's applied to your account.`}
           </p>
 
           {currentUrl && (
@@ -825,6 +859,8 @@ export default function Account() {
 
   const [pendingProfileReq, setPendingProfileReq] = useState(false);
   const [pendingIdReq, setPendingIdReq]           = useState(false);
+  const [pendingIdKinds, setPendingIdKinds]       = useState({ license: false, document: false }); // which kind is waiting for review
+  const [loadError, setLoadError]                 = useState(false); // true when the profile couldn't be loaded at all
   const [allProfileReqs, setAllProfileReqs]       = useState([]);
 
   const canEditDirectly = user?.role === "Owner" || user?.role === "Admin";
@@ -835,6 +871,7 @@ export default function Account() {
   const fetchProfile = async () => {
     if (!user) return;
     setLoading(true);
+    setLoadError(false);
     try {
       // If the referral list can't be read (e.g. Firestore rules for this
       // role), only that list is skipped — the rest of the page still loads.
@@ -934,9 +971,16 @@ export default function Account() {
       const idReqs       = idReqSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort(byNewestFirst);
       setAllProfileReqs(profileReqs);
       setPendingProfileReq(profileReqs.some(r => r.status === "pending"));
-      setPendingIdReq(idReqs.some(r => r.status === "pending"));
+      const pendingIds = idReqs.filter(r => r.status === "pending");
+      setPendingIdReq(pendingIds.length > 0);
+      // requests made before documentKind existed were always licenses
+      setPendingIdKinds({
+        license:  pendingIds.some(r => (r.documentKind || "license") === "license"),
+        document: pendingIds.some(r => r.documentKind === "document"),
+      });
     } catch (e) {
       console.error("Profile fetch error:", e);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -948,6 +992,11 @@ export default function Account() {
   const daysToExpiry = expiryDate ? Math.ceil((expiryDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000)) : null;
   const licenseExpired = expiryDate ? daysToExpiry < 0 : false;
   const licenseExpiringSoon = expiryDate ? (!licenseExpired && daysToExpiry <= LICENSE_WARNING_DAYS) : false;
+
+  // Driver/Supervisor accounts are expected to have both on file. Only judged once the profile has loaded, so a slow or
+  // failed load never reads as "nothing on file", and not while a submission is already waiting for review.
+  const missingLicense = tracksLicense && !!profile && !profile.driverLicenseUrl && !pendingIdKinds.license;
+  const missingId      = tracksLicense && !!profile && !profile.documentImageUrl && !pendingIdKinds.document;
 
   if (!user) return null;
 
@@ -1086,10 +1135,18 @@ export default function Account() {
           <div className="px-6 py-6 space-y-3">
             {[...Array(4)].map((_, i) => <div key={i} className="h-10 bg-gray-100 rounded-xl animate-pulse" />)}
           </div>
+        ) : loadError && !profile ? (
+          <div className="px-6 py-8 text-center space-y-3">
+            <p className="text-sm text-gray-500">Couldn't load your profile right now.</p>
+            <button onClick={fetchProfile}
+              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700">
+              Try again
+            </button>
+          </div>
         ) : profileTab === "details" ? (
           <div className="px-6 py-2">
             {/* BADGES — sits right before Email, inside the Details panel */}
-            {(pendingProfileReq || pendingIdReq || licenseExpiringSoon || licenseExpired) && (
+            {(pendingProfileReq || pendingIdReq || licenseExpiringSoon || licenseExpired || missingLicense || missingId) && (
               <div className="flex flex-wrap gap-2 py-3.5 border-b border-gray-50">
                 {pendingProfileReq && (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700">
@@ -1112,6 +1169,24 @@ export default function Account() {
                     {licenseExpired
                       ? "Driver's license is expired, please update"
                       : `Driver's license expires in ${daysToExpiry} day${daysToExpiry === 1 ? "" : "s"} — please update`}
+                  </button>
+                )}
+                {missingLicense && (
+                  <button
+                    onClick={() => setShowResubmit("license")}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
+                  >
+                    <IconWarning className="w-3.5 h-3.5" />
+                    No driver's license on file, please submit
+                  </button>
+                )}
+                {missingId && (
+                  <button
+                    onClick={() => setShowResubmit("document")}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
+                  >
+                    <IconWarning className="w-3.5 h-3.5" />
+                    No valid ID on file, please submit
                   </button>
                 )}
               </div>
@@ -1156,63 +1231,51 @@ export default function Account() {
           </div>
         ) : (
           <div className="px-6 py-4 space-y-5">
-            {!tracksLicense && !profile?.documentImageUrl && !profile?.driverLicenseUrl ? (
-              <p className="text-sm text-gray-400 text-center py-6">No documents on file.</p>
-            ) : (
-              <>
-                {tracksLicense && (
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <p className="text-xs font-semibold text-gray-400 uppercase">Driver's License</p>
-                      <button
-                        onClick={() => setShowResubmit("license")}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700"
-                      >
-                        <IconEdit className="w-3.5 h-3.5" />
-                        Resubmit
-                      </button>
-                    </div>
-                    {profile?.driverLicenseUrl ? (
-                      <img src={profile.driverLicenseUrl} alt="Driver's License" className="w-full h-48 object-cover rounded-xl border" />
-                    ) : (
-                      <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No license photo on file yet.</p>
-                    )}
-                    <DetailRow
-                      icon={<IconWarning />}
-                      label="Expiry Date"
-                      value={expiryDate ? expiryDate.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "Not set — pending admin review"}
-                    />
-                  </div>
+            {/* Driver's license — Driver/Supervisor only. Always shown, empty or not, so a missing one is visible and can be submitted. */}
+            {tracksLicense && (
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <p className="text-xs font-semibold text-gray-400 uppercase">Driver's License</p>
+                  <DocSubmitButton pending={pendingIdKinds.license} hasFile={!!profile?.driverLicenseUrl}
+                    onClick={() => setShowResubmit("license")} />
+                </div>
+                {profile?.driverLicenseUrl ? (
+                  <img src={profile.driverLicenseUrl} alt="Driver's License" className="w-full h-48 object-cover rounded-xl border" />
+                ) : (
+                  <EmptyDocBox title="No driver's license on file" pending={pendingIdKinds.license} direct={canEditDirectly} />
                 )}
-
-                {/* Document (government ID etc.) — was display-only with no
-                    resubmit path at all; fixed governmentIdUrl (a field
-                    nothing ever wrote) to the actual documentImageUrl field.
-                    No expiry tracking here by design — see earlier decision;
-                    that's scoped to the driver's license only. */}
-                {(profile?.documentImageUrl || profile?.documentType) && (
-                  <div className="space-y-3 pt-2 border-t">
-                    <div className="flex justify-between items-center">
-                      <p className="text-xs font-semibold text-gray-400 uppercase">Valid ID</p>
-                      <button
-                        onClick={() => setShowResubmit("document")}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700"
-                      >
-                        <IconEdit className="w-3.5 h-3.5" />
-                        Resubmit
-                      </button>
-                    </div>
-                    {profile?.documentImageUrl ? (
-                      <img src={profile.documentImageUrl} alt="Valid ID" className="w-full h-48 object-cover rounded-xl border" />
-                    ) : (
-                      <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No ID photo on file yet.</p>
-                    )}
-                    <DetailRow icon={<IconUser />} label="ID Type"   value={profile.documentType} />
-                    <DetailRow icon={<IconUser />} label="ID Number" value={profile.documentNumber} />
-                  </div>
+                {/* "pending admin review" only makes sense when there is a photo, or a submission, to review */}
+                {(profile?.driverLicenseUrl || pendingIdKinds.license) && (
+                  <DetailRow
+                    icon={<IconWarning />}
+                    label="Expiry Date"
+                    value={expiryDate ? expiryDate.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "Not set — pending admin review"}
+                  />
                 )}
-              </>
+              </div>
             )}
+
+            {/* Valid ID — every role, empty or not (it used to be hidden until one existed, so a missing ID could
+                never be submitted). No expiry tracking here by design; that's scoped to the driver's license. */}
+            <div className={`space-y-3 ${tracksLicense ? "pt-2 border-t" : ""}`}>
+              <div className="flex justify-between items-center">
+                <p className="text-xs font-semibold text-gray-400 uppercase">Valid ID</p>
+                <DocSubmitButton pending={pendingIdKinds.document} hasFile={!!profile?.documentImageUrl}
+                  onClick={() => setShowResubmit("document")} />
+              </div>
+              {profile?.documentImageUrl ? (
+                <img src={profile.documentImageUrl} alt="Valid ID" className="w-full h-48 object-cover rounded-xl border" />
+              ) : (
+                <EmptyDocBox title={profile?.documentType ? "No ID photo on file yet" : "No valid ID on file"}
+                  pending={pendingIdKinds.document} direct={canEditDirectly} />
+              )}
+              {(profile?.documentImageUrl || profile?.documentType) && (
+                <>
+                  <DetailRow icon={<IconUser />} label="ID Type"   value={profile.documentType} />
+                  <DetailRow icon={<IconUser />} label="ID Number" value={profile.documentNumber} />
+                </>
+              )}
+            </div>
           </div>
         )}
       </div>
