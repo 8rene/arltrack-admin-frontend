@@ -1626,12 +1626,28 @@ const buildOptions = (presets, existing, current, numeric = false) => {
   const sorted = [...seen.values()].sort((a, b) => (numeric ? Number(a) - Number(b) : a.localeCompare(b)));
   return sorted.map((v) => ({ value: v, label: v }));
 };
+// A price tier only counts when it has a duration AND a price above zero.
+const validTiers = (pricing) => pricing.filter(p => p.durationType && Number(p.price) > 0);
+
+// What the vehicle form still needs before it can be saved. Returns null when everything is there, otherwise the
+// message to show and the tab that holds the first missing thing (photo is on Details, prices on Pricing).
+const requiredCheck = ({ form, hasPhoto, pricing, checkBrandModel }) => {
+  const missing = [];
+  let tab = null;
+  if (checkBrandModel && (!form.brandID || !form.modelID)) { missing.push("a brand and model"); tab = "details"; }
+  if (!hasPhoto) { missing.push("a photo"); tab = tab || "details"; }
+  if (validTiers(pricing).length === 0) { missing.push("at least one price"); tab = tab || "pricing"; }
+  if (!missing.length) return null;
+  const list = missing.length > 1 ? `${missing.slice(0, -1).join(", ")} and ${missing[missing.length - 1]}` : missing[0];
+  return { message: `Please add ${list}.`, tab };
+};
+
 const matchOption = (options, v) => {
   const t = String(v ?? "").trim().toLowerCase();
   return options.find((o) => o.value.toLowerCase() === t)?.value || "";
 };
 
-function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, models, cars = [], onCreateBrand, onCreateModel, currentStatus, onStatusChangeRequest }) {
+function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, models, cars = [], onCreateBrand, onCreateModel, imageMissing = false, currentStatus, onStatusChangeRequest }) {
   const filteredModels = models.filter(m => m.brandID === form.brandID);
   const byLabel = (a, b) => a.label.localeCompare(b.label);
   const brandOptions = brands.map(b => ({ value: b.id, label: b.brandName })).sort(byLabel);
@@ -1639,6 +1655,12 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
   const colorOptions = buildOptions(COLOR_PRESETS, cars.map(c => c.color), form.color);
   const bodyOptions  = buildOptions(BODY_TYPE_PRESETS, cars.map(c => c.bodyType), form.bodyType);
   const seatOptions  = buildOptions(SEAT_PRESETS, cars.map(c => c.seatingCapacity), form.seatingCapacity, true);
+  // Year is a plain list, newest first: next year (for a car that's just been announced) back to 1980. A saved year outside that
+  // range (bad old data) is kept in the list so editing the car never blanks it.
+  const thisYear = new Date().getFullYear();
+  const yearOptions = Array.from({ length: thisYear + 1 - 1980 + 1 }, (_, i) => String(thisYear + 1 - i));
+  if (form.year && !yearOptions.includes(String(form.year))) yearOptions.push(String(form.year));
+  yearOptions.sort((a, b) => Number(b) - Number(a));
   const setField = (name) => (v) => setForm(f => ({ ...f, [name]: v }));
   // a name already in the list is reused (any capitalisation) instead of being added twice
   const reuseOrAdd = (options) => (name) => options.find(o => o.value.toLowerCase() === name.toLowerCase())?.value || name;
@@ -1652,20 +1674,21 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
     <div className="space-y-5">
       {/* Image */}
       <div>
-        <label className={LABEL_CLS}>Primary Photo</label>
+        <label className={LABEL_CLS}>Primary Photo <span className="text-red-500">*</span></label>
         <div className="flex gap-4 items-center">
-          <div className="w-28 h-20 bg-gray-100 rounded-xl overflow-hidden flex-shrink-0">
+          <div className={`w-28 h-20 bg-gray-100 rounded-xl overflow-hidden flex-shrink-0${imageMissing ? " ring-2 ring-red-400" : ""}`}>
             {imagePreview
               ? <img src={imagePreview} alt="preview" className="w-full h-full object-cover" />
               : <div className="flex items-center justify-center h-full text-gray-300"><Icons.Camera className="w-8 h-8" /></div>
             }
           </div>
-          <label className="cursor-pointer flex items-center gap-2 px-4 py-2 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors">
+          <label className={`cursor-pointer flex items-center gap-2 px-4 py-2 border-2 border-dashed rounded-xl text-sm hover:border-teal-400 hover:text-teal-600 transition-colors ${imageMissing ? "border-red-400 text-red-500" : "border-gray-300 text-gray-500"}`}>
             <Icons.Camera className="w-4 h-4" />
             Choose Image
             <input type="file" accept="image/*" className="hidden" onChange={onImageChange} />
           </label>
         </div>
+        {imageMissing && <p className="text-xs text-red-500 mt-1.5">A photo of the vehicle is required.</p>}
       </div>
 
       {/* Brand + Model */}
@@ -1686,7 +1709,7 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
           onChange={setField("color")} onCreate={reuseOrAdd(colorOptions)} placeholder="e.g. Pearl White" />
         <PickOrAddField label="Body Type" noun="body type" value={matchOption(bodyOptions, form.bodyType)} options={bodyOptions}
           onChange={setField("bodyType")} onCreate={reuseOrAdd(bodyOptions)} placeholder="e.g. Minibus" />
-        <DetailsField form={form} setForm={setForm} label="Year"         name="year"        type="number" placeholder="e.g. 2022" min="1980" inputMode="numeric" />
+        <DetailsField form={form} setForm={setForm} label="Year"         name="year"        options={yearOptions} />
         <PickOrAddField label="Seats" noun="seat count" value={matchOption(seatOptions, form.seatingCapacity)} options={seatOptions}
           onChange={setField("seatingCapacity")} onCreate={(raw) => reuseOrAdd(seatOptions)(createSeats(raw))}
           inputType="number" placeholder="e.g. 7" />
@@ -1734,7 +1757,7 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
 }
 
 // ─── PRICING FORM (standalone tab) ────────────────────────────────────────────
-function PricingForm({ pricing, setPricing }) {
+function PricingForm({ pricing, setPricing, showRequired = false }) {
   // editingIdx: which tier is currently in edit mode (-1 = none, "new" = new tier being added)
   const [editingIdx, setEditingIdx] = useState(null);
   // draft holds the temp values while editing
@@ -1792,6 +1815,13 @@ function PricingForm({ pricing, setPricing }) {
           </div>
         </div>
       </div>
+
+      {/* Shown after a failed save; its own element because a new vehicle starts with a blank tier row, so the empty state below never appears */}
+      {showRequired && (
+        <div className="text-sm text-red-600 font-medium bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          At least one price is required. Enter a duration and a price above ₱0, then save the tier.
+        </div>
+      )}
 
       {/* Existing tiers */}
       <div className="space-y-3">
@@ -1951,6 +1981,9 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
   const [imagePreview, setImagePreview] = useState(car.imageURL || null);
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState(null);
+  const [tried, setTried]       = useState(false); // true after a save attempt, so missing things can turn red
+  // The message goes away once something is changed, so it never lingers after the problem has been fixed.
+  useEffect(() => { setError(null); }, [form, pricing, imageFile]);
   // The status actually applied so far (starts as the car's real live
   // status). Only ever updated once StatusChangeFlow's gated PATCH call
   // genuinely succeeds — form.status can show Maintenance/Inactive mid-flow
@@ -1991,6 +2024,9 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
   };
 
   const handleSave = async () => {
+    // imagePreview is the car's saved photo until a new file is chosen, so it covers "already has one" too
+    const problem = requiredCheck({ form, hasPhoto: !!imagePreview, pricing, checkBrandModel: false });
+    if (problem) { setTried(true); setActiveTab(problem.tab); setError(problem.message); return; }
     setSaving(true); setError(null);
     try {
       // PUT /api/fleet/cars/:carID — runs through verifyToken +
@@ -2027,9 +2063,7 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
       await apiFetch(`/api/fleet/cars/${car.id}/pricing/replace`, {
         method: "PUT",
         body: JSON.stringify({
-          pricing: pricing
-            .filter(p => p.durationType && p.price !== "")
-            .map(p => ({ durationType: p.durationType, price: p.price })),
+          pricing: validTiers(pricing).map(p => ({ durationType: p.durationType, price: p.price })),
         }),
       });
 
@@ -2041,7 +2075,7 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
     }
   };
 
-  const pricingCount = pricing.filter(p => p.durationType && p.price).length;
+  const pricingCount = validTiers(pricing).length;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -2086,6 +2120,14 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
           </button>
         </div>
 
+        {/* Error banner: outside the scrolling area on purpose, so it is visible without scrolling down to find it */}
+        {error && (
+          <div role="alert" className="flex-shrink-0 mx-5 mt-4 flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3.5 py-3">
+            <span aria-hidden="true">⚠</span>
+            <span>{error}</span>
+          </div>
+        )}
+
         {/* Scrollable content */}
         <div className="overflow-y-auto flex-1 p-5">
           {activeTab === "details" ? (
@@ -2093,11 +2135,11 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
               imagePreview={imagePreview} onImageChange={handleImageChange}
               brands={brands} models={models} cars={cars}
               onCreateBrand={onCreateBrand} onCreateModel={onCreateModel}
+              imageMissing={tried && !imagePreview}
               currentStatus={confirmedStatus} onStatusChangeRequest={handleStatusChangeRequest} />
           ) : (
-            <PricingForm pricing={pricing} setPricing={setPricing} />
+            <PricingForm pricing={pricing} setPricing={setPricing} showRequired={tried && pricingCount === 0} />
           )}
-          {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3 mt-4">{error}</p>}
         </div>
 
         {/* Footer */}
@@ -2131,11 +2173,14 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
 function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClose, onSaved }) {
   const [activeTab, setActiveTab] = useState("details");
   const [form, setForm]     = useState({ status: "Active", fuelType: "Gasoline", transmission: "Automatic" });
-  const [pricing, setPricing] = useState([{ durationType: "", price: "" }]);
+  const [pricing, setPricing] = useState([]); // starts empty: no blank "Tier 1" row until the person adds one
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
+  const [tried, setTried]   = useState(false); // true after a save attempt, so missing things can turn red
+  // The message goes away once something is changed, so it never lingers after the problem has been fixed.
+  useEffect(() => { setError(null); }, [form, pricing, imageFile]);
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -2145,7 +2190,8 @@ function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClo
   };
 
   const handleSave = async () => {
-    if (!form.brandID || !form.modelID) { setError("Please select Brand and Model."); return; }
+    const problem = requiredCheck({ form, hasPhoto: !!imageFile, pricing, checkBrandModel: true });
+    if (problem) { setTried(true); setActiveTab(problem.tab); setError(problem.message); return; }
     setSaving(true); setError(null);
     try {
       // POST /api/fleet/cars accepts pricing[] in the same body and
@@ -2157,7 +2203,7 @@ function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClo
           ...form,
           seatingCapacity: Number(form.seatingCapacity) || 0,
           year: Number(form.year) || 0,
-          pricing: pricing.filter(p => p.durationType && p.price),
+          pricing: validTiers(pricing).map(p => ({ durationType: p.durationType, price: p.price })),
         }),
       });
       const carID = data.id;
@@ -2183,7 +2229,7 @@ function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClo
     }
   };
 
-  const pricingCount = pricing.filter(p => p.durationType && p.price).length;
+  const pricingCount = validTiers(pricing).length;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -2225,17 +2271,25 @@ function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClo
           </button>
         </div>
 
+        {/* Error banner: outside the scrolling area on purpose, so it is visible without scrolling down to find it */}
+        {error && (
+          <div role="alert" className="flex-shrink-0 mx-5 mt-4 flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3.5 py-3">
+            <span aria-hidden="true">⚠</span>
+            <span>{error}</span>
+          </div>
+        )}
+
         {/* Scrollable content */}
         <div className="overflow-y-auto flex-1 p-5">
           {activeTab === "details" ? (
             <CarDetailsForm form={form} setForm={setForm}
               imagePreview={imagePreview} onImageChange={handleImageChange}
               brands={brands} models={models} cars={cars}
-              onCreateBrand={onCreateBrand} onCreateModel={onCreateModel} />
+              onCreateBrand={onCreateBrand} onCreateModel={onCreateModel}
+              imageMissing={tried && !imagePreview} />
           ) : (
-            <PricingForm pricing={pricing} setPricing={setPricing} />
+            <PricingForm pricing={pricing} setPricing={setPricing} showRequired={tried && pricingCount === 0} />
           )}
-          {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3 mt-4">{error}</p>}
         </div>
 
         {/* Footer */}
