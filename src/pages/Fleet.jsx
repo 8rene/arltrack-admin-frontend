@@ -277,6 +277,28 @@ export default function Fleet() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // Used by the "+ Add new brand / model" option inside the Add and Edit vehicle forms. They add to the lists in place
+  // (no full reload, so the open form keeps what was typed) and hand back the id so the form can select it right away.
+  // A name that already exists (any capitalisation) is reused rather than saved a second time.
+  const createBrandInline = async (name) => {
+    const clean = name.trim();
+    const existing = brands.find(b => (b.brandName || "").trim().toLowerCase() === clean.toLowerCase());
+    if (existing) return existing.id;
+    const data = await apiFetch("/api/fleet/brands", { method: "POST", body: JSON.stringify({ brandName: clean }) });
+    setBrands(prev => [...prev, { id: data.id, brandID: data.id, brandName: data.brandName }]);
+    return data.id;
+  };
+
+  const createModelInline = async (name, brandID) => {
+    const clean = name.trim();
+    if (!brandID) throw new Error("Select a brand first.");
+    const existing = models.find(m => m.brandID === brandID && (m.modelName || "").trim().toLowerCase() === clean.toLowerCase());
+    if (existing) return existing.id;
+    const data = await apiFetch("/api/fleet/models", { method: "POST", body: JSON.stringify({ modelName: clean, brandID }) });
+    setModels(prev => [...prev, { id: data.id, modelID: data.id, modelName: data.modelName, brandID: data.brandID }]);
+    return data.id;
+  };
+
   // Rented/Reserved dropped from the filter chips too — now that they can't
   // be set from the UI anymore, they'd sit stuck at 0 forever (any legacy
   // car still tagged that way in Firestore is still reachable under "All",
@@ -368,12 +390,14 @@ export default function Fleet() {
           onEdit={() => { setDetailCar(null); setEditCar(detailCar); }} />
       )}
       {editCar && (
-        <EditCarModal car={editCar} brands={brands} models={models}
+        <EditCarModal car={editCar} brands={brands} models={models} cars={cars}
+          onCreateBrand={createBrandInline} onCreateModel={createModelInline}
           onClose={() => setEditCar(null)}
           onSaved={() => { setEditCar(null); fetchAll(); }} />
       )}
       {showAddCar && (
-        <AddCarModal brands={brands} models={models}
+        <AddCarModal brands={brands} models={models} cars={cars}
+          onCreateBrand={createBrandInline} onCreateModel={createModelInline}
           onClose={() => setShowAddCar(false)}
           onSaved={() => { setShowAddCar(false); fetchAll(); }} />
       )}
@@ -1477,31 +1501,158 @@ const PricingIcon = (props) => (
 );
 
 // ─── DETAILS FORM ─────────────────────────────────────────────────────────────
-function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, models, currentStatus, onStatusChangeRequest }) {
-  const filteredModels = models.filter(m => m.brandID === form.brandID);
+// Shared look for every text box / dropdown / textarea in the vehicle form.
+const FIELD_CLS =
+  "w-full bg-white border border-gray-300 rounded-lg px-3 py-2.5 text-sm text-gray-800 placeholder-gray-400 " +
+  "outline-none transition-colors hover:border-gray-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 " +
+  "disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed";
+const SELECT_CLS = FIELD_CLS + " appearance-none pr-9 bg-no-repeat cursor-pointer";
+const LABEL_CLS = "block text-sm font-medium text-gray-700 mb-1.5";
+// our own chevron, so the dropdown arrow isn't jammed against the right edge
+const SELECT_STYLE = {
+  backgroundImage:
+    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%236b7280' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 7.5l5 5 5-5'/%3E%3C/svg%3E\")",
+  backgroundPosition: "right 0.75rem center",
+  backgroundSize: "1rem",
+};
 
-  const Field = ({ label, name, type = "text", options }) => (
+// IMPORTANT: this lives at module level on purpose. When it was declared inside CarDetailsForm, every keystroke
+// created a brand-new component type, React remounted the <input>, and the text box lost focus after one character.
+function DetailsField({ label, name, form, setForm, type = "text", options, placeholder, ...rest }) {
+  const onChange = (e) => setForm((f) => ({ ...f, [name]: e.target.value }));
+  return (
     <div>
-      <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+      <label className={LABEL_CLS}>{label}</label>
       {options ? (
-        <select value={form[name] || ""} onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
-          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
+        <select value={form[name] || ""} onChange={onChange} className={SELECT_CLS} style={SELECT_STYLE}>
           <option value="">Select {label}</option>
-          {options.map(o => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}
+          {options.map((o) => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}
         </select>
       ) : (
-        <input type={type} value={form[name] || ""}
-          onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
-          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
+        <input type={type} value={form[name] ?? ""} onChange={onChange} placeholder={placeholder} className={FIELD_CLS} {...rest} />
       )}
     </div>
   );
+}
+
+// ─── PICK OR ADD ──────────────────────────────────────────────────────────────
+// A dropdown of what already exists, with "+ Add new …" as its last entry. Choosing that swaps the dropdown for a small
+// input; Add saves it (onCreate may call the API) and selects it straight away, so nobody has to leave the form.
+// Module level on purpose, like DetailsField: declaring it inside another component would drop focus on every keystroke.
+const ADD_NEW = "__add_new__";
+
+function PickOrAddField({ label, noun, value, onChange, options, onCreate, inputType = "text", placeholder, disabled = false, disabledHint }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft]   = useState("");
+  const [busy, setBusy]     = useState(false);
+  const [err, setErr]       = useState(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (adding) inputRef.current?.focus(); }, [adding]);
+
+  const close = () => { setAdding(false); setDraft(""); setErr(null); };
+
+  const submit = async () => {
+    const clean = draft.trim();
+    if (!clean) { setErr(`Enter a ${noun}.`); return; }
+    setBusy(true); setErr(null);
+    try {
+      const created = await onCreate(clean);
+      onChange(created);
+      close();
+    } catch (e) {
+      setErr(e.message || `Could not add ${noun}.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <label className={LABEL_CLS}>{label}</label>
+      {adding ? (
+        <>
+          <div className="flex gap-2">
+            <input
+              ref={inputRef} type={inputType} value={draft} disabled={busy}
+              min={inputType === "number" ? "1" : undefined} inputMode={inputType === "number" ? "numeric" : undefined}
+              placeholder={placeholder || `New ${noun}`} className={FIELD_CLS}
+              onChange={(e) => { setDraft(e.target.value); setErr(null); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); submit(); }
+                if (e.key === "Escape") { e.preventDefault(); close(); }
+              }} />
+            <button type="button" onClick={submit} disabled={busy}
+              className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50 whitespace-nowrap">
+              {busy ? "Adding…" : "Add"}
+            </button>
+            <button type="button" onClick={close} disabled={busy} aria-label={`Cancel adding ${noun}`}
+              className="px-3 rounded-lg border border-gray-300 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+              ×
+            </button>
+          </div>
+          {err && <p className="text-xs text-red-500 mt-1.5">{err}</p>}
+        </>
+      ) : (
+        <select
+          value={value || ""} disabled={disabled} className={SELECT_CLS} style={SELECT_STYLE}
+          onChange={(e) => (e.target.value === ADD_NEW ? setAdding(true) : onChange(e.target.value))}>
+          <option value="">{disabled && disabledHint ? disabledHint : `Select ${label}`}</option>
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {!disabled && <option disabled>──────────</option>}
+          {!disabled && <option value={ADD_NEW}>+ Add new {noun}…</option>}
+        </select>
+      )}
+    </div>
+  );
+}
+
+// Color / body type / seats have no table of their own: the choices are a few common ones plus whatever the fleet
+// already uses, so a value added once shows up in the dropdown for every later vehicle. `current` is always kept in the
+// list so editing an old car never blanks its value.
+const COLOR_PRESETS = ["White", "Black", "Silver", "Gray", "Red", "Blue", "Green", "Brown", "Beige", "Orange", "Yellow", "Maroon"];
+const BODY_TYPE_PRESETS = ["Sedan", "Hatchback", "SUV", "MPV", "Van", "Pickup", "Crossover", "Coupe", "Wagon"];
+const SEAT_PRESETS = [2, 4, 5, 6, 7, 8, 9, 12, 15];
+
+const buildOptions = (presets, existing, current, numeric = false) => {
+  const seen = new Map(); // lower-case -> shown text, so "white" and "White" are one entry
+  const add = (v) => {
+    const t = String(v ?? "").trim();
+    if (t && !seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t);
+  };
+  add(current);
+  presets.forEach(add);
+  existing.forEach(add);
+  const sorted = [...seen.values()].sort((a, b) => (numeric ? Number(a) - Number(b) : a.localeCompare(b)));
+  return sorted.map((v) => ({ value: v, label: v }));
+};
+const matchOption = (options, v) => {
+  const t = String(v ?? "").trim().toLowerCase();
+  return options.find((o) => o.value.toLowerCase() === t)?.value || "";
+};
+
+function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, models, cars = [], onCreateBrand, onCreateModel, currentStatus, onStatusChangeRequest }) {
+  const filteredModels = models.filter(m => m.brandID === form.brandID);
+  const byLabel = (a, b) => a.label.localeCompare(b.label);
+  const brandOptions = brands.map(b => ({ value: b.id, label: b.brandName })).sort(byLabel);
+  const modelOptions = filteredModels.map(m => ({ value: m.id, label: m.modelName })).sort(byLabel);
+  const colorOptions = buildOptions(COLOR_PRESETS, cars.map(c => c.color), form.color);
+  const bodyOptions  = buildOptions(BODY_TYPE_PRESETS, cars.map(c => c.bodyType), form.bodyType);
+  const seatOptions  = buildOptions(SEAT_PRESETS, cars.map(c => c.seatingCapacity), form.seatingCapacity, true);
+  const setField = (name) => (v) => setForm(f => ({ ...f, [name]: v }));
+  // a name already in the list is reused (any capitalisation) instead of being added twice
+  const reuseOrAdd = (options) => (name) => options.find(o => o.value.toLowerCase() === name.toLowerCase())?.value || name;
+  const createSeats = (raw) => {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 100) throw new Error("Enter a whole number of seats, like 7.");
+    return String(n);
+  };
 
   return (
     <div className="space-y-5">
       {/* Image */}
       <div>
-        <label className="block text-xs font-medium text-gray-500 mb-2">Primary Photo</label>
+        <label className={LABEL_CLS}>Primary Photo</label>
         <div className="flex gap-4 items-center">
           <div className="w-28 h-20 bg-gray-100 rounded-xl overflow-hidden flex-shrink-0">
             {imagePreview
@@ -1519,36 +1670,30 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
 
       {/* Brand + Model */}
       <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Brand</label>
-          <select value={form.brandID || ""} onChange={e => setForm(f => ({ ...f, brandID: e.target.value, modelID: "" }))}
-            className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
-            <option value="">Select Brand</option>
-            {brands.map(b => <option key={b.id} value={b.id}>{b.brandName}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Model</label>
-          <select value={form.modelID || ""} onChange={e => setForm(f => ({ ...f, modelID: e.target.value }))}
-            className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400"
-            disabled={!form.brandID}>
-            <option value="">Select Model</option>
-            {filteredModels.map(m => <option key={m.id} value={m.id}>{m.modelName}</option>)}
-          </select>
-        </div>
+        <PickOrAddField label="Brand" noun="brand" value={form.brandID} options={brandOptions}
+          onChange={(id) => setForm(f => ({ ...f, brandID: id, modelID: "" }))}
+          onCreate={onCreateBrand} placeholder="e.g. Toyota" />
+        <PickOrAddField label="Model" noun="model" value={form.modelID} options={modelOptions}
+          onChange={setField("modelID")}
+          onCreate={(name) => onCreateModel(name, form.brandID)} placeholder="e.g. Hiace"
+          disabled={!form.brandID} disabledHint="Select a brand first" />
       </div>
 
       {/* Other fields */}
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Plate Number"   name="plateNumber" />
-        <Field label="Color"          name="color" />
-        <Field label="Body Type"      name="bodyType" />
-        <Field label="Year"           name="year" type="number" />
-        <Field label="Seats"          name="seatingCapacity" type="number" />
-        <Field label="Fuel Type"      name="fuelType"     options={["Gasoline","Diesel","Electric","Hybrid"]} />
-        <Field label="Transmission"   name="transmission" options={["Automatic","Manual"]} />
+        <DetailsField form={form} setForm={setForm} label="Plate Number" name="plateNumber" placeholder="e.g. ABC 1234" autoComplete="off" />
+        <PickOrAddField label="Color" noun="color" value={matchOption(colorOptions, form.color)} options={colorOptions}
+          onChange={setField("color")} onCreate={reuseOrAdd(colorOptions)} placeholder="e.g. Pearl White" />
+        <PickOrAddField label="Body Type" noun="body type" value={matchOption(bodyOptions, form.bodyType)} options={bodyOptions}
+          onChange={setField("bodyType")} onCreate={reuseOrAdd(bodyOptions)} placeholder="e.g. Minibus" />
+        <DetailsField form={form} setForm={setForm} label="Year"         name="year"        type="number" placeholder="e.g. 2022" min="1980" inputMode="numeric" />
+        <PickOrAddField label="Seats" noun="seat count" value={matchOption(seatOptions, form.seatingCapacity)} options={seatOptions}
+          onChange={setField("seatingCapacity")} onCreate={(raw) => reuseOrAdd(seatOptions)(createSeats(raw))}
+          inputType="number" placeholder="e.g. 7" />
+        <DetailsField form={form} setForm={setForm} label="Fuel Type"    name="fuelType"     options={["Gasoline","Diesel","Electric","Hybrid"]} />
+        <DetailsField form={form} setForm={setForm} label="Transmission" name="transmission" options={["Automatic","Manual"]} />
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
+          <label className={LABEL_CLS}>Status</label>
           <select
             value={form.status || "Active"}
             onChange={(e) => {
@@ -1562,7 +1707,7 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
               }
               setForm(f => ({ ...f, status: newStatus }));
             }}
-            className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
+            className={SELECT_CLS} style={SELECT_STYLE}>
             <option value="Active">Active</option>
             <option value="Maintenance">Maintenance</option>
             <option value="Inactive">Inactive</option>
@@ -1572,17 +1717,17 @@ function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, mo
 
       {/* Short Description */}
       <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Short Description</label>
+        <label className={LABEL_CLS}>Short Description</label>
         <input value={form.shortDescription || ""} onChange={e => setForm(f => ({ ...f, shortDescription: e.target.value }))}
-          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
+          placeholder="One line shown on the vehicle card" className={FIELD_CLS} />
       </div>
 
       {/* Long Description */}
       <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Long Description</label>
+        <label className={LABEL_CLS}>Long Description</label>
         <textarea rows={3} value={form.longDescription || ""}
           onChange={e => setForm(f => ({ ...f, longDescription: e.target.value }))}
-          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 resize-none" />
+          placeholder="Full details shown on the vehicle page" className={FIELD_CLS + " resize-y"} />
       </div>
     </div>
   );
@@ -1785,7 +1930,7 @@ function PricingForm({ pricing, setPricing }) {
 }
 
 // ─── EDIT CAR MODAL ───────────────────────────────────────────────────────────
-function EditCarModal({ car, brands, models, onClose, onSaved }) {
+function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel, onClose, onSaved }) {
   const [activeTab, setActiveTab] = useState("details");
   const [form, setForm]         = useState({
     shortDescription: car.shortDescription || "",
@@ -1946,7 +2091,8 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
           {activeTab === "details" ? (
             <CarDetailsForm form={form} setForm={setForm}
               imagePreview={imagePreview} onImageChange={handleImageChange}
-              brands={brands} models={models}
+              brands={brands} models={models} cars={cars}
+              onCreateBrand={onCreateBrand} onCreateModel={onCreateModel}
               currentStatus={confirmedStatus} onStatusChangeRequest={handleStatusChangeRequest} />
           ) : (
             <PricingForm pricing={pricing} setPricing={setPricing} />
@@ -1982,7 +2128,7 @@ function EditCarModal({ car, brands, models, onClose, onSaved }) {
 }
 
 // ─── ADD CAR MODAL ────────────────────────────────────────────────────────────
-function AddCarModal({ brands, models, onClose, onSaved }) {
+function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClose, onSaved }) {
   const [activeTab, setActiveTab] = useState("details");
   const [form, setForm]     = useState({ status: "Active", fuelType: "Gasoline", transmission: "Automatic" });
   const [pricing, setPricing] = useState([{ durationType: "", price: "" }]);
@@ -2084,7 +2230,8 @@ function AddCarModal({ brands, models, onClose, onSaved }) {
           {activeTab === "details" ? (
             <CarDetailsForm form={form} setForm={setForm}
               imagePreview={imagePreview} onImageChange={handleImageChange}
-              brands={brands} models={models} />
+              brands={brands} models={models} cars={cars}
+              onCreateBrand={onCreateBrand} onCreateModel={onCreateModel} />
           ) : (
             <PricingForm pricing={pricing} setPricing={setPricing} />
           )}
