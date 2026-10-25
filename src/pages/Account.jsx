@@ -21,6 +21,19 @@ function parseExpiryDate(val) {
   return null;
 }
 
+// birthDate is stored as "YYYY-MM-DD" (signup) but may also be a Firestore Timestamp. Date-only strings are
+// formatted from their parts so a timezone can never shift the day.
+function formatBirthDate(val) {
+  if (!val) return "";
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  if (typeof val === "string") {
+    const m = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
+  }
+  const d = parseExpiryDate(val);
+  return d ? d.toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" }) : String(val);
+}
+
 /* ── Icons ── */
 const IconMail = ({ className = "w-4 h-4" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -43,6 +56,12 @@ const IconLogout = ({ className = "w-4 h-4" }) => (
 const IconPhone = ({ className = "w-4 h-4" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h2.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+  </svg>
+);
+
+const IconCalendar = ({ className = "w-4 h-4" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3M4 11h16M5 5h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z" />
   </svg>
 );
 
@@ -85,6 +104,13 @@ const IconClose = ({ className = "w-5 h-5" }) => (
 const IconKey = ({ className = "w-4 h-4" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+  </svg>
+);
+
+const IconEye = ({ className = "w-4 h-4" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
   </svg>
 );
 
@@ -144,15 +170,56 @@ function ProfileAvatar({ src, initials, uploading, onPick }) {
 }
 
 /* ── Detail row ── */
-function DetailRow({ icon, label, value }) {
+function DetailRow({ icon, label, value, className = "" }) {
   return (
-    <div className="flex items-center gap-3 py-3.5 border-b border-gray-50 last:border-0">
+    <div className={`flex items-center gap-3 py-3.5 border-b border-gray-50 last:border-0 ${className}`}>
       <div className="w-9 h-9 rounded-full bg-arl-light flex items-center justify-center text-arl-primary shrink-0">
         {icon}
       </div>
       <div className="min-w-0">
         <p className="text-xs text-gray-400">{label}</p>
         <p className="text-sm font-medium text-arl-dark truncate">{value || "—"}</p>
+      </div>
+    </div>
+  );
+}
+
+/* ── View button + full-size image viewer ──
+   Opens a document photo (driver's license / valid ID) at full size in a modal. */
+function ViewButton({ onClick }) {
+  return (
+    <button onClick={onClick}
+      className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-gray-600 bg-white rounded-lg text-xs font-medium hover:bg-gray-50">
+      <IconEye className="w-3.5 h-3.5" />
+      View
+    </button>
+  );
+}
+
+function ImageViewerModal({ title, src, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center p-4 border-b">
+          <h2 className="font-bold text-lg text-gray-800">{title}</h2>
+          <div className="flex items-center gap-3">
+            <a href={src} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-teal-600 hover:text-teal-700">
+              Open in new tab
+            </a>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1" aria-label="Close">
+              <IconClose className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        <div className="p-4 overflow-auto bg-gray-50 rounded-b-2xl flex items-center justify-center">
+          <img src={src} alt={title} className="max-w-full max-h-[75vh] object-contain rounded-lg" />
+        </div>
       </div>
     </div>
   );
@@ -872,6 +939,7 @@ export default function Account() {
   const [showEdit, setShowEdit] = useState(false);
   const [showResubmit, setShowResubmit] = useState(null); // null | "license" | "document"
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [viewImage, setViewImage] = useState(null); // null | { title, src }
   const [notice, setNotice] = useState(null);
   const [profileTab, setProfileTab] = useState("details"); // "details" | "document"
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -1092,7 +1160,7 @@ export default function Account() {
     : "—";
 
   return (
-    <div className="p-4 max-w-2xl mx-auto space-y-6">
+    <div className="p-4 max-w-4xl mx-auto space-y-4">
 
       {notice && (
         <div className={`rounded-2xl border px-4 py-3 text-sm ${notice.submitted ? "border-amber-200 bg-amber-50 text-amber-700" : "border-green-200 bg-green-50 text-green-700"}`}>
@@ -1115,7 +1183,7 @@ export default function Account() {
 
       {/* HEADER CARD */}
       <div className="bg-white rounded-2xl border shadow-card overflow-hidden">
-        <div className="bg-arl-primary px-6 py-8 flex items-center gap-4">
+        <div className="bg-arl-primary px-6 py-5 flex items-center gap-4">
           <ProfileAvatar
             key={user.profileImage || "none"}
             src={user.profileImage}
@@ -1212,61 +1280,85 @@ export default function Account() {
               </div>
             )}
 
+            <div className="grid grid-cols-1 md:grid-cols-2 md:gap-x-10">
             <DetailRow icon={<IconMail />}        label="Email"    value={user.email} />
             <DetailRow icon={<IconPhone />}       label="Phone"    value={profile?.phone} />
             <DetailRow icon={<IconUser />}        label="Full Name" value={fullName} />
+            <DetailRow icon={<IconCalendar />}    label="Birth Date" value={formatBirthDate(profile?.birthDate)} />
             <DetailRow icon={<IconHome />}        label="Address"
-              value={[profile?.street, profile?.barangay, profile?.city, profile?.province].filter(Boolean).join(", ")} />
+              value={[...new Set([profile?.street, profile?.village, profile?.barangay, profile?.municipality, profile?.city, profile?.province]
+                .map((v) => (typeof v === "string" ? v.trim() : v)).filter(Boolean))].join(", ")} />
+            <DetailRow icon={<IconHome />}        label="Postal Code" value={profile?.postalCode} />
             <DetailRow icon={<IconShield />}      label="Role"     value={user.role} />
-            {profile?.referralCode && (
-              <DetailRow icon={<IconUser />} label="Referral Code" value={profile.referralCode} />
-            )}
-            {profile?.referredByLabel && (
-              <DetailRow icon={<IconUser />} label="Referred By" value={profile.referredByLabel} />
-            )}
-            {profile?.referralCode && (
-              <div className="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
-                <IconUser className="w-4 h-4 text-gray-400 mt-1 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-400">People You've Referred</p>
-                  {profile.invitedFailed ? (
-                    <p className="text-sm text-gray-400 mt-0.5">Couldn't load this list right now.</p>
-                  ) : profile.invitedCount > 0 ? (
-                    <ul className="mt-1.5 space-y-1">
-                      {profile.invitedUsers.map((p) => (
-                        <li key={p.id} className="flex items-center justify-between text-sm text-gray-800">
-                          <span>{p.label}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
-                            p.status?.toLowerCase() === "locked" ? "bg-red-50 text-red-600" : "bg-blue-50 text-blue-600"
-                          }`}>{p.status}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-sm text-gray-800 mt-0.5">You haven't referred anyone yet.</p>
+            </div>
+
+            {/* REFERRALS — own section, each item on its own full-width line with breathing room */}
+            {(profile?.referralCode || profile?.referredByLabel) && (
+              <div className="mt-6 pt-6 pb-4 border-t border-gray-100">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Referrals</p>
+                <div className="space-y-1">
+                  {profile?.referralCode && (
+                    <DetailRow icon={<IconUser />} label="Referral Code" value={profile.referralCode} />
+                  )}
+                  {profile?.referredByLabel && (
+                    <DetailRow icon={<IconUser />} label="Referred By" value={profile.referredByLabel} />
+                  )}
+                  {profile?.referralCode && (
+                    <div className="flex items-start gap-3 py-3.5">
+                      <div className="w-9 h-9 rounded-full bg-arl-light flex items-center justify-center text-arl-primary shrink-0">
+                        <IconUser />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-400">People You've Referred</p>
+                        {profile.invitedFailed ? (
+                          <p className="text-sm text-gray-400 mt-1">Couldn't load this list right now.</p>
+                        ) : profile.invitedCount > 0 ? (
+                          <ul className="mt-2 space-y-2">
+                            {profile.invitedUsers.map((p) => (
+                              <li key={p.id} className="flex items-center justify-between gap-3 text-sm font-medium text-arl-dark bg-gray-50 rounded-xl px-3 py-2">
+                                <span className="truncate">{p.label}</span>
+                                <span className={`text-xs px-2 py-0.5 rounded-full capitalize shrink-0 ${
+                                  p.status?.toLowerCase() === "locked" ? "bg-red-50 text-red-600" : "bg-blue-50 text-blue-600"
+                                }`}>{p.status}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-sm font-medium text-arl-dark mt-1">You haven't referred anyone yet.</p>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
             )}
           </div>
         ) : (
-          <div className="px-6 py-4 space-y-5">
+          <div className="px-6 py-4 space-y-4">
             {/* Status checker — is each document on file? */}
             <div className="flex flex-wrap gap-2">
               <DocStatusChip label="Driver's License" hasFile={!!profile?.driverLicenseUrl} pending={pendingIdKinds.license} />
               <DocStatusChip label="Valid ID" hasFile={!!profile?.documentImageUrl} pending={pendingIdKinds.document} />
             </div>
 
+            {/* License and Valid ID sit side by side on wider screens so both fit without scrolling. */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
             {/* Driver's license — every role, empty or not, so a missing one is visible and can be submitted.
                 Expiry warnings/locking still only apply to Driver/Supervisor accounts. */}
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <p className="text-xs font-semibold text-gray-400 uppercase">Driver's License</p>
-                <DocSubmitButton pending={pendingIdKinds.license} hasFile={!!profile?.driverLicenseUrl}
-                  onClick={() => setShowResubmit("license")} />
+                <div className="flex items-center gap-2">
+                  {profile?.driverLicenseUrl && (
+                    <ViewButton onClick={() => setViewImage({ title: "Driver's License", src: profile.driverLicenseUrl })} />
+                  )}
+                  <DocSubmitButton pending={pendingIdKinds.license} hasFile={!!profile?.driverLicenseUrl}
+                    onClick={() => setShowResubmit("license")} />
+                </div>
               </div>
               {profile?.driverLicenseUrl ? (
-                <img src={profile.driverLicenseUrl} alt="Driver's License" className="w-full h-48 object-cover rounded-xl border" />
+                <img src={profile.driverLicenseUrl} alt="Driver's License" className="w-full h-40 object-cover rounded-xl border" />
               ) : (
                 <EmptyDocBox title="No driver's license on file" pending={pendingIdKinds.license} direct={canEditDirectly} />
               )}
@@ -1282,14 +1374,19 @@ export default function Account() {
 
             {/* Valid ID — every role, empty or not (it used to be hidden until one existed, so a missing ID could
                 never be submitted). No expiry tracking here by design; that's scoped to the driver's license. */}
-            <div className="space-y-3 pt-2 border-t">
+            <div className="space-y-3 pt-4 border-t md:pt-0 md:border-t-0 md:border-l md:pl-6">
               <div className="flex justify-between items-center">
                 <p className="text-xs font-semibold text-gray-400 uppercase">Valid ID</p>
-                <DocSubmitButton pending={pendingIdKinds.document} hasFile={!!profile?.documentImageUrl}
-                  onClick={() => setShowResubmit("document")} />
+                <div className="flex items-center gap-2">
+                  {profile?.documentImageUrl && (
+                    <ViewButton onClick={() => setViewImage({ title: "Valid ID", src: profile.documentImageUrl })} />
+                  )}
+                  <DocSubmitButton pending={pendingIdKinds.document} hasFile={!!profile?.documentImageUrl}
+                    onClick={() => setShowResubmit("document")} />
+                </div>
               </div>
               {profile?.documentImageUrl ? (
-                <img src={profile.documentImageUrl} alt="Valid ID" className="w-full h-48 object-cover rounded-xl border" />
+                <img src={profile.documentImageUrl} alt="Valid ID" className="w-full h-40 object-cover rounded-xl border" />
               ) : (
                 <EmptyDocBox title={profile?.documentType ? "No ID photo on file yet" : "No valid ID on file"}
                   pending={pendingIdKinds.document} direct={canEditDirectly} />
@@ -1301,22 +1398,24 @@ export default function Account() {
                 </>
               )}
             </div>
+
+            </div>
           </div>
         )}
       </div>
 
-      {/* ACTIONS */}
-      <div className="bg-white rounded-2xl border shadow-card px-6 py-4 space-y-3">
+      {/* ACTIONS — each on its own full-width row */}
+      <div className="bg-white rounded-2xl border shadow-card overflow-hidden divide-y divide-gray-100">
         <button
           onClick={() => setShowChangePassword(true)}
-          className="flex items-center gap-2 text-arl-dark text-sm font-semibold hover:text-arl-primary transition-colors"
+          className="w-full flex items-center justify-center gap-3 px-6 py-4 text-arl-dark text-sm font-semibold hover:bg-gray-50 hover:text-arl-primary transition-colors"
         >
           <IconKey className="w-4 h-4" />
           Change Password
         </button>
         <button
           onClick={handleSignOut}
-          className="flex items-center gap-2 text-red-500 text-sm font-semibold hover:text-red-600 transition-colors"
+          className="w-full flex items-center justify-center gap-3 px-6 py-4 text-red-500 text-sm font-semibold hover:bg-red-50 hover:text-red-600 transition-colors"
         >
           <IconLogout className="w-4 h-4" />
           Sign Out
@@ -1353,6 +1452,10 @@ export default function Account() {
             setTimeout(() => setNotice(null), 5000);
           }}
         />
+      )}
+
+      {viewImage && (
+        <ImageViewerModal title={viewImage.title} src={viewImage.src} onClose={() => setViewImage(null)} />
       )}
 
       {showChangePassword && (
