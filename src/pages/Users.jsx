@@ -2367,8 +2367,8 @@ const ASSIGNABLE_ROLES = [
   { value: ROLES.ADMIN,       label: "Admin" },
 ];
 
-// One window for everything about a user. Owner/Admin see all of it: status, flag, role (OTP), name, phone, username, referral
-// code, address and documents. Supervisors keep status + flag only. Email is never editable. Saves in this order: profile,
+// One window for everything about a user. Admin sees all of it: name, phone, username, referral code, referred-by, address,
+// documents, plus status, flag and role (OTP). Owner sees status, flag and role only; Supervisors see status + flag only. Email is never editable. Saves in this order: profile,
 // documents, status/flag, role — an error stops the chain and is shown, and what was already saved stays saved.
 function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, currentRoleName, onDocumentsChanged }) {
   const KNOWN_STATUSES = ["active", "inactive", "locked"];
@@ -2376,7 +2376,10 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
     status:    KNOWN_STATUSES.includes((user.status || "").toLowerCase()) ? user.status : "active",
     isFlagged: user.isFlagged || false,
   });
-  const canEditRole = viewerRole === ROLES.OWNER || viewerRole === ROLES.ADMIN;   // also gates profile + documents
+  const canEditRole = viewerRole === ROLES.OWNER || viewerRole === ROLES.ADMIN;   // role + status (OTP-protected role change)
+  // Editing a user's name / phone / address / referral / documents is an ADMIN-only job (the backend enforces it too).
+  // The Owner keeps role + status above, but does not see these sections.
+  const canEditProfile = viewerRole === ROLES.ADMIN;
   // Starts empty (not currentRoleName) — the dropdown shows a disabled "Currently: X" placeholder plus only the OTHER roles
   // as real choices, so re-picking the role someone is already in isn't an option at all.
   const [role, setRole] = useState("");
@@ -2464,7 +2467,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
   const handleSave = async () => {
     // ── checks first, so nothing is half-saved because of a typo ──
     const clean = Object.fromEntries(Object.entries(profile).map(([k, v]) => [k, v.trim()]));
-    if (canEditRole) {
+    if (canEditProfile) {
       if (!clean.firstName || !clean.lastName) return setError("First and last name are required.");
       if (!clean.username) return setError("Username is required.");
       if (clean.phone && !/^[0-9+\-\s()]{7,20}$/.test(clean.phone)) return setError("Enter a valid contact number.");
@@ -2478,7 +2481,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
 
     setSaving(true); setError(null);
     try {
-      if (canEditRole) {
+      if (canEditProfile) {
         const changes = PROFILE_FIELDS
           .filter((f) => clean[f.key] !== initialProfile[f.key].trim())
           .map((f) => ({ collection: f.source, field: f.key, newValue: clean[f.key] }));
@@ -2513,7 +2516,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => !saving && onClose()}>
-      <div className={`bg-white rounded-2xl w-full ${canEditRole ? "max-w-2xl" : "max-w-sm"} max-h-[92vh] flex flex-col`} onClick={e => e.stopPropagation()}>
+      <div className={`bg-white rounded-2xl w-full ${canEditProfile ? "max-w-2xl" : "max-w-sm"} max-h-[92vh] flex flex-col`} onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b">
           <h2 className="font-bold text-lg text-gray-800">Edit {roleLabelSingular}</h2>
           <button onClick={onClose} disabled={saving} className="text-gray-400 hover:text-gray-600 p-1">
@@ -2534,9 +2537,9 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
 
           {/* Email is the login — read-only for everyone. Supervisors also see the rest read-only. */}
           <div className="bg-gray-50 rounded-xl p-3 space-y-1 text-sm">
-            <p className="text-xs text-gray-400 font-medium mb-2">Account Info{canEditRole ? "" : " (read-only)"}</p>
-            <p className="text-gray-600"><span className="font-medium">Email:</span> {user.email || "—"} {canEditRole && <span className="text-xs text-gray-400">· can't be changed</span>}</p>
-            {!canEditRole && (
+            <p className="text-xs text-gray-400 font-medium mb-2">Account Info{canEditProfile ? "" : " (read-only)"}</p>
+            <p className="text-gray-600"><span className="font-medium">Email:</span> {user.email || "—"} {canEditProfile && <span className="text-xs text-gray-400">· can't be changed</span>}</p>
+            {!canEditProfile && (
               <>
                 <p className="text-gray-600"><span className="font-medium">Phone:</span> {user.phone || "—"}</p>
                 <p className="text-gray-600"><span className="font-medium">Username:</span> {user.username || "—"}</p>
@@ -2545,7 +2548,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
             <p className="text-gray-600"><span className="font-medium">Referred by:</span> {referrerLabel(user.referral?.referredBy) || "None"}</p>
           </div>
 
-          {canEditRole && (
+          {canEditProfile && (
             <>
               <div>{heading("Personal")}<div className="grid grid-cols-2 gap-3">{group("name")}</div></div>
               <div>
@@ -2598,7 +2601,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
           )}
 
           <div>
-            {canEditRole && heading("Account status")}
+            {canEditProfile && heading("Account status")}
             <div className="space-y-4">
               {/* Status */}
               <div>
