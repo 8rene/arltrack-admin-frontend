@@ -95,6 +95,11 @@ const WAIT_STAGE = {
   handback: { label: "Waiting for hand-back", dot: "bg-orange-500", bg: "bg-orange-50 border border-orange-200", tip: "Approved — the online part is done; the in-person amount still has to be handed back." },
   scheduled: { label: "Scheduled",           dot: "bg-violet-500", bg: "bg-violet-50 border border-violet-200", tip: "Approved — the payment was made today, so PayMongo can't send a partial refund yet. It is sent automatically after midnight." },
 };
+// Scheduled send (same-day payment): the cron tries up to 5 times (refundAttempts), then stops and staff use "Retry now".
+// The last error is on the part's payment-entry row, which arrives here as parts[].error.
+const SCHEDULE_MAX_ATTEMPTS = 5;
+const scheduleExhausted = (r) => (Number(r && r.refundAttempts) || 0) >= SCHEDULE_MAX_ATTEMPTS;
+const scheduleLastError = (r) => { const p = r && Array.isArray(r.parts) ? r.parts.find((x) => x && x.error) : null; return p ? p.error : null; };
 // Approved, but the PayMongo refund has not been created yet: it is waiting for its send time (same-day payment).
 const isScheduled = (r) => !!(r && r.status === "Approved" && r.sendAfter && !r.scheduledSentAt
   && Array.isArray(r.parts) && r.parts.some((x) => !x.paymongoRefundID && x.status !== "succeeded"));
@@ -138,23 +143,6 @@ function StatusBadge({ status, stage }) {
   );
 }
 
-// A grace-window request is approved by the system within seconds of being made. Still Pending after a couple of minutes means the
-// automatic approval did not run: say so, and why when the customer backend recorded it (autoApproveError). Staff can approve it
-// by hand, and the nightly job also picks it up.
-const autoApproveStuck = (r) => {
-  if (!r || r.status !== "Pending" || r.autoApprove !== true) return false;
-  const t = r.createdAt && r.createdAt.toDate ? r.createdAt.toDate() : r.createdAt ? new Date(r.createdAt) : null;
-  return !!t && !isNaN(t) && Date.now() - t.getTime() > 2 * 60 * 1000;
-};
-function AutoApproveBadge({ r }) {
-  if (!autoApproveStuck(r)) return null;
-  return (
-    <span title={r.autoApproveError || "This request was made inside the 2-hour grace window and should have been approved automatically."}
-      className="ml-1.5 inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800">
-      Auto-approve didn't run
-    </span>
-  );
-}
 
 // How long an approved refund has been waiting (since it was approved). Lets stuck ones stand out.
 const waitStartMs = (r) => {
@@ -412,7 +400,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
           <div className="min-w-0">
             <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{isDeposit(r) ? "Deposit return" : disc ? "Discount refund" : "Refund request"}</p>
             <h3 className="font-bold text-arl-dark text-lg truncate">{r.customerName || "—"}</h3>
-            <div className="mt-1.5">{disc ? <DiscountBadge state={r.refund.state} /> : <><StatusBadge status={r.status} stage={stageOf(r)} /><AutoApproveBadge r={r} /></>}</div>
+            <div className="mt-1.5">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
         </div>
@@ -433,7 +421,6 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             <Line label="Updated">{stampText(updatedOf(r))}</Line>
             {w && <Line label="Waiting"><span className={w.late ? "font-semibold text-amber-600" : ""}>{w.text}{w.late ? " — worth checking" : ""}</span></Line>}
             <Line label={isDeposit(r) ? "Reason" : disc ? "Discount reason" : "Reason"}>{isDeposit(r) ? "Security deposit returned after the trip" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
-            {autoApproveStuck(r) && <Line label="Auto-approve"><span className="text-amber-700">This request was made inside the 2-hour grace window, so it should have been approved automatically, but it wasn't. {r.autoApproveError || "No error was recorded."} You can approve it now; the nightly job will also pick it up.</span></Line>}
             {!disc && r.notes && <Line label="Notes">{r.notes}</Line>}
             {!disc && r.status === "Rejected" && r.rejectReason && <Line label="Rejected because"><span className="text-red-600">{r.rejectReason}</span></Line>}
           </Block>
@@ -521,10 +508,10 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               {isScheduled(r) && (
                 <Block title="Scheduled send">
                   <Line label="Sends after">{stampText(toDate(r.sendAfter))}</Line>
-                  <Line label="Attempts">{Number(r.refundAttempts) || 0} of 5</Line>
-                  {r.lastRefundError && <Line label="Last error"><span className="text-red-600">{r.lastRefundError}</span></Line>}
+                  <Line label="Attempts">{Number(r.refundAttempts) || 0} of {SCHEDULE_MAX_ATTEMPTS}</Line>
+                  {scheduleLastError(r) && <Line label="Last error"><span className="text-red-600">{scheduleLastError(r)}</span></Line>}
                   <p className="text-[11px] text-gray-500 mt-1">
-                    {r.scheduleExhausted
+                    {scheduleExhausted(r)
                       ? "Automatic attempts are used up. Fix the cause (for example the PayMongo balance), then press Retry now, or hand the money back in store."
                       : "PayMongo can't partially refund a payment on the day it was made. It is sent automatically by the nightly job; the customer has already been told the date."}
                   </p>
@@ -593,7 +580,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             {!disc && isScheduled(r) && (
               <>
                 <span className="text-xs text-violet-700 italic">Scheduled for {stampText(toDate(r.sendAfter))}</span>
-                {(r.scheduleExhausted || r.lastRefundError) && new Date(toDate(r.sendAfter)).getTime() <= Date.now() && (
+                {(scheduleExhausted(r) || scheduleLastError(r)) && new Date(toDate(r.sendAfter)).getTime() <= Date.now() && (
                   <button onClick={onRetryScheduled} disabled={busy}
                     className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50">
                     {busy ? "…" : "Retry now"}
@@ -1294,7 +1281,7 @@ export default function RefundRequests() {
                       <td className="px-5 py-4"><PaidWithBadge r={r} /></td>
                       {tabKey !== "pending" && <td className="px-5 py-4 whitespace-nowrap"><ViaBadge r={r} /></td>}
                       {tabKey !== "pending" && <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>}
-                      <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <><StatusBadge status={r.status} stage={stageOf(r)} /><AutoApproveBadge r={r} /></>}</td>
+                      <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
                       <td className="px-5 py-4 text-right">
                         <button onClick={() => setViewId(r.refundRequestID)}
                           className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
