@@ -93,9 +93,14 @@ const statusBg = {
 const WAIT_STAGE = {
   paymongo: { label: "Waiting for PayMongo",  dot: "bg-blue-500",   bg: "bg-blue-50 border border-blue-200",     tip: "Approved — waiting for PayMongo to confirm the refund." },
   handback: { label: "Waiting for hand-back", dot: "bg-orange-500", bg: "bg-orange-50 border border-orange-200", tip: "Approved — the online part is done; the in-person amount still has to be handed back." },
+  scheduled: { label: "Scheduled",           dot: "bg-violet-500", bg: "bg-violet-50 border border-violet-200", tip: "Approved — the payment was made today, so PayMongo can't send a partial refund yet. It is sent automatically after midnight." },
 };
+// Approved, but the PayMongo refund has not been created yet: it is waiting for its send time (same-day payment).
+const isScheduled = (r) => !!(r && r.status === "Approved" && r.sendAfter && !r.scheduledSentAt
+  && Array.isArray(r.parts) && r.parts.some((x) => !x.paymongoRefundID && x.status !== "succeeded"));
 const stageOf = (r) => {
   if (!r || r.status !== "Approved") return null;
+  if (isScheduled(r)) return "scheduled";
   const parts = Array.isArray(r.parts) ? r.parts : [];
   // No parts + a pending in-person amount + nothing sent to PayMongo (e.g. QR Ph, which PayMongo can't refund) = hand-back only.
   // Only an older request with neither parts nor a manual amount is assumed to be waiting on PayMongo.
@@ -243,7 +248,7 @@ const TYPE_BUTTONS = [
 const TABS = [
   { key: "pending",    label: "Request Pending", chips: [] },
   { key: "processing", label: "Under Process",   chips: [
-    { key: "paymongo", label: "Waiting for PayMongo" }, { key: "handback", label: "Waiting for hand-back" }, { key: "failed", label: "Failed" } ] },
+    { key: "scheduled", label: "Scheduled" }, { key: "paymongo", label: "Waiting for PayMongo" }, { key: "handback", label: "Waiting for hand-back" }, { key: "failed", label: "Failed" } ] },
   { key: "history",    label: "History",         chips: [
     { key: "Refunded", label: "Refunded" }, { key: "Rejected", label: "Rejected" } ] },
 ];
@@ -364,7 +369,7 @@ const Block = ({ title, children }) => (
 
 // Everything about one refund / discount refund. The table stays simple; the detail, the money movements and the
 // actions (approve, reject, hand back, retry) all live here.
-function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, handbackRef, setHandbackRef, busy, onRetry, retrying }) {
+function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, handbackRef, setHandbackRef, busy, onRetry, retrying, onRetryScheduled }) {
   const { effectiveRole } = useAuth();
   const canDepositReturn = ["Owner", "Admin", "Supervisor"].includes(effectiveRole);   // deposit retry / hand-back: Supervisor / Admin / Owner
   const disc = isDiscount(r);
@@ -454,6 +459,9 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                       {pv.forfeit > 0 && <Line label="Deposit kept"><span className="text-amber-700">−{fmt(pv.forfeit)}</span></Line>}
                       {pv.gatewayFeeKept > 0 && <Line label="Gateway fee kept"><span className="text-amber-700">−{fmt(pv.gatewayFeeKept)}</span></Line>}
                       <Line label="Via PayMongo">{fmt(pv.onlineAmount)}</Line>
+                      {pv.scheduled && pv.sendAfter && (
+                        <p className="text-[11px] text-violet-700 mb-1">The payment was made today, so PayMongo can't send a partial refund yet. If you approve now, the booking is cancelled and the money is sent automatically on {stampText(toDate(pv.sendAfter))}.</p>
+                      )}
                       {pv.manualAmount > 0 && <Line label="Hand back in person"><span className="text-orange-600 font-semibold">{fmt(pv.manualAmount)}</span></Line>}
                       {pv.unrefundableAmount > 0 && <Line label="Not refundable"><span className="text-red-600 font-semibold">{fmt(pv.unrefundableAmount)} — Payment ID does not exist</span></Line>}
                       {pv.total !== r.amount && <p className="text-[11px] text-gray-400 mt-1">Was {fmt(r.amount)} when requested.</p>}
@@ -464,7 +472,8 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                       <span className={pt.status === "succeeded" ? "text-green-600" : pt.status === "failed" ? "text-red-600" : "text-blue-600"}>
                         {pt.handedBack
                           ? `handed back${pt.handedBack.method ? ` (${pt.handedBack.method})` : ""}${pt.handedBack.referenceNumber ? ` · ref ${pt.handedBack.referenceNumber}` : ""}`
-                          : pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed" : "processing at PayMongo"}
+                          : pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed"
+                          : (!pt.paymongoRefundID && r.sendAfter && !r.scheduledSentAt) ? `scheduled — sends ${stampText(toDate(r.sendAfter))}` : "processing at PayMongo"}
                       </span>
                       {pt.paymongoRefundID && <span className="block font-mono text-[11px] text-gray-400">{pt.paymongoRefundID}</span>}
                       {pt.status === "failed" && pt.error && <span className="block text-[11px] text-red-600">{pt.error}</span>}
@@ -486,6 +495,19 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                       View in Payments →
                     </button>
                   )}
+                </Block>
+              )}
+
+              {isScheduled(r) && (
+                <Block title="Scheduled send">
+                  <Line label="Sends after">{stampText(toDate(r.sendAfter))}</Line>
+                  <Line label="Attempts">{Number(r.refundAttempts) || 0} of 5</Line>
+                  {r.lastRefundError && <Line label="Last error"><span className="text-red-600">{r.lastRefundError}</span></Line>}
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    {r.scheduleExhausted
+                      ? "Automatic attempts are used up. Fix the cause (for example the PayMongo balance), then press Retry now, or hand the money back in store."
+                      : "PayMongo can't partially refund a payment on the day it was made. It is sent automatically by the nightly job; the customer has already been told the date."}
+                  </p>
                 </Block>
               )}
 
@@ -548,6 +570,17 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               </>
             )}
             {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
+            {!disc && isScheduled(r) && (
+              <>
+                <span className="text-xs text-violet-700 italic">Scheduled for {stampText(toDate(r.sendAfter))}</span>
+                {(r.scheduleExhausted || r.lastRefundError) && new Date(toDate(r.sendAfter)).getTime() <= Date.now() && (
+                  <button onClick={onRetryScheduled} disabled={busy}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50">
+                    {busy ? "…" : "Retry now"}
+                  </button>
+                )}
+              </>
+            )}
             {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">{failedOwed > 0 ? "Needs manual follow-up — record the hand-back" : "Needs manual follow-up"}</span>}
             {showHandback && (
               <button onClick={onHandback} disabled={busy || retrying} title="Confirm you handed this amount back to the customer"
@@ -707,7 +740,7 @@ export default function RefundRequests() {
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    setTimeout(() => setToast(null), type === "error" ? 7000 : 3500);
   };
 
   const fetchRequests = useCallback(async () => {
@@ -764,6 +797,24 @@ export default function RefundRequests() {
       setViewId(null);
     } catch (e) { showToast(e.message, "error"); fetchRequests(); }
     finally { setBusyId(null); setApproveTarget(null); }
+  };
+
+  // A scheduled (same-day) refund whose automatic send failed: send it again now. The server refuses it before the
+  // send time and reports PayMongo's own error, which is shown in the toast and stays in the "Scheduled send" block.
+  const retryScheduled = async (r) => {
+    const id = r.refundRequestID;
+    setBusyId(id);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/${id}/retry-scheduled`, {
+        method: "PATCH", headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Could not send the refund.");
+      showToast(data.message || "Refund sent to PayMongo.");
+      setViewId(null);
+      fetchRequests();
+    } catch (e) { showToast(e.message, "error"); fetchRequests(); }
+    finally { setBusyId(null); }
   };
 
   // Staff confirm they physically handed the in-person part back. The backend finishes the
@@ -942,7 +993,7 @@ export default function RefundRequests() {
 
       {/* Toast */}
       {toast && (
-        <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
+        <div className={`fixed top-5 right-5 z-[100] max-w-md px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
           toast.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
         }`}>{toast.msg}</div>
       )}
@@ -964,6 +1015,7 @@ export default function RefundRequests() {
             setHandbackRef={(m) => setHandbackRef((x) => ({ ...x, [v.refundRequestID]: m }))}
             busy={busyId === v.refundRequestID}
             onRetry={() => (viaDepositRoutes(v) ? retryDeposit(v) : retryDiscount(v))} retrying={retryingId === v.refundRequestID}
+            onRetryScheduled={() => retryScheduled(v)}
           />
         );
       })()}
