@@ -138,6 +138,24 @@ function StatusBadge({ status, stage }) {
   );
 }
 
+// A grace-window request is approved by the system within seconds of being made. Still Pending after a couple of minutes means the
+// automatic approval did not run: say so, and why when the customer backend recorded it (autoApproveError). Staff can approve it
+// by hand, and the nightly job also picks it up.
+const autoApproveStuck = (r) => {
+  if (!r || r.status !== "Pending" || r.autoApprove !== true) return false;
+  const t = r.createdAt && r.createdAt.toDate ? r.createdAt.toDate() : r.createdAt ? new Date(r.createdAt) : null;
+  return !!t && !isNaN(t) && Date.now() - t.getTime() > 2 * 60 * 1000;
+};
+function AutoApproveBadge({ r }) {
+  if (!autoApproveStuck(r)) return null;
+  return (
+    <span title={r.autoApproveError || "This request was made inside the 2-hour grace window and should have been approved automatically."}
+      className="ml-1.5 inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800">
+      Auto-approve didn't run
+    </span>
+  );
+}
+
 // How long an approved refund has been waiting (since it was approved). Lets stuck ones stand out.
 const waitStartMs = (r) => {
   const d = r.processedAt || r.updatedAt;
@@ -394,7 +412,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
           <div className="min-w-0">
             <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{isDeposit(r) ? "Deposit return" : disc ? "Discount refund" : "Refund request"}</p>
             <h3 className="font-bold text-arl-dark text-lg truncate">{r.customerName || "—"}</h3>
-            <div className="mt-1.5">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</div>
+            <div className="mt-1.5">{disc ? <DiscountBadge state={r.refund.state} /> : <><StatusBadge status={r.status} stage={stageOf(r)} /><AutoApproveBadge r={r} /></>}</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
         </div>
@@ -415,6 +433,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             <Line label="Updated">{stampText(updatedOf(r))}</Line>
             {w && <Line label="Waiting"><span className={w.late ? "font-semibold text-amber-600" : ""}>{w.text}{w.late ? " — worth checking" : ""}</span></Line>}
             <Line label={isDeposit(r) ? "Reason" : disc ? "Discount reason" : "Reason"}>{isDeposit(r) ? "Security deposit returned after the trip" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
+            {autoApproveStuck(r) && <Line label="Auto-approve"><span className="text-amber-700">This request was made inside the 2-hour grace window, so it should have been approved automatically, but it wasn't. {r.autoApproveError || "No error was recorded."} You can approve it now; the nightly job will also pick it up.</span></Line>}
             {!disc && r.notes && <Line label="Notes">{r.notes}</Line>}
             {!disc && r.status === "Rejected" && r.rejectReason && <Line label="Rejected because"><span className="text-red-600">{r.rejectReason}</span></Line>}
           </Block>
@@ -425,7 +444,8 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               <Line label={isDeposit(r) ? "Returned to customer" : "Sent back to customer"}>{fmt(r.refund.amount)} {r.refund.via === "in_store" ? "in store" : "via PayMongo"}</Line>
               {r.refund.referenceNumber && r.refund.via === "paymongo" && <Line label="PayMongo ref"><span className="font-mono text-xs">{r.refund.referenceNumber}</span></Line>}
               {r.refund.state === "failed" && <p className="text-xs text-red-600 mt-2">PayMongo could not complete this refund, so the customer has not received it.{r.refund.errorNote ? ` (${r.refund.errorNote})` : ""}</p>}
-              {r.refund.state === "processing" && <p className="text-xs text-blue-700 mt-2">PayMongo is processing this refund. It can take up to 24 hours.</p>}
+              {r.refund.state === "processing" && r.refund.sendAfter && <p className="text-xs text-violet-700 mt-2">The payment was made today, so PayMongo can't send a partial refund yet. It is scheduled and will be sent automatically on {new Date(r.refund.sendAfter).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" })}. If it can't be sent, it moves to Failed and can be retried or handed back in store.</p>}
+              {r.refund.state === "processing" && !r.refund.sendAfter && <p className="text-xs text-blue-700 mt-2">PayMongo is processing this refund. It can take up to 24 hours.</p>}
               {viaDepositRoutes(r) && r.refund.state === "failed" && <p className="text-xs text-gray-500 mt-1">{isDeposit(r) ? "The deposit is" : "The trip is"} already settled. Retry the PayMongo refund, or hand the money back in store and record it here. Check your PayMongo payout balance if it keeps failing.</p>}
               {r.refund.state === "awaiting_handback" && <p className="text-xs text-orange-700 mt-2">Paid in store, so it can't go through PayMongo. Return it in store, then record it on the payment.</p>}
             </Block>
@@ -1274,7 +1294,7 @@ export default function RefundRequests() {
                       <td className="px-5 py-4"><PaidWithBadge r={r} /></td>
                       {tabKey !== "pending" && <td className="px-5 py-4 whitespace-nowrap"><ViaBadge r={r} /></td>}
                       {tabKey !== "pending" && <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>}
-                      <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
+                      <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <><StatusBadge status={r.status} stage={stageOf(r)} /><AutoApproveBadge r={r} /></>}</td>
                       <td className="px-5 py-4 text-right">
                         <button onClick={() => setViewId(r.refundRequestID)}
                           className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
