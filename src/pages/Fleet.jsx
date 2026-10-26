@@ -277,6 +277,13 @@ export default function Fleet() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // Refreshes just the brand / model lists (no page spinner), so the Brands & Models window can stay open after each change.
+  const refreshBrandsAndModels = useCallback(async () => {
+    const [brandsData, modelsData] = await Promise.all([apiFetch("/api/fleet/brands"), apiFetch("/api/fleet/models")]);
+    setBrands(brandsData || []);
+    setModels(modelsData || []);
+  }, []);
+
   // Used by the "+ Add new brand / model" option inside the Add and Edit vehicle forms. They add to the lists in place
   // (no full reload, so the open form keeps what was typed) and hand back the id so the form can select it right away.
   // A name that already exists (any capitalisation) is reused rather than saved a second time.
@@ -404,7 +411,7 @@ export default function Fleet() {
       {showManageBrands && (
         <ManageBrandsModal brands={brands} models={models}
           onClose={() => setShowManageBrands(false)}
-          onSaved={() => { setShowManageBrands(false); fetchAll(); }} />
+          onChanged={refreshBrandsAndModels} />
       )}
       {confirmDelete && (
         <ConfirmDeleteModal
@@ -2311,53 +2318,71 @@ function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClo
 }
 
 // ─── MANAGE BRANDS & MODELS MODAL ─────────────────────────────────────────────
-function ManageBrandsModal({ brands, models, onClose, onSaved }) {
-  const [newBrand, setNewBrand]     = useState("");
-  const [newModel, setNewModel]     = useState("");
+// Brands tab: add a brand, see every brand with its model count.
+// Models tab: pick a brand from the dropdown (same look as the vehicle form), then add / remove models for that brand only.
+// The window stays open after every add or delete (the lists are refreshed in place via onChanged), so several brands or models
+// can be entered in one go.
+function ManageBrandsModal({ brands, models, onClose, onChanged }) {
+  const [newBrand, setNewBrand]         = useState("");
+  const [newModel, setNewModel]         = useState("");
   const [modelBrandID, setModelBrandID] = useState("");
-  const [saving, setSaving]         = useState(false);
-  const [tab, setTab]               = useState("brand");
-  const [error, setError]           = useState(null);
-  const [confirmDel, setConfirmDel] = useState(null);
+  const [saving, setSaving]             = useState(false);
+  const [tab, setTab]                   = useState("brand");
+  const [error, setError]               = useState(null);
+  const [confirmDel, setConfirmDel]     = useState(null);
+
+  const byName = (key) => (a, b) => (a[key] || "").localeCompare(b[key] || "");
+  const sortedBrands = [...brands].sort(byName("brandName"));
+  const brandModels  = models.filter(m => m.brandID === modelBrandID).sort(byName("modelName"));
+  const selectedBrand = brands.find(b => b.id === modelBrandID);
+
+  // if the selected brand disappears (deleted), fall back to "no brand selected"
+  useEffect(() => {
+    if (modelBrandID && !brands.some(b => b.id === modelBrandID)) setModelBrandID("");
+  }, [brands, modelBrandID]);
+
+  const switchTab = (t) => { setTab(t); setError(null); };
 
   const addBrand = async () => {
-    if (!newBrand.trim()) return;
+    const clean = newBrand.trim();
+    if (!clean) { setError("Enter a brand name."); return; }
+    if (brands.some(b => (b.brandName || "").trim().toLowerCase() === clean.toLowerCase())) {
+      setError(`"${clean}" already exists.`); return;
+    }
     setSaving(true); setError(null);
     try {
-      await apiFetch("/api/fleet/brands", {
-        method: "POST",
-        body: JSON.stringify({ brandName: newBrand.trim() }),
-      });
-      setNewBrand(""); onSaved();
+      await apiFetch("/api/fleet/brands", { method: "POST", body: JSON.stringify({ brandName: clean }) });
+      setNewBrand(""); await onChanged();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
   const addModel = async () => {
-    if (!newModel.trim() || !modelBrandID) { setError("Select a brand and enter model name."); return; }
+    const clean = newModel.trim();
+    if (!modelBrandID) { setError("Select a brand first."); return; }
+    if (!clean) { setError("Enter a model name."); return; }
+    if (brandModels.some(m => (m.modelName || "").trim().toLowerCase() === clean.toLowerCase())) {
+      setError(`"${clean}" already exists under ${selectedBrand?.brandName}.`); return;
+    }
     setSaving(true); setError(null);
     try {
-      await apiFetch("/api/fleet/models", {
-        method: "POST",
-        body: JSON.stringify({ modelName: newModel.trim(), brandID: modelBrandID }),
-      });
-      setNewModel(""); setModelBrandID(""); onSaved();
+      await apiFetch("/api/fleet/models", { method: "POST", body: JSON.stringify({ modelName: clean, brandID: modelBrandID }) });
+      setNewModel(""); await onChanged();   // keep the brand selected so the next model can be typed straight away
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
     if (!confirmDel) return;
-    setSaving(true);
+    setSaving(true); setError(null);
     try {
-      // Backend's deleteBrand already cascades to that brand's models in
-      // one batch — matches what this used to do by hand.
-      if (confirmDel.type === "brand") {
-        await apiFetch(`/api/fleet/brands/${confirmDel.item.id}`, { method: "DELETE" });
-      } else {
-        await apiFetch(`/api/fleet/models/${confirmDel.item.id}`, { method: "DELETE" });
-      }
-      setConfirmDel(null); onSaved();
-    } catch (e) { setError(e.message); } finally { setSaving(false); }
+      // The backend refuses (409) while a car still uses the brand / model, and deleting a brand also removes its models.
+      const path = confirmDel.type === "brand" ? "brands" : "models";
+      await apiFetch(`/api/fleet/${path}/${confirmDel.item.id}`, { method: "DELETE" });
+      setConfirmDel(null); await onChanged();
+    } catch (e) { setConfirmDel(null); setError(e.message); } finally { setSaving(false); }
   };
+
+  const onEnter = (fn) => (e) => { if (e.key === "Enter") { e.preventDefault(); fn(); } };
+  const tabCls = (on) => `flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${on ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -2370,81 +2395,71 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
         </div>
 
         <div className="p-5 space-y-4">
-          {/* Tabs */}
           <div className="flex gap-2">
-            <button onClick={() => setTab("brand")}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${tab === "brand" ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-              <Icons.Tag className="w-3.5 h-3.5" />
-              Brands
+            <button onClick={() => switchTab("brand")} className={tabCls(tab === "brand")}>
+              <Icons.Tag className="w-3.5 h-3.5" /> Brands
             </button>
-            <button onClick={() => setTab("model")}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${tab === "model" ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-              <Icons.Car className="w-3.5 h-3.5" />
-              Models
+            <button onClick={() => switchTab("model")} className={tabCls(tab === "model")}>
+              <Icons.Car className="w-3.5 h-3.5" /> Models
             </button>
           </div>
 
           {tab === "brand" ? (
             <>
               <div className="flex gap-2">
-                <input value={newBrand} onChange={e => setNewBrand(e.target.value)}
-                  placeholder="New brand name (e.g. Toyota)"
-                  className="flex-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
+                <input value={newBrand} onChange={e => { setNewBrand(e.target.value); setError(null); }} onKeyDown={onEnter(addBrand)}
+                  placeholder="New brand name (e.g. Toyota)" disabled={saving} className={FIELD_CLS} />
                 <button onClick={addBrand} disabled={saving}
-                  className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700 disabled:opacity-50">Add</button>
+                  className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50">Add</button>
               </div>
               <div className="space-y-1 max-h-64 overflow-y-auto">
-                {brands.length === 0
+                {sortedBrands.length === 0
                   ? <p className="text-sm text-gray-400 text-center py-4">No brands yet</p>
-                  : brands.map(b => (
-                  <div key={b.id} className="flex items-center justify-between px-4 py-2.5 bg-gray-50 rounded-xl">
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">{b.brandName}</span>
-                      <span className="text-xs text-gray-400 ml-2">{models.filter(m => m.brandID === b.id).length} models</span>
+                  : sortedBrands.map(b => (
+                    <div key={b.id} className="flex items-center justify-between px-4 py-2.5 bg-gray-50 rounded-xl">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">{b.brandName}</span>
+                        <span className="text-xs text-gray-400 ml-2">{models.filter(m => m.brandID === b.id).length} models</span>
+                      </div>
+                      <button onClick={() => setConfirmDel({ type: "brand", item: b })} className="text-red-400 hover:text-red-600 p-1">
+                        <Icons.Trash className="w-4 h-4" />
+                      </button>
                     </div>
-                    <button onClick={() => setConfirmDel({ type: "brand", item: b })}
-                      className="text-red-400 hover:text-red-600 p-1">
-                      <Icons.Trash className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                  ))}
               </div>
             </>
           ) : (
             <>
-              <div className="space-y-2">
-                <select value={modelBrandID} onChange={e => setModelBrandID(e.target.value)}
-                  className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
+              <div>
+                <label className={LABEL_CLS}>Brand</label>
+                <select value={modelBrandID} onChange={e => { setModelBrandID(e.target.value); setError(null); }}
+                  className={SELECT_CLS} style={SELECT_STYLE}>
                   <option value="">Select Brand</option>
-                  {brands.map(b => <option key={b.id} value={b.id}>{b.brandName}</option>)}
+                  {sortedBrands.map(b => <option key={b.id} value={b.id}>{b.brandName}</option>)}
                 </select>
-                <div className="flex gap-2">
-                  <input value={newModel} onChange={e => setNewModel(e.target.value)}
-                    placeholder="New model name (e.g. Vios)"
-                    className="flex-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-                  <button onClick={addModel} disabled={saving}
-                    className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700 disabled:opacity-50">Add</button>
-                </div>
               </div>
-              <div className="space-y-3 max-h-64 overflow-y-auto">
-                {brands.map(b => {
-                  const bModels = models.filter(m => m.brandID === b.id);
-                  if (bModels.length === 0) return null;
-                  return (
-                    <div key={b.id}>
-                      <p className="text-xs font-semibold text-gray-400 uppercase mb-1">{b.brandName}</p>
-                      {bModels.map(m => (
-                        <div key={m.id} className="flex items-center justify-between px-4 py-2 bg-gray-50 rounded-xl mb-1">
-                          <span className="text-sm text-gray-700">{m.modelName}</span>
-                          <button onClick={() => setConfirmDel({ type: "model", item: m })}
-                            className="text-red-400 hover:text-red-600 p-1">
-                            <Icons.Trash className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
+
+              <div className="flex gap-2">
+                <input value={newModel} onChange={e => { setNewModel(e.target.value); setError(null); }} onKeyDown={onEnter(addModel)}
+                  placeholder={modelBrandID ? `New ${selectedBrand?.brandName} model (e.g. Vios)` : "Select a brand first"}
+                  disabled={saving || !modelBrandID} className={FIELD_CLS} />
+                <button onClick={addModel} disabled={saving || !modelBrandID}
+                  className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50">Add</button>
+              </div>
+
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {!modelBrandID ? (
+                  <p className="text-sm text-gray-400 text-center py-4">Choose a brand to see and add its models</p>
+                ) : brandModels.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-4">No models for {selectedBrand?.brandName} yet</p>
+                ) : brandModels.map(m => (
+                  <div key={m.id} className="flex items-center justify-between px-4 py-2.5 bg-gray-50 rounded-xl">
+                    <span className="text-sm text-gray-700">{m.modelName}</span>
+                    <button onClick={() => setConfirmDel({ type: "model", item: m })} className="text-red-400 hover:text-red-600 p-1">
+                      <Icons.Trash className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
               </div>
             </>
           )}
@@ -2453,9 +2468,8 @@ function ManageBrandsModal({ brands, models, onClose, onSaved }) {
         </div>
       </div>
 
-      {/* Inline confirm delete */}
       {confirmDel && (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
             <div className="text-center">
               <div className="flex justify-center mb-3">

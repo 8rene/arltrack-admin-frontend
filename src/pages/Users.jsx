@@ -3,7 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import {
   collection, getDocs, query, where, orderBy
 } from "firebase/firestore";
-import { db } from "../fireabase";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
 import UserActivityTab from "../components/UserActivityTab";
@@ -372,7 +373,7 @@ function toDateInputValue(val) {
 // (new submission review) and ViewDetailsModal's Documents tab (renewal
 // later on). Admin types/confirms the date while looking at the license
 // photo right next to it — no OCR, see earlier discussion on why.
-function ExpiryField({ userID, docId, currentValue, onSaved }) {
+function ExpiryField({ userID, docId, currentValue, onSaved, canEdit = true }) {
   const [value, setValue] = useState(toDateInputValue(currentValue));
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -406,6 +407,17 @@ function ExpiryField({ userID, docId, currentValue, onSaved }) {
       setSaving(false);
     }
   };
+
+  // Changing the date is an Owner/Admin job (the backend enforces it); everyone else just sees it.
+  if (!canEdit) {
+    return (
+      <div className="bg-gray-50 rounded-xl p-3">
+        <p className="text-xs text-gray-400 mb-1">Driver's License Expiry</p>
+        <p className={`text-sm font-medium ${isExpired ? "text-red-600" : "text-gray-800"}`}>{value || "—"}</p>
+        {isExpired && <p className="text-xs text-red-500 mt-1">This date is already in the past.</p>}
+      </div>
+    );
+  }
 
   return (
     <div className="bg-gray-50 rounded-xl p-3">
@@ -698,6 +710,11 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
   const [detailUser, setDetailUser]       = useState(null);
   const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+
+  // keep the open details window in step with a refreshed list, so a save shows up straight away
+  useEffect(() => {
+    setDetailUser((cur) => (cur ? users.find((u) => u.id === cur.id) || cur : cur));
+  }, [users]);
   const [deleteError, setDeleteError]     = useState(null);
   const [searchParams, setSearchParams]   = useSearchParams();
   const [sortKey, setSortKey]       = useState("joined"); // newest registrations on top by default
@@ -920,7 +937,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
 
       {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} viewerRole={viewerRole} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
       {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }}
-        viewerRole={viewerRole} currentRoleName={currentRoleName} />}
+        viewerRole={viewerRole} currentRoleName={currentRoleName} onDocumentsChanged={onRefresh} />}
       {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} error={deleteError} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => { setConfirmDelete(null); setDeleteError(null); }} />}
     </>
   );
@@ -1074,7 +1091,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
                 <Field label="City"         value={addr.city} />
                 <Field label="Province"     value={addr.province} />
                 <Field label="Village"      value={addr.village} />
-                <Field label="Zip Code"     value={addr.zipCode} />
+                <Field label="Postal Code"  value={addr.postalCode || addr.zipCode} />
               </Section>
 
               <Section title="Referral" icon={Icons.Star}>
@@ -1161,7 +1178,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
                     </div>
                     {imgs.driverLicense && (
                       <div className="mt-3">
-                        <ExpiryField userID={user.id} docId={docu.docId} currentValue={docu.driverLicenseExpiry} />
+                        <ExpiryField userID={user.id} docId={docu.docId} currentValue={docu.driverLicenseExpiry} canEdit={false} />
                       </div>
                     )}
                   </div>
@@ -1182,6 +1199,140 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
           onClose={() => setNestedUserID(null)}
         />
       )}
+    </div>
+  );
+}
+
+// ─── EDIT PROFILE (Owner/Admin) ───────────────────────────────────────────────
+// These fields live inside the main Edit window (EditUserModal). Name, phone, username, birth date, address and the referral
+// code; email is NOT editable (it is the login). Only fields that actually changed are sent; the backend re-checks the allowed
+// list and writes the old → new values to the audit log.
+const PROFILE_FIELDS = [
+  { key: "firstName",    label: "First Name",   source: "userDetails", group: "name" },
+  { key: "middleName",   label: "Middle Name",  source: "userDetails", group: "name" },
+  { key: "lastName",     label: "Last Name",    source: "userDetails", group: "name" },
+  { key: "suffix",       label: "Suffix",       source: "userDetails", group: "name" },
+  { key: "birthDate",    label: "Birth Date",   source: "userDetails", group: "name", type: "date" },
+  { key: "username",     label: "Username",     source: "user",        group: "account" },
+  { key: "phone",        label: "Contact No.",  source: "user",        group: "account" },
+  { key: "referralCode", label: "Referral Code", source: "user",       group: "account" },
+  { key: "referredByCode", label: "Referred By (their code)", source: "referral", group: "account" },
+  { key: "street",       label: "Street",       source: "userAddress", group: "address" },
+  { key: "barangay",     label: "Barangay",     source: "userAddress", group: "address" },
+  { key: "municipality", label: "Municipality", source: "userAddress", group: "address" },
+  { key: "city",         label: "City",         source: "userAddress", group: "address" },
+  { key: "province",     label: "Province",     source: "userAddress", group: "address" },
+  { key: "village",      label: "Village",      source: "userAddress", group: "address" },
+  { key: "postalCode",   label: "Postal Code",  source: "userAddress", group: "address" },
+];
+
+const modalInput = "w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50";
+
+// ─── REPLACE DOCUMENT (Owner/Admin) ────────────────────────────────────────────
+// Upload a new photo of the driver's license (needs its expiry date) or the government ID (needs type + number). It is
+// applied straight away — the admin is the reviewer — and recorded in the audit log.
+function ReplaceDocumentModal({ user, kind, onClose, onSaved }) {
+  const isLicense = kind === "license";
+  const docu = user.document || {};
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [expiry, setExpiry] = useState(toDateInputValue(docu.driverLicenseExpiry));
+  const [docType, setDocType] = useState(docu.documentType || "");
+  const [docNumber, setDocNumber] = useState(docu.documentNumber || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+
+  const pick = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith("image/")) return setError("Please choose an image file.");
+    if (f.size > 8 * 1024 * 1024) return setError("The image is larger than 8 MB.");
+    setError(null); setFile(f); setPreview(URL.createObjectURL(f));
+  };
+
+  const handleSave = async () => {
+    if (!file) return setError(`Choose a photo of the ${isLicense ? "driver's license" : "ID document"} first.`);
+    if (isLicense && !expiry) return setError("Enter the expiry date shown on the license.");
+    if (!isLicense && (!docType.trim() || !docNumber.trim())) return setError("Enter the document type and number shown on the ID.");
+    setSaving(true); setError(null);
+    try {
+      const folder = isLicense ? "driverLicenseResubmit" : "documentResubmit";
+      const sRef = storageRef(storage, `${folder}/${user.id}_${Date.now()}_${file.name.replace(/[^\w.-]/g, "_")}`);
+      await uploadBytes(sRef, file);
+      const newUrl = await getDownloadURL(sRef);
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/document/replace`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({
+          documentKind: kind, newUrl,
+          ...(isLicense ? { driverLicenseExpiry: expiry } : { documentType: docType.trim(), documentNumber: docNumber.trim() }),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.message || "Save failed.");
+      onSaved();
+    } catch (e) { setError(e.message || "Upload failed. Please try again."); } finally { setSaving(false); }
+  };
+
+  const currentUrl = isLicense ? docu.driverLicenseUrl : docu.documentImageUrl;
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={() => !saving && onClose()}>
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-center p-5 border-b">
+          <h2 className="font-bold text-lg text-gray-800">Replace {isLicense ? "driver's license" : "ID document"}</h2>
+          <button onClick={onClose} disabled={saving} className="text-gray-400 hover:text-gray-600 p-1"><Icons.Close className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-gray-400 mb-1">Current</p>
+              {currentUrl
+                ? <img src={currentUrl} alt="Current" className="w-full h-32 object-cover rounded-xl border" />
+                : <div className="w-full h-32 rounded-xl border bg-gray-50 flex items-center justify-center text-xs text-gray-400">None uploaded</div>}
+            </div>
+            <div>
+              <p className="text-xs text-gray-400 mb-1">New</p>
+              {preview
+                ? <img src={preview} alt="New" className="w-full h-32 object-cover rounded-xl border" />
+                : <div className="w-full h-32 rounded-xl border-2 border-dashed bg-gray-50 flex items-center justify-center text-xs text-gray-400">No photo chosen</div>}
+            </div>
+          </div>
+          <label className="block">
+            <span className="inline-block px-4 py-2 border border-teal-200 text-teal-700 rounded-xl text-sm font-medium hover:bg-teal-50 cursor-pointer">
+              {file ? "Choose a different photo" : "Choose photo"}
+            </span>
+            <input type="file" accept="image/*" className="hidden" onChange={pick} disabled={saving} />
+          </label>
+
+          {isLicense ? (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">License expiry date</label>
+              <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} disabled={saving} className={modalInput} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Document type</label>
+                <input value={docType} onChange={(e) => setDocType(e.target.value)} disabled={saving} placeholder="e.g. Passport" className={modalInput} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Document number</label>
+                <input value={docNumber} onChange={(e) => setDocNumber(e.target.value)} disabled={saving} className={modalInput} />
+              </div>
+            </div>
+          )}
+          {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3">{error}</p>}
+        </div>
+        <div className="flex gap-3 p-5 border-t">
+          <button onClick={onClose} disabled={saving} className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
+            {saving ? "Uploading…" : "Replace"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2216,27 +2367,59 @@ const ASSIGNABLE_ROLES = [
   { value: ROLES.ADMIN,       label: "Admin" },
 ];
 
-function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, currentRoleName }) {
+// One window for everything about a user. Owner/Admin see all of it: status, flag, role (OTP), name, phone, username, referral
+// code, address and documents. Supervisors keep status + flag only. Email is never editable. Saves in this order: profile,
+// documents, status/flag, role — an error stops the chain and is shown, and what was already saved stays saved.
+function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, currentRoleName, onDocumentsChanged }) {
   const KNOWN_STATUSES = ["active", "inactive", "locked"];
   const [form, setForm] = useState({
     status:    KNOWN_STATUSES.includes((user.status || "").toLowerCase()) ? user.status : "active",
     isFlagged: user.isFlagged || false,
   });
-  const canEditRole = viewerRole === ROLES.OWNER || viewerRole === ROLES.ADMIN;
-  // Starts empty (not currentRoleName) — the dropdown shows a disabled
-  // "Currently: X" placeholder plus only the OTHER roles as real choices,
-  // so re-picking the role someone is already in isn't an option at all,
-  // rather than being an option that happens to be a no-op on save.
+  const canEditRole = viewerRole === ROLES.OWNER || viewerRole === ROLES.ADMIN;   // also gates profile + documents
+  // Starts empty (not currentRoleName) — the dropdown shows a disabled "Currently: X" placeholder plus only the OTHER roles
+  // as real choices, so re-picking the role someone is already in isn't an option at all.
   const [role, setRole] = useState("");
   const assignableRoleOptions = ASSIGNABLE_ROLES.filter(r => r.value !== currentRoleName);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
 
-  // Role changes are high-stakes, so on top of the Owner/Admin gate above,
-  // the acting admin has to confirm a one-time code sent to THEIR OWN
-  // email (never the target user's) before the change is applied. The
-  // backend enforces this too (PATCH /api/users/:uid/role now requires
-  // and consumes a valid otp) — this is just the UI for it.
+  // ── profile fields ──
+  const det = user.details || {};
+  const addr = user.address || {};
+  const docu = user.document || {};
+  const initialProfile = useMemo(() => {
+    const src = { user, userDetails: det, userAddress: addr };
+    const out = {};
+    PROFILE_FIELDS.forEach((f) => {
+      let v = src[f.source]?.[f.key];
+      if (f.key === "postalCode") v = addr.postalCode ?? addr.zipCode;          // zipCode is the retired name for postalCode
+      if (f.key === "referralCode") v = user.referral?.code ?? user.referralCode;
+      if (f.key === "referredByCode") v = user.referral?.referredBy?.code;
+      out[f.key] = f.type === "date" ? toDateInputValue(v) : String(v ?? "");
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+  const [profile, setProfile] = useState(initialProfile);
+  const setP = (key, upper = false) => (e) => {
+    const v = upper ? e.target.value.toUpperCase() : e.target.value;
+    setProfile((p) => ({ ...p, [key]: v })); setError(null);
+  };
+
+  // ── document fields (photos are replaced through ReplaceDocumentModal) ──
+  const initialDoc = useMemo(() => ({
+    driverLicenseExpiry: toDateInputValue(docu.driverLicenseExpiry),
+    documentType: docu.documentType || "",
+    documentNumber: docu.documentNumber || "",
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [user.id]);
+  const [docForm, setDocForm] = useState(initialDoc);
+  const [docReplace, setDocReplace] = useState(null);   // "license" | "document"
+
+  // Role changes are high-stakes, so on top of the Owner/Admin gate above, the acting admin has to confirm a one-time code
+  // sent to THEIR OWN email (never the target user's) before the change is applied. The backend enforces this too
+  // (PATCH /api/users/:uid/role requires and consumes a valid otp) — this is just the UI for it.
   const [otp, setOtp]           = useState("");
   const [otpSent, setOtpSent]   = useState(false);
   const [sendingOtp, setSendingOtp] = useState(false);
@@ -2268,61 +2451,76 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
     }
   };
 
+  const authed = (method, path, body) => fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+    body: JSON.stringify(body),
+  }).then(async (res) => {
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.message || "Save failed.");
+    return json;
+  });
+
   const handleSave = async () => {
-    // Role changes need a verified code first — everything else (status,
-    // flag) can still be saved without one.
-    if (canEditRole && role && !otp) {
-      setError("Enter the verification code sent to your email to confirm this role change.");
-      return;
+    // ── checks first, so nothing is half-saved because of a typo ──
+    const clean = Object.fromEntries(Object.entries(profile).map(([k, v]) => [k, v.trim()]));
+    if (canEditRole) {
+      if (!clean.firstName || !clean.lastName) return setError("First and last name are required.");
+      if (!clean.username) return setError("Username is required.");
+      if (clean.phone && !/^[0-9+\-\s()]{7,20}$/.test(clean.phone)) return setError("Enter a valid contact number.");
+      if (clean.referralCode && !/^[A-Z0-9-]{4,20}$/.test(clean.referralCode)) return setError("Referral code must be 4–20 characters: letters, numbers or hyphens.");
+      if (initialProfile.referralCode.trim() && !clean.referralCode) return setError("A referral code can't be left empty.");
+      if (clean.referredByCode && !/^[A-Z0-9-]{4,20}$/.test(clean.referredByCode)) return setError("Referred-by must be a referral code like ARL-ABCD1234 (or leave it empty for none).");
+      if (clean.referredByCode && clean.referredByCode === clean.referralCode) return setError("A user can't be referred by their own code.");
     }
+    // Role changes need a verified code first — everything else can still be saved without one.
+    if (canEditRole && role && !otp) return setError("Enter the verification code sent to your email to confirm this role change.");
 
     setSaving(true); setError(null);
     try {
-      const statusRes = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/status`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify(form),
-      });
-      if (!statusRes.ok) {
-        const err = await statusRes.json().catch(() => ({}));
-        throw new Error(err.message || "Save failed.");
+      if (canEditRole) {
+        const changes = PROFILE_FIELDS
+          .filter((f) => clean[f.key] !== initialProfile[f.key].trim())
+          .map((f) => ({ collection: f.source, field: f.key, newValue: clean[f.key] }));
+        if (changes.length) await authed("PUT", `/api/users/${user.id}/profile`, { changes });
+
+        const docChanges = Object.fromEntries(Object.entries(docForm).filter(([k, v]) => v.trim() !== initialDoc[k].trim()).map(([k, v]) => [k, v.trim()]));
+        if (Object.keys(docChanges).length) await authed("PUT", `/api/users/${user.id}/document`, docChanges);
       }
 
-      // role can only ever be "" (placeholder, untouched) or one of the
-      // OTHER roles now — currentRoleName was filtered out of the options
-      // entirely, so there's no "picked the same role" case to guard against.
-      if (canEditRole && role) {
-        const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/role`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-          body: JSON.stringify({ role, otp }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.message || "Role update failed.");
-        }
-      }
+      await authed("PATCH", `/api/users/${user.id}/status`, form);
+
+      // role can only ever be "" (placeholder, untouched) or one of the OTHER roles — currentRoleName was filtered out.
+      if (canEditRole && role) await authed("PATCH", `/api/users/${user.id}/role`, { role, otp });
 
       onSaved();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
+  const inputCls2 = "w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50";
+  const heading = (t) => <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">{t}</p>;
+  const pField = (f) => (
+    <div key={f.key}>
+      <label className="block text-xs font-medium text-gray-500 mb-1">{f.label}</label>
+      <input
+        type={f.type || "text"} value={profile[f.key]} disabled={saving} className={inputCls2}
+        onChange={setP(f.key, f.key === "referralCode" || f.key === "referredByCode")}
+        placeholder={f.key === "referredByCode" ? "None — enter the referrer's code" : undefined}
+      />
+    </div>
+  );
+  const group = (g) => PROFILE_FIELDS.filter((f) => f.group === g).map(pField);
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => !saving && onClose()}>
+      <div className={`bg-white rounded-2xl w-full ${canEditRole ? "max-w-2xl" : "max-w-sm"} max-h-[92vh] flex flex-col`} onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b">
           <h2 className="font-bold text-lg text-gray-800">Edit {roleLabelSingular}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+          <button onClick={onClose} disabled={saving} className="text-gray-400 hover:text-gray-600 p-1">
             <Icons.Close className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-5 overflow-y-auto">
           {/* New signup awaiting approval — this is the "unlock" moment, so show who referred them */}
           {isNewSignup(user) && (
             <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 text-sm text-teal-800">
@@ -2334,100 +2532,168 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
             </div>
           )}
 
-          {/* Read-only info */}
+          {/* Email is the login — read-only for everyone. Supervisors also see the rest read-only. */}
           <div className="bg-gray-50 rounded-xl p-3 space-y-1 text-sm">
-            <p className="text-xs text-gray-400 font-medium mb-2">Account Info (read-only)</p>
-            <p className="text-gray-600"><span className="font-medium">Email:</span> {user.email || "—"}</p>
-            <p className="text-gray-600"><span className="font-medium">Phone:</span> {user.phone || "—"}</p>
-            <p className="text-gray-600"><span className="font-medium">Username:</span> {user.username || "—"}</p>
+            <p className="text-xs text-gray-400 font-medium mb-2">Account Info{canEditRole ? "" : " (read-only)"}</p>
+            <p className="text-gray-600"><span className="font-medium">Email:</span> {user.email || "—"} {canEditRole && <span className="text-xs text-gray-400">· can't be changed</span>}</p>
+            {!canEditRole && (
+              <>
+                <p className="text-gray-600"><span className="font-medium">Phone:</span> {user.phone || "—"}</p>
+                <p className="text-gray-600"><span className="font-medium">Username:</span> {user.username || "—"}</p>
+              </>
+            )}
             <p className="text-gray-600"><span className="font-medium">Referred by:</span> {referrerLabel(user.referral?.referredBy) || "None"}</p>
           </div>
 
-          {/* Status */}
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
-            <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
-              className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="locked">Locked</option>
-            </select>
-          </div>
-
-          {/* Role — Owner and Admin only */}
           {canEditRole && (
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Role</label>
-              <select value={role} onChange={e => setRole(e.target.value)}
-                className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
-                <option value="" disabled>Currently: {roleLabelSingular}</option>
-                {assignableRoleOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-              </select>
-              {role && (
-                <>
-                  <p className="text-xs text-amber-600 mt-1">
-                    This will move {user.details?.firstName || user.username || "this user"} out of the {roleLabelSingular} list into {role}.
-                  </p>
+            <>
+              <div>{heading("Personal")}<div className="grid grid-cols-2 gap-3">{group("name")}</div></div>
+              <div>
+                {heading("Account")}
+                <div className="grid grid-cols-2 gap-3">{group("account")}</div>
+                {profile.referralCode.trim() !== initialProfile.referralCode.trim() && (
+                  <p className="text-xs text-amber-600 mt-1.5">Changing the referral code means the old one stops working for new sign-ups.</p>
+                )}
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Referred by now: <span className="font-medium text-gray-600">{referrerLabel(user.referral?.referredBy) || "nobody"}</span>
+                  {profile.referredByCode.trim() !== initialProfile.referredByCode.trim() && (
+                    <span className="text-amber-600"> — {profile.referredByCode.trim() ? "will change to the owner of that code" : "will be cleared"} when you save.</span>
+                  )}
+                </p>
+              </div>
+              <div>{heading("Address")}<div className="grid grid-cols-2 gap-3">{group("address")}</div></div>
 
-                  {/* Verification step — required before a role change can be saved */}
-                  <div className="mt-3 p-3 border rounded-xl bg-gray-50 space-y-2">
-                    <p className="text-xs font-medium text-gray-600">Verify it's you</p>
-                    <p className="text-xs text-gray-400">
-                      We'll send a 6-digit code to your own account email to confirm this role change.
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleSendOtp}
-                        disabled={sendingOtp || otpCooldown > 0}
-                        className="px-3 py-2 text-xs font-medium rounded-xl border border-teal-300 text-teal-700 hover:bg-teal-50 disabled:opacity-50 whitespace-nowrap"
-                      >
-                        {sendingOtp ? "Sending..." : otpCooldown > 0 ? `Resend in ${otpCooldown}s` : otpSent ? "Resend code" : "Send code"}
-                      </button>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={6}
-                        placeholder="Enter 6-digit code"
-                        value={otp}
-                        onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                        className="flex-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400"
-                      />
-                    </div>
-                    {otpNotice && <p className="text-xs text-gray-500">{otpNotice}</p>}
+              <div>
+                {heading("Documents")}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">License expiry</label>
+                    <input type="date" value={docForm.driverLicenseExpiry} disabled={saving} className={inputCls2}
+                      onChange={(e) => setDocForm((d) => ({ ...d, driverLicenseExpiry: e.target.value }))} />
                   </div>
-                </>
-              )}
-            </div>
+                  <div />
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">ID document type</label>
+                    <input value={docForm.documentType} disabled={saving} className={inputCls2} placeholder="e.g. Passport"
+                      onChange={(e) => setDocForm((d) => ({ ...d, documentType: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">ID document number</label>
+                    <input value={docForm.documentNumber} disabled={saving} className={inputCls2}
+                      onChange={(e) => setDocForm((d) => ({ ...d, documentNumber: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button type="button" onClick={() => setDocReplace("license")} disabled={saving}
+                    className="px-3 py-1.5 border border-teal-200 text-teal-700 rounded-lg text-xs font-semibold hover:bg-teal-50 disabled:opacity-50">
+                    Replace license photo
+                  </button>
+                  <button type="button" onClick={() => setDocReplace("document")} disabled={saving}
+                    className="px-3 py-1.5 border border-teal-200 text-teal-700 rounded-lg text-xs font-semibold hover:bg-teal-50 disabled:opacity-50">
+                    Replace ID photo
+                  </button>
+                </div>
+              </div>
+            </>
           )}
 
-          {/* Flagged toggle */}
-          <div className="flex items-center justify-between p-3 border rounded-xl">
-            <div className="flex items-center gap-2">
-              <Icons.Flag className={`w-4 h-4 ${form.isFlagged ? "text-red-500 fill-red-500 stroke-red-500" : "text-gray-400"}`} />
+          <div>
+            {canEditRole && heading("Account status")}
+            <div className="space-y-4">
+              {/* Status */}
               <div>
-                <p className="text-sm font-medium text-gray-700">Flag this {roleLabelSingular.toLowerCase()}</p>
-                <p className="text-xs text-gray-400">Mark as suspicious or problematic</p>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
+                <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
+                  className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="locked">Locked</option>
+                </select>
+              </div>
+
+              {/* Role — Owner and Admin only */}
+              {canEditRole && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Role</label>
+                  <select value={role} onChange={e => setRole(e.target.value)}
+                    className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400">
+                    <option value="" disabled>Currently: {roleLabelSingular}</option>
+                    {assignableRoleOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  </select>
+                  {role && (
+                    <>
+                      <p className="text-xs text-amber-600 mt-1">
+                        This will move {user.details?.firstName || user.username || "this user"} out of the {roleLabelSingular} list into {role}.
+                      </p>
+
+                      {/* Verification step — required before a role change can be saved */}
+                      <div className="mt-3 p-3 border rounded-xl bg-gray-50 space-y-2">
+                        <p className="text-xs font-medium text-gray-600">Verify it's you</p>
+                        <p className="text-xs text-gray-400">
+                          We'll send a 6-digit code to your own account email to confirm this role change.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={handleSendOtp}
+                            disabled={sendingOtp || otpCooldown > 0}
+                            className="px-3 py-2 text-xs font-medium rounded-xl border border-teal-300 text-teal-700 hover:bg-teal-50 disabled:opacity-50 whitespace-nowrap"
+                          >
+                            {sendingOtp ? "Sending..." : otpCooldown > 0 ? `Resend in ${otpCooldown}s` : otpSent ? "Resend code" : "Send code"}
+                          </button>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="Enter 6-digit code"
+                            value={otp}
+                            onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                            className="flex-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400"
+                          />
+                        </div>
+                        {otpNotice && <p className="text-xs text-gray-500">{otpNotice}</p>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Flagged toggle */}
+              <div className="flex items-center justify-between p-3 border rounded-xl">
+                <div className="flex items-center gap-2">
+                  <Icons.Flag className={`w-4 h-4 ${form.isFlagged ? "text-red-500 fill-red-500 stroke-red-500" : "text-gray-400"}`} />
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Flag this {roleLabelSingular.toLowerCase()}</p>
+                    <p className="text-xs text-gray-400">Mark as suspicious or problematic</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setForm(f => ({ ...f, isFlagged: !f.isFlagged }))}
+                  className={`w-12 h-6 rounded-full transition-colors relative ${form.isFlagged ? "bg-red-500" : "bg-gray-200"}`}>
+                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${form.isFlagged ? "left-6" : "left-0.5"}`} />
+                </button>
               </div>
             </div>
-            <button
-              onClick={() => setForm(f => ({ ...f, isFlagged: !f.isFlagged }))}
-              className={`w-12 h-6 rounded-full transition-colors relative ${form.isFlagged ? "bg-red-500" : "bg-gray-200"}`}>
-              <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${form.isFlagged ? "left-6" : "left-0.5"}`} />
-            </button>
           </div>
 
           {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3">{error}</p>}
-
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
-            <button onClick={handleSave} disabled={saving}
-              className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
-              {saving ? "Saving..." : "Save Changes"}
-            </button>
-          </div>
+        </div>
+        <div className="flex justify-end gap-3 p-5 border-t">
+          <button onClick={onClose} disabled={saving} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
+            {saving ? "Saving..." : "Save Changes"}
+          </button>
         </div>
       </div>
+
+      {/* stopPropagation: clicks inside the Replace window must not reach this window's backdrop-click-to-close */}
+      {docReplace && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ReplaceDocumentModal user={user} kind={docReplace} onClose={() => setDocReplace(null)}
+            onSaved={() => { setDocReplace(null); onDocumentsChanged?.(); }} />
+        </div>
+      )}
     </div>
   );
 }

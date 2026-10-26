@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, Fragment } from "react";
+import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
@@ -452,6 +452,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
                         <p className="text-[11px] text-gray-500 mb-1">Includes {fmt(pv.heldCredit)} of discount credit the customer had already paid. It goes back with this refund; nothing is deducted for the discount.</p>
                       )}
                       {pv.forfeit > 0 && <Line label="Deposit kept"><span className="text-amber-700">−{fmt(pv.forfeit)}</span></Line>}
+                      {pv.gatewayFeeKept > 0 && <Line label="Gateway fee kept"><span className="text-amber-700">−{fmt(pv.gatewayFeeKept)}</span></Line>}
                       <Line label="Via PayMongo">{fmt(pv.onlineAmount)}</Line>
                       {pv.manualAmount > 0 && <Line label="Hand back in person"><span className="text-orange-600 font-semibold">{fmt(pv.manualAmount)}</span></Line>}
                       {pv.unrefundableAmount > 0 && <Line label="Not refundable"><span className="text-red-600 font-semibold">{fmt(pv.unrefundableAmount)} — Payment ID does not exist</span></Line>}
@@ -664,8 +665,10 @@ export default function RefundRequests() {
   const [handbackRef, setHandbackRef] = useState({});
   const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
   const [sortDir, setSortDir] = useState("asc");
-  const items = [...requests, ...discounts.map(toDiscountItem), ...depositReturns.map(toDepositItem)];
-
+  const items = useMemo(
+    () => [...requests, ...discounts.map(toDiscountItem), ...depositReturns.map(toDepositItem)],
+    [requests, discounts, depositReturns]
+  );
   const handleSort = (key) => {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -982,6 +985,7 @@ export default function RefundRequests() {
                 <p className="text-amber-800 font-semibold">Requested {when}</p>
                 <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(pv.grossPaid)}</span></div>
                 <div className="flex justify-between text-amber-700"><span>Deposit kept (48-hour policy)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.forfeit)}</span></div>
+                {Number(pv.gatewayFeeKept) > 0 && <div className="flex justify-between text-amber-700"><span>Gateway fee kept (deposit returned)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.gatewayFeeKept)}</span></div>}
                 <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(waiveForfeit ? pv.grossPaid : pv.total)}</span></div>
               </div>
               {Number(pv.qrphAmount) > 0 && (
