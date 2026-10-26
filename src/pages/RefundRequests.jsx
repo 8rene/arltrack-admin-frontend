@@ -95,10 +95,8 @@ const WAIT_STAGE = {
   handback: { label: "Waiting for hand-back", dot: "bg-orange-500", bg: "bg-orange-50 border border-orange-200", tip: "Approved — the online part is done; the in-person amount still has to be handed back." },
   scheduled: { label: "Scheduled",           dot: "bg-violet-500", bg: "bg-violet-50 border border-violet-200", tip: "Approved — the payment was made today, so PayMongo can't send a partial refund yet. It is sent automatically after midnight." },
 };
-// Scheduled send (same-day payment): the cron tries up to 5 times (refundAttempts), then stops and staff use "Retry now".
+// Scheduled send (same-day payment): the cron tries once; if PayMongo refuses, staff use "Retry now".
 // The last error is on the part's payment-entry row, which arrives here as parts[].error.
-const SCHEDULE_MAX_ATTEMPTS = 5;
-const scheduleExhausted = (r) => (Number(r && r.refundAttempts) || 0) >= SCHEDULE_MAX_ATTEMPTS;
 const scheduleLastError = (r) => { const p = r && Array.isArray(r.parts) ? r.parts.find((x) => x && x.error) : null; return p ? p.error : null; };
 // Approved, but the PayMongo refund has not been created yet: it is waiting for its send time (same-day payment).
 const isScheduled = (r) => !!(r && r.status === "Approved" && r.sendAfter && !r.scheduledSentAt
@@ -115,6 +113,11 @@ const stageOf = (r) => {
   if (onlinePending) return "paymongo";
   return handbackPending ? "handback" : "paymongo";
 };
+// A scheduled (same-day) refund whose automatic send failed and is past its send time: staff can still pay the unsent part
+// back in store instead of pressing "Retry now". Returns the amount of the unsent online part(s), 0 when it does not apply.
+const scheduledStuckDue = (r) => (isScheduled(r) && scheduleLastError(r) && new Date(r.sendAfter?.toDate ? r.sendAfter.toDate() : r.sendAfter).getTime() <= Date.now()
+  ? r.parts.filter((x) => !x.paymongoRefundID && x.status !== "succeeded").reduce((s, x) => s + (Number(x.amount) || 0), 0)
+  : 0);
 const handbackDue = (r) => (r && r.status === "Approved" && r.manualRefund && !r.manualRefund.issued ? Number(r.manualRefund.amount) || 0 : 0);
 // A Failed request: PayMongo refused part of it. That part is still owed to the customer, and staff pay it back themselves.
 const failedDue = (r) => (r && r.status === "Failed" && Array.isArray(r.parts)
@@ -383,7 +386,8 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
   const { tier, kept, hours } = disc ? {} : policyOf(r);
   const w = (disc ? r.refund.state !== "refunded" : r.status === "Approved") ? fmtWaiting(r) : null;
   const due = disc ? 0 : handbackDue(r);
-  const failedOwed = disc ? 0 : failedDue(r);
+  const stuckOwed = disc ? 0 : scheduledStuckDue(r);   // scheduled send failed: hand-back is offered next to "Retry now"
+  const failedOwed = disc ? 0 : (failedDue(r) || stuckOwed);
   const blocked = !disc && discountBlocksApproval(r);
   // Failed discount / deposit refunds get the same hand-back form and button as a failed refund request.
   const discHandback = disc && viaDepositRoutes(r) && r.refund.state === "failed" && canDepositReturn;
@@ -508,11 +512,10 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               {isScheduled(r) && (
                 <Block title="Scheduled send">
                   <Line label="Sends after">{stampText(toDate(r.sendAfter))}</Line>
-                  <Line label="Attempts">{Number(r.refundAttempts) || 0} of {SCHEDULE_MAX_ATTEMPTS}</Line>
                   {scheduleLastError(r) && <Line label="Last error"><span className="text-red-600">{scheduleLastError(r)}</span></Line>}
                   <p className="text-[11px] text-gray-500 mt-1">
-                    {scheduleExhausted(r)
-                      ? "Automatic attempts are used up. Fix the cause (for example the PayMongo balance), then press Retry now, or hand the money back in store."
+                    {scheduleLastError(r)
+                      ? "The automatic send failed and will not be retried by itself. Fix the cause (for example the PayMongo balance), then press Retry now, or hand the money back in store."
                       : "PayMongo can't partially refund a payment on the day it was made. It is sent automatically by the nightly job; the customer has already been told the date."}
                   </p>
                 </Block>
@@ -542,6 +545,8 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             <p className="text-[11px] text-gray-500 mb-2">
               {disc
                 ? "PayMongo could not complete this refund, so the customer has not received it. Retry it, or hand the money back in store and record it here."
+                : stuckOwed > 0
+                ? "The scheduled refund could not be sent, so the customer has not received it. Press Retry now, or give it to them yourself and record it here: it will then not be sent again."
                 : failedOwed > 0
                 ? "PayMongo could not refund this, so the customer has not received it. Give it to them yourself, then record it here. A retry would not help."
                 : "Give this to the customer, then record it here."} The reference number is optional.
@@ -580,7 +585,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             {!disc && isScheduled(r) && (
               <>
                 <span className="text-xs text-violet-700 italic">Scheduled for {stampText(toDate(r.sendAfter))}</span>
-                {(scheduleExhausted(r) || scheduleLastError(r)) && new Date(toDate(r.sendAfter)).getTime() <= Date.now() && (
+                {scheduleLastError(r) && new Date(toDate(r.sendAfter)).getTime() <= Date.now() && (
                   <button onClick={onRetryScheduled} disabled={busy}
                     className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50">
                     {busy ? "…" : "Retry now"}
@@ -777,9 +782,10 @@ export default function RefundRequests() {
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
-  // A request with a deposit forfeit asks for confirmation first; anything else approves straight away.
+  // A request with a deposit forfeit, or one that will be SCHEDULED for the next day (same-day payment), asks for
+  // confirmation first; anything else approves straight away.
   const startApprove = (r) => {
-    if (r.planPreview && r.planPreview.forfeit > 0) {
+    if (r.planPreview && (r.planPreview.forfeit > 0 || r.planPreview.scheduled)) {
       setApproveTarget(r); setWaiveForfeit(false); setWaiveReason("");
     } else {
       approve(r.refundRequestID);
@@ -1015,7 +1021,7 @@ export default function RefundRequests() {
             r={v} fmt={fmt} navigate={navigate} onClose={() => setViewId(null)}
             onApprove={() => startApprove(v)}
             onReject={() => { setRejectTarget(v); setRejectReason(""); }}
-            onHandback={() => (viaDepositRoutes(v) ? handBackDeposit(v) : v.status === "Failed" ? markFailedHandedBack(v) : markHandedBack(v))}
+            onHandback={() => (viaDepositRoutes(v) ? handBackDeposit(v) : v.status === "Failed" || scheduledStuckDue(v) > 0 ? markFailedHandedBack(v) : markHandedBack(v))}
             handbackMethod={handbackMethod[v.refundRequestID]}
             setHandbackMethod={(m) => setHandbackMethod((x) => ({ ...x, [v.refundRequestID]: m }))}
             handbackRef={handbackRef[v.refundRequestID]}
@@ -1030,6 +1036,8 @@ export default function RefundRequests() {
       {/* Approve confirmation: shows the 48-hour policy outcome + the staff override */}
       {approveTarget && approveTarget.planPreview && (() => {
         const pv = approveTarget.planPreview;
+        const hasForfeit = Number(pv.forfeit) > 0;
+        const willSchedule = !!(pv.scheduled && pv.sendAfter);
         const when = pv.tier === "no_show" ? "after the pickup time" : pv.hoursBeforePickup !== null && pv.hoursBeforePickup !== undefined ? `${Math.max(0, Math.round(pv.hoursBeforePickup * 10) / 10)} hours before pickup` : "under 48 hours before pickup";
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -1040,10 +1048,24 @@ export default function RefundRequests() {
                 <button onClick={() => setApproveTarget(null)} className="text-gray-400 hover:text-gray-600"><IconX /></button>
               </div>
               <p className="text-sm text-gray-500">{approveTarget.customerName}</p>
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm space-y-1">
-                <p className="text-amber-800 font-semibold">Requested {when}</p>
+              {willSchedule && !waiveForfeit && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm space-y-1">
+                  <p className="text-violet-800 font-semibold">This payment was made today</p>
+                  <p className="text-xs text-violet-800">
+                    PayMongo can't send a partial refund on the same day as the payment. If you confirm, the booking is cancelled now
+                    and the refund is scheduled: it will be sent automatically after midnight, on {stampText(toDate(pv.sendAfter))}.
+                  </p>
+                </div>
+              )}
+              {willSchedule && waiveForfeit && (
+                <p className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
+                  With the forfeit waived the full amount is refunded, which PayMongo can accept on the same day, so it may be sent right away instead of being scheduled.
+                </p>
+              )}
+              <div className={`rounded-xl border p-3 text-sm space-y-1 ${hasForfeit ? "border-amber-200 bg-amber-50" : "border-gray-200 bg-gray-50"}`}>
+                {hasForfeit && <p className="text-amber-800 font-semibold">Requested {when}</p>}
                 <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(pv.grossPaid)}</span></div>
-                <div className="flex justify-between text-amber-700"><span>Deposit kept (48-hour policy)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.forfeit)}</span></div>
+                {hasForfeit && <div className="flex justify-between text-amber-700"><span>Deposit kept (48-hour policy)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.forfeit)}</span></div>}
                 {Number(pv.gatewayFeeKept) > 0 && <div className="flex justify-between text-amber-700"><span>Gateway fee kept (deposit returned)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.gatewayFeeKept)}</span></div>}
                 <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(waiveForfeit ? pv.grossPaid : pv.total)}</span></div>
               </div>
@@ -1052,12 +1074,12 @@ export default function RefundRequests() {
                   {QRPH_NOTE} The customer is notified that our staff will hand it back in person.
                 </p>
               )}
-              <p className="text-[11px] text-gray-400">The timing is judged by when the customer sent the request, not by when you approve it.</p>
-              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+              {hasForfeit && <p className="text-[11px] text-gray-400">The timing is judged by when the customer sent the request, not by when you approve it.</p>}
+              {hasForfeit && <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
                 <input type="checkbox" className="mt-0.5" checked={waiveForfeit} onChange={(e) => setWaiveForfeit(e.target.checked)} />
                 <span>Waive the deposit forfeit and refund the full {fmt(pv.grossPaid)} <span className="text-gray-400">(goodwill, duplicate charge, etc.)</span></span>
-              </label>
-              {waiveForfeit && (
+              </label>}
+              {hasForfeit && waiveForfeit && (
                 <textarea
                   value={waiveReason}
                   onChange={(e) => setWaiveReason(e.target.value)}
@@ -1073,7 +1095,7 @@ export default function RefundRequests() {
                   disabled={busyId === approveTarget.refundRequestID || (waiveForfeit && !waiveReason.trim())}
                   className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
                 >
-                  {busyId === approveTarget.refundRequestID ? "Approving..." : "Confirm Approve"}
+                  {busyId === approveTarget.refundRequestID ? "Approving..." : (willSchedule && !waiveForfeit ? "Confirm & Schedule" : "Confirm Approve")}
                 </button>
               </div>
             </div>

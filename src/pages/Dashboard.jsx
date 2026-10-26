@@ -476,6 +476,16 @@ export default function Dashboard() {
     } catch { /* an alert list that can't load just stays as it was */ }
   };
   usePolling(loadPayoutAlerts, 2 * 60 * 1000);
+  // Scheduled (same-day payment) refunds: when each was scheduled, when it sends, and whether the automatic send failed.
+  const [scheduledRefunds, setScheduledRefunds] = useState([]);
+  const loadScheduledRefunds = async () => {
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/dashboard/scheduled-refunds`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      const json = await res.json();
+      if (res.ok && json.success) setScheduledRefunds(json.data || []);
+    } catch { /* keeps the last list */ }
+  };
+  usePolling(loadScheduledRefunds, 2 * 60 * 1000);
   useEffect(() => {
     const userMapRef = { current: {} };
     getDocs(collection(db, "user")).then((snap) => {
@@ -585,8 +595,41 @@ export default function Dashboard() {
   const APPROVED_REFUND_STALE_DAYS = 2;
   const PAYOUT_PROCESSING_STALE_HOURS = 24;
   const peso0 = (n) => `₱${Number(n || 0).toLocaleString()}`;
+  const fmtWhen = (v) => { const d = toJsDate(v); return d ? d.toLocaleString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"; };
+  const fmtDayOnly = (v) => { const d = toJsDate(v); return d ? d.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric" }) : "—"; };
+  const SCHEDULED_NOT_SENT_STALE_HOURS = 12;   // the nightly job runs at 00:10 Manila; still unsent long after that = something is wrong
+  const scheduledIds = new Set(scheduledRefunds.map((x) => x.refundRequestID));
   const followups = [
-    ...refundFollowups.map((r) => {
+    // Same-day-payment refunds: scheduled / due / needs retry / failed (the backend works out which).
+    ...scheduledRefunds.map((x) => {
+      const link = `/refund-requests?search=${encodeURIComponent(x.bookingID || "")}`;
+      const sendAfter = toJsDate(x.sendAfter);
+      const hoursLate = sendAfter ? (Date.now() - sendAfter.getTime()) / (60 * 60 * 1000) : 0;
+      const when = `scheduled ${fmtWhen(x.scheduledAt)}`;
+      if (x.state === "failed") return {
+        _type: "refund_followup", id: `sr-${x.refundRequestID}`, _due: toJsDate(x.scheduledAt) || new Date(), urgent: true,
+        title: "Scheduled Refund Failed", line1: `Booking ${x.bookingID || "—"}`,
+        line2: `${peso0(x.amount)} — customer has NOT received it${x.errorNote ? ` (${x.errorNote})` : ""}. Hand it back manually.`, link,
+      };
+      if (x.state === "retry") return {
+        _type: "refund_followup", id: `sr-${x.refundRequestID}`, _due: toJsDate(x.scheduledAt) || new Date(), urgent: true,
+        title: "Scheduled Refund Needs Retry", line1: `Booking ${x.bookingID || "—"}`,
+        line2: `${peso0(x.amount)} — ${when}. Automatic send failed${x.errorNote ? `: ${x.errorNote}` : ""}. Press Retry now.`, link,
+      };
+      if (x.state === "due") return {
+        _type: "refund_followup", id: `sr-${x.refundRequestID}`, _due: toJsDate(x.scheduledAt) || new Date(),
+        urgent: hoursLate > SCHEDULED_NOT_SENT_STALE_HOURS,
+        title: hoursLate > SCHEDULED_NOT_SENT_STALE_HOURS ? "Scheduled Refund Not Sent" : "Scheduled Refund Sending",
+        line1: `Booking ${x.bookingID || "—"}`,
+        line2: `${peso0(x.amount)} — ${when}, due ${fmtDayOnly(x.sendAfter)}${hoursLate > SCHEDULED_NOT_SENT_STALE_HOURS ? " — still not sent, check Refund Requests" : " — waiting for the nightly send"}`, link,
+      };
+      return {
+        _type: "refund_followup", id: `sr-${x.refundRequestID}`, _due: toJsDate(x.scheduledAt) || new Date(), urgent: false,
+        title: "Refund Scheduled", line1: `Booking ${x.bookingID || "—"}`,
+        line2: `${peso0(x.amount)} — ${when}, sends ${fmtDayOnly(x.sendAfter)}`, link,
+      };
+    }),
+    ...refundFollowups.filter((r) => !scheduledIds.has(r.id)).map((r) => {
       const ageDays = (Date.now() - r._due.getTime()) / (24 * 60 * 60 * 1000);
       const failed = r.status === "Failed";
       return {
@@ -709,7 +752,7 @@ export default function Dashboard() {
             <StatCard title={lateRefundReqs > 0 ? `Refund Requests (${lateRefundReqs} overdue)` : "Refund Requests"} value={refundReqs.length}
               icon={<IconBell className="w-6 h-6" />} color="bg-blue-50 text-blue-600" loading={false}
               onClick={() => navigate("/refund-requests")} />
-            <StatCard title="Refunds In Progress" value={followupWarnings.length}
+            <StatCard title={scheduledRefunds.filter((x) => x.state === "scheduled").length > 0 ? `Refunds In Progress (${scheduledRefunds.filter((x) => x.state === "scheduled").length} scheduled)` : "Refunds In Progress"} value={followupWarnings.length}
               icon={<IconClock className="w-6 h-6" />} color="bg-amber-50 text-amber-600" loading={false}
               onClick={() => navigate("/refund-requests")} />
             <StatCard title="Profile / ID Requests" value={profileReqs}
