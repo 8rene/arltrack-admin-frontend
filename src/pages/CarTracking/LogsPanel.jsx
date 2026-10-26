@@ -1,178 +1,140 @@
-import { useState } from "react";
-import { formatCodingRule } from "../../utils/geofenceAlerts";
-import { readCodingWarnings, warningsByCity } from "../../utils/codingWarnings";
+import { useMemo } from "react";
 
-function fmtTime(at) {
-  if (!at) return "—";
-  const d = new Date(at);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+// Accepts an ISO string, a Date, a Firestore Timestamp, or a serialized { _seconds } timestamp.
+function toMs(val) {
+  if (!val) return null;
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else d = new Date(val);
+    const t = d.getTime();
+    return isNaN(t) ? null : t;
+  } catch { return null; }
 }
 
-const ENTRY_STYLES = {
-  "geofence-breach":     { icon: "🚨", label: "Left geofence",        color: "text-red-600 bg-red-50" },
-  "geofence-cleared":    { icon: "✅", label: "Back inside geofence", color: "text-teal-600 bg-teal-50" },
-  "coding-restricted":   { icon: "🚫", label: "Coding restriction",   color: "text-orange-600 bg-orange-50" },
-  "coding-cleared":      { icon: "🟢", label: "Coding restriction lifted", color: "text-gray-500 bg-gray-50" },
-  "trip-dropped-off":    { icon: "📍", label: "Marked dropped off",   color: "text-amber-700 bg-amber-50" },
-  "trip-completed":      { icon: "🏁", label: "Booking completed",    color: "text-green-700 bg-green-50" },
-  "trip-stolen":         { icon: "🚨", label: "Flagged stolen",       color: "text-red-700 bg-red-50" },
-};
+// "12:44:00 AM | 08/10"
+function fmtStamp(ms) {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  const date = d.toLocaleDateString("en-PH", { month: "2-digit", day: "2-digit" });
+  return `${time} | ${date}`;
+}
 
-const FILTERS = [
-  { id: "all",      label: "All" },
-  { id: "geofence", label: "Geofence" },
-  { id: "coding",   label: "Coding" },
-  { id: "trip",     label: "Trip" },
-];
+// "Monday 7:00 AM to 8:00 PM" -- the window only; which plate digits are banned is not shown here.
+function fmtRule(rule) {
+  if (!rule || typeof rule !== "object") return null;
+  const window = rule.start && rule.end ? `${rule.start} to ${rule.end}` : null;
+  return [rule.day, window].filter(Boolean).join(" ") || null;
+}
+
+// Flattens every log source on the session into one chronological list.
+function buildEntries(info) {
+  const out = [];
+  const add = (at, title, detail = null, notes = []) => {
+    const ms = toMs(at);
+    if (ms === null) return;
+    const text = [detail, ...notes].filter(Boolean).join(" · ");
+    out.push({ ms, title, text });
+  };
+  const notesOf = (a) => [a.delayed ? "delayed" : null, a.afterDropOff ? "after drop-off" : null];
+
+  (info.geofenceAlerts || []).forEach((a) => {
+    if (a.type === "breach") {
+      const near = a.nearestZone ? `Nearest zone: ${a.nearestZone}` : null;
+      const dist = typeof a.distanceMeters === "number" ? `${Math.round(a.distanceMeters)} m away` : null;
+      add(a.at, "Left Zone", [near, dist].filter(Boolean).join(" · "), notesOf(a));
+    } else {
+      add(a.at, "Back Inside Zone", a.zone ? `Zone: ${a.zone}` : null, notesOf(a));
+    }
+  });
+
+  (info.codingAlerts || []).forEach((a) => {
+    if (a.type === "restricted") {
+      // "Marilao Monday 7:00 AM to 8:00 PM" then "Plate NB***4"
+      const where = [a.city, fmtRule(a.rule) || a.reason].filter(Boolean).join(" ");
+      const detail = [where, a.plate ? `Plate ${a.plate}` : null].filter(Boolean).join("\n");
+      add(a.at, "Coding Restriction Started", detail, notesOf(a));
+    } else {
+      add(a.at, "Coding Restriction Ended", a.city, notesOf(a));
+    }
+  });
+
+  (info.tripEvents || []).forEach((ev) => add(ev.at, ev.title)); // several trips merged (Traceback)
+  add(info.droppedOffAt, "Dropped Off");
+  add(info.completedAt, "Booking Completed");
+  add(info.stolenAt, "Flagged Stolen");
+
+  return out.sort((a, b) => a.ms - b.ms);
+}
 
 /**
- * "Logs" floating panel — right side of the Live map. Reads straight off
- * the focused car's active session: geofenceAlerts (breach/cleared, written
- * by livePing.service.js on every transition) and codingAlerts (MMDA
- * number-coding restriction windows), merged and sorted newest-first.
- *
- * The booking-time coding warning is pinned at the top (it predates the trip and has no time of its
- * own, so it used to sink to the bottom). Alerts that reached the server late (offline flush) say so.
- * `holidayToday` (optional) shows a one-line note that coding is suspended today.
+ * "Logs" floating panel — shared by the Live tab and by Traceback / History review.
+ * sessionInfo: { hasActiveSession, geofenceAlerts, codingAlerts, codingWarnings,
+ *                droppedOffAt, completedAt, stolenAt, tripEvents: [{ at, title }], holidays } — every field optional.
  */
-export default function LogsPanel({ sessionInfo, loading, onClose, holidayToday = null }) {
-  const [filter, setFilter] = useState("all");
-  const hasActiveSession = !!sessionInfo?.hasActiveSession;
-  const geofenceEntries = (sessionInfo?.geofenceAlerts || []).map(a => ({
-    ...a,
-    kind: `geofence-${a.type}`,
-    detail: a.type === "breach"
-      ? `Nearest zone: ${a.nearestZone || "—"} (${a.distanceMeters ?? "?"} m away)`
-      : a.afterDropOff
-        ? "Closed at drop-off — geofence alerts stop once the car is dropped off"
-        : `Re-entered near ${a.zone || "—"}`,
-  }));
-  const codingEntries = (sessionInfo?.codingAlerts || []).map(a => ({
-    ...a,
-    kind: `coding-${a.type}`,
-    // Newer alerts carry the rule that fired (saved at the time, so it still
-    // reads right after the rules are edited); older ones only have a reason.
-    detail: a.type === "restricted"
-      ? [
-          formatCodingRule(a.rule) ? [formatCodingRule(a.rule), a.city].filter(Boolean).join(" · ") : (a.reason || "Plate under coding restriction"),
-          a.plate ? `plate ${a.plate}` : null, // masked at the time it was recorded, e.g. AB****3
-        ].filter(Boolean).join(" · ")
-      : "Restriction window ended",
-  }));
-  // Booking-time Number Coding warnings saved by the customer app (codingWarnings): the
-  // restrictions found for the plate before the booking. Older trips have none.
-  const warnings = warningsByCity(readCodingWarnings(sessionInfo?.codingWarnings));
-  // Trip milestones: the dropped-off time is on the live session; completed is only in saved history.
-  const tripEntries = [
-    sessionInfo?.droppedOffAt && { kind: "trip-dropped-off", at: sessionInfo.droppedOffAt, detail: "Vehicle physically dropped off." },
-    sessionInfo?.completedAt  && { kind: "trip-completed",   at: sessionInfo.completedAt,  detail: "Booking marked completed." },
-    sessionInfo?.stolenAt     && { kind: "trip-stolen",      at: sessionInfo.stolenAt,     detail: "Car flagged as stolen — tracking continues." },
-  ].filter(Boolean);
-  const holidays = Array.isArray(sessionInfo?.holidays) ? sessionInfo.holidays : [];
+export default function LogsPanel({ sessionInfo, loading = false, holidayToday = null, onClose }) {
+  const info = useMemo(() => sessionInfo || {}, [sessionInfo]);
+  const entries = useMemo(() => buildEntries(info), [info]);
+  const warnings = Array.isArray(info.codingWarnings) ? info.codingWarnings : [];
+  const holidays = Array.isArray(info.holidays) ? info.holidays : [];
+  const hasAnything = entries.length > 0 || warnings.length > 0 || holidays.length > 0;
 
-  const all = [...geofenceEntries, ...codingEntries, ...tripEntries];
-  const entries = all
-    .filter(e => filter === "all" || e.kind.startsWith(`${filter}-`))
-    .sort((a, b) => new Date(b.at) - new Date(a.at));
-
-  const showWarnings = warnings.length > 0 && (filter === "all" || filter === "coding");
+  const row = "px-1 py-4";
 
   return (
     <div className="absolute top-4 right-4 bottom-4 w-80 z-[1001] bg-white rounded-2xl border border-gray-100 shadow-2xl flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
-        <div>
-          <p className="font-bold text-arl-dark text-sm">Trip Logs</p>
-          <p className="text-[11px] text-gray-400">Geofence, coding alerts & booking warnings</p>
-        </div>
-        <button onClick={onClose} className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:bg-gray-50">✕</button>
+      <div className="flex items-center justify-between px-5 py-4 shrink-0">
+        <p className="font-bold text-gray-900 text-base">Logs</p>
+        <button onClick={onClose} className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:bg-gray-50">✕</button>
       </div>
 
-      {hasActiveSession && !loading && (
-        <div className="flex gap-1 px-3 pt-2 shrink-0">
-          {FILTERS.map(f => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
-                filter === f.id ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide p-3 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide px-5 pb-4">
         {loading ? (
-          <p className="text-xs text-gray-400 italic px-1">Loading…</p>
-        ) : !hasActiveSession ? (
-          <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-700">
-            <p className="font-semibold mb-0.5">No active session for this car</p>
-            <p className="opacity-80">
-              There's no linked GPS session right now, so there's nothing to log —
-              this can happen for bookings made before a session was created at
-              booking time, or if pickup hasn't actually started tracking yet.
-            </p>
-          </div>
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : !info.hasActiveSession && !hasAnything && !holidayToday ? (
+          <p className="text-sm text-gray-400">No logs to show.</p>
         ) : (
-          <>
-            {holidayToday && (filter === "all" || filter === "coding") && (
-              <div className="rounded-xl p-3 bg-blue-50 text-blue-700">
-                <p className="text-xs font-semibold">🎌 Today is a holiday{holidayToday.holidayName ? ` — ${holidayToday.holidayName}` : ""}</p>
-                <p className="text-[11px] mt-1 opacity-80">Coding is suspended today, so no coding restriction is raised.</p>
+          <div className="divide-y divide-gray-100 border-t border-gray-100">
+            {holidayToday && (
+              <div className={row}>
+                <p className="text-sm font-semibold text-gray-900">{holidayToday.holidayName || "Holiday"}</p>
+                <p className="text-sm text-gray-500 mt-1">Holiday today · coding suspended</p>
               </div>
             )}
 
-            {showWarnings && (
-              <div className="rounded-xl p-3 text-amber-700 bg-amber-50">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">⚠️</span>
-                  <span className="text-xs font-semibold">Coding warning at booking</span>
-                </div>
-                {warnings.map((c, i) => (
-                  <p key={i} className="text-[11px] mt-1 opacity-80">
-                    {[c.city, c.plateLastDigit != null ? `plate ending ${c.plateLastDigit}` : "", c.text].filter(Boolean).join(" · ")}
-                  </p>
-                ))}
-              </div>
+            {!hasAnything && !holidayToday && (
+              <p className={`${row} text-sm text-gray-400`}>No alerts or events recorded.</p>
             )}
 
-            {entries.length === 0 ? (
-              !showWarnings && <p className="text-xs text-gray-400 italic px-1">No alerts logged for this trip yet.</p>
-            ) : (
-              entries.map((entry, i) => {
-                const style = ENTRY_STYLES[entry.kind] || { icon: "•", label: entry.kind, color: "text-gray-500 bg-gray-50" };
-                return (
-                  <div key={i} className={`rounded-xl p-3 ${style.color}`}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">{style.icon}</span>
-                      <span className="text-xs font-semibold">{style.label}</span>
-                    </div>
-                    <p className="text-[11px] mt-1 opacity-80">{entry.detail}</p>
-                    <p className="text-[10px] mt-1 opacity-60 font-mono">{fmtTime(entry.at)}</p>
-                    {entry.afterDropOff && entry.kind === "coding-restricted" && (
-                      <p className="text-[10px] mt-0.5 opacity-70">🚗 After drop-off — the car was no longer with the customer</p>
-                    )}
-                    {entry.delayed && (
-                      <p className="text-[10px] mt-0.5 opacity-70">⏱ Received late — reached the server {fmtTime(entry.receivedAt)}</p>
-                    )}
-                  </div>
-                );
-              })
-            )}
-
-            {holidays.length > 0 && (filter === "all" || filter === "coding") && (
-              <div className="rounded-xl p-3 bg-blue-50 text-blue-700">
-                <p className="text-xs font-semibold">🎌 Holidays during this trip</p>
-                <p className="text-[11px] mt-1 opacity-80">Coding is suspended on holidays.</p>
-                {holidays.map((h, i) => (
-                  <p key={i} className="text-[11px] mt-1 font-mono opacity-70">{h.date} · {h.name || "Holiday"}</p>
-                ))}
+            {entries.map((e, i) => (
+              <div key={`${e.ms}-${i}`} className={row}>
+                <p className="text-sm font-semibold text-gray-900">{fmtStamp(e.ms)}</p>
+                <p className="text-sm text-gray-600 mt-1">{e.title}</p>
+                {e.text && <p className="text-xs text-gray-400 mt-1 leading-relaxed whitespace-pre-line">{e.text}</p>}
               </div>
-            )}
-          </>
+            ))}
+
+            {warnings.map((w, i) => (
+              <div key={w.ruleID || `w${i}`} className={row}>
+                <p className="text-sm text-gray-600">Coding warning at booking</p>
+                <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                  {[
+                    w.city,
+                    [w.dayOfWeek, w.startTime && w.endTime ? `${w.startTime}–${w.endTime}` : null].filter(Boolean).join(" "),
+                    w.plateLastDigit !== undefined && w.plateLastDigit !== null ? `plate ending ${w.plateLastDigit}` : null,
+                  ].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+            ))}
+
+            {holidays.map((h, i) => (
+              <div key={h.holidayDate || `h${i}`} className={row}>
+                <p className="text-sm text-gray-600">{h.holidayName || "Holiday"}</p>
+                <p className="text-xs text-gray-400 mt-1">{h.holidayDate || "—"} · coding suspended</p>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

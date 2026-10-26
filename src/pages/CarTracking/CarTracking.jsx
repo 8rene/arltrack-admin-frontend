@@ -1437,11 +1437,6 @@ export default function CarTracking() {
                           <Icons.Clock className="w-3 h-3" />
                           {timeAgo(loc.updatedAt)} · {typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h
                         </p>
-                        {silent && (
-                          <p className={`text-[11px] rounded-lg px-2 py-0.5 mt-1 font-medium inline-flex items-center gap-1 ${veryStale ? "text-red-700 bg-red-50" : "text-amber-700 bg-amber-50"}`}>
-                            📡 No signal for {sinceMin >= 60 ? `${Math.floor(sinceMin / 60)}h ${sinceMin % 60}m` : `${sinceMin} min`} — on an active trip
-                          </p>
-                        )}
                         {loc.offline && (
                           <p className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2 py-0.5 mt-1 font-medium inline-flex items-center gap-1">
                             📦 Offline flush — buffered ping, not live

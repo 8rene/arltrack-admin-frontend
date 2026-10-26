@@ -75,7 +75,7 @@ export default function ReviewPanel({ cars, token }) {
       // Round-trip shape from this app's own Download button.
       if (parsed && !Array.isArray(parsed) && parsed.records && parsed.cars) {
         if (!parsed.cars.length) throw new Error("This file has no cars in it.");
-        setReviewData({ label: parsed.label || baseName, cars: parsed.cars, records: parsed.records, zonesAlerts: parsed.zonesAlerts, sessionMeta: parsed.sessionMeta });
+        setReviewData({ label: parsed.label || baseName, cars: parsed.cars, records: parsed.records, zonesAlerts: parsed.zonesAlerts, sessionMeta: parsed.sessionMeta, sessionsByCar: parsed.sessionsByCar });
         return;
       }
 

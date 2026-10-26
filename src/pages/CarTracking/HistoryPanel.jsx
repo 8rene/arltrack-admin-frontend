@@ -154,6 +154,9 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
             completedAt:    parsed.completedAt  || parsed.session?.completedAt  || null,
             stolenAt:       parsed.session?.stolenAt || null,
             holidays:       parsed.holidays     || [],
+            // Trip-level plate (masked) if the file has one; Trip Summary otherwise falls back to the
+            // plate stamped on the coding alerts.
+            plate:          parsed.session?.plate || parsed.plate || null,
           },
         },
         // See mergeSessionMeta: the file is the record for a finished trip; the list only fills gaps.

@@ -7,8 +7,25 @@ import LogsPanel from "./LogsPanel";
 import TracebackBookingInfoPanel from "./TracebackBookingInfoPanel";
 import TripSummaryPanel from "./TripSummaryPanel";
 import { colorForCar } from "../../utils/carColors";
+import { fetchCityBoundary } from "../../utils/cityBoundary";
+
+// The plate shown in Trip Summary. A saved trip file has no trip-level plate (yet); what it does have is the
+// masked plate ("AB****3") stamped on every coding-restriction alert, so use the latest of those.
+function plateFromZones(za) {
+  if (za?.plate) return za.plate;
+  const hit = (za?.codingAlerts || [])
+    .filter(a => a.type === "restricted" && a.plate)
+    .sort((a, b) => new Date(a.at) - new Date(b.at))
+    .pop();
+  return hit?.plate || null;
+}
+
+const escHtml = (s) => String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch]));
 
 const API = process.env.REACT_APP_API_URL;
+
+// One shared empty list, so a missing `cars` prop doesn't create a new [] (and re-fire effects) on every render.
+const NO_CARS = [];
 
 // Palette assigned to cars in order — stable per render since `cars` order is stable.
 // Shared with the Live tab (see ../../utils/carColors.js) so the same car
@@ -159,7 +176,44 @@ function buildTripEvents(session, za) {
   ].filter((e) => e.ms !== null);
 }
 
-function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focusedCar, globalStartMs, globalEndMs, eventsByCar }) {
+// One trip's zones / alerts / warnings / session meta for a car. A car can have several trips touching the
+// same date, so each car holds a LIST of these, and the one that matches the scrubbed time is the one shown.
+function makeEntry(session, d) {
+  return {
+    key: session?.bookingSessionID || "none",
+    session: session || null,
+    geofenceZones:  d?.geofenceZones  || [],
+    geofenceAlerts: d?.geofenceAlerts || [],
+    codingAlerts:   d?.codingAlerts   || [],
+    codingWarnings: d?.codingWarnings || [],
+    // Same review details History shows, now also for a trip still in progress.
+    droppedOffAt: session?.droppedOffAt || d?.droppedOffAt || null,
+    completedAt:  session?.completedAt  || d?.completedAt  || null,
+    stolenAt:     session?.stolenAt     || d?.stolenAt     || null,
+    holidays:     d?.holidays || [],
+    plate:        d?.plate || null,
+    available: true,
+  };
+}
+
+// The trip that owns instant `ms`: the one whose start..end contains it; between two trips, the one that just
+// finished; before the first, the first.
+function pickEntry(list, ms) {
+  if (!list || !list.length) return null;
+  if (list.length === 1) return list[0];
+  const startOf = (e) => { const t = e.session?.startedAt ? new Date(e.session.startedAt).getTime() : NaN; return Number.isNaN(t) ? null : t; };
+  const endOf   = (e) => { const t = e.session?.endedAt ? new Date(e.session.endedAt).getTime() : NaN; return Number.isNaN(t) ? Infinity : t; };
+  let hit = null, lastBefore = null;
+  for (const e of list) {
+    const st = startOf(e);
+    if (st === null) continue;
+    if (st <= ms) lastBefore = e;
+    if (st <= ms && ms <= endOf(e)) hit = e;
+  }
+  return hit || lastBefore || list[0];
+}
+
+function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focusedCar, globalStartMs, globalEndMs, eventsByCar, mode = "merged", onModeChange }) {
   const allSegmentSets = cars
     .filter(car => visible[car.id] && (traceData[car.id] || []).length)
     .map(car => buildSegments(traceData[car.id]));
@@ -187,9 +241,79 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
     window.addEventListener("pointerup", onUp);
   }
 
+  // Merged = ONE row for every visible car (handy with many cars); Each car = one row per car. A selected car
+  // always shows just its own row, so the switch only appears while nothing is selected.
+  const shown = cars.filter(car => visible[car.id] && (traceData[car.id] || []).length);
+  const canToggle = !focusedCar && shown.length > 1;
+  const merged = canToggle && mode === "merged";
+  const mergedIvs = [];
+  if (merged) {
+    allSegmentSets.flat().map(seg => [gpsMs(seg[0]), gpsMs(seg[seg.length - 1])]).sort((a, b) => a[0] - b[0])
+      .forEach(([st, en]) => {
+        const last = mergedIvs[mergedIvs.length - 1];
+        if (last && st <= last[1]) last[1] = Math.max(last[1], en); else mergedIvs.push([st, en]);
+      });
+  }
+  const mergedEvs = merged
+    ? shown.flatMap(car => (eventsByCar?.[car.id] || []).map(ev => ({ ...ev, carName: car.name, k: `${car.id}-${ev.key}` })))
+    : [];
+
   return (
     <div className="px-3 py-2 border-t border-gray-100">
-      {cars.map((car, idx) => {
+      {canToggle && (
+        <div className="flex justify-end mb-1">
+          <div className="inline-flex rounded-lg bg-gray-50 p-0.5 text-[10px] font-semibold">
+            {[["merged", "Merged"], ["each", "Each car"]].map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => onModeChange?.(v)}
+                className={`px-2 py-0.5 rounded-md transition-all ${mode === v ? "bg-white text-teal-700 shadow-sm" : "text-gray-400 hover:text-gray-600"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {merged && (
+        <div className={`flex items-center gap-2 mb-1 ${mergedEvs.length ? "pt-3" : ""}`}>
+          <span className="text-[10px] w-16 shrink-0 truncate text-gray-500 font-semibold">All cars ({shown.length})</span>
+          <div
+            onPointerDown={e => handlePointerDown(e, "__all__", e.currentTarget)}
+            className="flex-1 h-2 relative bg-gray-100 rounded cursor-pointer"
+            style={{ touchAction: "none" }}
+          >
+            {mergedIvs.map(([st, en], i) => {
+              const leftPct = scale.toPct(st), rightPct = scale.toPct(en);
+              const widthPct = Math.max(rightPct - leftPct, 1.2);
+              const span = Math.max(en - st, 1);
+              const inRange = currentTimeMs >= st && currentTimeMs <= en;
+              const pastEnd = currentTimeMs > en;
+              const fillPct = inRange ? ((currentTimeMs - st) / span) * 100 : pastEnd ? 100 : 0;
+              return (
+                <div key={i} className="absolute top-0 h-full rounded pointer-events-none" style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: "#0d948844" }}>
+                  {(inRange || pastEnd) && <div className="absolute top-0 left-0 h-full rounded" style={{ width: `${fillPct}%`, background: "#0d9488" }} />}
+                </div>
+              );
+            })}
+            {mergedEvs.map(ev => (
+              <button
+                key={ev.k}
+                type="button"
+                title={`${ev.carName} · ${ev.label} · ${new Date(ev.ms).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}
+                onPointerDown={(e) => { e.stopPropagation(); onScrub("__all__", ev.ms); }}
+                className="absolute -top-3 -translate-x-1/2 text-[11px] leading-none z-10 hover:scale-125 transition-transform"
+                style={{ left: `${scale.toPct(ev.ms)}%` }}
+              >
+                {ev.icon}
+              </button>
+            ))}
+          </div>
+          <span className="text-[10px] w-14 shrink-0 text-right text-gray-400 font-mono">{fmtTime({ at: new Date(globalStartMs).toISOString() })}</span>
+        </div>
+      )}
+      {!merged && cars.map((car, idx) => {
         const records = traceData[car.id] || [];
         if (!records.length || !visible[car.id]) return null;
         const color = colorForCar(idx);
@@ -259,9 +383,9 @@ const DAY_BUTTONS = [
  *    from a pre-loaded { cars, records } object — used by HistoryPanel when
  *    the user clicks "Review" on an archived trip.
  */
-export default function TracebackPanel({ cars, token, reviewData = null, onExitReview = null, refreshTick = 0 }) {
+export default function TracebackPanel({ cars = NO_CARS, token, reviewData = null, onExitReview = null, refreshTick = 0 }) {
   const isReview = !!reviewData;
-  const effectiveCars = isReview ? reviewData.cars : cars;
+  const effectiveCars = (isReview ? reviewData.cars : cars) || NO_CARS;
 
   const [daysAgo, setDaysAgo] = useState(0);
   const [traceData, setTraceData] = useState({});
@@ -270,22 +394,23 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   // fills this from the traceback endpoint; review mode reads it straight off
   // reviewData.zonesAlerts (set by History/Review from the archive JSON) and
   // marks a car unavailable when that data isn't present.
-  const [zonesAlerts, setZonesAlerts] = useState({});
+  const [entriesByCar, setEntriesByCar] = useState({}); // { [carId]: [entry, ...] } oldest trip first
   // { [carId]: { bookingSessionID, bookingID, status, startedAt, endedAt } | null } —
   // whichever session owns the currently-viewed date, per car. Live mode gets
   // this from the traceback endpoint (which already looks the session up for
   // geofence data); review mode reads it off reviewData.sessionMeta (set by
   // HistoryPanel from the archived trip's own record — raw uploaded files
   // won't have this, and that's fine, the panels handle it being absent).
-  const [sessionByCar, setSessionByCar] = useState({});
   const [showBookingInfo, setShowBookingInfo] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(null);
   const [visible, setVisible] = useState({});
   const [scrubIdx, setScrubIdx] = useState(0);
+  const [dragPct, setDragPct] = useState(null); // slider position (0-100) while being dragged; null = follow playback
   const [playing, setPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1);
+  const [barMode, setBarMode] = useState("merged"); // timeline rows: "merged" (one bar) | "each" (one per car)
   const [focusedCar, setFocusedCar] = useState(null);
   const [flyPos, setFlyPos] = useState(null);
   const playRef = useRef(null);
@@ -294,6 +419,9 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   const leafletMap = useRef(null);
   const layersRef = useRef({}); // { [carId]: { start, current, ghost, active } }
   const zoneLayersRef = useRef([]); // geofence-zone Circle/Marker layers currently drawn
+  const codingLayersRef = useRef([]); // coding-restriction area (city outline + label) currently drawn
+  const [cityBoundaries, setCityBoundaries] = useState({}); // { [cityLower]: { geometry, lat, lng } | null (lookup failed) }
+  const boundaryInFlightRef = useRef(new Set());
 
   const date = getDateDaysAgo(daysAgo);
 
@@ -336,46 +464,29 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
         }
         const json = await r.json();
         if (!r.ok) throw new Error(json.message || `Failed to load traceback for ${car.name}.`);
-        return {
-          id: car.id,
-          records: json?.data?.records || [],
-          geofenceZones:  json?.data?.geofenceZones  || [],
-          geofenceAlerts: json?.data?.geofenceAlerts || [],
-          codingAlerts:   json?.data?.codingAlerts   || [],
-          codingWarnings: json?.data?.codingWarnings || [],
-          holidays:       json?.data?.holidays || [],
-          session:        json?.data?.session || null,
-        };
+        const d = json?.data || {};
+        // New backend: every trip touching this date. Older backend: just the one at the top level.
+        const entries = Array.isArray(d.sessions) && d.sessions.length
+          ? d.sessions.map(x => makeEntry(x.session, x))
+          : [makeEntry(d.session, d)];
+        return { id: car.id, records: d.records || [], entries };
       })
     );
-    const map = {}, vis = {}, zones = {}, sessions = {};
+    const map = {}, vis = {}, zones = {};
     let firstError = null;
     results.forEach(r => {
       if (r.status === "fulfilled") {
         const sorted = [...r.value.records].sort((a, b) => gpsMs(a) - gpsMs(b));
         map[r.value.id] = sorted;
         vis[r.value.id] = sorted.length > 0;
-        zones[r.value.id] = {
-          geofenceZones:  r.value.geofenceZones,
-          geofenceAlerts: r.value.geofenceAlerts,
-          codingAlerts:   r.value.codingAlerts,
-          codingWarnings: r.value.codingWarnings,
-          // Same review details History shows, now also for a trip still in progress.
-          droppedOffAt:   r.value.session?.droppedOffAt || null,
-          completedAt:    r.value.session?.completedAt  || null,
-          stolenAt:       r.value.session?.stolenAt     || null,
-          holidays:       r.value.holidays,
-          available: true,
-        };
-        sessions[r.value.id] = r.value.session;
+        zones[r.value.id] = r.value.entries;
       } else if (!firstError) {
         firstError = r.reason?.message || "Failed to load traceback.";
       }
     });
     setTraceData(map);
     setVisible(vis);
-    setZonesAlerts(zones);
-    setSessionByCar(sessions);
+    setEntriesByCar(zones);
     if (firstError) setFetchError(firstError);
     setLoading(false);
   }, [cars, token]);
@@ -390,39 +501,50 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   useEffect(() => {
     const isManualRefresh = refreshTick !== prevTickRef.current;
     prevTickRef.current = refreshTick;
-    if (!isReview && cars.length) fetchAll(date, isManualRefresh);
-  }, [date, cars.length, isReview, fetchAll, refreshTick]);
+    if (!isReview && cars?.length) fetchAll(date, isManualRefresh);
+  }, [date, cars?.length, isReview, fetchAll, refreshTick]);
 
   useEffect(() => {
     if (!isReview) return;
     setScrubIdx(0); setPlaying(false); setFocusedCar(null); setFlyPos(null);
-    const map = {}, vis = {}, zones = {}, sessions = {};
+    const map = {}, vis = {}, zones = {};
     effectiveCars.forEach(car => {
       const sorted = [...(reviewData.records[car.id] || [])].sort((a, b) => gpsMs(a) - gpsMs(b));
       map[car.id] = sorted;
       vis[car.id] = sorted.length > 0;
       const carZoneData = reviewData.zonesAlerts?.[car.id];
-      zones[car.id] = carZoneData
-        ? { ...carZoneData, available: true }
-        : { geofenceZones: [], geofenceAlerts: [], codingAlerts: [], available: false };
-      sessions[car.id] = reviewData.sessionMeta?.[car.id] || null;
+      const meta = reviewData.sessionMeta?.[car.id] || null;
+      const saved = reviewData.sessionsByCar?.[car.id]; // a download made on Traceback can carry several trips
+      zones[car.id] = Array.isArray(saved) && saved.length
+        ? saved
+        : [carZoneData
+            ? makeEntry(meta, carZoneData)
+            : { ...makeEntry(meta, null), available: false }];
     });
     setTraceData(map);
     setVisible(vis);
-    setZonesAlerts(zones);
-    setSessionByCar(sessions);
+    setEntriesByCar(zones);
+    // Review always has a car selected (first one with data) so Trip Summary / Logs are right there.
+    setFocusedCar(effectiveCars.find(c => map[c.id]?.length)?.id || null);
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewData, isReview]);
 
   function buildAllVisible(data, vis) {
-    return Object.entries(data).filter(([id]) => vis[id]).flatMap(([, r]) => [...r].sort((a, b) => gpsMs(a) - gpsMs(b)));
+    // One list ordered by TIME across every visible car (not car-by-car) -- the overall bar, playback and the
+    // binary search in closestIdx() all rely on it, so a car that ran earlier can't trap the scrubber at its end.
+    return Object.entries(data).filter(([id]) => vis[id]).flatMap(([, r]) => r).sort((a, b) => gpsMs(a) - gpsMs(b));
   }
 
   const allPoints = Object.entries(traceData).filter(([id]) => visible[id]).flatMap(([, r]) => r);
   const allVisible = buildAllVisible(traceData, visible);
   const hasData = allVisible.length > 0;
-  const allGpsTimes = allPoints.map(gpsMs);
+  // What the timeline bars + the bottom slider cover: the selected car alone when one is selected, otherwise
+  // every visible car. (The map keeps using allPoints / allVisible, so deselecting still fits all cars.)
+  const inScope = (id) => !!visible[id] && (!focusedCar || id === focusedCar);
+  const barVisible = {};
+  Object.keys(traceData).forEach(id => { if (inScope(id)) barVisible[id] = true; });
+  const allGpsTimes = Object.entries(traceData).filter(([id]) => inScope(id)).flatMap(([, r]) => r).map(gpsMs);
   // Flags per car. A Traceback day only shows that day's pings, so only flags inside that day count there
   // (a pickup three days ago must not stretch today's bar); a saved trip (History / Review) shows the whole
   // trip, so all of its flags count.
@@ -430,8 +552,8 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   const dayEndMs   = !isReview && date ? new Date(`${date}T23:59:59.999+08:00`).getTime() : null;
   const eventsByCar = {};
   effectiveCars.forEach((car) => {
-    if (!visible[car.id]) return;
-    eventsByCar[car.id] = buildTripEvents(sessionByCar[car.id], zonesAlerts[car.id])
+    if (!inScope(car.id)) return;
+    eventsByCar[car.id] = (entriesByCar[car.id] || []).flatMap(e => buildTripEvents(e.session, e))
       .filter((e) => dayStartMs === null || (e.ms >= dayStartMs && e.ms <= dayEndMs));
   });
   const eventTimes = Object.values(eventsByCar).flat().map((e) => e.ms);
@@ -445,8 +567,27 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   const focusedRecs = focusedCar ? (traceData[focusedCar] || []) : null;
   const curRec = focusedRecs?.length ? focusedRecs[Math.min(scrubIdx, focusedRecs.length - 1)] : (allVisible[Math.min(scrubIdx, allVisible.length - 1)] || null);
   const currentTimeMs = curRec ? gpsMs(curRec) : 0;
-  const firstRec = allVisible[0] || null;
-  const lastRec = allVisible[allVisible.length - 1] || null;
+
+  // The trip each car is in at the scrubbed instant. Zones, alerts, logs and the summary all follow this,
+  // so scrubbing from an earlier booking into a later one on the same day switches everything with it.
+  const zonesAlerts = {};
+  const sessionByCar = {};
+  effectiveCars.forEach(car => {
+    const e = pickEntry(entriesByCar[car.id], currentTimeMs);
+    if (e) { zonesAlerts[car.id] = e; sessionByCar[car.id] = e.session; }
+  });
+  const panelCar = focusedCar || (isReview && effectiveCars.length === 1 ? effectiveCars[0].id : null);
+  const activeTripKey = effectiveCars.map(c => `${c.id}:${zonesAlerts[c.id]?.key || ""}`).join("|");
+
+  // The slider uses the SAME time scale as the bar above it (gaps squeezed, flags included), so its thumb always
+  // sits exactly where the bar is filled, and it scrubs by TIME instead of stepping one ping at a time.
+  const barScale = buildTimeScale(
+    globalStartMs, globalEndMs,
+    effectiveCars.filter(c => inScope(c.id) && (traceData[c.id] || []).length).map(c => buildSegments(traceData[c.id]))
+  );
+  // Selected car -> its own pings; nothing selected -> every visible car combined.
+  const sliderRecs = focusedRecs?.length ? focusedRecs : allVisible;
+  const fmtMs = (ms) => (ms ? fmtTime({ at: new Date(ms).toISOString() }) : "—");
 
   // ── Geofence / coding-restriction banner at the scrubbed instant ─────────
   // Only consider visible cars (matches what's actually drawn on the map).
@@ -468,6 +609,12 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
       }
       return entries;
     });
+  // Which cars are inside a coding restriction at the scrubbed instant (and which city) -- the map area below
+  // only redraws when this changes, not on every scrub tick.
+  const codingShapeKey = carsForBanner.map(c => {
+    const a = activeAlertAt(zonesAlerts[c.id]?.codingAlerts, currentTimeMs, "restricted");
+    return a?.city ? `${c.id}:${a.city}:${a.at}` : "";
+  }).join("|");
   // If nobody visible actually has zone/alert data to check (typical for a
   // bare uploaded file with no session context), say so once instead of
   // silently omitting the banner — matches the fallback the plan called for.
@@ -478,17 +625,53 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
       ? [{ id: "unavailable", tone: "unavailable", text: "Geofence status unavailable for this file" }]
       : [];
 
+  // Logs panel: every trip this car had that day, merged into one list (LogsPanel sorts it by time). Only the
+  // map layers (zones / coding area) are per-trip. On Traceback a day shows only that day's entries -- a trip
+  // that spans several days must not dump the other days' alerts in here; a saved trip (Review) shows all.
+  function logsForCar(carId) {
+    const entries = entriesByCar[carId] || [];
+    const inDay = (at) => {
+      if (dayStartMs === null) return true;
+      const t = at ? new Date(at).getTime() : NaN;
+      return !Number.isNaN(t) && t >= dayStartMs && t <= dayEndMs;
+    };
+    const seen = new Set();
+    const uniq = (list, keyOf) => list.filter(x => { const k = keyOf(x); if (seen.has(k)) return false; seen.add(k); return true; });
+    const tripEvents = entries.flatMap(e => buildTripEvents(e.session, e))
+      .filter(ev => inDay(new Date(ev.ms).toISOString()))
+      .map(ev => ({ at: new Date(ev.ms).toISOString(), title: { pickup: "Picked Up", dropoff: "Dropped Off", completed: "Booking Completed", stolen: "Flagged Stolen" }[ev.key] }));
+    return {
+      hasActiveSession: entries.some(e => e.available),
+      geofenceAlerts: entries.flatMap(e => e.geofenceAlerts || []).filter(a => inDay(a.at)),
+      codingAlerts:   entries.flatMap(e => e.codingAlerts   || []).filter(a => inDay(a.at)),
+      codingWarnings: entries.flatMap(e => e.codingWarnings || []).filter((w, i, arr) => arr.findIndex(x => JSON.stringify(x) === JSON.stringify(w)) === i),
+      tripEvents,
+      holidays: uniq(entries.flatMap(e => e.holidays || []), h => h.holidayDate || JSON.stringify(h)),
+    };
+  }
+
   // Downloads exactly what's currently loaded (every car's full point set,
   // not just visible/focused ones) as JSON — round-trips straight back in
   // through the Review tab's upload, same as a geo-test/GPS-test export.
   function handleDownload() {
-    const hasAnyRecords = Object.values(traceData).some(r => r.length);
-    if (!hasAnyRecords) {
+    // A car is selected -> download just that car (points, zones, logs, every trip it had that day).
+    // Nothing selected -> every car that has data, as before.
+    const carsOut = focusedCar ? effectiveCars.filter(c => c.id === focusedCar) : effectiveCars;
+    const records = {}, entries = {}, latest = {}, latestMeta = {};
+    carsOut.forEach(c => {
+      records[c.id] = traceData[c.id] || [];
+      entries[c.id] = entriesByCar[c.id] || [];
+      // zonesAlerts / sessionMeta keep the single-trip shape (newest trip); sessionsByCar carries every trip.
+      const l = entries[c.id].slice(-1)[0];
+      if (l) { latest[c.id] = l; latestMeta[c.id] = l.session; }
+    });
+    if (!Object.values(records).some(r => r.length)) {
       setDownloadNotice({ ok: false, msg: "No data to download" });
       return;
     }
-    const label = isReview ? (reviewData.label || "traceback-review") : `traceback-${date}`;
-    const payload = { label, cars: effectiveCars, records: traceData, zonesAlerts, sessionMeta: sessionByCar };
+    const baseLabel = isReview ? (reviewData.label || "traceback-review") : `traceback-${date}`;
+    const label = focusedCar && carsOut[0] ? `${baseLabel}-${carsOut[0].name}` : baseLabel;
+    const payload = { label, cars: carsOut, records, zonesAlerts: latest, sessionMeta: latestMeta, sessionsByCar: entries };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -553,6 +736,13 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
   }
   function handleTimelineScrub(carId, ms) {
     setPlaying(false);
+    // Nothing selected: the bar scrubs the COMBINED timeline (earliest ping of any car -> latest ping of any
+    // car) and does not pick a car. Only when a car is already selected does touching another car's row switch to it.
+    if (!focusedCar) {
+      const merged = buildAllVisible(traceData, visible);
+      if (merged.length) setScrubIdx(closestIdx(merged, ms));
+      return;
+    }
     if (focusedCar !== carId) setFocusedCar(carId);
     if (!visible[carId]) setVisible(v => ({ ...v, [carId]: true }));
     const recs = traceData[carId];
@@ -658,7 +848,81 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
       });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zonesAlerts, focusedCar, visible, effectiveCars]);
+  }, [activeTripKey, focusedCar, visible, effectiveCars]);
+
+  // ── Coding-restriction area: fetch the outline of every city this trip was ever restricted in (one at a time,
+  // ~1 req/sec for Nominatim's usage policy), so it is ready the moment the scrubber reaches the alert. ──────
+  useEffect(() => {
+    const cities = new Set();
+    effectiveCars.forEach(c => (entriesByCar[c.id] || []).forEach(e => (e.codingAlerts || []).forEach(a => { if (a.type === "restricted" && a.city) cities.add(a.city); })));
+    const toFetch = [...cities].filter(city => { const k = city.toLowerCase(); return !(k in cityBoundaries) && !boundaryInFlightRef.current.has(k); });
+    if (!toFetch.length) return;
+    let cancelled = false;
+    (async () => {
+      for (const city of toFetch) {
+        if (cancelled) return;
+        const key = city.toLowerCase();
+        boundaryInFlightRef.current.add(key);
+        try {
+          const boundary = await fetchCityBoundary(city);
+          if (!cancelled) setCityBoundaries(z => ({ ...z, [key]: boundary }));
+        } catch {
+          if (!cancelled) setCityBoundaries(z => ({ ...z, [key]: null }));
+        } finally {
+          boundaryInFlightRef.current.delete(key); // if cancelled before it landed, the next run retries it
+        }
+        await new Promise(r => setTimeout(r, 1100));
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entriesByCar]);
+
+  // ── Coding-restriction area: while the scrubbed time is inside a coding alert, draw that city's whole outline
+  // in the car's color (same idea as the Live tab). Until the outline arrives -- or if it can't be found -- a
+  // circle around where the alert fired stands in for it. Gone as soon as the alert clears. ───────────────────
+  useEffect(() => {
+    if (!leafletMap.current) return;
+    codingLayersRef.current.forEach(layer => layer.remove());
+    codingLayersRef.current = [];
+
+    const carsToShow = focusedCar ? effectiveCars.filter(c => c.id === focusedCar) : effectiveCars.filter(c => visible[c.id]);
+    carsToShow.forEach(car => {
+      const alert = activeAlertAt(zonesAlerts[car.id]?.codingAlerts, currentTimeMs, "restricted");
+      if (!alert?.city) return; // older / fixed-rule alerts have no city, so no area to outline
+      const color = colorForCar(effectiveCars.findIndex(c => c.id === car.id));
+      const style = { color, fillColor: color, fillOpacity: 0.22, weight: 3, interactive: false };
+      const boundary = cityBoundaries[alert.city.toLowerCase()];
+
+      let shape = null, labelLatLng = null;
+      if (boundary?.geometry) {
+        shape = L.geoJSON(boundary.geometry, { style, interactive: false });
+        labelLatLng = [boundary.lat, boundary.lng];
+      } else {
+        const recs = traceData[car.id] || [];
+        if (recs.length) {
+          const r = recs[closestIdx(recs, new Date(alert.at).getTime())];
+          shape = L.circle([r.lat, r.lng], { radius: 2500, ...style });
+          labelLatLng = [r.lat, r.lng];
+        }
+      }
+      if (!shape) return;
+
+      shape.addTo(leafletMap.current);
+      shape.bringToBack(); // under the trail, pins and geofence zones
+      const label = L.marker(labelLatLng, {
+        interactive: false,
+        icon: L.divIcon({
+          className: "",
+          html: `<div style="background:${color};color:white;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.3);transform:translateY(-26px);">Coding-restricted · ${escHtml(alert.city)}</div>`,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        }),
+      }).addTo(leafletMap.current);
+      codingLayersRef.current.push(shape, label);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codingShapeKey, cityBoundaries, focusedCar, visible, effectiveCars]);
 
   // ── Fit bounds / fly-to ─────────────────────────────────────────────────
   useEffect(() => {
@@ -727,6 +991,7 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
                 <span
                   onClick={e => {
                     e.stopPropagation();
+                    if (isReview && focusedCar === car.id) return; // can't hide the selected car in review
                     const turningOff = visible[car.id];
                     const nextVis = { ...visible, [car.id]: !visible[car.id] };
                     setVisible(nextVis);
@@ -776,8 +1041,10 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
 
           <GeofenceBanner banners={mapBanners} />
 
+          {/* Trip Summary / Logs follow the selected car. A saved trip with only one car keeps them available even when
+              that car is deselected (nothing else could be meant), so deselecting never hides them there. */}
           <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 items-end">
-            {focusedCar && (
+            {panelCar && (
               <>
                 <button
                   onClick={() => { setShowBookingInfo(v => !v); setShowLogs(false); }}
@@ -814,33 +1081,34 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
             )}
           </div>
 
-          {showBookingInfo && focusedCar && (
+          {showBookingInfo && panelCar && (
             isReview ? (
               <TripSummaryPanel
-                bookingID={sessionByCar[focusedCar]?.bookingID}
-                carLabel={effectiveCars.find(c => c.id === focusedCar)?.name || focusedCar}
+                bookingID={sessionByCar[panelCar]?.bookingID}
+                carLabel={effectiveCars.find(c => c.id === panelCar)?.name || panelCar}
                 tripLabel={reviewData?.label}
-                droppedOffAt={zonesAlerts[focusedCar]?.droppedOffAt || null}
-                completedAt={zonesAlerts[focusedCar]?.completedAt || null}
-                geofenceAlertCount={(zonesAlerts[focusedCar]?.geofenceAlerts || []).length}
-                codingAlertCount={(zonesAlerts[focusedCar]?.codingAlerts || []).length}
+                plate={plateFromZones(zonesAlerts[panelCar])}
+                droppedOffAt={zonesAlerts[panelCar]?.droppedOffAt || null}
+                completedAt={zonesAlerts[panelCar]?.completedAt || null}
+                geofenceAlertCount={(zonesAlerts[panelCar]?.geofenceAlerts || []).length}
+                codingAlertCount={(zonesAlerts[panelCar]?.codingAlerts || []).length}
                 token={token}
                 onClose={() => setShowBookingInfo(false)}
               />
             ) : (
               <TracebackBookingInfoPanel
-                carId={focusedCar}
-                carLabel={effectiveCars.find(c => c.id === focusedCar)?.name || focusedCar}
+                carId={panelCar}
+                carLabel={effectiveCars.find(c => c.id === panelCar)?.name || panelCar}
                 date={date}
-                session={sessionByCar[focusedCar] || null}
-                zones={zonesAlerts[focusedCar]?.geofenceZones || []}
+                session={sessionByCar[panelCar] || null}
+                zones={zonesAlerts[panelCar]?.geofenceZones || []}
                 // Traceback is a review/inspection view, not a place to steer an
                 // in-progress trip — zone editing (labels, radius, add/remove,
                 // Save) now only happens from the Live tab's BookingInfoPanel.
                 // Always read-only here, regardless of date or session status.
                 canEdit={false}
                 currentPosition={(() => {
-                  const recs = traceData[focusedCar] || [];
+                  const recs = traceData[panelCar] || [];
                   return recs.length ? { lat: recs[recs.length - 1].lat, lng: recs[recs.length - 1].lng } : null;
                 })()}
                 token={token}
@@ -851,18 +1119,9 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
             )
           )}
 
-          {showLogs && focusedCar && (
+          {showLogs && panelCar && (
             <LogsPanel
-              sessionInfo={{
-                hasActiveSession: !!zonesAlerts[focusedCar]?.available,
-                geofenceAlerts: zonesAlerts[focusedCar]?.geofenceAlerts || [],
-                codingAlerts:   zonesAlerts[focusedCar]?.codingAlerts   || [],
-                codingWarnings: zonesAlerts[focusedCar]?.codingWarnings || [],
-                droppedOffAt:   zonesAlerts[focusedCar]?.droppedOffAt   || null,
-                completedAt:    zonesAlerts[focusedCar]?.completedAt    || null,
-                stolenAt:       zonesAlerts[focusedCar]?.stolenAt       || null,
-                holidays:       zonesAlerts[focusedCar]?.holidays       || [],
-              }}
+              sessionInfo={logsForCar(panelCar)}
               loading={loading}
               onClose={() => setShowLogs(false)}
             />
@@ -883,15 +1142,16 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
         {hasData && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-soft shrink-0">
             <TimelineBars
-              traceData={traceData} visible={visible} cars={effectiveCars}
+              traceData={traceData} visible={barVisible} cars={effectiveCars}
               currentTimeMs={currentTimeMs} onScrub={handleTimelineScrub}
               focusedCar={focusedCar} globalStartMs={globalStartMs} globalEndMs={globalEndMs}
               eventsByCar={eventsByCar}
+              mode={barMode} onModeChange={setBarMode}
             />
 
             <div className="px-4 py-3 border-t border-gray-100">
               <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1.5">
-                <span>{fmtTime(firstRec)}</span>
+                <span>{fmtMs(globalStartMs)}</span>
                 <span className="flex items-center gap-2">
                   <span className="font-mono text-sm text-gray-700 font-semibold">{fmtTime(curRec)}</span>
                   {curRec && (
@@ -903,11 +1163,20 @@ export default function TracebackPanel({ cars, token, reviewData = null, onExitR
                     <span className="text-amber-600 font-medium">📦 Offline flush</span>
                   )}
                 </span>
-                <span>{fmtTime(lastRec)}</span>
+                <span>{fmtMs(globalEndMs)}</span>
               </div>
               <input
-                type="range" min={0} max={Math.max(maxLen - 1, 0)} value={scrubIdx}
-                onChange={e => { setPlaying(false); setScrubIdx(Number(e.target.value)); }}
+                type="range" min={0} max={100} step="any"
+                value={dragPct ?? barScale.toPct(currentTimeMs)}
+                onChange={e => {
+                  const pct = Number(e.target.value);
+                  setPlaying(false);
+                  setDragPct(pct);
+                  if (sliderRecs.length) setScrubIdx(closestIdx(sliderRecs, barScale.toMs(pct)));
+                }}
+                onPointerUp={() => setDragPct(null)}
+                onKeyUp={() => setDragPct(null)}
+                onBlur={() => setDragPct(null)}
                 className="w-full accent-teal-600"
               />
               <div className="flex items-center justify-center gap-2 mt-2">

@@ -62,7 +62,7 @@ const STATUS_STYLES = {
  */
 export default function TripSummaryPanel({
   bookingID, carLabel, tripLabel, token, onClose,
-  droppedOffAt = null, completedAt = null, geofenceAlertCount = 0, codingAlertCount = 0,
+  droppedOffAt = null, completedAt = null, geofenceAlertCount = 0, codingAlertCount = 0, plate = null,
 }) {
   const navigate = useNavigate();
   const [booking, setBooking] = useState(null);
@@ -128,6 +128,7 @@ export default function TripSummaryPanel({
                 )}
               </div>
               <p className="text-[11px] text-gray-400 mt-1">Booking ID: {booking.bookingID || bookingID}</p>
+              {plate && <p className="text-[11px] text-gray-400">Plate: {plate}</p>}
             </div>
 
             <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-1.5">
