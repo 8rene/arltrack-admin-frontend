@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import TripMapModal from "../components/TripMapModal";
-import TripMapCard from "../components/TripMapCard";
+import TripMapModal, { TripLocationsMap } from "../components/TripMapModal";
 import { InspectionMediaGallery } from "../components/InspectionMedia";
 import TripDetailModal from "../components/TripDetailModal";
 import TripTermsModal from "../components/TripTermsModal";
@@ -107,6 +106,69 @@ const tripStops = (trip) => {
   });
   return stops;
 };
+
+// ── Coding restriction display helpers ──
+// "2026-11-03" (a Manila calendar date from the backend) -> "Tue, Nov 3".
+const fmtYmd = (ymd) => {
+  const d = new Date(`${ymd}T00:00:00+08:00`);
+  return isNaN(d) ? ymd : d.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", timeZone: "Asia/Manila" });
+};
+const manilaTodayYmd = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+// One row per date + city, with every window that day in a single line.
+const groupCodingDays = (days) => {
+  const map = new Map();
+  (days || []).forEach((d) => {
+    const key = `${d.date}|${d.city}|${d.holiday || ""}`;
+    if (!map.has(key)) map.set(key, { date: d.date, city: d.city, plateLastDigit: d.plateLastDigit, holiday: d.holiday, windows: [] });
+    map.get(key).windows.push(`${d.startTime} – ${d.endTime}`);
+  });
+  return [...map.values()];
+};
+const directionsUrl = (st) => `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}&travelmode=driving`;
+const STOP_DOT = { pickup: "bg-indigo-600", dropoff: "bg-amber-500", stop: "bg-teal-600" };
+
+// Cities to outline on the map: the ones with a real restricted day inside the trip (holidays
+// excluded). Older responses without codingSchedule fall back to the booking-time warnings.
+const tripCodingAreas = (trip) => {
+  const sched = trip?.codingSchedule;
+  const list = sched
+    ? (sched.days || []).filter((d) => !d.holiday)
+    : warningsByCity(readCodingWarnings(trip?.codingWarnings));
+  return list.map((d) => ({ city: d.city }));
+};
+
+// "Destinations" list shared by the Active tab and the History detail. Tapping a row asks the map
+// to fly to that stop (onFocus); each pinned row has a Directions link.
+function DestinationsList({ stops, onFocus }) {
+  if (!stops.length) return null;
+  return (
+    <Block title="Destinations">
+      <div className="divide-y divide-gray-100">
+        {stops.map((st, i) => {
+          const pinned = hasPin(st);
+          const stopNo = stops.slice(0, i + 1).filter((x) => x.type === "stop").length;
+          const label  = st.type === "pickup" ? "Pickup" : st.type === "dropoff" ? "Dropoff" : `Stop ${stopNo}`;
+          return (
+            <div key={st.key} className="flex items-center gap-3 py-2.5">
+              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STOP_DOT[st.type] || STOP_DOT.pickup}`} />
+              <button type="button" disabled={!pinned} onClick={() => onFocus?.(st.key)}
+                className="flex-1 min-w-0 text-left disabled:cursor-default">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{label}</p>
+                <p className="text-sm text-gray-800 break-words">{st.address || "—"}</p>
+              </button>
+              {pinned && (
+                <a href={directionsUrl(st)} target="_blank" rel="noopener noreferrer"
+                  className="shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 border border-indigo-100 hover:bg-indigo-50">
+                  Directions
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Block>
+  );
+}
 
 // mm:ss for the Remind Staff cooldown.
 const fmtCountdown = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
@@ -387,37 +449,98 @@ function TripPenalties({ penalties, onEdit, bare = false }) {
   return bare ? body : <Block title="Penalties">{body}</Block>;
 }
 
-// The "Locations" section of the History View modal: pickup / dropoff map cards and any extra stops.
+// Coding warnings (what the customer was told at booking) + "Coding restriction during this trip"
+// (those hours as real dates, holidays flagged). Shared by the Active Locations tab and the History detail.
+function TripCodingInfo({ trip }) {
+  const codingByCity = warningsByCity(readCodingWarnings(trip.codingWarnings));
+  const sched        = trip.codingSchedule || null;
+  const codingRows   = groupCodingDays(sched?.days || []);
+  const todayYmd     = manilaTodayYmd();
+  return (
+    <>
+        {/* Coding warnings — the weekly hours the customer was warned about when booking */}
+        {codingByCity.length > 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <p className="font-semibold">⚠️ Coding warnings</p>
+            <ul className="mt-1.5 space-y-0.5">
+              {codingByCity.map((c) => (
+                <li key={c.city || "city"}>
+                  <span className="font-semibold">{c.city || "City"}</span>
+                  {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
+                  {c.text ? `: ${c.text}` : ""}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1.5 opacity-80">Plan the route around these days and times to avoid a coding violation.</p>
+          </div>
+        )}
+
+        {/* Coding restriction — those hours as real dates inside this trip, holidays checked */}
+        {sched && codingByCity.length > 0 && (
+          <Block title="Coding restriction during this trip">
+            {sched.holidaysChecked === false && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-1.5">
+                Couldn't check holidays right now — a day listed below may actually be suspended.
+              </p>
+            )}
+            {codingRows.length === 0 ? (
+              <p className="text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg px-2.5 py-2 mt-1">
+                No coding hours fall within this trip's dates.
+              </p>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {codingRows.map((g) => (
+                  <div key={`${g.date}|${g.city}`} className="flex items-start justify-between gap-3 py-2">
+                    <div className="min-w-0">
+                      <p className={`text-sm font-semibold ${g.holiday ? "text-gray-400 line-through" : "text-arl-dark"}`}>
+                        {fmtYmd(g.date)}
+                        {g.date === todayYmd && <span className="ml-2 no-underline inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 align-middle">Today</span>}
+                      </p>
+                      <p className="text-xs text-gray-400">{g.city || "City"}{g.plateLastDigit != null ? ` · plate ending ${g.plateLastDigit}` : ""}</p>
+                    </div>
+                    <div className="text-right text-xs shrink-0">
+                      {g.holiday ? (
+                        <>
+                          <span className="inline-block font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">Suspended · {g.holiday}</span>
+                          <p className="text-gray-300 line-through mt-0.5">{g.windows.join(", ")}</p>
+                        </>
+                      ) : (
+                        <span className="font-semibold text-red-600">{g.windows.join(", ")}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Block>
+        )}
+    </>
+  );
+}
+
+// The "Locations" section of the History View modal: the same map + destinations list as the Active tab.
 function TripLocationsSection({ trip, onFullMap }) {
-  const showPickupMap  = hasPin(trip.pickupLocation);
-  const showDropoffMap = hasPin(trip.dropoffLocation) && !isSameSpot(trip.pickupLocation, trip.dropoffLocation);
-  const extraStops     = tripStops(trip).filter((st) => st.type === "stop");
+  const [focusReq, setFocusReq] = useState(null);
+  const allStops = tripStops(trip);
+  const pinStops = allStops.filter(hasPin);
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <button onClick={onFullMap} disabled={tripStops(trip).length === 0}
+        <button onClick={onFullMap} disabled={pinStops.length === 0}
           className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed">
           <IconMap className="w-3.5 h-3.5" /> Full map
         </button>
       </div>
-      {!showPickupMap && !showDropoffMap ? (
+      {pinStops.length === 0 ? (
         <div className="text-xs bg-gray-50 rounded-xl px-3 py-4 text-center space-y-1">
           <p className="text-gray-400">No map pins saved for this trip.</p>
           {trip.location && trip.location !== "—" && <p className="font-semibold text-gray-700">{trip.location}</p>}
         </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {showPickupMap && <TripMapCard key={`${trip.id}-pickup`} destination={trip.pickupLocation} label="Pickup" />}
-          {showDropoffMap && <TripMapCard key={`${trip.id}-dropoff`} destination={trip.dropoffLocation} label="Dropoff" />}
-        </div>
+        <TripLocationsMap key={trip.id} stops={pinStops} codingAreas={tripCodingAreas(trip)} focusReq={focusReq} />
       )}
-      {extraStops.length > 0 && (
-        <Block title={`Extra stops (${extraStops.length})`}>
-          {extraStops.map((st, i) => (
-            <Line key={st.key} label={`Stop ${i + 1}`}>{st.address}</Line>
-          ))}
-        </Block>
-      )}
+      <DestinationsList stops={allStops} onFocus={(key) => setFocusReq({ key, n: Date.now() })} />
+      <TripCodingInfo trip={trip} />
     </div>
   );
 }
@@ -635,6 +758,11 @@ function ActiveTripsTab() {
   // under the driver. lastIdx keeps the position if the current trip vanishes.
   const [currentID, setCurrentID] = useState(null);
   const lastIdx = useRef(0);
+  // Active tab of the trip card. Stored with the trip it belongs to, so moving to
+  // another trip falls back to "details" without any reset logic.
+  const [tripTabState, setTripTabState] = useState({ tripID: null, tab: "details" });
+  // Tapping a destination in the Locations list asks the map to fly there ({ key, n } — n bumps so a repeat tap re-fires).
+  const [focusReq, setFocusReq] = useState(null);
   // Remind Staff cooldowns: "<tripID>:<phase>" → epoch ms when the button
   // unlocks. Seeded from the server on every fetch (so a page refresh
   // doesn't reset it) and bumped locally right after a reminder is sent.
@@ -939,10 +1067,24 @@ function ActiveTripsTab() {
         const paymentReady = isPaymentReady(trip);
         const balance     = trip.payment?.balance ?? 0;
         const blocked     = !trip.beforeDocsComplete || !paymentReady;
-        const showPickupMap  = hasPin(trip.pickupLocation);
-        const showDropoffMap = hasPin(trip.dropoffLocation) && !isSameSpot(trip.pickupLocation, trip.dropoffLocation);
-        const extraStops  = tripStops(trip).filter((st) => st.type === "stop");
+        const mapStops    = tripStops(trip);                    // everything to list (pickup, dropoff, extra stops)
+        const pinStops    = mapStops.filter((st) => hasPin(st)); // only those with coordinates can go on the map
         const inspection  = trip.beforeInspection || { photos: false, parts: false, complete: !!trip.beforeDocsComplete };
+        // Dated coding restriction (from the backend: only days inside this trip, holidays flagged).
+        // Older responses without it fall back to the plain booking-time warnings.
+        const sched          = trip.codingSchedule || null;
+        const codingDays     = sched?.days || [];
+        const restrictedDays = codingDays.filter((d) => !d.holiday);
+        const codingAreas    = tripCodingAreas(trip);
+        const activeTab    = tripTabState.tripID === trip.id ? tripTabState.tab : "details";
+        const setActiveTab = (tab) => setTripTabState({ tripID: trip.id, tab });
+        const tripTabs = [
+          { key: "details",    label: "Details" },
+          // amber dot = coding applies at some point during this trip
+          { key: "locations",  label: "Locations", alert: sched ? restrictedDays.length > 0 : codingByCity.length > 0 },
+          // amber dot = pre-trip inspection still outstanding
+          { key: "inspection", label: "Inspection", alert: !isOngoing && !trip.beforeDocsComplete },
+        ];
 
         // Summary cards — click one to jump to the first trip of that kind.
         const upcomingTrips = trips.filter((t) => t.status !== "ongoing");
@@ -966,37 +1108,42 @@ function ActiveTripsTab() {
                 active={inGroup(readyTrips)} onClick={() => jump(readyTrips)} />
             </div>
 
-            {/* Pager */}
-            <div className="bg-white rounded-2xl shadow-soft p-3 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <button onClick={() => goTo(idx - 1)} disabled={idx === 0}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
-                  ‹ Previous
-                </button>
-                <span className="text-xs text-gray-400">Trip <span className="font-semibold text-arl-dark">{idx + 1}</span> of {trips.length}</span>
-                <button onClick={() => goTo(idx + 1)} disabled={idx === trips.length - 1}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
-                  Next ›
-                </button>
-              </div>
-              {trips.length > 1 && (
-                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                  {trips.map((t, i) => (
-                    <button key={t.id} onClick={() => goTo(i)} title={`${t.customerName} — ${t.vehicleName}`}
-                      className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                        i === idx ? "bg-arl-dark text-white" : "text-gray-600 border hover:bg-gray-50"
-                      }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${t.status === "ongoing" ? "bg-green-500" : "bg-yellow-500"}`} />
-                      {fmtDateTime(t.startDateTime)}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Booking */}
+            {/* ONE card for the whole trip: pager → header → tabs → content.
+                Previously the pager, Booking, Locations and Inspection were four
+                separate cards, so "Trip 1 of 3" looked like it only belonged to
+                the first box. The Start Pickup / Dropoff bar below stays outside
+                (sticky) so it's reachable from every tab. */}
             <div className="bg-white rounded-2xl shadow-soft overflow-hidden">
-              <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100">
+              {/* Pager */}
+              <div className="p-3 space-y-2.5 border-b border-gray-100">
+                <div className="flex items-center justify-between gap-2">
+                  <button onClick={() => goTo(idx - 1)} disabled={idx === 0}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                    ‹ Previous
+                  </button>
+                  <span className="text-xs text-gray-400">Trip <span className="font-semibold text-arl-dark">{idx + 1}</span> of {trips.length}</span>
+                  <button onClick={() => goTo(idx + 1)} disabled={idx === trips.length - 1}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                    Next ›
+                  </button>
+                </div>
+                {trips.length > 1 && (
+                  <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                    {trips.map((t, i) => (
+                      <button key={t.id} onClick={() => goTo(i)} title={`${t.customerName} — ${t.vehicleName}`}
+                        className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                          i === idx ? "bg-arl-dark text-white" : "text-gray-600 border hover:bg-gray-50"
+                        }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${t.status === "ongoing" ? "bg-green-500" : "bg-yellow-500"}`} />
+                        {fmtDateTime(t.startDateTime)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Header */}
+              <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
                 <div className="min-w-0">
                   <Eyebrow>{isOngoing ? "Ongoing trip" : "Upcoming trip"}{trip.modeOfDriving === "With Chauffeur" ? " · Chauffeur" : ""}</Eyebrow>
                   <h3 className="font-bold text-arl-dark text-lg truncate">{trip.customerName}</h3>
@@ -1007,142 +1154,143 @@ function ActiveTripsTab() {
                 </div>
               </div>
 
+              {/* Tabs */}
+              <div role="tablist" className="flex gap-1 px-5 border-b border-gray-100">
+                {tripTabs.map((t) => (
+                  <button key={t.key} role="tab" aria-selected={activeTab === t.key} onClick={() => setActiveTab(t.key)}
+                    className={`relative px-3 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+                      activeTab === t.key ? "border-arl-dark text-arl-dark" : "border-transparent text-gray-400 hover:text-gray-600"
+                    }`}>
+                    {t.label}
+                    {t.alert && <span className="absolute top-1.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" title="Needs attention" />}
+                  </button>
+                ))}
+              </div>
+
               <div className="px-5 py-4 space-y-3">
-                <button onClick={() => setTermsTrip(trip)}
-                  className="text-xs font-semibold text-teal-600 hover:underline">
-                  View accepted terms
-                </button>
-                {/* Quick actions: remind the customer to pay (left) and tell them you're on the way (right) */}
-                {!isOngoing && (balance > 0 || !trip.enRouteAt) && (
-                  <div className="flex gap-2">
-                    {balance > 0 && (
-                      <button
-                        onClick={() => handleRemindCustomer(trip)}
-                        disabled={remainingFor(trip.id, "balance") > 0 || remindingKey === `${trip.id}:balance`}
-                        className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-sm font-semibold border border-amber-200 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        {remindingKey === `${trip.id}:balance`
-                          ? "Sending…"
-                          : remainingFor(trip.id, "balance") > 0
-                            ? `Remind again in ${fmtCountdown(remainingFor(trip.id, "balance"))}`
-                            : "🔔 Remind to pay"}
-                      </button>
+                {/* ── DETAILS ── */}
+                {activeTab === "details" && (
+                  <>
+                    <button onClick={() => setTermsTrip(trip)}
+                      className="text-xs font-semibold text-teal-600 hover:underline">
+                      View accepted terms
+                    </button>
+                    {/* Quick actions: remind the customer to pay (left) and tell them you're on the way (right) */}
+                    {!isOngoing && (balance > 0 || !trip.enRouteAt) && (
+                      <div className="flex gap-2">
+                        {balance > 0 && (
+                          <button
+                            onClick={() => handleRemindCustomer(trip)}
+                            disabled={remainingFor(trip.id, "balance") > 0 || remindingKey === `${trip.id}:balance`}
+                            className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-sm font-semibold border border-amber-200 text-amber-700 hover:bg-amber-50 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                            {remindingKey === `${trip.id}:balance`
+                              ? "Sending…"
+                              : remainingFor(trip.id, "balance") > 0
+                                ? `Remind again in ${fmtCountdown(remainingFor(trip.id, "balance"))}`
+                                : "🔔 Remind to pay"}
+                          </button>
+                        )}
+                        {!trip.enRouteAt && (
+                          <button onClick={() => handleOnMyWay(trip)}
+                            disabled={busyID === trip.id || blocked}
+                            className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-sm font-semibold text-teal-700 border border-teal-200 hover:bg-teal-50 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                            🚗 On my way
+                          </button>
+                        )}
+                      </div>
                     )}
-                    {!trip.enRouteAt && (
-                      <button onClick={() => handleOnMyWay(trip)}
-                        disabled={busyID === trip.id || blocked}
-                        className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-sm font-semibold text-teal-700 border border-teal-200 hover:bg-teal-50 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        🚗 On my way
-                      </button>
-                    )}
-                  </div>
-                )}
 
-                <Block title="Booking">
-                  <Line label="Vehicle">{trip.vehicleName}</Line>
-                  {trip.customerPhone && trip.customerPhone !== "—" && (
-                    <Line label="Customer phone">
-                      <a href={`tel:${trip.customerPhone}`} className="font-medium text-teal-600 hover:underline">{trip.customerPhone}</a>
-                    </Line>
-                  )}
-                  <Line label="Starts">{fmtDateTimeLong(trip.startDateTime)}</Line>
-                  <Line label="Ends">{fmtDateTimeLong(trip.endDateTime)}</Line>
-                  {!isOngoing && (
-                    <Line label="Heading to pickup">
-                      {trip.enRouteAt
-                        ? <span className="font-semibold text-green-700">On the way · since {fmtTime(trip.enRouteAt)}</span>
-                        : <span className="text-gray-400">Not yet</span>}
-                    </Line>
-                  )}
-                  <Line label="Payment">
-                    <span className={`font-semibold ${paymentReady ? "text-green-700" : "text-amber-600"}`}>
-                      {paymentReady ? "Settled" : (trip.payment?.paymentStatus || "Pending")}
-                      {balance > 0 ? ` · Balance ${peso(balance)}` : ""}
-                    </span>
-                  </Line>
-                </Block>
-
-                {isOngoing && (
-                  <Block title="Trip progress">
-                    <Line label="Picked up"><span className="font-semibold">{fmtTime(trip.startedAt) || "—"}</span></Line>
-                    <Line label="Dropped off"><span className="font-semibold">{droppedOff || "Not recorded"}</span></Line>
-                  </Block>
-                )}
-
-                <TripPenalties penalties={trip.penalties} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
-
-                {codingByCity.length > 0 && (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                    <p className="font-semibold">⚠️ Number Coding restrictions on this trip</p>
-                    <ul className="mt-1.5 space-y-0.5">
-                      {codingByCity.map((c) => (
-                        <li key={c.city || "city"}>
-                          <span className="font-semibold">{c.city || "City"}</span>
-                          {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
-                          {c.text ? `: ${c.text}` : ""}
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="mt-1.5 opacity-80">Plan the route around these days and times to avoid a coding violation.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Route */}
-            <div className="bg-white rounded-2xl shadow-soft p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <Eyebrow>Locations</Eyebrow>
-                <button onClick={() => setMapTrip(trip)} disabled={tripStops(trip).length === 0}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed">
-                  <IconMap className="w-3.5 h-3.5" /> Full map
-                </button>
-              </div>
-              {!showPickupMap && !showDropoffMap ? (
-                <div className="text-xs bg-gray-50 rounded-xl px-3 py-4 text-center space-y-1">
-                  <p className="text-gray-400">No map pins saved for this trip.</p>
-                  {trip.location && trip.location !== "—" && <p className="font-semibold text-gray-700">{trip.location}</p>}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {showPickupMap && <TripMapCard key={`${trip.id}-pickup`} destination={trip.pickupLocation} label="Pickup" />}
-                  {showDropoffMap && <TripMapCard key={`${trip.id}-dropoff`} destination={trip.dropoffLocation} label="Dropoff" />}
-                  {extraStops.length > 0 && (
-                    <Block title={`Extra stops (${extraStops.length})`}>
-                      {extraStops.map((st, i) => (
-                        <Line key={st.key} label={`Stop ${i + 1}`}>{st.address}</Line>
-                      ))}
+                    <Block title="Booking">
+                      <Line label="Vehicle">{trip.vehicleName}</Line>
+                      {trip.customerPhone && trip.customerPhone !== "—" && (
+                        <Line label="Customer phone">
+                          <a href={`tel:${trip.customerPhone}`} className="font-medium text-teal-600 hover:underline">{trip.customerPhone}</a>
+                        </Line>
+                      )}
+                      <Line label="Starts">{fmtDateTimeLong(trip.startDateTime)}</Line>
+                      <Line label="Ends">{fmtDateTimeLong(trip.endDateTime)}</Line>
+                      {!isOngoing && (
+                        <Line label="Heading to pickup">
+                          {trip.enRouteAt
+                            ? <span className="font-semibold text-green-700">On the way · since {fmtTime(trip.enRouteAt)}</span>
+                            : <span className="text-gray-400">Not yet</span>}
+                        </Line>
+                      )}
+                      <Line label="Payment">
+                        <span className={`font-semibold ${paymentReady ? "text-green-700" : "text-amber-600"}`}>
+                          {paymentReady ? "Settled" : (trip.payment?.paymentStatus || "Pending")}
+                          {balance > 0 ? ` · Balance ${peso(balance)}` : ""}
+                        </span>
+                      </Line>
                     </Block>
-                  )}
-                </div>
-              )}
-            </div>
 
-            {/* Vehicle inspection */}
-            <div className="bg-white rounded-2xl shadow-soft p-5 space-y-3">
-              <Eyebrow>Vehicle inspection</Eyebrow>
-              {!isOngoing && (
-                paymentReady ? (
-                  <InspectionPanel
-                    inspection={inspection}
-                    phase="before"
-                    remaining={remainingFor(trip.id, "before")}
-                    sending={remindingKey === `${trip.id}:before`}
-                    onRemind={() => handleRemindStaff(trip, "before")}
-                  />
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                      Waiting for staff to settle payment{balance > 0 ? ` · Balance ${peso(balance)}` : ""}
-                    </p>
-                  </div>
-                )
-              )}
-              <TripInspectionProof
-                key={trip.id}
-                tripID={trip.id}
-                authedFetch={authedFetch}
-                refreshKey={`${trip.beforeDocsComplete}:${trip.afterDocsComplete}`}
-              />
+                    {isOngoing && (
+                      <Block title="Trip progress">
+                        <Line label="Picked up"><span className="font-semibold">{fmtTime(trip.startedAt) || "—"}</span></Line>
+                        <Line label="Dropped off"><span className="font-semibold">{droppedOff || "Not recorded"}</span></Line>
+                      </Block>
+                    )}
+
+                    <TripPenalties penalties={trip.penalties} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
+                  </>
+                )}
+
+                {/* ── LOCATIONS ── */}
+                {activeTab === "locations" && (
+                  <>
+                    <div className="flex justify-end">
+                      <button onClick={() => setMapTrip(trip)} disabled={pinStops.length === 0}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <IconMap className="w-3.5 h-3.5" /> Full map
+                      </button>
+                    </div>
+
+                    {pinStops.length === 0 ? (
+                      <div className="text-xs bg-gray-50 rounded-xl px-3 py-4 text-center space-y-1">
+                        <p className="text-gray-400">No map pins saved for this trip.</p>
+                        {trip.location && trip.location !== "—" && <p className="font-semibold text-gray-700">{trip.location}</p>}
+                      </div>
+                    ) : (
+                      <TripLocationsMap key={trip.id} stops={pinStops} codingAreas={codingAreas} focusReq={focusReq} />
+                    )}
+
+                    {/* Destinations — tap one to fly the map to it */}
+                    <DestinationsList stops={mapStops} onFocus={(key) => setFocusReq({ key, n: Date.now() })} />
+
+                    {/* Coding warnings + the dated coding restriction for this trip */}
+                    <TripCodingInfo trip={trip} />
+                  </>
+                )}
+
+                {/* ── INSPECTION ── */}
+                {activeTab === "inspection" && (
+                  <>
+                    {!isOngoing && (
+                      paymentReady ? (
+                        <InspectionPanel
+                          inspection={inspection}
+                          phase="before"
+                          remaining={remainingFor(trip.id, "before")}
+                          sending={remindingKey === `${trip.id}:before`}
+                          onRemind={() => handleRemindStaff(trip, "before")}
+                        />
+                      ) : (
+                        <div className="space-y-2">
+                          <p className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                            Waiting for staff to settle payment{balance > 0 ? ` · Balance ${peso(balance)}` : ""}
+                          </p>
+                        </div>
+                      )
+                    )}
+                    <TripInspectionProof
+                      key={trip.id}
+                      tripID={trip.id}
+                      authedFetch={authedFetch}
+                      refreshKey={`${trip.beforeDocsComplete}:${trip.afterDocsComplete}`}
+                    />
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Actions */}
@@ -1179,6 +1327,7 @@ function ActiveTripsTab() {
         onClose={() => setMapTrip(null)}
         title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
         stops={mapTrip ? tripStops(mapTrip) : []}
+        codingAreas={mapTrip ? tripCodingAreas(mapTrip) : []}
       />
       <TripTermsModal open={!!termsTrip} onClose={() => setTermsTrip(null)} trip={termsTrip} token={token} />
       <DriverPenaltyModal
@@ -1344,6 +1493,7 @@ function HistoryTab() {
         onClose={() => setMapTrip(null)}
         title={mapTrip ? `${mapTrip.customerName} — ${mapTrip.vehicleName}` : "Trip Route"}
         stops={mapTrip ? tripStops(mapTrip) : []}
+        codingAreas={mapTrip ? tripCodingAreas(mapTrip) : []}
       />
       <TripTermsModal open={!!termsTrip} onClose={() => setTermsTrip(null)} trip={termsTrip} token={token} />
       <TripDetailModal

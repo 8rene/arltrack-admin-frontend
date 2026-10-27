@@ -58,6 +58,16 @@ const nav = [
         ),
       },
       {
+        label: "GPS Setup",
+        path: "/gps-setup",
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <ellipse cx="12" cy="12" rx="3" ry="3" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6.3 6.3a8 8 0 000 11.4M17.7 6.3a8 8 0 010 11.4M3.5 3.5a13 13 0 000 17M20.5 3.5a13 13 0 010 17" />
+          </svg>
+        ),
+      },
+      {
         label: "Driver Dispatch",
         path: "/driver-dispatch",
         icon: (
@@ -152,23 +162,13 @@ const nav = [
     // running record of activity (a different kind of thing from System's
     // config/catalog items like Parts Inventory and System Settings), so
     // they get their own section instead of being buried alongside those.
-    // GPS Setup / Parts Inventory / System Settings — grouped together
-    // because they share the same shape: maintain a catalog (registered GPS
-    // devices, part types) and/or a standing config, rather than day-to-day
+    // Parts Inventory / System Settings — grouped together
+    // because they share the same shape: maintain a catalog (part types)
+    // and/or a standing config, rather than day-to-day
     // driving/dispatch/tracking work. Sits above Logs since staff reach for
     // setup screens more often than for the audit trail.
     group: "Setup",
     items: [
-      {
-        label: "GPS Setup",
-        path: "/gps-setup",
-        icon: (
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-            <ellipse cx="12" cy="12" rx="3" ry="3" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6.3 6.3a8 8 0 000 11.4M17.7 6.3a8 8 0 010 11.4M3.5 3.5a13 13 0 000 17M20.5 3.5a13 13 0 010 17" />
-          </svg>
-        ),
-      },
       {
         // Parts catalog (name/type/serial) — "Inventory" was already the
         // right word for this (it's an actual stock count), just renamed

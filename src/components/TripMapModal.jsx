@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { getAreaOutline, peekAreaOutline } from "../utils/cityBoundary";
 
 // ─── ICONS ───────────────────────────────────────────────────────────────
 const IconX = ({ className = "w-5 h-5" }) => (
@@ -63,7 +64,7 @@ function stopDivIcon(type) {
     className: "",
     html: `<div style="position:relative;width:28px;height:28px"><div style="width:28px;height:28px;border-radius:${s.shape};background:${s.color};transform:rotate(${s.rotate});border:2px solid white;box-shadow:0 1px 5px rgba(0,0,0,.4)"></div></div>`,
     iconSize: [28, 28],
-    iconAnchor: [14, 28],
+    iconAnchor: [14, type === "stop" ? 14 : 28],
   });
 }
 
@@ -84,6 +85,65 @@ function buildDirectionsUrl(dest, driverPos) {
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
+// ─── Coding areas ─────────────────────────────────────────────────────────
+// Number-coding areas are outlined in red dashes — deliberately not indigo/amber/
+// teal/green, which the stop pins and the driver dot already use.
+const CODING_COLOR = "#dc2626";
+
+/**
+ * Draws each city's coding-area outline on a Leaflet map and reports which ones
+ * actually drew. Outlines come from the shared session cache in utils/cityBoundary
+ * (uncached cities are fetched ~1.1s apart for Nominatim's usage policy). A city with
+ * no outline simply isn't drawn — the written schedule still lists it.
+ *
+ * @param mapRef  ref to the Leaflet map (set by the caller's init effect, which must run first)
+ * @param cities  string[] of city names
+ * @param mapKey  anything that changes when the map is (re)created, so outlines are redrawn on the new map
+ */
+function useCodingAreaLayer(mapRef, cities, mapKey) {
+  const [shown, setShown] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const key = cities.join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    const map = mapRef.current;
+    setShown([]);
+    if (!map || !cities.length) { setLoading(false); return; }
+    const layer = L.layerGroup().addTo(map);
+    setLoading(true);
+    (async () => {
+      for (const city of cities) {
+        if (cancelled) return;
+        const cached = peekAreaOutline(city) !== undefined;
+        try {
+          const outline = await getAreaOutline(city);
+          if (cancelled) return;
+          if (outline?.geometry) {
+            L.geoJSON(outline.geometry, { style: { color: CODING_COLOR, weight: 2, dashArray: "6 5", fillColor: CODING_COLOR, fillOpacity: 0.07 } })
+              .bindTooltip(`${city} · coding area`, { sticky: true })
+              .addTo(layer);
+            setShown((a) => [...a, city]);
+          }
+        } catch { /* network hiccup — leave this city undrawn */ }
+        if (!cached) await new Promise((r) => setTimeout(r, 1100));
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; try { layer.remove(); } catch { /* map already removed */ } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, mapKey]);
+
+  return { shown, loading };
+}
+
+const CodingLegend = ({ shown }) => (
+  <span className="inline-flex items-center gap-1.5">
+    <span className="w-4 h-2.5 rounded-sm border-2 border-dashed shrink-0" style={{ borderColor: CODING_COLOR, background: "rgba(220,38,38,.08)" }} />
+    Coding area{shown.length ? ` (${shown.join(", ")})` : ""}
+  </span>
+);
+
 /**
  * Full-size map modal for a trip's stops (pickup / dropoff / any extra
  * stops selected during booking).
@@ -99,8 +159,9 @@ function buildDirectionsUrl(dest, driverPos) {
  * @param {() => void} onClose
  * @param {string} title
  * @param {Array<{ key: string, type: "pickup"|"dropoff"|"stop", address?: string, lat: number, lng: number }>} stops
+ * @param {Array<{ city: string }>} [codingAreas] cities whose number-coding area is outlined on the map (optional)
  */
-export default function TripMapModal({ open, onClose, title = "Trip Route", stops = [] }) {
+export default function TripMapModal({ open, onClose, title = "Trip Route", stops = [], codingAreas = [] }) {
   const mapElRef      = useRef(null);
   const mapRef        = useRef(null);
   const markersRef    = useRef({});   // { [stopKey]: L.Marker }
@@ -219,6 +280,10 @@ export default function TripMapModal({ open, onClose, title = "Trip Route", stop
   // Reset selection state each time the modal is (re)opened for a new trip
   useEffect(() => { if (!open) setSelectedKey(null); }, [open]);
 
+  // Coding-area outlines (must come after the init effect above so the map exists)
+  const areaCities = [...new Set(codingAreas.map((a) => a.city).filter(Boolean))];
+  const { shown: shownAreas, loading: areasLoading } = useCodingAreaLayer(mapRef, areaCities, open);
+
   if (!open) return null;
 
   return (
@@ -281,6 +346,10 @@ export default function TripMapModal({ open, onClose, title = "Trip Route", stop
                 <span className="w-3 h-3 rounded-full shrink-0 bg-green-500" />
                 Your location
               </div>
+              {shownAreas.length > 0 && (
+                <div className="text-xs text-gray-500"><CodingLegend shown={shownAreas} /></div>
+              )}
+              {areasLoading && <p className="text-[11px] text-gray-400">Loading coding area…</p>}
             </div>
           </div>
 
@@ -331,6 +400,152 @@ export default function TripMapModal({ open, onClose, title = "Trip Route", stop
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Inline map ───────────────────────────────────────────────────────────
+const LegendDot = ({ type, round, color, children }) => {
+  const c = color || STOP_STYLE[type]?.color;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="w-2.5 h-2.5 shrink-0" style={{ background: c, borderRadius: round ? "50%" : "50% 50% 50% 0", transform: round ? "none" : "rotate(-45deg)" }} />
+      {children}
+    </span>
+  );
+};
+
+/**
+ * The same trip map, inline (not in a modal) — used on the My Trips "Locations" tab and
+ * the History detail. Shows every stop that has coordinates, the driver's own position,
+ * and the number-coding areas. Shares markers, directions and coding outlines with the
+ * modal above, so a pin or an outline means the same thing in both.
+ *
+ * @param {Array<{ key, type: "pickup"|"dropoff"|"stop", address?, lat, lng }>} stops  only stops that HAVE coordinates
+ * @param {Array<{ city: string }>} [codingAreas]
+ * @param {{ key: string, n: number }|null} [focusReq]  bump `n` to fly to the stop with this key (e.g. from a list)
+ */
+export function TripLocationsMap({ stops = [], codingAreas = [], focusReq = null }) {
+  const elRef = useRef(null);
+  const mapRef = useRef(null);
+  const markersRef = useRef({});
+  const driverMarkerRef = useRef(null);
+  const handledFocus = useRef(focusReq?.n ?? 0);
+
+  const [driverPos, setDriverPos] = useState(null);
+  const [locStatus, setLocStatus] = useState("idle"); // idle | loading | granted | denied | unsupported
+
+  const stopsKey = stops.map((s) => `${s.key}:${s.lat},${s.lng}`).join("|");
+  const areaCities = [...new Set(codingAreas.map((a) => a.city).filter(Boolean))];
+
+  const fitAll = useCallback((pos) => {
+    const map = mapRef.current;
+    if (!map || !stops.length) return;
+    const pts = stops.map((s) => [s.lat, s.lng]);
+    if (pos) pts.push([pos.lat, pos.lng]);
+    if (pts.length === 1) map.setView(pts[0], 15);
+    else map.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 16 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopsKey]);
+
+  // Init the map (the parent remounts this per trip via `key`).
+  useEffect(() => {
+    if (!elRef.current || mapRef.current || !stops.length) return;
+    const map = L.map(elRef.current, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
+    map.attributionControl.setPrefix(false);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    mapRef.current = map;
+
+    stops.forEach((s) => {
+      const label = STOP_STYLE[s.type]?.label || "Stop";
+      markersRef.current[s.key] = L.marker([s.lat, s.lng], { icon: stopDivIcon(s.type) })
+        .bindTooltip(`<b>${label}</b>${s.address ? `<br/>${String(s.address).replace(/</g, "&lt;")}` : ""}`, { direction: "top", offset: [0, -24] })
+        .addTo(map);
+    });
+    fitAll(null);
+    // The container can still be laying out (e.g. inside a modal that just opened), so re-measure a
+    // few times. These MUST be cancelled on cleanup: if the map is removed first (React StrictMode
+    // remounts, or the modal closing), invalidateSize() on a removed map throws
+    // "Cannot read properties of undefined (reading 'classList')".
+    const timers = [0, 150, 400].map((ms) => setTimeout(() => {
+      if (mapRef.current !== map) return;
+      map.invalidateSize({ animate: false });
+      if (ms === 150) fitAll(null);
+    }, ms));
+
+    return () => {
+      timers.forEach(clearTimeout);
+      map.stop();
+      map.remove();
+      mapRef.current = null;
+      markersRef.current = {};
+      driverMarkerRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopsKey]);
+
+  // Driver position — one shot (no re-prompting), same as the modal.
+  const locateMe = useCallback(() => {
+    if (!("geolocation" in navigator)) { setLocStatus("unsupported"); return; }
+    setLocStatus("loading");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setDriverPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocStatus("granted"); },
+      () => setLocStatus("denied"),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+    );
+  }, []);
+  useEffect(() => { locateMe(); }, [locateMe]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !driverPos) return;
+    if (driverMarkerRef.current) driverMarkerRef.current.setLatLng([driverPos.lat, driverPos.lng]);
+    else driverMarkerRef.current = L.marker([driverPos.lat, driverPos.lng], { icon: driverDivIcon }).bindTooltip("You").addTo(map);
+    fitAll(driverPos);
+  }, [driverPos, fitAll]);
+
+  const { shown: shownAreas, loading: areasLoading } = useCodingAreaLayer(mapRef, areaCities, stopsKey);
+
+  // "Tap a destination in the list → fly to it".
+  useEffect(() => {
+    if (!focusReq || focusReq.n === handledFocus.current) return;
+    handledFocus.current = focusReq.n;
+    const map = mapRef.current;
+    const mk = markersRef.current[focusReq.key];
+    if (!map || !mk || !map._loaded) return;
+    map.flyTo(mk.getLatLng(), 17, { duration: 0.6 });
+    mk.openTooltip();
+  }, [focusReq]);
+
+  if (!stops.length) return null;
+
+  return (
+    <div className="rounded-xl overflow-hidden border border-gray-100">
+      <div className="relative z-0">
+        <div ref={elRef} className="w-full h-72 sm:h-96" />
+        <div className="absolute top-2.5 right-2.5 z-[500] flex flex-col gap-1.5">
+          <button onClick={() => fitAll(driverPos)} title="Fit all stops"
+            className="w-9 h-9 flex items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-600 shadow-sm hover:bg-gray-50">
+            <IconExpand />
+          </button>
+          {locStatus !== "granted" && locStatus !== "loading" && (
+            <button onClick={locateMe} title="Show my location"
+              className="w-9 h-9 flex items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-600 shadow-sm hover:bg-gray-50">
+              <IconLocate />
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 bg-gray-50 text-[11px] text-gray-500">
+        <LegendDot type="pickup">Pickup</LegendDot>
+        <LegendDot type="dropoff">Dropoff</LegendDot>
+        {stops.some((s) => s.type === "stop") && <LegendDot type="stop" round>Stop</LegendDot>}
+        {driverPos && <LegendDot color="#10b981" round>You</LegendDot>}
+        {shownAreas.length > 0 && <CodingLegend shown={shownAreas} />}
+        {areasLoading && <span className="text-gray-400">Loading coding area…</span>}
+        {locStatus === "denied" && <span className="text-gray-400">Location off</span>}
       </div>
     </div>
   );

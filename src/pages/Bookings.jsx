@@ -1883,7 +1883,7 @@ export default function Bookings() {
                       <td className="px-4 py-3 font-semibold text-gray-800">{fmt(b.totalFee)}</td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                         {b.paymentStage && b.paymentStage !== "—" ? b.paymentStage : "—"}
-                        {Number(b.balance) > 0 && <div className="text-xs text-orange-600">{fmt(b.balance)} remaining</div>}
+                        {Number(b.balance) > 0 && ![ "For Refund", "Refunded", "Cancelled" ].includes(b.paymentStage) && <div className="text-xs text-orange-600">{fmt(b.balance)} remaining</div>}
                       </td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
                       <td className="px-4 py-3">

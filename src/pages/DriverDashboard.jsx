@@ -21,10 +21,15 @@ const IconClock = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-const IconPin = ({ className = "w-4 h-4" }) => (
+const IconCar = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s7-7.75 7-13a7 7 0 10-14 0c0 5.25 7 13 7 13z" />
-    <circle cx="12" cy="8" r="2.5" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M8 17h8M3 11l2-5h14l2 5M5 11h14M5 17v2m14-2v2" />
+  </svg>
+);
+
+const IconTimer = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M7 3h10M7 21h10M8 3v3a4 4 0 001.2 2.8L12 12l2.8-3.2A4 4 0 0016 6V3M8 21v-3a4 4 0 011.2-2.8L12 12l2.8 3.2A4 4 0 0116 18v3" />
   </svg>
 );
 
@@ -59,6 +64,29 @@ const fmtDateTime = (val) => {
   const d = new Date(val);
   if (isNaN(d)) return "—";
   return d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+};
+
+const fmtDay = (val) => {
+  const d = new Date(val);
+  return isNaN(d) ? "—" : d.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric" });
+};
+const fmtClock = (val) => {
+  const d = new Date(val);
+  return isNaN(d) ? "" : d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
+};
+
+// "7 days 22 hrs" / "3 days" / "6 hrs" — whole hours are plenty for a rental
+// window; under an hour falls back to minutes.
+const fmtDuration = (start, end) => {
+  const ms = new Date(end) - new Date(start);
+  if (!start || !end || isNaN(ms) || ms <= 0) return "—";
+  const totalHrs = Math.round(ms / 3_600_000);
+  if (totalHrs < 1) return `${Math.max(1, Math.round(ms / 60_000))} mins`;
+  const days = Math.floor(totalHrs / 24);
+  const hrs  = totalHrs % 24;
+  const d = days ? `${days} ${days === 1 ? "day" : "days"}` : "";
+  const h = hrs  ? `${hrs} ${hrs === 1 ? "hr" : "hrs"}`     : "";
+  return [d, h].filter(Boolean).join(" ");
 };
 
 // Small stat card, matching Dashboard.jsx's card conventions (rounded-2xl, shadow-soft).
@@ -208,20 +236,24 @@ export default function DriverDashboard() {
           </div>
         ) : (
           <div className="bg-white rounded-2xl shadow-soft p-4 space-y-3">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-arl-dark">{nextTrip.customerName}</span>
-                  <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-lg ${
-                    nextTrip.status === "ongoing" ? "bg-green-50 text-green-700 border border-green-200" : "bg-yellow-50 text-yellow-700 border border-yellow-200"
-                  }`}>{nextTrip.status}</span>
-                </div>
-                <p className="text-xs text-gray-400 mt-0.5">{nextTrip.vehicleName}</p>
+            {/* When is the whole point of this card, so it gets the big type.
+                Customer, pickup address etc. live behind the button. */}
+            <span className={`inline-block text-xs font-bold uppercase tracking-wide px-3 py-1 rounded-lg ${
+              nextTrip.status === "ongoing" ? "bg-green-50 text-green-700 border border-green-200" : "bg-yellow-50 text-yellow-700 border border-yellow-200"
+            }`}>{nextTrip.status}</span>
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                <p className="text-base font-bold text-arl-dark leading-tight">
+                  {fmtDay(nextTrip.startDateTime)} <span className="text-arl-primary">· {fmtClock(nextTrip.startDateTime)}</span>
+                </p>
+                <p className="text-xs text-gray-500">
+                  until <span className="font-semibold text-arl-dark">{fmtDay(nextTrip.endDateTime)}, {fmtClock(nextTrip.endDateTime)}</span>
+                </p>
               </div>
-            </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-              <span className="flex items-center gap-1"><IconClock /> {fmtDateTime(nextTrip.startDateTime)} → {fmtDateTime(nextTrip.endDateTime)}</span>
-              <span className="flex items-center gap-1"><IconPin /> {nextTrip.location}</span>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                <span className="flex items-center gap-1"><IconTimer /> {fmtDuration(nextTrip.startDateTime, nextTrip.endDateTime)}</span>
+                <span className="flex items-center gap-1"><IconCar /> {nextTrip.vehicleName}</span>
+              </div>
             </div>
             <button onClick={() => navigate("/my-trips")}
               className="w-full py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all">
@@ -244,10 +276,10 @@ export default function DriverDashboard() {
             {upcoming.slice(0, 4).map((trip) => (
               <div key={trip.id} className="bg-white rounded-xl shadow-soft p-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-arl-dark truncate">{trip.customerName}</p>
-                  <p className="text-xs text-gray-400 truncate">{trip.vehicleName} • {trip.location}</p>
+                  <p className="text-sm font-semibold text-arl-dark truncate">{trip.vehicleName}</p>
+                  <p className="text-xs text-gray-400 truncate">{fmtDuration(trip.startDateTime, trip.endDateTime)}</p>
                 </div>
-                <span className="text-xs text-gray-500 shrink-0 flex items-center gap-1">
+                <span className="text-sm font-bold text-arl-dark shrink-0 flex items-center gap-1">
                   <IconClock /> {fmtDateTime(trip.startDateTime)}
                 </span>
               </div>

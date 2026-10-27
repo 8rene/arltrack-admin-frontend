@@ -557,16 +557,21 @@ export default function Users() {
     }
   }, [activeRole]);
 
-  const [pendingEditReqCount, setPendingEditReqCount] = useState(0); // profile edit requests
-  const [pendingIdReqCount, setPendingIdReqCount]       = useState(0); // license/document resubmits (shown under Document Request)
+  const [pendingEditReqUIDs, setPendingEditReqUIDs] = useState([]); // userIDs with a pending profile edit request
+  const [pendingIdReqUIDs, setPendingIdReqUIDs]       = useState([]); // userIDs with a pending license/document resubmit (shown under Document Request)
+  // The people in the role tab that is open right now. Requests are only shown / counted for these,
+  // so a customer's request never appears under Drivers (and vice versa).
+  const roleUserIDs = useMemo(() => new Set(users.map(u => u.id)), [users]);
+  const pendingEditReqCount = pendingEditReqUIDs.filter(id => roleUserIDs.has(id)).length;
+  const pendingIdReqCount   = pendingIdReqUIDs.filter(id => roleUserIDs.has(id)).length;
   const fetchEditReqCounts = useCallback(async () => {
     try {
       const [editSnap, idSnap] = await Promise.all([
         getDocs(query(collection(db, "editRequests"), where("status", "==", "pending"))),
         getDocs(query(collection(db, "idResubmitRequests"), where("status", "==", "pending"))),
       ]);
-      setPendingEditReqCount(editSnap.size);
-      setPendingIdReqCount(idSnap.size);
+      setPendingEditReqUIDs(editSnap.docs.map(d => d.data().userID));
+      setPendingIdReqUIDs(idSnap.docs.map(d => d.data().userID));
     } catch (e) {
       console.error("Edit request count fetch error:", e);
     }
@@ -694,9 +699,9 @@ export default function Users() {
         <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showBookings={activeRole.key === "customer"}
           filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole} />
       ) : subTab === "documents" ? (
-        <DocumentsTab users={pendingDocs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts} />
+        <DocumentsTab users={pendingDocs} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts} />
       ) : (
-        <EditRequestsTab onCountChange={fetchEditReqCounts} />
+        <EditRequestsTab roleUserIDs={roleUserIDs} onCountChange={fetchEditReqCounts} />
       )}
     </div>
   );
@@ -1819,9 +1824,11 @@ function ResubmitReviewModal({ req, user, busy, onClose, onApprove, onReject }) 
 // license/document photos waiting for review. History: reviewed resubmissions.
 // (Resubmits used to live under "Edit Request"; they're document reviews, so
 // they sit here now.)
-function DocumentsTab({ users, onRefresh, roleLabel = "Customers", onCountChange }) {
+function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", onCountChange }) {
   const [view, setView]               = useState("pending"); // "pending" | "history"
-  const [idReqs, setIdReqs]           = useState([]);
+  const [allIdReqs, setIdReqs]        = useState([]);
+  // Only the resubmissions that belong to the role tab that is open.
+  const idReqs = useMemo(() => allIdReqs.filter(r => roleUserIDs?.has(r.userID)), [allIdReqs, roleUserIDs]);
   const [userLookup, setUserLookup]   = useState({});
   const [reqLoading, setReqLoading]   = useState(true);
   const [busyId, setBusyId]           = useState(null);
@@ -2027,9 +2034,11 @@ function ProfileRequestsTable({ rows, mode, userLookup, onOpen }) {
   );
 }
 
-function EditRequestsTab({ onCountChange }) {
+function EditRequestsTab({ roleUserIDs, onCountChange }) {
   const [view, setView]               = useState("pending"); // "pending" | "history"
-  const [profileReqs, setProfileReqs] = useState([]);
+  const [allProfileReqs, setProfileReqs] = useState([]);
+  // Only the edit requests that belong to the role tab that is open.
+  const profileReqs = useMemo(() => allProfileReqs.filter(r => roleUserIDs?.has(r.userID)), [allProfileReqs, roleUserIDs]);
   const [userLookup, setUserLookup]   = useState({}); // uid -> { name, username, email }
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);

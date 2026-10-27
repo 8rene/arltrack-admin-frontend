@@ -378,7 +378,7 @@ const Block = ({ title, children }) => (
 
 // Everything about one refund / discount refund. The table stays simple; the detail, the money movements and the
 // actions (approve, reject, hand back, retry) all live here.
-function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, handbackRef, setHandbackRef, busy, onRetry, retrying, onRetryScheduled }) {
+function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHandback, handbackMethod, setHandbackMethod, handbackRef, setHandbackRef, busy, onRetry, retrying, onRetryScheduled, onSync, syncing }) {
   const { effectiveRole } = useAuth();
   const canDepositReturn = ["Owner", "Admin", "Supervisor"].includes(effectiveRole);   // deposit retry / hand-back: Supervisor / Admin / Owner
   const disc = isDiscount(r);
@@ -582,6 +582,13 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
               </>
             )}
             {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
+            {/* If PayMongo already finished but this never updated (missed webhook), ask PayMongo directly. */}
+            {((!disc && r.status === "Approved" && stageOf(r) === "paymongo") || (disc && r.refund?.state === "processing")) && r.bookingID && (
+              <button onClick={onSync} disabled={busy || syncing} title="Ask PayMongo whether this refund already went through"
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-blue-700 border border-blue-200 bg-blue-50 hover:bg-blue-100 disabled:opacity-50">
+                {syncing ? "Checking…" : "Check with PayMongo"}
+              </button>
+            )}
             {!disc && isScheduled(r) && (
               <>
                 <span className="text-xs text-violet-700 italic">Scheduled for {stampText(toDate(r.sendAfter))}</span>
@@ -690,6 +697,7 @@ export default function RefundRequests() {
   const [depositReturns, setDepositReturns] = useState([]);   // security deposits sent back through PayMongo
   const [discounts, setDiscounts] = useState([]);           // discount refunds (money a staff discount sent back)
   const [retryingId, setRetryingId] = useState(null);
+  const [syncingId, setSyncingId] = useState(null);
   const [viewId, setViewId]   = useState(null);   // refundRequestID of the item open in the View modal
   const [statusF, setStatusF]   = useState("All");
   const [typeF, setTypeF]       = useState("all");   // Under Process + History: all | refund | staff | deposit | discount
@@ -870,6 +878,23 @@ export default function RefundRequests() {
     finally { setBusyId(null); }
   };
 
+  // "Check with PayMongo": the refund may already be done at PayMongo while this screen still says "Waiting for PayMongo"
+  // (the confirmation never reached us). The server asks PayMongo for the final result and applies it.
+  const syncWithPaymongo = async (r) => {
+    setSyncingId(r.refundRequestID);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/booking/${encodeURIComponent(r.bookingID)}/sync-paymongo`, {
+        method: "PATCH", headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.message || "Could not check with PayMongo.");
+      showToast(data.message || "Checked with PayMongo.");
+      setViewId(null);
+      fetchRequests();
+    } catch (e) { showToast(e.message, "error"); fetchRequests(); }
+    finally { setSyncingId(null); }
+  };
+
   // A discount's PayMongo refund failed: send it again (the failed attempt stays on record).
   const retryDiscount = async (r) => {
     setRetryingId(r.refundRequestID);
@@ -1029,6 +1054,7 @@ export default function RefundRequests() {
             busy={busyId === v.refundRequestID}
             onRetry={() => (viaDepositRoutes(v) ? retryDeposit(v) : retryDiscount(v))} retrying={retryingId === v.refundRequestID}
             onRetryScheduled={() => retryScheduled(v)}
+            onSync={() => syncWithPaymongo(v)} syncing={syncingId === v.refundRequestID}
           />
         );
       })()}
