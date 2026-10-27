@@ -208,17 +208,28 @@ const fmtTime = (val) => {
   return new Date(ms).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
 };
 
-// True when `val` falls on/after `from` and on/before `to` (both "YYYY-MM-DD"
-// strings from <input type="date">, either may be empty). Compared in local
-// time so a booking made at 11:30 PM still counts as that day.
-const inDateRange = (val, from, to) => {
-  if (!from && !to) return true;
+// "YYYY-MM-DD" (local day) of any date value the table shows, or null — what
+// the date picker in "Search by" is compared against.
+const dayKey = (val) => {
   const ms = toMillis(val);
-  if (!isFinite(ms)) return false;
-  if (from && ms < new Date(`${from}T00:00:00`).getTime()) return false;
-  if (to   && ms > new Date(`${to}T23:59:59.999`).getTime()) return false;
-  return true;
+  if (!isFinite(ms)) return null;
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+
+// "Search by" options — mirror the table's columns. Status is NOT here: it has
+// its own dropdown. Booking ID has no column but stays searchable because
+// Payments / Refund Requests link in with ?search=<bookingID>.
+const SEARCH_BY = [
+  { key: "created",  label: "Created At", type: "date" },
+  { key: "customer", label: "Customer",   type: "text" },
+  { key: "phone",    label: "Contact No.", type: "text" },
+  { key: "vehicle",  label: "Vehicle",    type: "text" },
+  { key: "start",    label: "Trip Start", type: "date" },
+  { key: "end",      label: "Trip End",   type: "date" },
+  { key: "phase",    label: "Phase",      type: "text" },
+  { key: "booking",  label: "Booking ID", type: "text" },
+];
 
 // ─── SORT HEADER ────────────────────────────────────────────────────────────
 // Clickable <th> that toggles asc/desc on the given sortKey. Shows a neutral
@@ -1583,6 +1594,8 @@ export default function Bookings() {
   const [refundBooking, setRefundBooking] = useState(null);
   const [activeTab, setActiveTab]           = useState("All");
   const [search, setSearch]                 = useState("");
+  const [searchBy, setSearchBy]             = useState("customer");
+  const [dateValue, setDateValue]           = useState(""); // "YYYY-MM-DD" from the date picker
   const [allBookings, setAllBookings]       = useState([]);
   const [loading, setLoading]               = useState(true);
   const [error, setError]                   = useState(null);
@@ -1597,8 +1610,6 @@ export default function Bookings() {
   const [searchParams, setSearchParams]     = useSearchParams();
   const [sortKey, setSortKey]               = useState("created");  // newest bookings on top by default
   const [sortDir, setSortDir]               = useState("desc");
-  const [dateFrom, setDateFrom]             = useState("");  // "YYYY-MM-DD" — filters by the booking's Created date
-  const [dateTo, setDateTo]                 = useState("");
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -1659,6 +1670,8 @@ export default function Bookings() {
   useEffect(() => {
     const q = searchParams.get("search");
     if (!q) return;
+    setSearchBy("booking"); // these links always carry a booking ID
+    setDateValue("");
     setSearch(q);
     setActiveTab("All");
     setSearchParams((prev) => { prev.delete("search"); return prev; }, { replace: true });
@@ -1698,16 +1711,26 @@ export default function Bookings() {
     ? allBookings
     : allBookings.filter((b) => b.status?.toLowerCase() === activeTab.toLowerCase());
 
+  const searchType = SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
+  const hasFilters = !!search.trim() || !!dateValue || activeTab !== "All";
+  const clearFilters = () => { setSearch(""); setDateValue(""); setActiveTab("All"); };
+
   const filtered = tabFiltered.filter((b) => {
-    if (!inDateRange(b.createdAt, dateFrom, dateTo)) return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (b.bookingID || b.id || "").toLowerCase().includes(q) ||
-      (b.customerName || "").toLowerCase().includes(q) ||
-      (b.vehicleName || "").toLowerCase().includes(q) ||
-      (b.phone || "").toLowerCase().includes(q)
-    );
+    if (searchType === "date") {
+      if (!dateValue) return true;
+      const val = searchBy === "created" ? b.createdAt : searchBy === "start" ? b.startDateTime : b.endDateTime;
+      return dayKey(val) === dateValue;
+    }
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const hay = {
+      customer: b.customerName,
+      phone:    b.phone,
+      vehicle:  b.vehicleName,
+      phase:    b.paymentStage,
+      booking:  b.bookingID || b.id,
+    }[searchBy];
+    return String(hay || "").toLowerCase().includes(q);
   });
 
   // Sort (dates/fee only — everything else stays in API/insertion order).
@@ -1716,7 +1739,8 @@ export default function Bookings() {
   const sorted = [...filtered].sort((a, b) => {
     if (!sortKey) return 0;
     let av, bv;
-    if (sortKey === "dates") { av = toMillis(a.startDateTime); bv = toMillis(b.startDateTime); }
+    if (sortKey === "start") { av = toMillis(a.startDateTime); bv = toMillis(b.startDateTime); }
+    else if (sortKey === "end") { av = toMillis(a.endDateTime); bv = toMillis(b.endDateTime); }
     else if (sortKey === "fee") { av = a.totalFee ?? -Infinity; bv = b.totalFee ?? -Infinity; }
     else if (sortKey === "created") { av = toMillis(a.createdAt); bv = toMillis(b.createdAt); }
     else return 0;
@@ -1725,7 +1749,7 @@ export default function Bookings() {
 
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   // Jump back to page 1 whenever the visible set changes shape (new search/filter/tab).
-  useEffect(() => { setPage(1); }, [search, activeTab, allBookings, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, activeTab, allBookings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmtDuration = (days) => { if (days == null) return "—"; return days <= 1 ? `${days} day` : `${days} days`; };
 
@@ -1763,41 +1787,45 @@ export default function Bookings() {
       </div>
 
       {/* SEARCH */}
-      <div className="flex flex-wrap gap-3 items-center bg-white p-4 rounded-2xl border">
-        <input
-          type="text"
-          placeholder="Search by booking ID, customer, vehicle, phone..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
-        />
-        {/* Date range — filters by the date the booking was created */}
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <span className="text-xs uppercase tracking-wide text-gray-400">From</span>
-          <input
-            type="date"
-            value={dateFrom}
-            max={dateTo || undefined}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="px-3 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
-          />
-          <span className="text-xs uppercase tracking-wide text-gray-400">To</span>
-          <input
-            type="date"
-            value={dateTo}
-            min={dateFrom || undefined}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="px-3 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
-          />
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => { setDateFrom(""); setDateTo(""); }}
-              className="px-3 py-2 border rounded-xl text-xs text-gray-500 hover:bg-gray-50"
-            >
-              Clear
-            </button>
-          )}
+      <div className="flex flex-wrap gap-3 items-end bg-white p-4 rounded-2xl border">
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+          <select
+            value={searchBy}
+            onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+          >
+            {SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
         </div>
+        {searchType === "date" ? (
+          <input
+            type="date"
+            value={dateValue}
+            onChange={(e) => setDateValue(e.target.value)}
+            className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
+          />
+        ) : (
+          <input
+            type="text"
+            placeholder={`Enter ${(SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
+          />
+        )}
+        <select
+          value={activeTab}
+          onChange={(e) => setActiveTab(e.target.value)}
+          className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+        >
+          {STATUS_TABS.map((t) => <option key={t} value={t}>{t === "All" ? "All statuses" : t}</option>)}
+        </select>
+        {hasFilters && (
+          <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+            Clear
+          </button>
+        )}
         <button
           onClick={fetchBookings}
           className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5"
@@ -1833,7 +1861,8 @@ export default function Bookings() {
                 <th className="px-4 py-3 text-left">Customer</th>
                 <th className="px-4 py-3 text-left">Contact No.</th>
                 <th className="px-4 py-3 text-left">Vehicle</th>
-                <SortableTh label="Trip Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Trip Start" sortKey="start" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Trip End" sortKey="end" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Duration</th>
                 <SortableTh label="Total Fee" sortKey="fee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Phase</th>
@@ -1845,13 +1874,13 @@ export default function Bookings() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    {Array.from({ length: 10 }).map((__, j) => (
+                    {Array.from({ length: 11 }).map((__, j) => (
                       <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={10} className="text-center text-gray-400 py-12">No bookings found</td></tr>
+                <tr><td colSpan={11} className="text-center text-gray-400 py-12">No bookings found</td></tr>
               ) : (
                 pageItems.map((b) => {
                   const needsAction = b.status?.toLowerCase() === "cancellation_request";
@@ -1875,7 +1904,8 @@ export default function Bookings() {
                       <td className="px-4 py-3">
                         <div className="text-gray-700">{b.vehicleName}</div>
                       </td>
-                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(b.startDateTime)} – {fmtDate(b.endDateTime)}</td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(b.startDateTime)}</td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(b.endDateTime)}</td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                         {fmtDuration(b.totalDays)}
                         {b.durationType && <span className="text-xs text-gray-400 ml-1">· {b.durationType}</span>}

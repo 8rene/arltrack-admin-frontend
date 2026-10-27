@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   collection, getDocs, query, where, doc, getDoc,
 } from "firebase/firestore";
@@ -236,6 +236,9 @@ export default function VehicleDocs() {
   // toggleHistoryRow) — batch-fetched once up front instead so the list
   // reads as names, not gibberish IDs.
   const [pastBookingNames, setPastBookingNames] = useState({});
+  // { [bookingID]: { before: seconds|null, after: seconds|null } } — when each
+  // trip's Before / After inspection was done. null = still loading.
+  const [inspectionDates, setInspectionDates]   = useState(null);
   const [expandedHistoryID, setExpandedHistoryID] = useState(null);
   const [historyRecords, setHistoryRecords]     = useState({});
   // Set when a deep link points at an already-closed booking — consumed
@@ -496,6 +499,7 @@ export default function VehicleDocs() {
     setTripType("before");
     setPastBookings([]);
     setPastBookingNames({});
+    setInspectionDates(null);
     setExpandedHistoryID(null);
     setHistoryRecords({});
     setHistoryFocusID(null);
@@ -600,6 +604,45 @@ export default function VehicleDocs() {
         .sort((a, b) => toSec(b.startDateTime) - toSec(a.startDateTime));
       setPastBookings(past);
 
+      // Inspection date per past trip (Before / After). Uses the moment the
+      // inspection was confirmed; if it was never confirmed, falls back to
+      // when the latest photo record was saved. Queried in chunks of 30
+      // booking IDs (Firestore's "in" limit) — non-blocking, the table
+      // shows "…" in those columns until it lands.
+      (async () => {
+        const ids = past.map(b => b.bookingID || b.id).filter(Boolean);
+        const dates = Object.fromEntries(ids.map(id => [id, { before: null, after: null }]));
+        const pickDate = (d) => {
+          const c = toSec(d.inspectionConfirmed?.at);
+          if (isFinite(c)) return c;
+          const r = toSec(d.recordedAt || d.updatedAt || d.createdAt);
+          return isFinite(r) ? r : null;
+        };
+        try {
+          for (let i = 0; i < ids.length; i += 30) {
+            const chunk = ids.slice(i, i + 30);
+            const [bSnap, aSnap] = await Promise.all([
+              getDocs(query(collection(db, "vehicleDocumentationBeforeTrip"), where("bookingID", "in", chunk))),
+              getDocs(query(collection(db, "vehicleDocumentationAfterTrip"),  where("bookingID", "in", chunk))),
+            ]);
+            [["before", bSnap], ["after", aSnap]].forEach(([phase, snap]) => {
+              snap.docs.forEach(d => {
+                const data = d.data();
+                const t = pickDate(data);
+                const cur = dates[data.bookingID]?.[phase];
+                // confirmed time wins over save time; otherwise keep the latest
+                if (t !== null && (cur === null || cur === undefined || data.inspectionConfirmed || t > cur)) {
+                  if (dates[data.bookingID]) dates[data.bookingID][phase] = t;
+                }
+              });
+            });
+          }
+        } catch (e) {
+          console.error("[VD] Failed to load inspection dates:", e);
+        }
+        setInspectionDates(dates);
+      })();
+
       // Batch-resolve one name per unique customer up front (instead of
       // per-row on expand) so the collapsed list can show "Customer" —
       // not the booking ID — without waiting for a click.
@@ -690,13 +733,20 @@ export default function VehicleDocs() {
   // actually leave a deep-linked record once you'd landed on it.
   const [deepLinkConsumed, setDeepLinkConsumed] = useState(false);
   useEffect(() => { setDeepLinkConsumed(false); }, [deepLinkCarID, deepLinkBookingID]);
+  // There is no longer a way to close/deselect a car, so a car is ALWAYS
+  // open: the deep-linked one when the URL names it, otherwise the first
+  // car in the list.
   useEffect(() => {
-    if (!deepLinkCarID || carsLoading || !cars.length || selectedCar || deepLinkConsumed) return;
-    const match = cars.find(c => (c.carID || c.id) === deepLinkCarID);
-    if (match) {
-      selectCar(match, deepLinkBookingID);
-      setDeepLinkConsumed(true);
+    if (carsLoading || !cars.length) return;
+    if (deepLinkCarID && !deepLinkConsumed) {
+      const match = cars.find(c => (c.carID || c.id) === deepLinkCarID);
+      if (match) {
+        selectCar(match, deepLinkBookingID);
+        setDeepLinkConsumed(true);
+        return;
+      }
     }
+    if (!selectedCar) selectCar(cars[0]);
   }, [deepLinkCarID, deepLinkBookingID, carsLoading, cars, selectedCar, selectCar, deepLinkConsumed]);
 
 
@@ -1223,7 +1273,7 @@ export default function VehicleDocs() {
       <div className="flex gap-4">
 
         {/* Car list — same layout as Inventory */}
-        <div className={`${selectedCar ? "w-72 shrink-0" : "flex-1"} transition-all duration-300`}>
+        <div className="w-72 shrink-0">
           {inPickupMode && selectedCar && (
             <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
               <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
@@ -1265,7 +1315,7 @@ export default function VehicleDocs() {
               ))}
             </div>
           ) : (
-            <div className={`grid gap-3 ${selectedCar ? "grid-cols-1" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"}`}>
+            <div className="grid gap-3 grid-cols-1">
               {cars.length === 0 && (
                 <p className="text-gray-400 text-sm col-span-full text-center py-8">No vehicles found.</p>
               )}
@@ -1275,7 +1325,7 @@ export default function VehicleDocs() {
                 return (
                 <button key={car.id}
                   disabled={isLockedOut}
-                  onClick={() => isSelected ? setSelectedCar(null) : selectCar(car)}
+                  onClick={() => { if (!isSelected) selectCar(car); }}
                   className={`w-full text-left bg-white rounded-2xl border transition-all duration-200 shadow-soft p-4 ${
                     isLockedOut
                       ? "opacity-40 grayscale cursor-not-allowed border-gray-100"
@@ -1284,9 +1334,9 @@ export default function VehicleDocs() {
                   <div className="flex items-center gap-3">
                     {car.imageURL ? (
                       <img src={car.imageURL} alt="car"
-                        className={`rounded-xl object-cover ${selectedCar ? "w-10 h-10" : "w-14 h-14"}`} />
+                        className="rounded-xl object-cover w-10 h-10" />
                     ) : (
-                      <div className={`rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 ${selectedCar ? "w-10 h-10" : "w-14 h-14"}`}>
+                      <div className="rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 w-10 h-10">
                         🚗
                       </div>
                     )}
@@ -1330,8 +1380,6 @@ export default function VehicleDocs() {
                   <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-black ${STATUS_STYLE[selectedCar.status] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_STYLE[selectedCar.status]?.includes("green") ? "bg-green-500" : "bg-gray-400"}`} />
                     {selectedCar.status || "—"}
                   </span>
-                  <button onClick={() => setSelectedCar(null)}
-                    className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
                 </div>
               </div>
             </div>
@@ -1710,6 +1758,7 @@ export default function VehicleDocs() {
                 <PastTripsSection
                   pastBookings={pastBookings}
                   pastBookingNames={pastBookingNames}
+                  inspectionDates={inspectionDates}
                   parts={carParts}
                   carID={selectedCar?.carID || selectedCar?.id}
                   expandedHistoryID={expandedHistoryID}
@@ -1946,23 +1995,20 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
 }
 
 const PAST_TRIPS_PAGE_SIZE = 10;
-// Text the History search box matches a trip's date against — the same
-// "Oct 12, 2026" the table shows, plus long month name, ISO, numeric and the
-// time of day, so "october", "2026-10-12", "10/12" and "3:00 pm" all work.
 const isoLocalDate = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const dateSearchText = (val) => {
+// "YYYY-MM-DD" (local day) of a Firestore/ISO/ms value, or null — what the History date picker compares against.
+const dayKey = (val) => {
   const sec = toSec(val);
-  if (!isFinite(sec)) return "";
-  const d = new Date(sec * 1000);
-  return [
-    fmtDateShort(val),
-    d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
-    isoLocalDate(d),
-    d.toLocaleDateString("en-PH"),
-    d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", hour12: true }),
-  ].join(" ").toLowerCase();
+  return isFinite(sec) ? isoLocalDate(new Date(sec * 1000)) : null;
 };
+const SEARCH_BY = [
+  { key: "customer", label: "Customer",          type: "text" },
+  { key: "start",    label: "Trip Start",        type: "date" },
+  { key: "end",      label: "Trip End",          type: "date" },
+  { key: "before",   label: "Before Inspection", type: "date" },
+  { key: "after",    label: "After Inspection",  type: "date" },
+];
 
 const tripDays = (b) => {
   const st = toSec(b.startDateTime), en = toSec(b.endDateTime);
@@ -2000,57 +2046,67 @@ function SortableHeader({ label, sortKey: key, sortKeyState, sortDir, onSort, cl
   );
 }
 
-function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expandedHistoryID, historyRecords, onToggleRow, onCloseRow, getPartFieldKey, onViewPhoto, lightboxOpen, canEditHistory, onEditPart, onReplacePhoto }) {
+function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, parts, carID, expandedHistoryID, historyRecords, onToggleRow, onCloseRow, getPartFieldKey, onViewPhoto, lightboxOpen, canEditHistory, onEditPart, onReplacePhoto }) {
   const [page, setPage] = useState(1);
   const [jumpedFor, setJumpedFor] = useState(null);
   const [sortKey, setSortKey] = useState(null); // null = default (API order)
   const [sortDir, setSortDir] = useState("asc");
   const [search, setSearch]     = useState("");
-  const [dateFrom, setDateFrom] = useState(""); // "YYYY-MM-DD" from <input type="date">
-  const [dateTo, setDateTo]     = useState("");
+  const [searchBy, setSearchBy] = useState("customer");
+  const [dateValue, setDateValue] = useState(""); // "YYYY-MM-DD" from the date picker
+  const [statusFilter, setStatusFilter] = useState("all"); // "all" | "completed" | "cancelled" | "stolen"
   const handleSort = (key) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("asc"); }
     setPage(1);
   };
 
-  const hasFilters   = !!(search.trim() || dateFrom || dateTo);
-  const clearFilters = () => { setSearch(""); setDateFrom(""); setDateTo(""); setPage(1); };
+  const hasFilters   = !!search.trim() || !!dateValue || statusFilter !== "all";
+  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("all"); setPage(1); };
 
-  // Search: every space-separated word must appear somewhere in booking ID,
-  // customer name, or the start/end dates (see dateSearchText).
+  // Search: "Search by" mirrors the table columns. Customer is a text match
+  // (every space-separated word must match); Trip Start, Trip End, Before and
+  // After Inspection are exact-day date picks. Status has its own dropdown.
   const terms  = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  // Date range: keeps trips that OVERLAP the range (a trip running Oct 10–14
-  // shows up for a range of Oct 12–12). Either end may be left empty.
-  const fromMs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
-  const toMs   = dateTo   ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+  const searchType = SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
+  const inspSec = (id, phase) => inspectionDates?.[id]?.[phase] ?? NaN;
 
   const filteredBookings = pastBookings.filter((b) => {
     const id = b.bookingID || b.id;
-    if (terms.length) {
-      const hay = [id, pastBookingNames[id] || "", dateSearchText(b.startDateTime), dateSearchText(b.endDateTime)]
-        .join(" ").toLowerCase();
-      if (!terms.every((t) => hay.includes(t))) return false;
+    if (statusFilter !== "all" && b.status?.toLowerCase() !== statusFilter) return false;
+    if (searchType === "date") {
+      if (!dateValue) return true;
+      if (searchBy === "start") return dayKey(b.startDateTime) === dateValue;
+      if (searchBy === "end")   return dayKey(b.endDateTime) === dateValue;
+      const sec = inspSec(id, searchBy);
+      return isFinite(sec) && dayKey(sec * 1000) === dateValue;
     }
-    if (fromMs !== null || toMs !== null) {
-      const st = toSec(b.startDateTime) * 1000, en = toSec(b.endDateTime) * 1000;
-      if (!isFinite(st) && !isFinite(en)) return false;
-      const tripStart = isFinite(st) ? st : en;
-      const tripEnd   = isFinite(en) ? en : st;
-      if (fromMs !== null && tripEnd   < fromMs) return false;
-      if (toMs   !== null && tripStart > toMs)   return false;
-    }
-    return true;
+    if (!terms.length) return true;
+    const hay = (pastBookingNames[id] || "").toLowerCase();
+    return terms.every((t) => hay.includes(t));
   });
 
   const sortedBookings = !sortKey ? filteredBookings : [...filteredBookings].sort((a, b) => {
     const aID = a.bookingID || a.id, bID = b.bookingID || b.id;
+    if (sortKey === "before" || sortKey === "after") {
+      const av = inspSec(aID, sortKey), bv = inspSec(bID, sortKey);
+      // trips with no inspection date always sink to the bottom
+      if (!isFinite(av) && !isFinite(bv)) return 0;
+      if (!isFinite(av)) return 1;
+      if (!isFinite(bv)) return -1;
+      return sortDir === "asc" ? av - bv : bv - av;
+    }
+    if (sortKey === "status") {
+      const c = (a.status || "").localeCompare(b.status || "");
+      return sortDir === "asc" ? c : -c;
+    }
     if (sortKey === "customer") {
       const c = (pastBookingNames[aID] || aID || "").localeCompare(pastBookingNames[bID] || bID || "");
       return sortDir === "asc" ? c : -c;
     }
     let av, bv;
-    if (sortKey === "dates")        { av = toSec(a.startDateTime) || 0; bv = toSec(b.startDateTime) || 0; }
+    if (sortKey === "start")        { av = toSec(a.startDateTime) || 0; bv = toSec(b.startDateTime) || 0; }
+    else if (sortKey === "end")     { av = toSec(a.endDateTime) || 0;   bv = toSec(b.endDateTime) || 0; }
     else if (sortKey === "duration"){
       const aSt = toSec(a.startDateTime), aEn = toSec(a.endDateTime);
       const bSt = toSec(b.startDateTime), bEn = toSec(b.endDateTime);
@@ -2085,38 +2141,49 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
-      {/* Search + date range */}
+      {/* Search by (field picker) + status filter */}
       <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-gray-100">
-        <div className="relative flex-1 min-w-[220px]">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Search booking ID, customer or date…"
-            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
-          />
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+          <select
+            value={searchBy}
+            onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); setPage(1); }}
+            className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+          >
+            {SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
         </div>
-        <label className="flex flex-col gap-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-          From
-          <input
-            type="date"
-            value={dateFrom}
-            max={dateTo || undefined}
-            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-            className="px-3 py-1.5 border border-gray-200 rounded-xl text-sm normal-case font-normal text-gray-700 outline-none focus:ring-2 focus:ring-teal-400"
-          />
-        </label>
-        <label className="flex flex-col gap-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-          To
-          <input
-            type="date"
-            value={dateTo}
-            min={dateFrom || undefined}
-            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-            className="px-3 py-1.5 border border-gray-200 rounded-xl text-sm normal-case font-normal text-gray-700 outline-none focus:ring-2 focus:ring-teal-400"
-          />
-        </label>
+        <div className="relative flex-1 min-w-[220px]">
+          {searchType === "date" ? (
+            <input
+              type="date"
+              value={dateValue}
+              onChange={(e) => { setDateValue(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+            />
+          ) : (
+            <>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                placeholder="Enter customer name…"
+                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </>
+          )}
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+          className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+        >
+          <option value="all">All statuses</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="stolen">Stolen</option>
+        </select>
         {hasFilters && (
           <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
             Clear
@@ -2126,8 +2193,8 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
 
       <div className="px-5 py-2 text-[11px] text-gray-400 border-b border-gray-100 bg-gray-50/50">
         {hasFilters
-          ? `${sortedBookings.length} of ${pastBookings.length} past trips match · date range includes any trip that overlaps it`
-          : `${pastBookings.length} past trip${pastBookings.length === 1 ? "" : "s"} · click a row to view its inspection record`}
+          ? `${sortedBookings.length} of ${pastBookings.length} past trips match`
+          : `${pastBookings.length} past trip${pastBookings.length === 1 ? "" : "s"} · click View to open its inspection record`}
       </div>
 
       {/* Table — every row opens that trip's record in a modal */}
@@ -2135,21 +2202,23 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
         <table className="w-full text-left">
           <thead className="border-b border-gray-100 bg-gray-50/50">
             <tr>
-              <th className="px-5 py-2 w-[120px]"><span className={th}>Status</span></th>
-              <th className="px-3 py-2"><SortableHeader label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-3 py-2 hidden lg:table-cell"><span className={th}>Booking ID</span></th>
-              <th className="px-3 py-2"><SortableHeader label="Trip Dates" sortKey="dates" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-5 py-2"><SortableHeader label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-3 py-2"><SortableHeader label="Trip Start" sortKey="start" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-3 py-2"><SortableHeader label="Trip End" sortKey="end" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
               <th className="px-3 py-2"><SortableHeader label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-5 py-2 w-8" />
+              <th className="px-3 py-2"><SortableHeader label="Before Inspection" sortKey="before" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-3 py-2"><SortableHeader label="After Inspection" sortKey="after" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-3 py-2 w-[120px]"><SortableHeader label="Status" sortKey="status" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-5 py-2 w-[90px] text-right"><span className={th}>Action</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-5 py-10 text-center text-xs text-gray-400">
+                <td colSpan={8} className="px-5 py-10 text-center text-xs text-gray-400">
                   {pastBookings.length === 0
                     ? "No past trips for this vehicle yet."
-                    : "No trips match your search or date range."}
+                    : "No trips match your search."}
                 </td>
               </tr>
             ) : visible.map((booking) => {
@@ -2158,28 +2227,36 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
               return (
                 <tr
                   key={bID}
-                  onClick={() => onToggleRow(booking)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleRow(booking); } }}
-                  tabIndex={0}
-                  role="button"
-                  className="cursor-pointer hover:bg-teal-50/40 focus:bg-teal-50/40 focus:outline-none transition-colors"
+                  className="hover:bg-teal-50/40 transition-colors"
                 >
-                  <td className="px-5 py-2.5">
+                  <td className="px-5 py-2.5 max-w-[220px]">
+                    <span className="block text-xs font-semibold text-gray-700 truncate">{pastBookingNames[bID] || bID}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums whitespace-nowrap">{fmtDateShort(booking.startDateTime)}</td>
+                  <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums whitespace-nowrap">{fmtDateShort(booking.endDateTime)}</td>
+                  <td className="px-3 py-2.5 text-xs text-gray-400 tabular-nums whitespace-nowrap">{tripDays(booking)}</td>
+                  {["before", "after"].map((phase) => {
+                    const sec = inspSec(bID, phase);
+                    return (
+                      <td key={phase} className="px-3 py-2.5 text-xs text-gray-500 tabular-nums whitespace-nowrap">
+                        {!inspectionDates ? "…" : isFinite(sec) ? fmtDateShort(sec * 1000) : <span className="text-gray-300">—</span>}
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 py-2.5">
                     <span className={`inline-flex items-center justify-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
                       {status?.replace("_", " ") || "—"}
                     </span>
                   </td>
-                  <td className="px-3 py-2.5 max-w-[220px]">
-                    <span className="block text-xs font-semibold text-gray-700 truncate">{pastBookingNames[bID] || bID}</span>
+                  <td className="px-5 py-2.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => onToggleRow(booking)}
+                      className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors font-medium"
+                    >
+                      View
+                    </button>
                   </td>
-                  <td className="px-3 py-2.5 hidden lg:table-cell max-w-[200px]">
-                    <span className="block text-[10px] font-mono text-gray-400 truncate" title={bID}>{bID}</span>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums whitespace-nowrap">
-                    {fmtDateShort(booking.startDateTime)} – {fmtDateShort(booking.endDateTime)}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-gray-400 tabular-nums whitespace-nowrap">{tripDays(booking)}</td>
-                  <td className="px-5 py-2.5 text-right text-gray-300 text-base leading-none">›</td>
                 </tr>
               );
             })}
@@ -2222,6 +2299,7 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
 function TripHistoryModal({ booking, customerName, record, parts, carID, getPartFieldKey, onViewPhoto, canEditHistory, onEditPart, onReplacePhoto, onClose, escDisabled }) {
   const bID    = booking.bookingID || booking.id;
   const status = booking.status?.toLowerCase();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape" && !escDisabled) onClose(); };
@@ -2236,19 +2314,45 @@ function TripHistoryModal({ booking, customerName, record, parts, carID, getPart
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-gray-100">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-bold text-gray-800 text-sm truncate">{customerName || record?.userFullName || "Trip record"}</h3>
-              <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
-                {status?.replace("_", " ") || "—"}
-              </span>
-            </div>
-            <p className="text-[11px] font-mono text-gray-400 mt-0.5 truncate" title={bID}>{bID}</p>
-            <p className="text-xs text-gray-500 mt-1">
-              {fmtDate(booking.startDateTime)} – {fmtDate(booking.endDateTime)} · {tripDays(booking)}
-            </p>
+          <div className="min-w-0 flex-1">
+            <h3 className="font-bold text-gray-800 text-sm mb-3">Trip Inspection Record</h3>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 text-xs">
+              <div className="flex gap-2 min-w-0">
+                <dt className="w-20 shrink-0 text-gray-400">Customer</dt>
+                <dd className="font-semibold text-gray-700 truncate">{customerName || record?.userFullName || "—"}</dd>
+              </div>
+              <div className="flex gap-2 items-center min-w-0">
+                <dt className="w-20 shrink-0 text-gray-400">Status</dt>
+                <dd>
+                  <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
+                    {status?.replace("_", " ") || "—"}
+                  </span>
+                </dd>
+              </div>
+              <div className="flex gap-2 min-w-0">
+                <dt className="w-20 shrink-0 text-gray-400">Booking ID</dt>
+                <dd className="font-mono text-gray-600 truncate" title={bID}>{bID}</dd>
+              </div>
+              <div className="flex gap-2 min-w-0">
+                <dt className="w-20 shrink-0 text-gray-400">Duration</dt>
+                <dd className="text-gray-700">{tripDays(booking)}</dd>
+              </div>
+              <div className="flex gap-2 min-w-0 sm:col-span-2">
+                <dt className="w-20 shrink-0 text-gray-400">Trip Dates</dt>
+                <dd className="text-gray-700">{fmtDate(booking.startDateTime)} – {fmtDate(booking.endDateTime)}</dd>
+              </div>
+            </dl>
           </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
+              className="text-xs px-3 py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition-colors font-semibold"
+            >
+              View Booking
+            </button>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none shrink-0" aria-label="Close">✕</button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">

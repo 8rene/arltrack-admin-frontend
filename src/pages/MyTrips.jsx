@@ -68,6 +68,9 @@ const fmtDateTimeLong = (val) => {
   return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 };
 
+// "Oct 26, 11:45 PM" -> "Oct 27, 2026, 11:45 AM" : the start without the year, the end with it.
+const fmtRange = (start, end) => `${fmtDateTime(start)} → ${fmtDateTimeLong(end)}`;
+
 const fmtTime = (val) => {
   if (!val) return null;
   const d = new Date(val);
@@ -1452,16 +1455,21 @@ function HistoryTab() {
           <div key={trip.id} className="bg-white rounded-2xl shadow-soft overflow-hidden transition-shadow hover:shadow-md">
             <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100">
               <div className="min-w-0">
-                <Eyebrow>{trip.vehicleName}{trip.modeOfDriving === "With Chauffeur" ? " · Chauffeur" : ""}</Eyebrow>
-                <h3 className="font-bold text-arl-dark text-base truncate">{trip.customerName}</h3>
+                <Eyebrow>Trip dates{trip.modeOfDriving === "With Chauffeur" ? " · Chauffeur" : ""}</Eyebrow>
+                <h3 className="font-bold text-arl-dark text-base">{fmtRange(trip.startDateTime, trip.endDateTime)}</h3>
               </div>
               <StatusPill status={trip.status} />
             </div>
 
             <div className="px-5 py-4 space-y-3">
               <Block>
-                <Line label="Starts">{fmtDateTimeLong(trip.startDateTime)}</Line>
-                <Line label="Ends">{fmtDateTimeLong(trip.endDateTime)}</Line>
+                <Line label="Vehicle">{trip.vehicleName}</Line>
+                <Line label="Customer">{trip.customerName}</Line>
+                {trip.customerPhone && trip.customerPhone !== "—" && (
+                  <Line label="Customer phone">
+                    <a href={`tel:${trip.customerPhone}`} className="font-medium text-teal-600 hover:underline">{trip.customerPhone}</a>
+                  </Line>
+                )}
                 <Line label="Location">{trip.location}</Line>
                 {trip.status === "completed" && (trip.startedAt || trip.droppedOffTime || trip.completedAt) && (
                   <>

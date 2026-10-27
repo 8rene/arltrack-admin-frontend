@@ -1059,7 +1059,7 @@ export default function Dashboard() {
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="font-semibold text-gray-800 flex items-center gap-2">
             <IconFileText className="w-4 h-4 text-gray-600" />
-            All Bookings
+            Recent Bookings
           </h2>
           <button onClick={fetchMetrics} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1">
             <IconRefresh className="w-3.5 h-3.5" />

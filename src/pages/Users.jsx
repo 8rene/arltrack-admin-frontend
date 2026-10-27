@@ -253,17 +253,6 @@ function fmtTime(val) {
   return new Date(ms).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
 }
 
-// True when `val` is on/after `from` and on/before `to` ("YYYY-MM-DD" strings
-// from <input type="date">, either may be empty). Local-time day boundaries.
-function inDateRange(val, from, to) {
-  if (!from && !to) return true;
-  const ms = toMillis(val);
-  if (!isFinite(ms)) return false;
-  if (from && ms < new Date(`${from}T00:00:00`).getTime()) return false;
-  if (to   && ms > new Date(`${to}T23:59:59.999`).getTime()) return false;
-  return true;
-}
-
 // ─── SORT HEADER ────────────────────────────────────────────────────────────
 // Clickable <th> that toggles asc/desc on the given sortKey. Shows a neutral
 // up/down chevrons icon when the column isn't the active sort (so it reads
@@ -710,8 +699,6 @@ export default function Users() {
 // ─── DIRECTORY TAB (used for Customers, Drivers, Supervisors, Admins) ─────────
 function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showBookings, filterStatus, setFilterStatus, viewerRole, currentRoleName }) {
   const [search, setSearch]       = useState("");
-  const [dateFrom, setDateFrom]   = useState(""); // "YYYY-MM-DD" — filters by Joined date
-  const [dateTo, setDateTo]       = useState("");
   const [detailUser, setDetailUser]       = useState(null);
   const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -788,7 +775,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
       (filterStatus === "flagged"  && u.isFlagged) ||
       (filterStatus === "verified" && u.isVerified === true) ||
       (filterStatus !== "flagged" && filterStatus !== "verified" && (u.status || "").toLowerCase() === filterStatus);
-    return matchSearch && matchStatus && inDateRange(u.createdAt, dateFrom, dateTo);
+    return matchSearch && matchStatus;
   });
 
   const sorted = [...filtered].sort((a, b) => {
@@ -819,7 +806,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
 
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   // Jump back to page 1 whenever the visible set changes shape (new search/filter/role tab).
-  useEffect(() => { setPage(1); }, [search, filterStatus, users, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, filterStatus, users]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -827,21 +814,6 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search by name, email, phone or user ID..."
           className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-        {/* Date range — filters by the date the account was created (Joined) */}
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <span className="text-xs uppercase tracking-wide text-gray-400">From</span>
-          <input type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)}
-            className="px-3 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-          <span className="text-xs uppercase tracking-wide text-gray-400">To</span>
-          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)}
-            className="px-3 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-          {(dateFrom || dateTo) && (
-            <button onClick={() => { setDateFrom(""); setDateTo(""); }}
-              className="px-3 py-2 border rounded-xl text-xs text-gray-500 hover:bg-gray-50">
-              Clear
-            </button>
-          )}
-        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">

@@ -98,6 +98,12 @@ const IconSiren = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 const IconX = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -244,7 +250,7 @@ export default function Maintenance() {
   const [cars, setCars]                   = useState([]);
   const [config, setConfig]               = useState({ basisOptions: FALLBACK_BASIS, statusOptions: FALLBACK_STATUSES, serviceCatalog: [] });
   const [loading, setLoading]             = useState(true);
-  const [search, setSearch]               = useState("");
+  const [carFilter, setCarFilter]         = useState("All"); // "Brand Model" label, or "All"
   const [statusFilter, setStatusFilter]   = useState("All");
   const [editRecord, setEditRecord]       = useState(null);
   const [showAdd, setShowAdd]             = useState(false);
@@ -717,23 +723,24 @@ export default function Maintenance() {
     return da === db_ ? 0 : da < db_ ? -1 : 1;
   });
 
+  // Vehicle filter: one entry per car model ("Brand Model") — no plate numbers. Built from the whole fleet,
+  // so a model shows up even before it has a record; models seen only on old records are kept too.
+  // Picking one shows the records of every car of that model.
+  const vehicleOptions = [...new Set([
+    ...cars.map(c => c.label),
+    ...records.map(r => r.carLabel),
+  ].filter(l => l && l !== "—"))].sort((x, y) => x.localeCompare(y));
+
   const filtered = sortedRecords.filter(r => {
-    const q = search.toLowerCase();
-    const serviceNames = (r.services || []).map(s => s.serviceName).join(" ").toLowerCase();
-    const matchQ = !q
-      || (r.carLabel || "").toLowerCase().includes(q)
-      || (r.plateNumber || "").toLowerCase().includes(q)
-      || (r.basis || "").toLowerCase().includes(q)
-      || (r.description || "").toLowerCase().includes(q)
-      || serviceNames.includes(q);
+    const matchC = carFilter === "All" || r.carLabel === carFilter;
     const matchS = statusFilter === "All" || r.status === statusFilter;
     const matchD = !selectedDay || (toDate(r.maintenanceDate) && localISODate(toDate(r.maintenanceDate)) === selectedDay);
-    return matchQ && matchS && matchD;
+    return matchC && matchS && matchD;
   });
 
   // The table is paginated and day-filtered; the calendar and stat cards keep reading all records.
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, statusFilter, sortKey, sortDir, activeStatFilter, selectedDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [carFilter, statusFilter, sortKey, sortDir, activeStatFilter, selectedDay]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -750,17 +757,6 @@ export default function Maintenance() {
         <div>
           <h1 className="text-xl font-bold text-arl-dark">Maintenance</h1>
           <p className="text-xs text-gray-400 mt-0.5">{loading ? "Loading…" : `${records.length} records`}</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <input type="text" placeholder="Search car, basis, service…"
-            value={search} onChange={e => setSearch(e.target.value)}
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light w-48" />
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
-            {ALL_STATUSES.map(s => <option key={s}>{s}</option>)}
-          </select>
-          <button onClick={fetchAll} disabled={loading}
-            className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">↺</button>
         </div>
       </div>
 
@@ -839,7 +835,7 @@ export default function Maintenance() {
         onSelectDay={setSelectedDay}
       />
 
-      {/* Under the calendar: day filter chip (left) + Schedule button (right) */}
+      {/* Under the calendar: day filter chip (left) + Vehicle / Status filters, Refresh and Schedule (right) */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           {selectedDay && (
@@ -852,10 +848,26 @@ export default function Maintenance() {
             </span>
           )}
         </div>
-        <button onClick={openAdd}
-          className="px-4 py-2 text-sm rounded-xl bg-arl-dark text-white hover:opacity-90 font-semibold">
-          + Schedule
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select value={carFilter} onChange={e => setCarFilter(e.target.value)} title="Filter by vehicle"
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm max-w-[14rem]">
+            <option value="All">All vehicles</option>
+            {vehicleOptions.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} title="Filter by status"
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
+            {ALL_STATUSES.map(st => <option key={st} value={st}>{st === "All" ? "All statuses" : st}</option>)}
+          </select>
+          <button onClick={fetchAll} disabled={loading}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            <IconRefresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+          <button onClick={openAdd}
+            className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold">
+            + Schedule
+          </button>
+        </div>
       </div>
 
       {/* TABLE */}

@@ -144,6 +144,12 @@ export default function Reviews() {
     loadReviews(car.id);
   };
 
+  // A car is always open — default to the first one once the list loads.
+  useEffect(() => {
+    if (!selectedCar && cars.length) openCar(cars[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cars]);
+
   const removeReview = async (review) => {
     if (!window.confirm(`Delete this review by ${review.reviewerName}? It will be moved to Reviews Archive and can be restored from there.`)) return;
     setDeletingID(review.reviewID);
@@ -194,7 +200,7 @@ export default function Reviews() {
 
       <div className="flex gap-4">
         {/* Car list — every vehicle, not just ones with existing reviews */}
-        <div className={`${selectedCar ? "w-72 shrink-0" : "flex-1"} transition-all duration-300`}>
+        <div className="w-72 shrink-0">
           {carsLoading ? (
             <div className="space-y-3">
               {[1, 2, 3].map(i => (
@@ -202,7 +208,7 @@ export default function Reviews() {
               ))}
             </div>
           ) : (
-            <div className={`grid gap-3 ${selectedCar ? "grid-cols-1" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"}`}>
+            <div className="grid gap-3 grid-cols-1">
               {cars.length === 0 && (
                 <p className="text-gray-400 text-sm col-span-full text-center py-8">No vehicles found.</p>
               )}
@@ -211,7 +217,7 @@ export default function Reviews() {
                 return (
                   <button
                     key={car.id}
-                    onClick={() => isSelected ? setSelectedCar(null) : openCar(car)}
+                    onClick={() => { if (!isSelected) openCar(car); }}
                     className={`w-full text-left bg-white rounded-2xl border transition-all duration-200 shadow-soft p-4 hover:shadow-md ${
                       isSelected ? "border-teal-400 ring-2 ring-teal-100" : "border-gray-100 hover:border-teal-200"
                     }`}
@@ -219,9 +225,9 @@ export default function Reviews() {
                     <div className="flex items-center gap-3">
                       {car.imageURL ? (
                         <img src={car.imageURL} alt="car"
-                          className={`rounded-xl object-cover ${selectedCar ? "w-10 h-10" : "w-14 h-14"}`} />
+                          className="rounded-xl object-cover w-10 h-10" />
                       ) : (
-                        <div className={`rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 ${selectedCar ? "w-10 h-10" : "w-14 h-14"}`}>
+                        <div className="rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 w-10 h-10">
                           🚗
                         </div>
                       )}
@@ -257,7 +263,6 @@ export default function Reviews() {
                     : `${reviews.length} review${reviews.length !== 1 ? "s" : ""}${avgRating(reviews) ? ` · avg ${avgRating(reviews)}` : ""}`}
                 </p>
               </div>
-              <button onClick={() => setSelectedCar(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
             </div>
 
             {reviewsLoading ? (
