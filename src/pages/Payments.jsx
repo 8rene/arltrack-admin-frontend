@@ -887,7 +887,7 @@ export default function Payments() {
                         )}
                       </Section>
 
-                      {/* The gateway fee the customer paid us vs. what PayMongo kept, one line per online charge. */}
+                      {/* Gateway fee received (payment + penalty) vs. PayMongo's transaction fees (payment + penalty). */}
                       <GatewayBreakdown payment={selected} fmt={fmtCurrency} />
 
                       {/* Every penalty charged on this booking: charged, paid, waived. Waived / voided ones are listed
@@ -1563,18 +1563,16 @@ function KeyFigure({ label, value, note, color }) {
 //   total     = all PayMongo fees added up
 //   sale      = received − total: what is left of the gateway fee after PayMongo took its cut
 //               (negative = the business absorbed the difference)
-// Penalties paid online count too (p.penaltyGateway): the customer pays the same gateway % on top of the penalty, so
-// that fee is part of "received", and what PayMongo kept on those charges is one more line in the box.
+// buildGatewayBreakdown() is the BOOKING's side only (deposit + balance). GatewayBreakdown below adds the penalties paid online
+// (payment.penaltyGateway: a penalty over the fee threshold carries its own gateway fee, and PayMongo takes a cut of every
+// online penalty charge) into the same received / total / sale.
 const PHASE_NAME = { deposit: "Deposit", balance: "Balance", penalty: "Penalties" };
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const signed = (n, fmtFn) => (n < 0 ? `−${peso(Math.abs(n), fmtFn)}` : peso(n, fmtFn));
 
 function buildGatewayBreakdown(p) {
-  const pg = p.penaltyGateway || null;
-  const bookingReceived = Number(p.gatewayFee) || 0;
-  const penaltyReceived = pg ? Number(pg.received) || 0 : 0;
-  const received = round2(bookingReceived + penaltyReceived);
+  const received = round2(Number(p.gatewayFee) || 0);
   const tx = Array.isArray(p.paymongoTransactions) ? p.paymongoTransactions : [];
   const fees = [];
   ["deposit", "balance"].forEach((phase) => {
@@ -1604,22 +1602,12 @@ function buildGatewayBreakdown(p) {
   // The total only counts PayMongo's real fees (in-store rows are ₱0 and must not make "no fee recorded" look like ₱0).
   const onlineFees = fees.filter((f) => !f.inStore);
   const storedTotal = p.paymongoFee ? p.paymongoFee.total : null;
-  const bookingTotal = storedTotal !== null && storedTotal !== undefined
+  const total = storedTotal !== null && storedTotal !== undefined
     ? Number(storedTotal) || 0
     : onlineFees.length ? round2(onlineFees.reduce((s, f) => s + f.amount, 0)) : null;
 
-  // Penalties paid online: what PayMongo kept on them is its own line, and it is added to the total.
-  // (null = PayMongo's fee wasn't recorded for them, so no line and nothing added.)
-  const penaltyFee = pg && pg.paymongoFee !== null && pg.paymongoFee !== undefined ? Number(pg.paymongoFee) || 0 : null;
-  if (penaltyFee !== null) {
-    fees.push({ phase: "penalty", amount: penaltyFee, channel: null, charged: pg.charged != null ? Number(pg.charged) : null });
-  }
-  const total = penaltyFee === null ? bookingTotal : round2((bookingTotal || 0) + penaltyFee);
-
   return {
     received,
-    bookingReceived,
-    penaltyReceived,
     rate: Number(p.gatewayFeeRate) || 0,
     base: Number(p.gatewayFeeBase) || 0,
     fees,
@@ -1631,62 +1619,60 @@ function buildGatewayBreakdown(p) {
 
 function GatewayBreakdown({ payment, fmt }) {
   const g = buildGatewayBreakdown(payment);
-  if (!g.show) return null;
-  const saleColor = g.sale === null ? "" : g.sale >= 0 ? "text-green-600" : "text-red-500";
+  const pen = payment?.penaltyGateway || null;
+  if (!g.show && !pen) return null;
+
+  const penItems = pen && Array.isArray(pen.items) ? pen.items : [];
+  const paymentReceived = g.received;
+  const penaltyReceived = pen ? round2(Number(pen.received) || 0) : 0;
+  const receivedTotal = round2(paymentReceived + penaltyReceived);
+
+  // PayMongo's transaction fees. null = not recorded (cash payment, or paid before fee tracking started).
+  const paymentFee = g.total;
+  const penaltyFee = pen && pen.paymongoFee !== null && pen.paymongoFee !== undefined ? Number(pen.paymongoFee) || 0 : null;
+  const hasFees = paymentFee !== null || penaltyFee !== null;
+  const feeTotal = round2((paymentFee || 0) + (penaltyFee || 0));
+  const sale = round2(receivedTotal - feeTotal);
+
   return (
     <Section title="Gateway Breakdown">
-      {/* What the customer paid us for the gateway (green: money in). */}
-      <Row
-        label="Gateway received"
-        hint={[
-          g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid",
-          g.penaltyReceived > 0 ? `includes ${peso(g.penaltyReceived, fmt)} paid on penalties` : null,
-        ].filter(Boolean).join(" · ")}
-        value={peso(g.received, fmt)}
-        bold
-        color="text-green-600"
-      />
+      <Row label="Payment Gateway" hint={g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid on the booking"}
+        value={peso(paymentReceived, fmt)} color="text-green-600" />
+      {pen && (
+        <Row label="Penalty Gateway" hint="Online fee the customer paid on penalties over the threshold"
+          value={peso(penaltyReceived, fmt)} color="text-green-600" />
+      )}
+      <Row label="Total gateway received" value={peso(receivedTotal, fmt)} bold color="text-green-600" />
 
-      {/* What PayMongo kept, grouped in one box: one line per payment, then the total (reddish: money out). */}
-      {(g.fees.length > 0 || g.total !== null) && (
+      {hasFees && (
         <div className="my-2 rounded-xl border border-red-100 bg-red-50/40 px-4 py-1.5">
-          {g.fees.map((f, i) => (
-            <Row
-              key={f.phase}
-              label={`Payment ${i + 1} · ${PHASE_NAME[f.phase]}${f.inStore ? " (in store)" : ""}`}
-              hint={f.inStore
-                ? ["Paid in store, so PayMongo charged no fee", f.channel, f.charged != null ? `received ${peso(f.charged, fmt)}` : null, f.ref ? `ref ${f.ref}` : null].filter(Boolean).join(" · ")
-                : ([f.channel, f.charged != null ? `charged ${peso(f.charged, fmt)}` : null].filter(Boolean).join(" · ") || null)}
-              value={peso(f.amount, fmt)}
-              color={f.inStore ? "text-gray-400" : "text-red-400"}
-            />
-          ))}
-          {g.total !== null && (
-            <div className={g.fees.length > 0 ? "border-t border-red-100 mt-1 pt-1" : ""}>
-              <Row label="Gateway total" hint="All PayMongo fees added up" value={peso(g.total, fmt)} bold color="text-red-600" />
-            </div>
+          {paymentFee !== null && (
+            <Row label="Payment Transaction Fee"
+              hint={g.fees.map((f, i) => `Payment ${i + 1} · ${PHASE_NAME[f.phase]}${f.inStore ? " (in store)" : ""}: ${peso(f.amount, fmt)}`).join(" · ") || "PayMongo's fee on the booking"}
+              value={peso(paymentFee, fmt)} color="text-red-400" />
           )}
+          {penaltyFee !== null && (
+            <Row label="Penalty Transaction Fee"
+              hint={penItems.map((it, i) => `Penalty ${i + 1} · ${it.description}: ${it.paymongoFee === null ? "not recorded" : peso(it.paymongoFee, fmt)}`).join(" · ") || "PayMongo's fee on penalties"}
+              value={peso(penaltyFee, fmt)} color="text-red-400" />
+          )}
+          <div className="border-t border-red-100 mt-1 pt-1">
+            <Row label="Total transaction fee" value={peso(feeTotal, fmt)} bold color="text-red-600" />
+          </div>
         </div>
       )}
 
-      {/* Outside the box: what is left of the gateway fee after PayMongo's cut (green; red if PayMongo cost more). */}
-      {g.total !== null ? (
-        <Row label="Gateway sale" hint="Gateway received minus gateway total" value={signed(g.sale, fmt)} bold color={saleColor} />
+      {hasFees ? (
+        <Row label="Gateway sale" hint="Total gateway received minus total transaction fee" value={signed(sale, fmt)} bold color={sale >= 0 ? "text-green-600" : "text-red-500"} />
       ) : (
         <p className="text-xs text-gray-400 pt-2">
           PayMongo's own fee isn't recorded for this payment (cash payment, or paid before fee tracking started).
         </p>
       )}
 
-      {/* PayMongo keeps its fee on a charge that is refunded. Its own line, NOT part of the gateway total or sale above
-          (those stay "charges only"). Shown only once a refund / return row has recorded a share of the fee. */}
       {Number(payment?.paymongoFee?.keptOnRefunds) > 0 && (
-        <Row
-          label="PayMongo fee kept on refunds"
-          hint="Fee PayMongo kept on charges that were refunded or returned"
-          value={peso(Number(payment.paymongoFee.keptOnRefunds), fmt)}
-          color="text-red-400"
-        />
+        <Row label="PayMongo fee kept on refunds" hint="Fee PayMongo kept on charges that were refunded or returned"
+          value={peso(Number(payment.paymongoFee.keptOnRefunds), fmt)} color="text-red-400" />
       )}
     </Section>
   );

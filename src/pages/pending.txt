@@ -514,4 +514,9 @@ hand back instore cash, can have reference nuber
 history and review dont have a codign mark of the recorverd 
 
 
-create the index in the car tracking issue
+history dont flush?
+if penalty has exceeds 1k it would ask for a gateway fee again
+fleet refund ithousl be a full refund
+
+checkthe more than 1k payment
+retry on inprogress
