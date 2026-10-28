@@ -260,10 +260,11 @@ export default function Holidays() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [month, setMonth] = useState(""); // "" = all months
+  const [sortDir, setSortDir] = useState("asc"); // Date column: asc = Jan → Dec
+  const [calMonth, setCalMonth] = useState(null); // { y, m } shown on the calendar; null = default
 
-  const [dialog, setDialog] = useState(null);       // { holiday } — holiday null = adding
+  const [dialog, setDialog] = useState(null);       // { holiday, date } — holiday null = adding (date pre-fills it)
   const [toDelete, setToDelete] = useState(null);
-  const [pendingYear, setPendingYear] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -288,32 +289,21 @@ export default function Holidays() {
   const displayYear = holidays.find((h) => h.holidayDate)
     ? parseYmd(holidays.find((h) => h.holidayDate).holidayDate).y
     : Number(today.slice(0, 4));
-  const yearOptions = useMemo(() => {
-    const cur = Number(today.slice(0, 4));
-    const set = new Set([displayYear]);
-    for (let y = cur - 6; y <= cur + 6; y++) set.add(y);
-    return [...set].sort((a, b) => a - b);
-  }, [displayYear, today]);
-
-  const visible = useMemo(
-    () => holidays.filter((h) => !month || (h.holidayDate && parseYmd(h.holidayDate).m === Number(month))),
-    [holidays, month]
-  );
-
-  const confirmRetrace = async () => {
-    setBusy(true);
-    try {
-      const json = await api("/api/holidays/retrace", { method: "POST", body: { year: pendingYear } });
-      setHolidays(json.data || []);
-      showToast(`Retraced ${json.updated} holiday${json.updated === 1 ? "" : "s"} to ${pendingYear}.`);
-      setPendingYear(null);
-    } catch (e) {
-      showToast(`Failed to update holidays for ${pendingYear}: ${e.message}`, "error");
-      setPendingYear(null);
-    } finally {
-      setBusy(false);
-    }
+  // Calendar starts on the current month when the list is on this year, else January.
+  const cal = calMonth || {
+    y: displayYear,
+    m: Number(today.slice(0, 4)) === displayYear ? Number(today.slice(5, 7)) - 1 : 0,
   };
+
+  const visible = useMemo(() => {
+    const list = holidays.filter((h) => !month || (h.holidayDate && parseYmd(h.holidayDate).m === Number(month)));
+    // YYYY-MM-DD strings sort correctly as text; holidays with no date go last.
+    return [...list].sort((a, b) => {
+      if (!a.holidayDate) return 1;
+      if (!b.holidayDate) return -1;
+      return sortDir === "asc" ? a.holidayDate.localeCompare(b.holidayDate) : b.holidayDate.localeCompare(a.holidayDate);
+    });
+  }, [holidays, month, sortDir]);
 
   const confirmDelete = async () => {
     setBusy(true);
@@ -343,27 +333,24 @@ export default function Holidays() {
             {" · "}Number coding is suspended on these dates.
           </p>
         </div>
-        <button onClick={() => setDialog({ holiday: null })} className={btnPrimary}>
+        <button onClick={() => setDialog({ holiday: null, date: null })} className={btnPrimary}>
           + Add holiday
         </button>
       </div>
 
+      <ErrorBanner onRetry={load}>{error}</ErrorBanner>
+
+      <HolidayCalendar
+        holidays={holidays}
+        cal={cal}
+        setCalMonth={setCalMonth}
+        today={today}
+        yearLocked={holidays.length > 0 ? displayYear : null}
+        onEdit={(h) => setDialog({ holiday: h, date: null })}
+        onAdd={(ymd) => setDialog({ holiday: null, date: ymd })}
+      />
+
       <div className="flex flex-wrap gap-3 items-end mb-3">
-        <div className="w-32">
-          <Field label="Year">
-            <select
-              className={inputCls}
-              value={displayYear}
-              disabled={loading || holidays.length === 0}
-              onChange={(e) => {
-                const y = Number(e.target.value);
-                if (y !== displayYear) setPendingYear(y);
-              }}
-            >
-              {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </Field>
-        </div>
         <div className="w-48">
           <Field label="Filter by month">
             <select className={inputCls} value={month} onChange={(e) => setMonth(e.target.value)}>
@@ -377,18 +364,11 @@ export default function Holidays() {
         </button>
       </div>
 
-      <p className="text-xs text-gray-400 mb-4">
-        Changing the year moves every holiday onto it. Holy Week and National Heroes Day are recalculated;
-        Chinese New Year, Eid al-Fitr and Eid al-Adha follow lunar/proclaimed dates, so check those manually.
-      </p>
-
-      <ErrorBanner onRetry={load}>{error}</ErrorBanner>
-
       <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
         <table className="w-full text-sm font-sans min-w-[560px]">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              <th className={thCls}>Date</th>
+              <SortableTh label="Date" active dir={sortDir} onSort={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))} />
               <th className={thCls}>Holiday</th>
               <th className={thCls}>Day</th>
               <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
@@ -405,26 +385,18 @@ export default function Holidays() {
               visible.map((h) => {
                 const isToday = h.holidayDate === today;
                 const isPast = h.holidayDate && h.holidayDate < today;
-                const { m, d } = h.holidayDate ? parseYmd(h.holidayDate) : { m: 1, d: 0 };
                 return (
                   <tr key={h.id} className={`border-b border-gray-50 hover:bg-gray-50/50 ${isPast ? "opacity-60" : ""}`}>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 shrink-0 rounded-xl border border-teal-100 bg-teal-50 text-center py-1">
-                          <div className="text-[10px] font-semibold uppercase text-teal-600">{MONTH_NAMES[m - 1].slice(0, 3)}</div>
-                          <div className="text-base font-bold text-teal-700 leading-tight">{d || "—"}</div>
-                        </div>
-                        <span className="text-gray-500 whitespace-nowrap">{fmtDate(h.holidayDate)}</span>
-                      </div>
-                    </td>
+                    <td className="px-5 py-3 text-gray-500 whitespace-nowrap">{fmtDate(h.holidayDate)}</td>
                     <td className="px-5 py-3 font-semibold text-gray-800">
                       {h.holidayName || "—"}
                       {isToday && <span className="ml-2 align-middle"><Pill tone="green">Today</Pill></span>}
+                      {isWeekendYmd(h.holidayDate) && <span className="ml-2 align-middle"><Pill tone="gray">Weekend</Pill></span>}
                     </td>
                     <td className="px-5 py-3 text-gray-600">{h.holidayDay || "—"}</td>
                     <td className="px-5 py-3">
                       <RowActions
-                        onEdit={() => setDialog({ holiday: h })}
+                        onEdit={() => setDialog({ holiday: h, date: null })}
                         onDelete={canDelete ? () => setToDelete(h) : null}
                       />
                     </td>
@@ -439,6 +411,7 @@ export default function Holidays() {
       {dialog && (
         <HolidayDialog
           existing={dialog.holiday}
+          defaultDate={dialog.date}
           api={api}
           onClose={() => setDialog(null)}
           onSaved={async (msg) => { setDialog(null); showToast(msg); await load(); }}
@@ -458,27 +431,139 @@ export default function Holidays() {
           Number coding will no longer be suspended on that date.
         </ConfirmDialog>
       )}
-
-      {pendingYear && (
-        <ConfirmDialog
-          title={`Move all holidays to ${pendingYear}?`}
-          confirmLabel={`Move to ${pendingYear}`}
-          busy={busy}
-          onConfirm={confirmRetrace}
-          onCancel={() => setPendingYear(null)}
-        >
-          This rewrites the date of all <strong>{holidays.length}</strong> holidays from {displayYear} to {pendingYear}.
-          Any date you set by hand will be replaced, and it affects number-coding suspension right away.
-        </ConfirmDialog>
-      )}
     </div>
   );
 }
 
-function HolidayDialog({ existing, api, onClose, onSaved }) {
+// ─── Sort header — same look as the Bookings table ──────────────────────────
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg
+    className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`}
+    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableTh({ label, active, dir, onSort }) {
+  return (
+    <th className="px-5 py-3 text-left select-none">
+      <button
+        onClick={onSort}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={dir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
+const isWeekendYmd = (ymd) => validYmd(ymd) && ["Saturday", "Sunday"].includes(weekdayOf(ymd));
+const pad2 = (n) => String(n).padStart(2, "0");
+
+// ─── Holiday calendar ────────────────────────────────────────────────────────
+// Same look as the Maintenance calendar. A holiday shows as a teal chip with its
+// name (click it to edit); clicking an empty day adds a holiday on that date.
+// Weekend holidays are grey — number coding doesn't run on weekends anyway.
+// With a list loaded, the month arrows stay inside the list's year.
+function HolidayCalendar({ holidays, cal, setCalMonth, today, yearLocked, onEdit, onAdd }) {
+  const { y, m } = cal;
+  const monthName = `${MONTH_NAMES[m]} ${y}`;
+  const firstDay = new Date(Date.UTC(y, m, 1)).getUTCDay(); // Sunday-first, like Maintenance
+  const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+
+  const byDate = {};
+  holidays.forEach((h) => { if (h.holidayDate) (byDate[h.holidayDate] = byDate[h.holidayDate] || []).push(h); });
+
+  const canPrev = !(yearLocked && m === 0);
+  const canNext = !(yearLocked && m === 11);
+  const prevMonth = () => canPrev && setCalMonth(m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 });
+  const nextMonth = () => canNext && setCalMonth(m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 });
+
+  const cells = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const navBtn = "w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:hover:bg-transparent";
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5 mb-4">
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={prevMonth} disabled={!canPrev} className={navBtn} aria-label="Previous month">‹</button>
+        <h2 className="font-bold text-gray-800 text-base">{monthName}</h2>
+        <button onClick={nextMonth} disabled={!canNext} className={navBtn} aria-label="Next month">›</button>
+      </div>
+
+      <div className="grid grid-cols-7 mb-1">
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+          <div key={d} className="text-center text-xs font-semibold text-gray-400 py-1">{d}</div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((day, i) => {
+          if (!day) return <div key={i} />;
+          const ymd = `${y}-${pad2(m + 1)}-${pad2(day)}`;
+          const isToday = ymd === today;
+          const weekend = i % 7 === 0 || i % 7 === 6;
+          const hols = byDate[ymd] || [];
+          return (
+            <div
+              key={i}
+              role="button"
+              tabIndex={0}
+              title={hols.length ? undefined : `Add a holiday on ${MONTH_NAMES[m]} ${day}`}
+              onClick={() => onAdd(ymd)}
+              onKeyDown={(e) => e.key === "Enter" && onAdd(ymd)}
+              className={`min-h-[84px] p-1.5 rounded-xl border cursor-pointer transition-all ${
+                isToday ? "border-teal-500 bg-teal-50"
+                : hols.length ? "border-gray-200 hover:border-teal-300"
+                : weekend ? "border-transparent bg-gray-50/70 hover:bg-gray-100"
+                : "border-transparent hover:bg-gray-50"
+              }`}
+            >
+              <span className={`text-xs font-semibold ${isToday ? "text-teal-600" : weekend ? "text-gray-400" : "text-gray-700"}`}>{day}</span>
+              <div className="mt-1 space-y-1">
+                {hols.map((h) => (
+                  <button
+                    key={h.id}
+                    onClick={(e) => { e.stopPropagation(); onEdit(h); }}
+                    title={`${h.holidayName}${weekend ? " — weekend, no coding anyway" : ""} (click to edit)`}
+                    className={`block w-full truncate text-left px-1.5 py-0.5 rounded-md text-[11px] font-semibold border transition ${
+                      weekend
+                        ? "bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200"
+                        : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100"
+                    }`}
+                  >
+                    {h.holidayName || "Holiday"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap gap-4 mt-4 pt-3 border-t border-gray-100 text-xs text-gray-500">
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-teal-100 border border-teal-200" />Holiday (coding suspended)</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-gray-100 border border-gray-200" />Weekend holiday (no coding anyway)</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border border-teal-500 bg-teal-50" />Today</span>
+        <span className="ml-auto text-gray-400">Click a holiday to edit · click an empty day to add one</span>
+      </div>
+    </div>
+  );
+}
+
+function HolidayDialog({ existing, defaultDate, api, onClose, onSaved }) {
   const isEditing = !!existing;
   const [name, setName] = useState(existing?.holidayName || "");
-  const [date, setDate] = useState(existing?.holidayDate || todayYmdPHT());
+  const [date, setDate] = useState(existing?.holidayDate || defaultDate || todayYmdPHT());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 

@@ -167,7 +167,7 @@ const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition"
 const RowActions = ({ onView, onEdit, onDelete }) => (
   <div className="flex items-center gap-2 justify-end">
     {onView && (
-      <button onClick={onView} className={`${actionBtn} border-gray-200 text-gray-600 hover:bg-gray-50`}>View</button>
+      <button onClick={onView} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
     )}
     {onEdit && (
       <button onClick={onEdit} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
@@ -244,6 +244,62 @@ const hasErrors = (errs) => Object.values(errs).some(Boolean);
 
 const dayShort = (d) => d.slice(0, 3);
 
+// "Now" on the Manila wall clock (coding is evaluated in PHT by the backend).
+const phtNow = () => {
+  const d = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  return { ymd: d.toISOString().slice(0, 10), dow: d.getUTCDay() || 7, minutes: d.getUTCHours() * 60 + d.getUTCMinutes() };
+};
+// Digits in the weekly grid. Calm by default (plain numbers) so a full table
+// isn't a wall of red; today's column gets soft teal chips so it stands out.
+const MiniDigits = ({ digits, today = false }) =>
+  today ? (
+    <span className="inline-flex gap-1.5">
+      {digits.map((d) => (
+        <span key={d} className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-white border border-teal-200 text-teal-700 text-sm font-bold shadow-sm">
+          {d}
+        </span>
+      ))}
+    </span>
+  ) : (
+    <span className="inline-flex gap-2.5 text-base font-semibold text-gray-600 tabular-nums">
+      {digits.map((d) => <span key={d}>{d}</span>)}
+    </span>
+  );
+
+const IconBuilding = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+  </svg>
+);
+const IconList = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+const IconClockSm = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// Same look as the stat cards on Bookings / Payments: big number + tinted icon
+// circle on top, small grey label underneath.
+const StatCard = ({ label, value, icon: Icon, color }) => (
+  <div className="p-4 rounded-2xl border bg-white">
+    <div className="flex items-start justify-between">
+      <div className="text-2xl font-bold text-gray-800">{value}</div>
+      <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${color}`}>
+        <Icon className="w-4 h-4" />
+      </span>
+    </div>
+    <div className="text-xs text-gray-400 mt-0.5">{label}</div>
+  </div>
+);
+
 const DigitChips = ({ digits }) =>
   digits.length === 0 ? (
     <span className="text-gray-400">—</span>
@@ -309,6 +365,8 @@ export default function CodingRestrictions() {
   const [cityToDelete, setCityToDelete] = useState(null); // { city, count }
   const [busy, setBusy] = useState(false);
 
+  const [holidays, setHolidays] = useState([]);
+
   const load = useCallback(async () => {
     try {
       const json = await api("/api/coding-rules");
@@ -323,11 +381,26 @@ export default function CodingRestrictions() {
 
   usePolling(load, 60000);
 
+  // Holidays (to show "coding suspended today"). Best-effort: if it fails the page still works.
+  const loadExtras = useCallback(async () => {
+    try {
+      const h = await api("/api/holidays");
+      setHolidays(Array.isArray(h.data) ? h.data : []);
+    } catch { /* ignore */ }
+  }, [api]);
+  useEffect(() => { loadExtras(); }, [loadExtras]);
+
   // If the opened city vanishes (its last rule deleted — here or elsewhere, or
   // it was renamed elsewhere), close the modal instead of showing an empty one.
   useEffect(() => {
     if (city && !loading && !data.cities.includes(city)) setCity(null);
   }, [city, data.cities, loading]);
+
+  const now = phtNow();
+  const holidayToday = holidays.find((h) => h.holidayDate === now.ymd) || null;
+
+  // Mon–Fri always; Sat/Sun only if some city actually has a weekend rule.
+  const gridDays = [1, 2, 3, 4, 5, 6, 7].filter((n) => n <= 5 || data.rules.some((r) => r.dayOfWeek === n));
 
   const cityRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -335,10 +408,20 @@ export default function CodingRestrictions() {
       .filter((c) => !q || c.toLowerCase().includes(q))
       .map((c) => {
         const rules = data.rules.filter((r) => r.city === c);
-        const days = [...new Set(rules.map((r) => r.dayOfWeek))].sort((a, b) => a - b);
-        return { city: c, count: rules.length, days: days.map((d) => dayShort(DAY_NAMES[d - 1] || "?")).join(", ") };
+        const byDay = {};
+        rules.forEach((r) => { (byDay[r.dayOfWeek] = byDay[r.dayOfWeek] || []).push(r); });
+        return { city: c, count: rules.length, byDay };
       });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, search]);
+
+  // Everything restricted today (skipped entirely on a holiday).
+  const todayAll = useMemo(
+    () => (holidayToday ? [] : data.rules.filter((r) => r.dayOfWeek === now.dow)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.rules, holidayToday, now.dow]
+  );
+  const todayCities = new Set(todayAll.map((r) => r.city)).size;
 
   const cityRules = useMemo(
     () => (city ? data.rules.filter((r) => r.city === city) : []),
@@ -383,10 +466,22 @@ export default function CodingRestrictions() {
           <p className="text-sm text-gray-400 mt-0.5">
             {loading
               ? "Loading…"
-              : `${data.cities.length} cit${data.cities.length === 1 ? "y" : "ies"} with coding schedules. View a city to see its rules.`}
+              : `${data.cities.length} cit${data.cities.length === 1 ? "y" : "ies"} with coding schedules. Hover a day to see its time window, or view a city for the details.`}
           </p>
         </div>
         <button onClick={() => setCityDialog(true)} className={btnPrimary}>+ Add city</button>
+      </div>
+
+      {/* ── Summary ── */}
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <StatCard label="Cities" value={loading ? "…" : data.cities.length} icon={IconBuilding} color="bg-teal-50 text-teal-600" />
+        <StatCard label="Rules" value={loading ? "…" : data.rules.length} icon={IconList} color="bg-blue-50 text-blue-600" />
+        <StatCard
+          label={holidayToday ? "Coding today (holiday — suspended)" : "Cities with coding today"}
+          value={loading ? "…" : holidayToday ? 0 : todayCities}
+          icon={IconClockSm}
+          color="bg-yellow-50 text-yellow-600"
+        />
       </div>
 
       {/* ── Filters ── */}
@@ -398,43 +493,56 @@ export default function CodingRestrictions() {
           onChange={(e) => setSearch(e.target.value)}
           className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 w-56"
         />
-        <button onClick={load} disabled={loading} className="px-3 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 ml-auto">
+        <button onClick={() => { load(); loadExtras(); }} disabled={loading} className="px-3 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 ml-auto">
           {loading ? "…" : "Refresh"}
         </button>
       </div>
 
       <ErrorBanner onRetry={load}>{error}</ErrorBanner>
 
-      {/* ── City list ── */}
+      {/* ── City list: one row per city, Monday–Sunday at a glance ── */}
       <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
-        <table className="w-full text-sm font-sans min-w-[520px]">
+        <table className="w-full table-fixed text-sm font-sans min-w-[900px]">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              <th className={thCls}>City</th>
-              <th className={thCls}>Rules</th>
-              <th className={thCls}>Coding days</th>
-              <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
+              <th className={`${thCls} w-48`}>City</th>
+              {gridDays.map((n) => (
+                <th key={n} className={`px-2 py-3 text-center text-xs font-semibold uppercase tracking-wider ${now.dow === n ? "text-teal-600 bg-teal-50/60" : "text-gray-400"}`}>
+                  {dayShort(DAY_NAMES[n - 1])}
+                </th>
+              ))}
+              <th className="w-28 px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <SkeletonRows rows={6} cols={4} />
+              <SkeletonRows rows={6} cols={gridDays.length + 2} />
             ) : cityRows.length === 0 ? (
-              <EmptyRow cols={4}>
+              <EmptyRow cols={gridDays.length + 2}>
                 {data.cities.length === 0 ? "No coding schedules yet. Add a city to get started." : "No city matches your search."}
               </EmptyRow>
             ) : (
               cityRows.map((r) => (
-                <tr key={r.city} onClick={() => setCity(r.city)} className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer">
-                  <td className="px-5 py-3 font-semibold text-gray-800">{r.city}</td>
-                  <td className="px-5 py-3 text-gray-600">{r.count === 1 ? "1 rule" : `${r.count} rules`}</td>
-                  <td className="px-5 py-3 text-gray-500">{r.days || "—"}</td>
-                  <td className="px-5 py-3" onClick={(e) => e.stopPropagation()}>
-                    <RowActions
-                      onView={() => setCity(r.city)}
-                      onEdit={() => setCityToRename(r.city)}
-                      onDelete={canDelete ? () => setCityToDelete(r) : null}
-                    />
+                <tr key={r.city} className="border-b border-gray-50 hover:bg-gray-50/50">
+                  <td className="px-5 py-3">
+                    <p className="font-semibold text-gray-800">{r.city}</p>
+                  </td>
+                  {gridDays.map((n) => {
+                    const rs = r.byDay[n] || [];
+                    return (
+                      <td key={n} className={`px-2 py-3 text-center ${now.dow === n ? "bg-teal-50/60" : ""}`}>
+                        {rs.length === 0 ? (
+                          <span className="text-gray-300">—</span>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1" title={rs.map((x) => `${x.startTime} – ${x.endTime}`).join(", ")}>
+                            {rs.map((x) => <MiniDigits key={x.id} digits={x.bannedDigits} today={now.dow === n} />)}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="px-5 py-3">
+                    <RowActions onView={() => setCity(r.city)} />
                   </td>
                 </tr>
               ))
@@ -450,6 +558,8 @@ export default function CodingRestrictions() {
           rules={cityRules}
           canDelete={canDelete}
           onClose={() => setCity(null)}
+          onEditCity={() => setCityToRename(city)}
+          onDeleteCity={() => setCityToDelete({ city, count: cityRules.length })}
           onAdd={(day) => setRuleDialog({ rule: null, day })}
           onEdit={(rule) => setRuleDialog({ rule, day: null })}
           onDelete={(rule) => setToDelete(rule)}
@@ -471,6 +581,7 @@ export default function CodingRestrictions() {
       {cityDialog && (
         <CityDialog
           existingCities={data.cities}
+          allRules={data.rules}
           api={api}
           onClose={() => setCityDialog(false)}
           onSaved={async (name) => {
@@ -489,9 +600,11 @@ export default function CodingRestrictions() {
           api={api}
           onClose={() => setCityToRename(null)}
           onSaved={async (newName) => {
+            const old = cityToRename;
             setCityToRename(null);
             showToast(`Renamed to ${newName}.`);
             await load();
+            if (city === old) setCity(newName);
           }}
         />
       )}
@@ -530,7 +643,7 @@ export default function CodingRestrictions() {
 // ─── A city's Monday–Sunday rules, in a modal ────────────────────────────────
 // Every day of the week gets a row. Days with no rule show "No coding" with an
 // Add button that pre-selects that day.
-function CityRulesModal({ city, rules, canDelete, onClose, onAdd, onEdit, onDelete }) {
+function CityRulesModal({ city, rules, canDelete, onClose, onEditCity, onDeleteCity, onAdd, onEdit, onDelete }) {
   return (
     <Modal
       title={city}
@@ -538,16 +651,25 @@ function CityRulesModal({ city, rules, canDelete, onClose, onAdd, onEdit, onDele
       onClose={onClose}
       footer={
         <>
+          {canDelete && (
+            <button onClick={onDeleteCity} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>
+              Delete
+            </button>
+          )}
           <button onClick={onClose} className={btnGhost}>Close</button>
-          <button onClick={() => onAdd(null)} className={btnPrimary}>+ Add rule</button>
         </>
       }
     >
       <p className="text-sm text-gray-400 mb-4">
         Plates ending in the banned digits can't be driven in {city} during the window.
       </p>
-      <div className="mb-4">
+      <div className="mb-3">
         <CityMap readOnly value={city} />
+      </div>
+      <div className="flex justify-end mb-4">
+        <button onClick={onEditCity} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>
+          Edit
+        </button>
       </div>
       <div className="border border-gray-100 rounded-2xl overflow-x-auto mb-2">
         <table className="w-full text-sm font-sans min-w-[560px]">
@@ -981,7 +1103,7 @@ function RuleDialog({ city, existing, defaultDay, api, onClose, onSaved }) {
 const MIN_RULES = 5;
 const newRow = (dayName) => ({ dayName, startTime: "", endTime: "", bannedDigits: "" });
 
-function CityDialog({ existingCities, api, onClose, onSaved }) {
+function CityDialog({ existingCities, allRules, api, onClose, onSaved }) {
   const [name, setName] = useState("");
   const [rows, setRows] = useState(() => Array.from({ length: MIN_RULES }, (_, i) => newRow(DAY_NAMES[i % 7])));
   const [saving, setSaving] = useState(false);
@@ -990,6 +1112,18 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
 
   const setRow = (i, patch) => setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const rowErrs = rows.map(validateRule);
+
+  // Pre-fill the rows from an existing city's schedule (still editable after).
+  const copyFrom = (src) => {
+    if (!src) return;
+    const copied = allRules
+      .filter((r) => r.city === src)
+      .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
+      .map((r) => ({ dayName: r.dayName, startTime: r.startTime, endTime: r.endTime, bannedDigits: r.bannedDigits.join(", ") }));
+    while (copied.length < MIN_RULES) copied.push(newRow(DAY_NAMES[copied.length % 7]));
+    setRows(copied);
+    setShowErrors(false);
+  };
 
   const save = async () => {
     setShowErrors(true);
@@ -1049,6 +1183,15 @@ function CityDialog({ existingCities, api, onClose, onSaved }) {
             placeholder="Search a city, e.g. Dagupan — then confirm it on the map"
           />
         </Field>
+
+        {existingCities.length > 0 && (
+          <Field label="Copy schedule from (optional)">
+            <select className={inputCls} defaultValue="" onChange={(e) => copyFrom(e.target.value)}>
+              <option value="">Start blank</option>
+              {existingCities.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </Field>
+        )}
 
         <div className="space-y-3">
           {rows.map((r, i) => {

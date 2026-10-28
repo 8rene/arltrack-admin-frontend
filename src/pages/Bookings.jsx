@@ -860,6 +860,7 @@ const profileInitials = (details, basic) =>
   ((details?.firstName?.[0] || basic?.email?.[0] || "?") + (details?.lastName?.[0] || "")).toUpperCase();
 
 function CustomerProfileModal({ userID, bookings, onClose }) {
+  const navigate = useNavigate();
   const [subID, setSubID] = useState(null); // invited user currently being viewed (null = original customer)
   const root = useCustomerProfile(userID);
   const sub  = useCustomerProfile(subID);
@@ -976,6 +977,13 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
                 {details && row("Birth Date", details.birthDate ? fmtDate(details.birthDate) : "—")}
               </>
             )}
+            <button
+              type="button"
+              onClick={() => navigate(`/users?open=${encodeURIComponent(subID || userID)}`)}
+              className="w-full mt-3 py-2 border border-teal-200 text-teal-700 rounded-xl text-sm font-semibold hover:bg-teal-50"
+            >
+              View More →
+            </button>
           </div>
         )}
       </div>
@@ -1033,10 +1041,38 @@ const STAGE_STYLE = {
   done:    "bg-green-50 text-green-700 border-green-200",
 };
 
+// Card + label-over-value cell, same look as the user details window (Users.jsx ViewDetailsModal).
+function InfoSection({ title, aside, children, cols = 2 }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {aside}
+      </div>
+      <div className={`p-4 grid ${cols === 3 ? "grid-cols-3" : "grid-cols-2"} gap-x-6 gap-y-4`}>{children}</div>
+    </section>
+  );
+}
+function InfoField({ label, value, wide }) {
+  return (
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</div>
+    </div>
+  );
+}
+
 function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelete }) {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
   const navigate = useNavigate();
+  const driverTotal = Number(booking.driversFee) || 0;
+  const driverDays  = Math.max(1, Number(booking.totalDays) || 1);
+  // Amount only; the "Refunded" label is not shown any more (the Cancellation section covers refunds).
+  const depositText = booking.deposit?.status === "Waived" ? "Waived"
+    : booking.deposit ? `${fmt(booking.deposit.amount)}${booking.deposit.status && booking.deposit.status !== "Refunded" ? ` · ${booking.deposit.status}` : ""}`
+    : Number(booking.securityDeposit) > 0 ? `${fmt(booking.securityDeposit)}${booking.paymentStatus === "Refunded" ? "" : " · Awaiting payment"}`
+    : "Not collected";
   const row = (label, value) => (
     <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
       <span className="text-gray-500 font-medium w-36 shrink-0">{label}</span>
@@ -1140,6 +1176,9 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   // this booking (see booking.service.js's resolveHistoryInfo).
   const [mapOpen, setMapOpen] = useState(false);
   const locationStops = tripStops(booking);
+  // The Details row shows where the car is picked up (booking.location is the destination). The map is unchanged.
+  const pk = booking.pickupLocation;
+  const pickupText = (typeof pk === "string" ? pk : pk?.address || pk?.label || pk?.name) || booking.location || "—";
   // Booking-time Number Coding restrictions the customer app saved (booking.codingWarnings) —
   // the list the customer was warned about; empty for bookings made before that existed.
   const codingByCity = warningsByCity(readCodingWarnings(booking.codingWarnings));
@@ -1385,16 +1424,18 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
             </div>
           )}
 
-          {/* Cancelled / stolen: one clear red banner on both tabs. */}
+          {/* Cancelled / stolen: one clear red banner on both tabs. The header says WHO cancelled;
+              the details (reason, time, refund) are in the Cancellation section of the Details tab. */}
           {dead && (
             <div className="mt-2 mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
               <p className="text-xs font-bold uppercase tracking-wide text-red-700">
-                {isStolen ? "Stolen — car flagged stolen" : "Cancelled"}
+                {isStolen
+                  ? "Stolen — car flagged stolen"
+                  : booking.cancelledBy === "customer" ? "Cancelled by Customer"
+                  : booking.cancelledBy === "staff" ? "Cancelled by Staff"
+                  : booking.cancelledBy === "system" ? "Cancelled by System"
+                  : "Cancelled"}
               </p>
-              {!isStolen && booking.cancellationReason && (
-                <p className="text-xs text-red-700 mt-0.5">Reason: {booking.cancellationReason}</p>
-              )}
-              {refundNote && <p className="text-xs text-red-700 mt-0.5">Payment: {refundNote}</p>}
             </div>
           )}
 
@@ -1486,116 +1527,135 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
               </ol>
             </>
           ) : (
-            <div className="grid md:grid-cols-2 gap-x-8">
-              <div>
-                {row("Booking ID",      booking.bookingID || booking.id)}
-                <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
-                  <span className="text-gray-500 font-medium w-36 shrink-0">Customer</span>
-                  {booking.userID ? (
-                    <button onClick={() => onViewCustomer(booking.userID)} className="text-indigo-600 hover:underline font-medium text-right">
-                      {booking.customerName || "—"}
+            <div className="space-y-4">
+              {/* Same look as the user details window in Users.jsx: one bordered card per group. */}
+              <InfoSection title="Customer Information">
+                <InfoField label="Customer" value={booking.userID ? (
+                  <button onClick={() => onViewCustomer(booking.userID)} className="text-indigo-600 hover:underline font-medium text-left">
+                    {booking.customerName || "—"}
+                  </button>
+                ) : booking.customerName} />
+                <InfoField label="Phone" value={booking.phone} />
+              </InfoSection>
+
+              <InfoSection title="Booking Information">
+                <InfoField label="Booking ID" value={booking.bookingID || booking.id} />
+                <InfoField label="Created"    value={fmtDateTime(booking.createdAt)} />
+                <InfoField label="Vehicle" value={booking.carID && booking.vehicleName ? (
+                  <button onClick={goToCarTracking} title="Open in Car Tracking" className="text-indigo-600 hover:underline font-medium text-left">
+                    {booking.vehicleName}
+                  </button>
+                ) : booking.vehicleName} />
+                <InfoField label="Service Type" value={booking.serviceTypeName} />
+                <InfoField label="Start Date" value={fmtDate(booking.startDateTime)} />
+                <InfoField label="End Date"   value={fmtDate(booking.endDateTime)} />
+                <InfoField wide label="Duration" value={booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : null} />
+                <InfoField label="Driving"    value={booking.modeOfDriving} />
+                <InfoField label="Driver" value={booking.driverID ? (
+                  `${booking.driverName || "—"}${booking.driverPhone && booking.driverPhone !== "—" ? ` · ${booking.driverPhone}` : ""}`
+                ) : (
+                  <span className="text-gray-400 italic font-normal">{isChauffeur ? "No driver assigned" : "Not needed"}</span>
+                )} />
+                {/* Label, address and map button on one line. */}
+                <div className="col-span-2 flex items-center gap-4 pt-3 border-t border-gray-100 min-w-0">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400 shrink-0">Pickup Location</p>
+                  <p className="text-sm font-medium text-gray-800 min-w-0 flex-1 break-words">{pickupText}</p>
+                  {locationStops.length > 0 ? (
+                    <button onClick={() => setMapOpen(true)} className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0">
+                      View Map →
                     </button>
                   ) : (
-                    <span className="text-gray-800 text-right">{booking.customerName || "—"}</span>
+                    <span className="text-xs text-gray-300 shrink-0">No map data</span>
                   )}
                 </div>
-                {row("Phone",           booking.phone)}
-                {row("Vehicle",
-                  booking.carID && booking.vehicleName ? (
-                    <button onClick={goToCarTracking} title="Open in Car Tracking" className="text-indigo-600 hover:underline font-medium text-right">
-                      {booking.vehicleName}
-                    </button>
-                  ) : booking.vehicleName
+              </InfoSection>
+
+              <InfoSection
+                title="Booking Fee"
+                cols={3}
+                aside={(
+                  <button
+                    type="button"
+                    onClick={goToPayments}
+                    title="Open this booking's payment on the Payments page"
+                    className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors"
+                  >
+                    Payments →
+                  </button>
                 )}
-                {row("Service Type",    booking.serviceTypeName)}
-                {row("Car ID",          booking.carID)}
-                {row("Created",         fmtDateTime(booking.createdAt))}
-                {row("Start Date",      fmtDate(booking.startDateTime))}
-                {row("End Date",        fmtDate(booking.endDateTime))}
-                {row("Duration",        booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : "—")}
-                <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
-                  <span className="text-gray-500 font-medium w-36 shrink-0">Location</span>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-gray-800 text-right truncate">{booking.location || "—"}</span>
-                    {locationStops.length > 0 ? (
-                      <button onClick={() => setMapOpen(true)} className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0">
-                        View Map →
-                      </button>
-                    ) : (
-                      <span className="text-xs text-gray-300 shrink-0">No map data</span>
-                    )}
-                  </div>
+              >
+                <InfoField label="Rental Fee"       value={fmt(booking.rentalFee)} />
+                <InfoField label="Security Deposit" value={depositText} />
+                <div />
+                <InfoField label="Service Fee"      value={fmt(booking.serviceFee)} />
+                <InfoField label="Gateway Fee"      value={Number(booking.gatewayFee) > 0 ? fmt(booking.gatewayFee) : null} />
+                <InfoField
+                  label={<>Extra Fee <span className="normal-case text-gray-500">({Number(booking.extraFee) > 0 ? "Outside Base Area" : "Base Area"})</span></>}
+                  value={fmt(booking.extraFee)}
+                />
+                {/* Chauffeur: rate per day × days = total. driversFee is the total, so the rate is total ÷ days. */}
+                <InfoField label="Driver's Fee"     value={driverTotal > 0 ? fmt(driverTotal / driverDays) : null} />
+                <InfoField label="Duration"         value={driverTotal > 0 ? `× ${driverDays} day${driverDays > 1 ? "s" : ""}` : null} />
+                <InfoField label="Total Driver Fee" value={driverTotal > 0 ? fmt(driverTotal) : null} />
+                <div className="col-span-3 flex items-baseline justify-end gap-4 pt-3 border-t border-gray-100">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Total Fee</span>
+                  <span className="text-base font-bold text-gray-800">{fmt(booking.totalFee)}</span>
                 </div>
-                {/* T&C this customer ticked "I agree" to. Written once at booking creation, never edited. */}
-                <div className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 text-sm">
-                  <span className="text-gray-500 font-medium w-36 shrink-0">Terms &amp; Conditions</span>
-                  {booking.termsViewID && booking.termsAcceptedAt ? (
-                    <div className="text-right min-w-0">
-                      <button onClick={goToTerms} title="Open the exact Terms & Conditions text the customer agreed to" className="text-indigo-600 hover:underline font-medium">
+              </InfoSection>
+
+              {/* Cancellation — only for a cancelled booking. Every line shows; "—" = not recorded. */}
+              {isCancelled && (
+                <InfoSection title="Cancellation">
+                  <InfoField label="Cancelled By" value={
+                    booking.cancelledBy === "system" ? "System (auto-cancelled)"
+                    : booking.cancelledBy === "customer" ? `${booking.cancelledByName || booking.customerName || "Customer"} · Customer`
+                    : booking.cancelledBy === "staff" ? (booking.cancelledByName ? `${booking.cancelledByName} · Staff` : "Staff · name not recorded")
+                    : "Not recorded"
+                  } />
+                  <InfoField label="Cancelled At" value={booking.cancelledAt ? fmtDateTime(booking.cancelledAt) : null} />
+                  {booking.approvedByName && <InfoField label="Approved By" value={`${booking.approvedByName} · Staff`} />}
+                  <InfoField wide label="Reason" value={booking.cancelDisplayReason} />
+                  <InfoField wide label="Refund" value={(booking.refundSummary?.status || refundNote) ? (
+                    <span className="flex items-center justify-between gap-3">
+                      <span>{booking.refundSummary?.status || refundNote}</span>
+                      {booking.refundSummary?.refundRequestID && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(booking.refundSummary.refundRequestID)}`)}
+                          className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
+                        >
+                          View refund →
+                        </button>
+                      )}
+                    </span>
+                  ) : null} />
+                </InfoSection>
+              )}
+
+              {/* T&C this customer ticked "I agree" to. Written once at booking creation, never edited. */}
+              <InfoSection title="Terms & Conditions">
+                <InfoField wide label="Agreed Version" value={
+                  booking.termsViewID && booking.termsAcceptedAt ? (
+                    <span className="flex items-center justify-between gap-3">
+                      <button onClick={goToTerms} title="Open the exact Terms & Conditions text the customer agreed to" className="text-indigo-600 hover:underline font-medium text-left">
                         {booking.termsVersionNumber != null && Number.isFinite(Number(booking.termsVersionNumber))
                           ? `Version ${Number(booking.termsVersionNumber).toFixed(2)}`
                           : "View agreed terms"} →
                       </button>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        Agreed {fmtDateTime(booking.termsAcceptedAt)}
-                      </p>
-                    </div>
-                  ) : booking.termsAcceptedAt ? (
-                    <div className="text-right">
-                      <span className="text-gray-800">Agreed {fmtDateTime(booking.termsAcceptedAt)}</span>
-                      <p className="text-xs text-gray-400 mt-0.5">Version not recorded</p>
-                    </div>
-                  ) : (
-                    <span className="text-gray-400 text-right">No agreement recorded</span>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                {row("Rental Fee",  fmt(booking.rentalFee))}
-                {row("Service Fee", fmt(booking.serviceFee))}
-                {Number(booking.gatewayFee) > 0 && row("Gateway Fee", fmt(booking.gatewayFee))}
-                {row("Extra Fee",   fmt(booking.extraFee))}
-                {Number(booking.driversFee) > 0 && row("Driver's Fee", fmt(booking.driversFee))}
-                {row("Security Deposit", booking.paymentStatus === "Refunded" && booking.securityDeposit > 0
-                  ? `${fmt(booking.securityDeposit)} · Refunded`
-                  : booking.deposit
-                    ? (booking.deposit.status === "Waived"
-                        ? "Waived"
-                        : `${fmt(booking.deposit.amount)} · ${booking.deposit.status || "Held"}`)
-                    : Number(booking.securityDeposit) > 0
-                      ? `${fmt(booking.securityDeposit)} · Awaiting payment`
-                      : "Not collected")}
-                {row("Total Fee",   fmt(booking.totalFee))}
-                {row("Payment", (
-                  <button
-                    type="button"
-                    onClick={goToPayments}
-                    className="text-teal-700 font-semibold hover:underline"
-                    title="Open this booking's payment on the Payments page"
-                  >
-                    {booking.paymentMethod || "Payment"} · View in Payments →
-                  </button>
-                ))}
-                {row("Driving",     booking.modeOfDriving)}
-                <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
-                  <span className="text-gray-500 font-medium w-36 shrink-0">Driver</span>
-                  {booking.driverID ? (
-                    <span className="text-gray-800 text-right">
-                      {booking.driverName || "—"}
-                      {booking.driverPhone && booking.driverPhone !== "—" ? ` · ${booking.driverPhone}` : ""}
+                      <span className="text-xs text-gray-400 font-normal shrink-0">Agreed {fmtDateTime(booking.termsAcceptedAt)}</span>
                     </span>
+                  ) : booking.termsAcceptedAt ? (
+                    <span>Agreed {fmtDateTime(booking.termsAcceptedAt)} <span className="text-xs text-gray-400 font-normal">· Version not recorded</span></span>
                   ) : (
-                    <span className="text-gray-400 italic text-right">{isChauffeur ? "No driver assigned" : "Not needed"}</span>
-                  )}
-                </div>
-              </div>
+                    <span className="text-gray-400 font-normal">No agreement recorded</span>
+                  )
+                } />
+              </InfoSection>
 
-              <div className="md:col-span-2 pt-1 mt-1 border-t border-gray-100">
-                {row("Notes (User)",  booking.notesUser)}
-                {row("Notes (Admin)", booking.notesAdmin)}
-                {booking.cancellationReason && row("Cancel Reason", booking.cancellationReason)}
-              </div>
+              <InfoSection title="Notes">
+                <InfoField wide label="Notes (User)"  value={booking.notesUser} />
+                <InfoField wide label="Notes (Admin)" value={booking.notesAdmin} />
+              </InfoSection>
             </div>
           )}
         </div>

@@ -117,7 +117,6 @@ const toDate = (val) => {
 };
 const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
 // A penalty carries the online payment fee only when its total is HIGHER than this (same number as the customer checkout).
-const PENALTY_FEE_MIN_AMOUNT = 1000;
 
 // ─── SORT HEADER — same clickable <th> as Bookings/Payments/Maintenance ───
 const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
@@ -945,7 +944,7 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
         {showMaintenance && bookingID && (
           <MaintenanceSidePanel bookingID={bookingID} token={token} fmt={fmt} onClose={() => setShowMaintenance(false)} />
         )}
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 pb-0 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6 pb-0 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="font-bold text-arl-dark">Penalties on this booking</h3>
@@ -991,28 +990,48 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
           )}
         </div>
 
-        <div className="space-y-2">
-          {list.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No penalties on this booking.</p>}
-          {list.map((p) => (
-            <div key={p.id}
-              className={`rounded-xl border px-3 py-2.5 flex items-center gap-3 ${p.status === "UnderReview" ? "border-amber-200 bg-amber-50/40" : "border-gray-100"}`}>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-gray-800 truncate" title={(p.lineItems || []).map((li) => li.description).join(", ")}>
-                  {(p.lineItems || []).map((li) => li.description).join(", ") || "--"}
-                </p>
-                <p className="text-[11px] text-gray-400 mt-0.5">
-                  {toDate(p.createdAt) ? toDate(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "--"}
-                  {p.status === "UnderReview" && p.createdByName ? ` · noted by ${p.createdByName}` : ""}
-                  {p.status === "Confirmed" && p.paidAmount > 0 ? ` · ${fmt(p.paidAmount)} paid` : ""}
-                </p>
-              </div>
-              <div className="text-right shrink-0 space-y-1">
-                <p className={`text-xs font-semibold ${p.status === "Confirmed" || p.status === "UnderReview" ? "text-gray-800" : "text-gray-400 line-through"}`}>{fmt(p.amount)}</p>
-                <SettlementBadge status={p.settlementStatus} />
-              </div>
-              <button onClick={() => onViewPenalty(p)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50 shrink-0">View</button>
-            </div>
-          ))}
+        <div className="overflow-x-auto rounded-xl border border-gray-100">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+                <th className="px-3 py-2.5 text-left font-semibold">Date</th>
+                <th className="px-3 py-2.5 text-left font-semibold">Charges</th>
+                <th className="px-3 py-2.5 text-left font-semibold">Amount</th>
+                <th className="px-3 py-2.5 text-left font-semibold">Paid</th>
+                <th className="px-3 py-2.5 text-left font-semibold">Status</th>
+                <th className="px-3 py-2.5 text-left font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.length === 0 ? (
+                <tr><td colSpan={6} className="text-center py-8 text-gray-400 text-xs">No penalties on this booking.</td></tr>
+              ) : list.map((p) => {
+                const counted = p.status === "Confirmed" || p.status === "UnderReview";
+                const chargesText = (p.lineItems || []).map((li) => li.description).join(", ");
+                return (
+                  <tr key={p.id} onClick={() => onViewPenalty(p)}
+                    className={`border-t border-gray-50 cursor-pointer hover:bg-teal-50/30 transition-colors ${p.status === "UnderReview" ? "bg-amber-50/40" : ""}`}>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">
+                      {toDate(p.createdAt) ? toDate(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-800">
+                      <div className="max-w-[220px] truncate" title={chargesText}>{chargesText || "—"}</div>
+                      {p.status === "UnderReview" && p.createdByName && (
+                        <div className="text-[11px] text-gray-400 mt-0.5">noted by {p.createdByName}</div>
+                      )}
+                    </td>
+                    <td className={`px-3 py-2.5 whitespace-nowrap font-semibold ${counted ? "text-gray-800" : "text-gray-400 line-through"}`}>{fmt(p.amount)}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{p.status === "Confirmed" ? fmt(p.paidAmount) : "—"}</td>
+                    <td className="px-3 py-2.5"><SettlementBadge status={p.settlementStatus} /></td>
+                    <td className="px-3 py-2.5 text-left whitespace-nowrap">
+                      <button onClick={(e) => { e.stopPropagation(); onViewPenalty(p); }}
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
         <div className="sticky bottom-0 -mx-6 px-6 py-4 bg-white border-t border-gray-100 rounded-b-2xl z-10 flex items-center justify-between gap-2">
@@ -1030,23 +1049,42 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
   );
 }
 
-// Plain building blocks for the details modal: a label / value line and a titled section separated by a thin rule
-// (no coloured boxes, so the modal stays easy to scan).
-function Field({ label, value }) {
+// Building blocks for the details modal: the same boxed look as the Bookings / Users detail windows (a bordered card
+// with a grey title strip and small uppercase labels).
+// Field = one label-over-value cell (put several inside a FieldGrid); Row = a label-left / value-right line (charges).
+function Field({ label, value, wide }) {
   if (value === null || value === undefined || value === "") return null;
   return (
-    <div className="flex justify-between gap-6 py-2 text-sm">
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <p className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value}</p>
+    </div>
+  );
+}
+
+function FieldGrid({ children }) {
+  return <div className="grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>;
+}
+
+function Row({ label, value }) {
+  if (value === null || value === undefined || value === "") return null;
+  return (
+    <div className="flex justify-between gap-6 py-1.5 text-sm">
       <span className="text-gray-500">{label}</span>
-      <span className="text-gray-900 text-right">{value}</span>
+      <span className="text-gray-900 font-medium text-right">{value}</span>
     </div>
   );
 }
 
 function Block({ title, children }) {
   return (
-    <section className="py-6 border-t border-gray-100 first:border-t-0 first:pt-0">
-      {title && <h4 className="text-sm font-semibold text-gray-900 mb-2">{title}</h4>}
-      {children}
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm mb-4">
+      {title && (
+        <div className="px-4 py-2.5 bg-gray-50 border-b">
+          <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h4>
+        </div>
+      )}
+      <div className="p-4">{children}</div>
     </section>
   );
 }
@@ -1133,8 +1171,6 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
   const hasActions    = canPayInStore || canWaive || canVoid || canEdit || canConfirm;
 
   const statusLabel = isReview ? "Under review" : isConfirmed ? (p.settlementStatus || "Confirmed") : p.status;
-  // The online payment fee only applies to a penalty over the threshold (same rule as the customer checkout).
-  const feeApplies = !isReview && Number(p.gatewayFeeRate) > 0 && Number(p.amount) > PENALTY_FEE_MIN_AMOUNT;
   const outlineBtn = "text-sm px-4 py-2 rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 font-medium";
   const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light";
 
@@ -1154,7 +1190,15 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
           <div className="flex items-start justify-between gap-4 pb-6">
             <div>
               <h3 className="text-lg font-bold text-arl-dark">Penalty details</h3>
-              <p className="text-sm text-gray-500 mt-0.5">Booking {p.bookingID || "—"}</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="text-sm text-gray-500">Booking {p.bookingID || "—"}</p>
+                {p.bookingID && onViewBookingPage && (
+                  <button type="button" onClick={onViewBookingPage}
+                    className="px-2.5 py-0.5 rounded-lg text-xs font-semibold border border-teal-300 text-teal-700 hover:bg-teal-50 transition-colors">
+                    View booking
+                  </button>
+                )}
+              </div>
             </div>
             <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 p-1"><IconX /></button>
           </div>
@@ -1228,7 +1272,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             </Block>
           ) : (
             <Block title="Charges">
-              {(p.lineItems || []).map((li, i) => <Field key={i} label={li.description || "Charge"} value={fmt(li.amount)} />)}
+              {(p.lineItems || []).map((li, i) => <Row key={i} label={li.description || "Charge"} value={fmt(li.amount)} />)}
               {isLateFee && (
                 <p className="text-sm text-gray-500 mt-2">
                   Late fee: {p.lateMinutes} min late (after {p.graceMinutes}-min grace) at {fmt(p.rateAtCreation)}/hr.
@@ -1242,45 +1286,40 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
 
           {/* Amount + payment status */}
           <Block title="Payment">
-            {isOverridden && <Field label="Computed total" value={fmt(p.computedAmount)} />}
-            <Field label="Amount charged" value={fmt(p.amount)} />
-            {isOverridden && <Field label="Override reason" value={p.overrideReason || "—"} />}
-            <Field label="Paid so far" value={fmt(p.paidAmount)} />
-            {feeApplies && <Field label="Online payment fee" value={`${p.gatewayFeeRate}% added if paid online`} />}
-            {p.gatewayFeePaid > 0 && <Field label="Online fee paid" value={fmt(p.gatewayFeePaid)} />}
-            <Field label="Payment mode" value={p.paymentMethod || null} />
-            <Field label="Reference #" value={p.referenceNumber || null} />
-            <Field label="Paid at" value={fmtDate(p.paidAt)} />
+            <FieldGrid>
+              {isOverridden && <Field label="Computed total" value={fmt(p.computedAmount)} />}
+              <Field label="Amount charged" value={fmt(p.amount)} />
+              {isOverridden && <Field label="Override reason" value={p.overrideReason || "—"} />}
+              <Field label="Paid so far" value={fmt(p.paidAmount)} />
+              {p.gatewayFeePaid > 0 && <Field label="Online fee paid" value={fmt(p.gatewayFeePaid)} />}
+              <Field label="Payment mode" value={p.paymentMethod || null} />
+              <Field label="Reference #" value={p.referenceNumber || null} />
+              <Field label="Paid at" value={fmtDate(p.paidAt)} />
+            </FieldGrid>
             {/* Opens the Payments page for this penalty's payment. Nothing can be paid on a penalty still under review. */}
             {!isReview && onViewPayments && (
-              <button type="button" onClick={onViewPayments} className="mt-2 text-sm font-medium text-teal-700 hover:underline">
-                Check payments →
+              <button type="button" onClick={onViewPayments}
+                className="mt-3 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                View payment
               </button>
             )}
           </Block>
 
           <Block title="Details">
-            <Field label="Customer" value={p.customerName} />
-            <Field label="Car" value={p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName} (${p.plateNumber})` : p.plateNumber} />
-            <Field label="Noted by" value={p.createdByName} />
-            <Field label="Created" value={fmtDate(p.createdAt)} />
-            <Field label="Last edited" value={fmtDate(p.editedAt)} />
-            <Field label="Confirmed" value={isReview ? "Not yet" : fmtDate(p.confirmedAt)} />
-            {p.bookingID && onViewBookingPage && (
-              <button type="button" onClick={onViewBookingPage} className="mt-2 text-sm font-medium text-teal-700 hover:underline">
-                View booking →
-              </button>
-            )}
+            <FieldGrid>
+              <Field label="Customer" value={p.customerName} />
+              <Field label="Car" value={p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName} (${p.plateNumber})` : p.plateNumber} />
+              <Field label="Noted by" value={p.createdByName} />
+              <Field label="Created" value={fmtDate(p.createdAt)} />
+              <Field label="Last edited" value={fmtDate(p.editedAt)} />
+              <Field label="Confirmed" value={isReview ? "Not yet" : fmtDate(p.confirmedAt)} />
+            </FieldGrid>
           </Block>
 
           {(p.status === "Voided" || p.status === "Waived" || p.status === "Discarded") && p.statusReason && (
             <Block title={`${p.status}: reason`}>
               <p className="text-sm text-gray-600">{p.statusReason}</p>
             </Block>
-          )}
-
-          {isConfirmed && p.paidAmount > 0 && (
-            <p className="text-sm text-gray-500 pb-5">Waive and Void aren't available once a payment has been recorded.</p>
           )}
 
           {/* Sticky footer: the actions and Close stay in view while the rest scrolls. Actions are hidden while editing,
@@ -1306,6 +1345,12 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
               </div>
             ) : (
               <div className="flex items-center gap-2 flex-wrap">
+                {p.bookingID && canRecordInStore && (
+                  <button onClick={() => setShowMaintenance((v) => !v)}
+                    className="text-sm px-4 py-2 rounded-xl border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-semibold">
+                    {showMaintenance ? "Hide maintenance" : "View maintenance"}
+                  </button>
+                )}
                 {hasActions && !editing && (
                   <>
                     {canConfirm && (
@@ -1330,11 +1375,6 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                   </>
                 )}
                 <div className="ml-auto flex items-center gap-2">
-                  {p.bookingID && canRecordInStore && (
-                    <button onClick={() => setShowMaintenance((v) => !v)} className={outlineBtn}>
-                      {showMaintenance ? "Hide maintenance" : "View maintenance"}
-                    </button>
-                  )}
                   <button onClick={onClose} className="text-sm px-4 py-2 rounded-xl font-medium text-gray-600 hover:bg-gray-100">
                     Close
                   </button>
@@ -1606,8 +1646,8 @@ export default function Penalties() {
       : i % 2 === 1 ? "bg-gray-50/30" : "";
     const chargesText = (p.lineItems || []).map((li) => li.description).join(", ");
     return (
-        <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${rowClass}`}>
-          <td className="px-4 py-3 text-xs whitespace-nowrap">
+        <tr key={p.id} onClick={() => setDetailsModal(p)} className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-arl-light/30 transition-colors ${rowClass}`}>
+          <td className="px-4 py-3 text-sm whitespace-nowrap">
             {toDate(p.createdAt) ? (
               <>
                 <span className="text-gray-700">{toDate(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
@@ -1616,21 +1656,21 @@ export default function Penalties() {
               </>
             ) : "—"}
           </td>
-          <td className="px-4 py-3 text-xs text-gray-700">
+          <td className="px-4 py-3 text-sm text-gray-700">
             <div className="max-w-[220px] truncate" title={(p.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>
               {chargesText || "—"}
             </div>
           </td>
-          <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-xs">{p.customerName || "—"}</div></td>
-          <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
+          <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-sm">{p.customerName || "—"}</div></td>
+          <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
             {p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName}` : "—"}
           </td>
-          <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(p.amount)}</td>
-          <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(p.paidAmount)}</td>
+          <td className="px-4 py-3 text-sm font-semibold text-gray-800 whitespace-nowrap">{fmt(p.amount)}</td>
+          <td className="px-4 py-3 text-sm font-semibold text-gray-800 whitespace-nowrap">{fmt(p.paidAmount)}</td>
           <td className="px-4 py-3"><SettlementBadge status={p.settlementStatus} /></td>
-          <td className="px-4 py-3">
-            <button onClick={() => setDetailsModal(p)}
-              className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
+          <td className="px-4 py-3 text-left whitespace-nowrap">
+            <button onClick={(e) => { e.stopPropagation(); setDetailsModal(p); }}
+              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
           </td>
         </tr>
     );
@@ -1673,12 +1713,12 @@ export default function Penalties() {
     return (
       <tr key={g.key} onClick={() => setBookingModalID(g.first.bookingID)}
         className={`border-b border-gray-100 border-l-4 cursor-pointer hover:bg-arl-light/30 transition-colors ${g.reviewCount > 0 ? "bg-amber-50/60 border-l-amber-400" : "bg-teal-50/40 border-l-teal-500"}`}>
-        <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-500">
+        <td className="px-4 py-3 text-sm whitespace-nowrap text-gray-500">
           {d ? d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "--"}
         </td>
-        <td className="px-4 py-3 text-xs">
+        <td className="px-4 py-3 text-sm">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full bg-teal-600 text-white" title="Several penalties on the same booking">
+            <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-teal-600 text-white" title="Several penalties on the same booking">
               <IconLayers className="w-3 h-3" /> {g.items.length} penalties
             </span>
           </div>
@@ -1687,20 +1727,20 @@ export default function Penalties() {
             {[...new Set(g.items.flatMap((x) => (x.lineItems || []).map((li) => li.description)))].join(", ") || "—"}
           </div>
         </td>
-        <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-xs">{g.first.customerName || "--"}</div></td>
-        <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
+        <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-sm">{g.first.customerName || "--"}</div></td>
+        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
           {g.first.brandName !== "--" || g.first.modelName !== "--" ? `${g.first.brandName} ${g.first.modelName}` : "--"}
         </td>
-        <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">
+        <td className="px-4 py-3 text-sm font-semibold text-gray-800 whitespace-nowrap">
           {g.amount === 0 && g.reviewAmount > 0
             ? <span className="text-amber-700">{fmt(g.reviewAmount)}</span>
             : fmt(g.amount)}
         </td>
-        <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{fmt(g.paid)}</td>
+        <td className="px-4 py-3 text-sm font-semibold text-gray-800 whitespace-nowrap">{fmt(g.paid)}</td>
         <td className="px-4 py-3"><SettlementBadge status={g.worst} /></td>
-        <td className="px-4 py-3">
+        <td className="px-4 py-3 text-left whitespace-nowrap">
           <button onClick={(e) => { e.stopPropagation(); setBookingModalID(g.first.bookingID); }}
-            className="px-3 py-1 border border-teal-300 text-teal-700 rounded-lg text-xs font-semibold hover:bg-white whitespace-nowrap">View all ›</button>
+            className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">View all ›</button>
         </td>
       </tr>
     );
@@ -1783,9 +1823,11 @@ export default function Penalties() {
           onClose={() => setDetailsModal(null)}
           onViewBookingPage={() => { setDetailsModal(null); viewBooking(detailsModal.bookingID); }}
           // Payments.jsx opens from ?paymentID= (exact) or ?bookingID= (looser) and goes straight into the payment's details.
-          // Several penalties on one booking: the booking window has the single Payment button, not each penalty.
-          onViewPayments={records.filter((r) => r.bookingID === detailsModal.bookingID).length > 1 ? null : () => {
-            const q = detailsModal.paymentID ? `paymentID=${encodeURIComponent(detailsModal.paymentID)}` : `bookingID=${encodeURIComponent(detailsModal.bookingID)}`;
+          // Several penalties on one booking share ONE payment record, so each penalty links to that same payment.
+          onViewPayments={() => {
+            const sibling = records.find((r) => r.bookingID === detailsModal.bookingID && r.paymentID);
+            const pid = detailsModal.paymentID || sibling?.paymentID;
+            const q = pid ? `paymentID=${encodeURIComponent(pid)}` : `bookingID=${encodeURIComponent(detailsModal.bookingID)}`;
             setDetailsModal(null);
             navigate(`/payments?${q}`);
           }}
@@ -1905,7 +1947,7 @@ export default function Penalties() {
               <SortableTh label="Amount"     sortKey="amount"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Paid"       sortKey="paid"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Status"     sortKey="status"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Action</th>
             </tr>
           </thead>
           <tbody>

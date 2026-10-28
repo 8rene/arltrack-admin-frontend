@@ -68,20 +68,20 @@ function Markdown({ source }) {
 }
 
 /**
- * Read-only modal for a driver: the exact Terms & Conditions version the customer
- * accepted for ONE of the driver's own trips (GET /api/driver-dispatch/my-trips/:id/terms).
- * It shows the version on the booking, not the current Terms, and has no history browser.
+ * The accepted-terms text for ONE of the driver's own trips
+ * (GET /api/driver-dispatch/my-trips/:id/terms). Shows the version on the booking, not the current Terms.
+ * Used inside the History "View" modal and by TripTermsModal below. Fetches when it mounts.
  */
-export default function TripTermsModal({ open, onClose, trip, token }) {
+export function TripTermsContent({ tripID, token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!open || !trip?.id) return undefined;
+    if (!tripID) return undefined;
     let cancelled = false;
     setData(null); setError(null); setLoading(true);
-    fetch(`${API_URL}/api/driver-dispatch/my-trips/${trip.id}/terms`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_URL}/api/driver-dispatch/my-trips/${tripID}/terms`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async (res) => {
         const json = await res.json();
         if (!res.ok) throw new Error(json.message || "Couldn't load the terms.");
@@ -90,11 +90,33 @@ export default function TripTermsModal({ open, onClose, trip, token }) {
       .catch((e) => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [open, trip?.id, token]);
+  }, [tripID, token]);
 
-  if (!open) return null;
   const accepted = fmtWhen(data?.acceptedAt);
+  return (
+    <div>
+      {data?.available && (
+        <p className="text-xs text-gray-500 mb-3">
+          {data.version != null ? `Version ${Number(data.version).toFixed(2)}` : "Version not recorded"}
+          {accepted ? ` · accepted ${accepted}` : ""}
+        </p>
+      )}
+      {loading && <p className="text-xs text-gray-400 text-center py-6">Loading terms…</p>}
+      {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
+      {data && !data.available && (
+        <p className="text-sm text-gray-500 text-center py-6">No accepted terms were recorded for this booking.</p>
+      )}
+      {data?.available && <Markdown source={data.content} />}
+    </div>
+  );
+}
 
+/**
+ * Read-only modal for a driver: the exact Terms & Conditions version the customer
+ * accepted for ONE of the driver's own trips. Still used by the Trips (active) tab.
+ */
+export default function TripTermsModal({ open, onClose, trip, token }) {
+  if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
@@ -103,23 +125,12 @@ export default function TripTermsModal({ open, onClose, trip, token }) {
           <div className="min-w-0">
             <h3 className="font-bold text-arl-dark">Terms the customer accepted</h3>
             {trip && <p className="text-xs text-gray-400 truncate">{trip.customerName} — {trip.vehicleName}</p>}
-            {data?.available && (
-              <p className="text-xs text-gray-500 mt-1">
-                {data.version != null ? `Version ${Number(data.version).toFixed(2)}` : "Version not recorded"}
-                {accepted ? ` · accepted ${accepted}` : ""}
-              </p>
-            )}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
-          {loading && <p className="text-xs text-gray-400 text-center py-6">Loading terms…</p>}
-          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
-          {data && !data.available && (
-            <p className="text-sm text-gray-500 text-center py-6">No accepted terms were recorded for this booking.</p>
-          )}
-          {data?.available && <Markdown source={data.content} />}
+          <TripTermsContent tripID={trip?.id} token={token} />
         </div>
 
         <div className="p-4 pt-3 border-t border-gray-100">

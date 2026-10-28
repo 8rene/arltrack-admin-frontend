@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import TripMapModal, { TripLocationsMap } from "../components/TripMapModal";
 import { InspectionMediaGallery } from "../components/InspectionMedia";
 import TripDetailModal from "../components/TripDetailModal";
-import TripTermsModal from "../components/TripTermsModal";
+import TripTermsModal, { TripTermsContent } from "../components/TripTermsModal";
 import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -39,21 +39,6 @@ const IconMap = ({ className = "w-3.5 h-3.5" }) => (
   </svg>
 );
 
-const IconHistory = ({ className = "w-6 h-6" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3 12a9 9 0 109-9 9 9 0 00-6.36 2.64L3 8" />
-    <path strokeLinecap="round" d="M3 3v5h5" />
-    <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 3" />
-  </svg>
-);
-
-const IconEye = ({ className = "w-3.5 h-3.5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-    <circle cx="12" cy="12" r="3" />
-  </svg>
-);
-
 const fmtDateTime = (val) => {
   if (!val) return "—";
   const d = new Date(val);
@@ -67,9 +52,6 @@ const fmtDateTimeLong = (val) => {
   if (isNaN(d)) return "—";
   return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 };
-
-// "Oct 26, 11:45 PM" -> "Oct 27, 2026, 11:45 AM" : the start without the year, the end with it.
-const fmtRange = (start, end) => `${fmtDateTime(start)} → ${fmtDateTimeLong(end)}`;
 
 const fmtTime = (val) => {
   if (!val) return null;
@@ -423,6 +405,48 @@ const PENALTY_PILL = {
 function TripPenalties({ penalties, onEdit, bare = false }) {
   const list = Array.isArray(penalties) ? penalties : [];
   if (list.length === 0) return null;
+
+  // Modal view (bare): one block per penalty the driver noted — a Label | Price table, with ONE overall status for it.
+  if (bare) {
+    return (
+      <div className="space-y-3">
+        {list.map((p) => {
+          const items = Array.isArray(p.items) ? p.items : [];
+          const perItem = items.length > 1 && items.every((i) => Number.isFinite(Number(i.amount)));
+          const rows = perItem
+            ? items.map((i, idx) => ({ key: `${p.penaltyID}-${idx}`, label: i.description, amount: i.amount }))
+            : [{ key: p.penaltyID, label: items.map((i) => i.description).join(", "), amount: p.amount }];
+          return (
+            <div key={p.penaltyID} className="rounded-xl border border-gray-100 overflow-hidden">
+              <div className="flex items-center justify-between gap-3 px-4 py-2 bg-gray-50/60 border-b border-gray-100">
+                <span className="text-xs text-gray-400">{p.createdAt ? `Noted ${fmtWhen(p.createdAt)}` : "Noted by you"}</span>
+                <span className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${PENALTY_PILL[p.status] || PENALTY_PILL.Removed}`}>{p.status}</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                    <th className="py-2 pl-4 pr-3 text-left">Label</th>
+                    <th className="py-2 pl-3 pr-4 text-right">Price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.key} className="border-b border-gray-50 last:border-0">
+                      <td className="py-2.5 pl-4 pr-3 text-gray-800 font-medium break-words">{r.label}</td>
+                      <td className="py-2.5 pl-3 pr-4 text-right text-gray-800 font-semibold whitespace-nowrap">{peso(r.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {p.status === "Under review" && <p className="px-4 pb-3 text-[11px] text-gray-400">Waiting for a supervisor to review it.</p>}
+              {(p.status === "Rejected" || p.status === "Removed") && p.reason && <p className="px-4 pb-3 text-xs text-gray-500">Reason: {p.reason}</p>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   const body = (
       <div className="space-y-2 mt-1">
         {list.map((p) => (
@@ -1355,6 +1379,92 @@ function ActiveTripsTab() {
 }
 
 // ─── HISTORY TAB (completed/cancelled/stolen) ─────────────────────────────
+// ─── History table helpers (same look/behaviour as the Bookings page) ───
+const HISTORY_PAGE_SIZE = 10;
+
+const HISTORY_SEARCH_BY = [
+  { key: "customer", label: "Customer",   type: "text" },
+  { key: "phone",    label: "Contact No.", type: "text" },
+  { key: "vehicle",  label: "Vehicle",    type: "text" },
+  { key: "location", label: "Location",   type: "text" },
+  { key: "start",    label: "Trip Start", type: "date" },
+  { key: "end",      label: "Trip End",   type: "date" },
+  { key: "booking",  label: "Booking ID", type: "text" },
+];
+
+// "YYYY-MM-DD" (local day) of a date value, or null — what the date picker is compared against.
+const historyDayKey = (val) => {
+  if (!val) return null;
+  const d = new Date(val);
+  if (isNaN(d)) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const fmtDayOnly = (val) => {
+  if (!val) return "—";
+  const d = new Date(val);
+  if (isNaN(d)) return "—";
+  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+};
+const fmtTimeOnly = (val) => {
+  if (!val) return "";
+  const d = new Date(val);
+  if (isNaN(d)) return "";
+  return d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
+};
+
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+function HistorySortableTh({ label, sortKey, activeKey, sortDir, onSort }) {
+  const active = activeKey === sortKey;
+  return (
+    <th className="px-4 py-3 text-left select-none">
+      <button onClick={() => onSort(sortKey)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}>
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
+function HistoryPagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+  const rangeEnd = Math.min(start + pageSize, count);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}</p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>{n}</button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+      </div>
+    </div>
+  );
+}
+
 function HistoryTab() {
   const token = localStorage.getItem("token");
 
@@ -1363,9 +1473,14 @@ function HistoryTab() {
   const [error, setError]     = useState(null);
   const [mapTrip, setMapTrip] = useState(null);
   const [detailTrip, setDetailTrip] = useState(null);
-  const [termsTrip, setTermsTrip] = useState(null);
   const [editPenaltyCtx, setEditPenaltyCtx] = useState(null); // { penalty, trip } — editing one still under review
   const [statusF, setStatusF] = useState("All");   // click a summary card to filter, click again to clear
+  const [search, setSearch]     = useState("");
+  const [searchBy, setSearchBy] = useState("customer");
+  const [dateValue, setDateValue] = useState("");
+  const [sortKey, setSortKey]   = useState("start");
+  const [sortDir, setSortDir]   = useState("desc");
+  const [page, setPage]         = useState(1);
 
   const authedFetch = useCallback((path, options = {}) => fetch(`${API_URL}${path}`, {
     ...options,
@@ -1410,13 +1525,6 @@ function HistoryTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
-        <button onClick={fetchHistory} disabled={loading}
-          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
-          {loading ? "Refreshing…" : "↺ Refresh"}
-        </button>
-      </div>
-
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-3">{error}</div>
       )}
@@ -1425,7 +1533,7 @@ function HistoryTab() {
         const count = (st) => trips.filter((t) => t.status === st).length;
         const card = (st, icon, label, color) => (
           <StatCard icon={icon} value={count(st)} label={label} color={color}
-            active={statusF === st} onClick={() => setStatusF(statusF === st ? "All" : st)} />
+            active={statusF === st} onClick={() => { setStatusF(statusF === st ? "All" : st); setPage(1); }} />
         );
         return (
           <div className="grid grid-cols-3 gap-3 sm:gap-4">
@@ -1437,63 +1545,143 @@ function HistoryTab() {
       })()}
 
       {(() => {
-        const shown = statusF === "All" ? trips : trips.filter((t) => t.status === statusF);
-        if (loading && trips.length === 0) return <p className="text-sm text-gray-400 py-16 text-center">Loading…</p>;
-        if (trips.length === 0) {
-          return (
-            <div className="bg-white rounded-2xl shadow-soft p-10 text-center">
-              <IconHistory className="w-8 h-8 mx-auto text-gray-300 mb-2" />
-              <p className="text-sm font-semibold text-arl-dark">No completed trips yet</p>
-              <p className="text-xs text-gray-400 mt-1">Trips you've finished, cancelled, or flagged will show here.</p>
-            </div>
-          );
-        }
-        if (shown.length === 0) {
-          return <div className="bg-white rounded-2xl shadow-soft p-10 text-center text-sm text-gray-400">No {statusF} trips.</div>;
-        }
-        return shown.map((trip) => (
-          <div key={trip.id} className="bg-white rounded-2xl shadow-soft overflow-hidden transition-shadow hover:shadow-md">
-            <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100">
-              <div className="min-w-0">
-                <Eyebrow>Trip dates{trip.modeOfDriving === "With Chauffeur" ? " · Chauffeur" : ""}</Eyebrow>
-                <h3 className="font-bold text-arl-dark text-base">{fmtRange(trip.startDateTime, trip.endDateTime)}</h3>
+        const searchType = HISTORY_SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
+        const q = search.trim().toLowerCase();
+        const filtered = trips.filter((t) => {
+          if (statusF !== "All" && t.status !== statusF) return false;
+          if (searchType === "date") {
+            if (!dateValue) return true;
+            return historyDayKey(searchBy === "start" ? t.startDateTime : t.endDateTime) === dateValue;
+          }
+          if (!q) return true;
+          const hay = {
+            customer: t.customerName, phone: t.customerPhone, vehicle: t.vehicleName,
+            location: t.location, booking: t.bookingID || t.id,
+          }[searchBy];
+          return String(hay || "").toLowerCase().includes(q);
+        });
+        const ts = (v) => { const n = new Date(v).getTime(); return isNaN(n) ? 0 : n; };
+        const sorted = [...filtered].sort((a, b) => {
+          const av = ts(sortKey === "end" ? a.endDateTime : a.startDateTime);
+          const bv = ts(sortKey === "end" ? b.endDateTime : b.startDateTime);
+          return sortDir === "asc" ? av - bv : bv - av;
+        });
+        const count = sorted.length;
+        const totalPages = Math.max(1, Math.ceil(count / HISTORY_PAGE_SIZE));
+        const safePage = Math.min(page, totalPages);
+        const start = (safePage - 1) * HISTORY_PAGE_SIZE;
+        const pageItems = sorted.slice(start, start + HISTORY_PAGE_SIZE);
+        const handleSort = (key) => {
+          if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+          else { setSortKey(key); setSortDir("desc"); }
+          setPage(1);
+        };
+        const COLS = 9;
+
+        return (
+          <div className="bg-white rounded-2xl border overflow-hidden">
+            <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+                <select value={searchBy}
+                  onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); setPage(1); }}
+                  className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+                  {HISTORY_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+                </select>
               </div>
-              <StatusPill status={trip.status} />
+              {searchType === "date" ? (
+                <input type="date" value={dateValue}
+                  onChange={(e) => { setDateValue(e.target.value); setPage(1); }}
+                  className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+              ) : (
+                <input type="text"
+                  placeholder={`Enter ${(HISTORY_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                  className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+              )}
+              <select value={statusF} onChange={(e) => { setStatusF(e.target.value); setPage(1); }}
+                className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+                <option value="All">All statuses</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="stolen">Flagged stolen</option>
+              </select>
+              <button onClick={fetchHistory} disabled={loading}
+                className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
+                {loading ? "Refreshing…" : "↺ Refresh"}
+              </button>
             </div>
 
-            <div className="px-5 py-4 space-y-3">
-              <Block>
-                <Line label="Vehicle">{trip.vehicleName}</Line>
-                <Line label="Customer">{trip.customerName}</Line>
-                {trip.customerPhone && trip.customerPhone !== "—" && (
-                  <Line label="Customer phone">
-                    <a href={`tel:${trip.customerPhone}`} className="font-medium text-teal-600 hover:underline">{trip.customerPhone}</a>
-                  </Line>
-                )}
-                <Line label="Location">{trip.location}</Line>
-                {trip.status === "completed" && (trip.startedAt || trip.droppedOffTime || trip.completedAt) && (
-                  <>
-                    <Line label="Picked up">{fmtDateTimeLong(trip.startedAt)}</Line>
-                    <Line label="Dropped off">{trip.droppedOffTime ? fmtDateTimeLong(trip.droppedOffTime) : "Not recorded"}</Line>
-                    <Line label="Completed">{fmtDateTimeLong(trip.completedAt)}</Line>
-                  </>
-                )}
-              </Block>
-              <TripPenalties penalties={minePenalties(trip)} onEdit={(penalty) => setEditPenaltyCtx({ penalty, trip })} />
-
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setTermsTrip(trip)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold text-gray-600 hover:bg-gray-50">
-                  Terms
-                </button>
-                <button onClick={() => setDetailTrip(trip)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-semibold text-teal-700 hover:bg-teal-50">
-                  <IconEye /> View
-                </button>
-              </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+                  <tr>
+                    <HistorySortableTh label="Trip Start" sortKey="start" activeKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                    <HistorySortableTh label="Trip End" sortKey="end" activeKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                    <th className="px-4 py-3 text-left">Customer</th>
+                    <th className="px-4 py-3 text-left">Contact No.</th>
+                    <th className="px-4 py-3 text-left">Vehicle</th>
+                    <th className="px-4 py-3 text-left">Location</th>
+                    <th className="px-4 py-3 text-left">Penalties</th>
+                    <th className="px-4 py-3 text-left">Status</th>
+                    <th className="pl-4 pr-8 py-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading && trips.length === 0 ? (
+                    Array.from({ length: 6 }).map((_, i) => (
+                      <tr key={i} className="border-t">
+                        {Array.from({ length: COLS }).map((__, j) => (
+                          <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : count === 0 ? (
+                    <tr><td colSpan={COLS} className="text-center text-gray-400 py-12">
+                      {trips.length === 0 ? "No completed trips yet — trips you've finished, cancelled, or flagged will show here." : "No trips found"}
+                    </td></tr>
+                  ) : (
+                    pageItems.map((trip) => (
+                      <tr key={trip.id} className="border-t hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="text-gray-700">{fmtDayOnly(trip.startDateTime)}</span>
+                          <span className="mx-1.5 text-gray-300">|</span>
+                          <span className="text-gray-500">{fmtTimeOnly(trip.startDateTime)}</span>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="text-gray-700">{fmtDayOnly(trip.endDateTime)}</span>
+                          <span className="mx-1.5 text-gray-300">|</span>
+                          <span className="text-gray-500">{fmtTimeOnly(trip.endDateTime)}</span>
+                        </td>
+                        <td className="px-4 py-3 font-medium text-gray-800">
+                          {trip.customerName}
+                          {trip.modeOfDriving === "With Chauffeur" && <span className="ml-1.5 text-xs text-gray-400 font-normal">· Chauffeur</span>}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                          {trip.customerPhone && trip.customerPhone !== "—"
+                            ? <a href={`tel:${trip.customerPhone}`} className="text-teal-600 hover:underline">{trip.customerPhone}</a>
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">{trip.vehicleName}</td>
+                        <td className="px-4 py-3 text-gray-600 max-w-[16rem] truncate" title={trip.location}>{trip.location}</td>
+                        <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{minePenalties(trip).length || "—"}</td>
+                        <td className="px-4 py-3"><StatusPill status={trip.status} /></td>
+                        <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-2">
+                            <button onClick={() => setDetailTrip(trip)}
+                              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
+            <HistoryPagination page={safePage} totalPages={totalPages} onChange={setPage} start={start} pageSize={HISTORY_PAGE_SIZE} count={count} />
           </div>
-        ));
+        );
       })()}
 
       <TripMapModal
@@ -1503,7 +1691,6 @@ function HistoryTab() {
         stops={mapTrip ? tripStops(mapTrip) : []}
         codingAreas={mapTrip ? tripCodingAreas(mapTrip) : []}
       />
-      <TripTermsModal open={!!termsTrip} onClose={() => setTermsTrip(null)} trip={termsTrip} token={token} />
       <TripDetailModal
         key={detailTrip?.id || "none"}
         open={!!detailTrip}
@@ -1520,6 +1707,9 @@ function HistoryTab() {
           ) },
           { key: "inspection", title: "Vehicle inspection", render: () => (
             <TripInspectionProof key={detailTrip.id} tripID={detailTrip.id} authedFetch={authedFetch} refreshKey="history" />
+          ) },
+          { key: "terms", title: "Terms & Conditions", render: () => (
+            <TripTermsContent key={detailTrip.id} tripID={detailTrip.id} token={token} />
           ) },
         ] : []}
         // No "View Full Inspection" link: Vehicle Inspections is staff-only.

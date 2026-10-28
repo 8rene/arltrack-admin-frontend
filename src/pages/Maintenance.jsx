@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useSearchParams, useLocation } from "react-router-dom";
+import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
 import { buildFlaggedParts, toMs } from "../utils/damagedParts";
@@ -239,6 +239,14 @@ const EMPTY_FORM = {
   useToday: false,      // true = maintenanceDate always mirrors today's date
 };
 
+// "Search by" options — same idea as the Bookings page; they mirror the table's columns.
+const SEARCH_BY = [
+  { key: "plate",   label: "Plate No.",  type: "text" },
+  { key: "basis",   label: "Basis",      type: "text" },
+  { key: "created", label: "Created At", type: "date" },
+  { key: "date",    label: "Date",       type: "date" },
+];
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function Maintenance() {
@@ -252,6 +260,9 @@ export default function Maintenance() {
   const [loading, setLoading]             = useState(true);
   const [carFilter, setCarFilter]         = useState("All"); // "Brand Model" label, or "All"
   const [statusFilter, setStatusFilter]   = useState("All");
+  const [search, setSearch]                 = useState("");
+  const [searchBy, setSearchBy]             = useState("plate");
+  const [dateValue, setDateValue]           = useState("");
   const [editRecord, setEditRecord]       = useState(null);
   const [showAdd, setShowAdd]             = useState(false);
   const [form, setForm]                   = useState(EMPTY_FORM);
@@ -731,16 +742,28 @@ export default function Maintenance() {
     ...records.map(r => r.carLabel),
   ].filter(l => l && l !== "—"))].sort((x, y) => x.localeCompare(y));
 
+  const searchType = SEARCH_BY.find(o => o.key === searchBy)?.type || "text";
+  const searchText = search.trim().toLowerCase();
   const filtered = sortedRecords.filter(r => {
     const matchC = carFilter === "All" || r.carLabel === carFilter;
     const matchS = statusFilter === "All" || r.status === statusFilter;
     const matchD = !selectedDay || (toDate(r.maintenanceDate) && localISODate(toDate(r.maintenanceDate)) === selectedDay);
-    return matchC && matchS && matchD;
+    let matchQ = true;
+    if (searchType === "date") {
+      if (dateValue) {
+        const d = toDate(searchBy === "created" ? r.createdAt : r.maintenanceDate);
+        matchQ = !!d && localISODate(d) === dateValue;
+      }
+    } else if (searchText) {
+      const hay = { plate: r.plateNumber, basis: r.basis }[searchBy];
+      matchQ = String(hay || "").toLowerCase().includes(searchText);
+    }
+    return matchC && matchS && matchD && matchQ;
   });
 
   // The table is paginated and day-filtered; the calendar and stat cards keep reading all records.
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [carFilter, statusFilter, sortKey, sortDir, activeStatFilter, selectedDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [carFilter, statusFilter, search, searchBy, dateValue, sortKey, sortDir, activeStatFilter, selectedDay]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -835,7 +858,7 @@ export default function Maintenance() {
         onSelectDay={setSelectedDay}
       />
 
-      {/* Under the calendar: day filter chip (left) + Vehicle / Status filters, Refresh and Schedule (right) */}
+      {/* Under the calendar: day filter chip (left) + Refresh and Schedule (right) */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           {selectedDay && (
@@ -849,17 +872,8 @@ export default function Maintenance() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <select value={carFilter} onChange={e => setCarFilter(e.target.value)} title="Filter by vehicle"
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm max-w-[14rem]">
-            <option value="All">All vehicles</option>
-            {vehicleOptions.map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} title="Filter by status"
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
-            {ALL_STATUSES.map(st => <option key={st} value={st}>{st === "All" ? "All statuses" : st}</option>)}
-          </select>
           <button onClick={fetchAll} disabled={loading}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            className="px-4 py-2 rounded-xl text-sm font-medium border border-teal-300 text-teal-700 bg-white hover:bg-teal-50 disabled:opacity-50 flex items-center gap-1.5">
             <IconRefresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </button>
@@ -872,18 +886,44 @@ export default function Maintenance() {
 
       {/* TABLE */}
       <div className="flex gap-5 items-start">
-        <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
-          <table className="w-full text-sm table-fixed">
-            <colgroup>
-              <col style={{width:"15%"}} /><col style={{width:"15%"}} /><col style={{width:"10%"}} /><col style={{width:"13%"}} />
-              <col style={{width:"12%"}} /><col style={{width:"9%"}} /><col style={{width:"12%"}} /><col style={{width:"14%"}} />
-            </colgroup>
+        <div className="flex-1 min-w-0 bg-white rounded-2xl border overflow-hidden">
+          {/* SEARCH + FILTERS — same layout as the Bookings page */}
+          <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+              <select value={searchBy}
+                onChange={e => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+                className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+                {SEARCH_BY.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+            </div>
+            {searchType === "date" ? (
+              <input type="date" value={dateValue} onChange={e => setDateValue(e.target.value)}
+                className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+            ) : (
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+                placeholder={`Enter ${(SEARCH_BY.find(o => o.key === searchBy)?.label || "").toLowerCase()}...`}
+                className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+            )}
+            <select value={carFilter} onChange={e => setCarFilter(e.target.value)} title="Filter by vehicle"
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white max-w-[14rem]">
+              <option value="All">All vehicles</option>
+              {vehicleOptions.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} title="Filter by status"
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+              {ALL_STATUSES.map(st => <option key={st} value={st}>{st === "All" ? "All statuses" : st}</option>)}
+            </select>
+          </div>
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[900px] text-sm">
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
+              <tr className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
                 <SortableTh label="Created" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Vehicle" sortKey="vehicle" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Plate No." sortKey="plate" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left font-semibold">Basis</th>
+                <th className="px-4 py-3 text-left font-semibold">Damaged Parts</th>
                 <SortableTh label="Date" sortKey="date" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Cost" sortKey="cost" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left font-semibold">Status</th>
@@ -894,13 +934,13 @@ export default function Maintenance() {
               {loading ? (
                 Array.from({length:5}).map((_,i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    {Array.from({length:8}).map((_,j) => (
+                    {Array.from({length:9}).map((_,j) => (
                       <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4"/></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">{selectedDay ? "No maintenance records on this day." : "No maintenance records found."}</td></tr>
+                <tr><td colSpan={9} className="text-center py-16 text-gray-400 text-sm">{selectedDay ? "No maintenance records on this day." : "No maintenance records found."}</td></tr>
               ) : paginated.map((r, i) => {
                 const isEditing = editRecord?.id === r.id;
                 const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(r);
@@ -912,19 +952,27 @@ export default function Maintenance() {
                 return (
                 <tr key={r.id} onClick={() => openView(r)}
                   className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-teal-50/30 transition-colors ${rowClass}`}>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                  <td className="px-4 py-3 text-sm whitespace-nowrap">
                     <span className="text-gray-700">{fmtDate(r.createdAt)}</span>
                     <span className="mx-1.5 text-gray-300">|</span>
                     <span className="text-gray-500">{fmtTime(r.createdAt)}</span>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-semibold text-gray-800 text-xs truncate">{r.carLabel}</div>
+                    <div className="font-semibold text-gray-800 text-sm truncate max-w-[14rem]">{r.carLabel}</div>
                   </td>
-                  <td className="px-4 py-3 text-xs font-medium text-gray-600 whitespace-nowrap truncate">{r.plateNumber || "—"}</td>
-                  <td className="px-4 py-3 text-xs text-gray-700 truncate">
+                  <td className="px-4 py-3 text-sm font-medium text-gray-600 whitespace-nowrap">{r.plateNumber || "—"}</td>
+                  <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
                     {r.basis ? `${BASIS_ICON[r.basis] || ""} ${r.basis}` : "—"}
                   </td>
-                  <td className={`px-4 py-3 text-xs whitespace-nowrap ${isOverdueJob(r) ? "text-red-500 font-semibold" : "text-gray-500"}`}>
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const n = (r.partsAddressed || []).filter(p => p?.conditionBefore === "Damaged").length;
+                      return n > 0
+                        ? <span title={`${n} damaged part${n === 1 ? "" : "s"} on this job`} className="inline-flex items-center justify-center min-w-[1.75rem] px-2 py-0.5 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200">{n}</span>
+                        : <span className="text-gray-300">—</span>;
+                    })()}
+                  </td>
+                  <td className={`px-4 py-3 text-sm whitespace-nowrap ${isOverdueJob(r) ? "text-red-500 font-semibold" : "text-gray-500"}`}>
                     <span className="inline-flex items-center gap-1">
                       {fmtDate(r.maintenanceDate)}
                       {isOverdueJob(r) && (
@@ -932,30 +980,32 @@ export default function Maintenance() {
                       )}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-700">
+                  <td className="px-4 py-3 text-sm text-gray-700">
                     {r.totalCost ? peso(r.totalCost) : "—"}
                   </td>
                   <td className="px-4 py-3">
                     <MainStatusBadge status={r.status || "—"} />
                   </td>
-                  <td className="px-4 py-3">
-                    {r.status === "Scheduled" ? (
-                      <button onClick={e => { e.stopPropagation(); openConfirm(r); }}
-                        className="text-xs px-2.5 py-1 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition-colors font-semibold">
-                        Confirm
-                      </button>
-                    ) : (
+                  <td className="px-4 py-3 text-left whitespace-nowrap">
+                    <div className="inline-flex items-center gap-2">
+                      {r.status === "Scheduled" && (
+                        <button onClick={e => { e.stopPropagation(); openConfirm(r); }}
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-teal-300 text-teal-700 hover:bg-teal-50 transition-colors">
+                          Confirm
+                        </button>
+                      )}
                       <button onClick={e => { e.stopPropagation(); openView(r); }}
-                        className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors font-medium">
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
                         View
                       </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
                 );
               })}
             </tbody>
           </table>
+          </div>
           <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
         </div>
 
@@ -1052,15 +1102,16 @@ const IconLock = ({ className = "w-3 h-3" }) => (
   </svg>
 );
 
+// Bordered card with a gray header — same look as the Bookings view window.
 function ModalSection({ n, title, hint, children }) {
   return (
-    <section className="space-y-3">
-      <div className="flex items-baseline gap-2">
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b">
         <span className="w-5 h-5 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">{n}</span>
-        <h3 className="text-sm font-bold text-gray-800">{title}</h3>
-        {hint && <span className="text-xs text-gray-400">{hint}</span>}
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {hint && <span className="text-xs text-gray-400 font-normal normal-case tracking-normal">{hint}</span>}
       </div>
-      {children}
+      <div className="p-4 space-y-3">{children}</div>
     </section>
   );
 }
@@ -1081,6 +1132,7 @@ function MaintenanceModal({
   catalog, catalogByID, flaggedByPart, partNames,
   addPart, updatePart, removePart,
 }) {
+  const navigate = useNavigate();
   const car = cars.find(c => c.id === form.carID);
   const afterOptions = PART_AFTER_OPTIONS;
 
@@ -1102,10 +1154,36 @@ function MaintenanceModal({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
           <div>
-            <h2 className="font-bold text-gray-800 text-base">{viewing ? "Maintenance Details" : editRecord ? "Edit Maintenance" : "Schedule Maintenance"}</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="font-bold text-gray-800 text-lg">{viewing ? "Maintenance Details" : editRecord ? "Edit Maintenance" : "Schedule Maintenance"}</h2>
+              {viewing && form.status && <MainStatusBadge status={form.status} />}
+            </div>
             <p className="text-xs text-gray-400 mt-0.5">
               {car ? `${car.label}${car.plateNumber ? ` · ${car.plateNumber}` : ""}` : "Choose a vehicle to begin"}
             </p>
+            {editRecord && (
+              <div className="flex flex-wrap gap-x-8 gap-y-1 mt-2.5">
+                {[
+                  { label: "Created by", name: editRecord.createdByName, at: editRecord.createdAt },
+                  { label: "Last updated by", name: editRecord.updatedByName, at: editRecord.updatedAt },
+                ].map(x => (
+                  <div key={x.label} className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{x.label}</div>
+                    {x.name ? (
+                      <div className="text-xs text-gray-700">
+                        <span className="font-semibold">{x.name}</span>
+                        {x.at ? <span className="text-gray-400"> · {fmtDate(x.at)}, {fmtTime(x.at)}</span> : null}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-400" title="This record was saved before staff tracking was added.">
+                        Not recorded
+                        <span className="text-gray-300"> · saved before tracking{x.at ? ` · ${fmtDate(x.at)}` : ""}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <button onClick={onClose} disabled={saving} aria-label="Close" className="w-8 h-8 disabled:opacity-40 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100">
             <IconX className="w-4 h-4" />
@@ -1115,7 +1193,7 @@ function MaintenanceModal({
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {/* View mode: the whole form is a disabled fieldset, so nothing can be changed until "Edit". */}
-          <fieldset disabled={viewing} className="space-y-7 min-w-0 border-0 p-0 m-0">
+          <fieldset disabled={viewing} className="space-y-4 min-w-0 border-0 p-0 m-0">
 
           {/* 1 · JOB */}
           <ModalSection n="1" title="Job">
@@ -1389,6 +1467,12 @@ function MaintenanceModal({
           {viewing ? (
             <>
               <span className="mr-auto text-xs text-gray-400">Read-only. Click Edit to make changes.</span>
+              {editRecord?.bookingID && (
+                <button onClick={() => navigate(`/bookings?open=${encodeURIComponent(editRecord.bookingID)}`)}
+                  className="px-5 py-2 rounded-xl border border-teal-300 text-sm font-semibold text-teal-700 hover:bg-teal-50">
+                  View booking
+                </button>
+              )}
               <button onClick={onClose}
                 className="px-5 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Close</button>
               <button onClick={onEdit}

@@ -553,11 +553,16 @@ export default function Users() {
       const docMap     = Object.fromEntries(docSnap.docs.map(d => [d.data().userID || d.id, { docId: d.id, ...d.data() }]));
       const bookingCount = {};
       const completedCount = {};
+      const upcomingCount = {};   // upcoming + ongoing
+      const cancelledCount = {};
       bookingsSnap.docs.forEach(d => {
         const { userID: uid, status } = d.data();
         if (!uid) return;
+        const st = String(status || "").toLowerCase();
         bookingCount[uid] = (bookingCount[uid] || 0) + 1;
-        if (String(status || "").toLowerCase() === "completed") completedCount[uid] = (completedCount[uid] || 0) + 1;
+        if (st === "completed") completedCount[uid] = (completedCount[uid] || 0) + 1;
+        else if (st === "upcoming" || st === "ongoing") upcomingCount[uid] = (upcomingCount[uid] || 0) + 1;
+        else if (st === "cancelled") cancelledCount[uid] = (cancelledCount[uid] || 0) + 1;
       });
 
       const merged = baseUsers.map(u => ({
@@ -567,6 +572,8 @@ export default function Users() {
         document:     docMap[u.id]     || {},
         bookingCount: bookingCount[u.id] || 0,
         completedBookingCount: completedCount[u.id] || 0,
+        upcomingBookingCount: upcomingCount[u.id] || 0,
+        cancelledBookingCount: cancelledCount[u.id] || 0,
       }));
 
       setUsers(merged);
@@ -717,7 +724,7 @@ export default function Users() {
           {[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}
         </div>
       ) : subTab === "directory" ? (
-        <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showBookings={activeRole.key === "customer"} showVerification={showVerification}
+        <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showVerification={showVerification}
           filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole} />
       ) : subTab === "documents" ? (
         <DocumentsTab users={users} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts} />
@@ -729,7 +736,7 @@ export default function Users() {
 }
 
 // ─── DIRECTORY TAB (used for Customers, Drivers, Supervisors, Admins) ─────────
-function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showBookings, showVerification, filterStatus, setFilterStatus, viewerRole, currentRoleName }) {
+function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showVerification, filterStatus, setFilterStatus, viewerRole, currentRoleName }) {
   const [search, setSearch]       = useState("");
   const [searchBy, setSearchBy]   = useState("name");
   const [dateValue, setDateValue] = useState(""); // "YYYY-MM-DD" from the date picker
@@ -839,11 +846,6 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
       const bv = b.referral?.invitedCount || 0;
       return sortDir === "asc" ? av - bv : bv - av;
     }
-    if (sortKey === "bookings") {
-      const av = a.bookingCount || 0;
-      const bv = b.bookingCount || 0;
-      return sortDir === "asc" ? av - bv : bv - av;
-    }
     if (sortKey === "account") return sortDir === "asc"
       ? (a.status || "").localeCompare(b.status || "")
       : (b.status || "").localeCompare(a.status || "");
@@ -915,7 +917,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                   <th className="px-5 py-3 text-left">Contact No.</th>
                   <SortableTh label="Referral" sortKey="invited" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">ID Status</th>
-                  {showBookings && <SortableTh label="Bookings" sortKey="bookings" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />}
+                  {showVerification && <th className="px-5 py-3 text-left">Flagged</th>}
                   <SortableTh label="Account" sortKey="account" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-right">Action</th>
                 </tr>
@@ -938,9 +940,6 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                           <div>
                             <p className="font-semibold text-gray-800 flex items-center gap-1">
                               {fullName}
-                              {u.isFlagged && (
-                                <Icons.Flag className="w-3.5 h-3.5 text-red-500 fill-red-500 stroke-red-500" />
-                              )}
                             </p>
                             <p className="text-xs text-gray-400">@{u.username || "—"}</p>
                           </div>
@@ -966,7 +965,16 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                             </span>
                         }
                       </td>
-                      {showBookings && <td className="px-5 py-3 font-semibold text-gray-700">{u.bookingCount}</td>}
+                      {showVerification && (
+                        <td className="px-5 py-3">
+                          {u.isFlagged
+                            ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-black font-medium">
+                                <Icons.Flag className="w-3 h-3 text-red-500 fill-red-500 stroke-red-500" />
+                                Flagged
+                              </span>
+                            : <span className="text-gray-400 text-xs">—</span>}
+                        </td>
+                      )}
                       <td className="px-5 py-3">
                         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium capitalize text-black ${
                           u.status?.toLowerCase() === "active"   ? "bg-blue-50 border border-blue-200" :
@@ -1135,7 +1143,12 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
                 <Field label="ID Status"  value={user.isVerified ? "✓ Verified" : "Pending"} />
                 <Field label="Flagged"    value={user.isFlagged ? "Yes" : "No"} />
                 {roleLabelSingular === "Customer" && (
-                  <Field label="Bookings" value={`${user.bookingCount || 0} total · ${user.completedBookingCount || 0} completed`} />
+                  <>
+                    <Field label="Upcoming Bookings"  value={String(user.upcomingBookingCount || 0)} />
+                    <Field label="Completed Bookings" value={String(user.completedBookingCount || 0)} />
+                    <Field label="Cancelled Bookings" value={String(user.cancelledBookingCount || 0)} />
+                    <Field label="Total Bookings"     value={String(user.bookingCount || 0)} />
+                  </>
                 )}
               </Section>
 
@@ -1491,7 +1504,7 @@ async function fetchUserLookup() {
     const u = d.data();
     const det = detailsMap[d.id] || {};
     const name = `${det.firstName || ""} ${det.lastName || ""}`.trim();
-    lookup[d.id] = { name: name || u.username || u.email || d.id, username: u.username || "", email: u.email || "" };
+    lookup[d.id] = { name: name || u.username || u.email || d.id, username: u.username || "", email: u.email || "", isFlagged: u.isFlagged === true };
   });
   return lookup;
 }
@@ -1853,6 +1866,7 @@ function ResubmitTable({ rows, loading, userLookup, onOpen, statusFilter, setSta
                   onSort={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))} />
                 <th className="px-5 py-3 text-left">User</th>
                 <th className="px-5 py-3 text-left">Type</th>
+                <th className="px-5 py-3 text-left">Flagged</th>
                 <th className="px-5 py-3 text-left">Status</th>
                 {showReviewed && <th className="px-5 py-3 text-left">Reviewed</th>}
                 <th className="px-5 py-3 text-right">Action</th>
@@ -1869,7 +1883,22 @@ function ResubmitTable({ rows, loading, userLookup, onOpen, statusFilter, setSta
                       <p className="font-semibold text-gray-800">{u.name || req.userID}</p>
                       <p className="text-xs text-gray-400">@{u.username || "—"}</p>
                     </td>
-                    <td className="px-5 py-3 text-gray-600">{isLicense ? "Driver's License" : "Document"}</td>
+                    <td className="px-5 py-3 text-gray-600">
+                      {isLicense ? "Driver's License" : (
+                        <>
+                          <p>Document</p>
+                          {req.documentType && <p className="text-xs text-gray-400">{req.documentType}</p>}
+                        </>
+                      )}
+                    </td>
+                    <td className="px-5 py-3">
+                      {u.isFlagged
+                        ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-black font-medium">
+                            <Icons.Flag className="w-3 h-3 text-red-500 fill-red-500 stroke-red-500" />
+                            Flagged
+                          </span>
+                        : <span className="text-gray-400 text-xs">—</span>}
+                    </td>
                     <td className="px-5 py-3"><RequestStatusPill status={req.status} /></td>
                     {showReviewed && <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={req.reviewedAt} /></td>}
                     <td className="px-5 py-3">

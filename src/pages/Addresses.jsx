@@ -169,15 +169,9 @@ function Pill({ children, tone = "teal" }) {
 
 // Full-size buttons (not tiny text links) so the Actions column isn't mostly empty.
 const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
-const RowActions = ({ onView, onEdit, onDelete }) => (
+const RowActions = ({ onView }) => (
   <div className="flex items-center gap-2 justify-end">
-    {onView && (
-      <button onClick={onView} className={`${actionBtn} border-gray-200 text-gray-600 hover:bg-gray-50`}>View</button>
-    )}
-    <button onClick={onEdit} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
-    {onDelete && (
-      <button onClick={onDelete} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>Delete</button>
-    )}
+    <button onClick={onView} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
   </div>
 );
 
@@ -247,9 +241,52 @@ function sortBundle(b) {
   };
 }
 
-// A stable colour per parent so rows from the same parent read as a group.
-const TONES = ["teal", "blue", "amber", "green", "gray"];
-const toneFor = (id = "") => TONES[[...id].reduce((s, ch) => s + ch.charCodeAt(0), 0) % TONES.length];
+// ─── Level card icons (same style as the Bookings stat cards) ────────────────
+const svgProps = { viewBox: "0 0 24 24", fill: "none", xmlns: "http://www.w3.org/2000/svg" };
+const stroke = { stroke: "currentColor", strokeWidth: 1.75, strokeLinecap: "round", strokeLinejoin: "round" };
+const IconGlobe = ({ className = "w-4 h-4" }) => (
+  <svg className={className} {...svgProps}><circle cx="12" cy="12" r="9" {...stroke} /><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18" {...stroke} /></svg>
+);
+const IconPin = ({ className = "w-4 h-4" }) => (
+  <svg className={className} {...svgProps}><path d="M12 21s-6-5.6-6-10a6 6 0 1112 0c0 4.4-6 10-6 10z" {...stroke} /><circle cx="12" cy="11" r="2" {...stroke} /></svg>
+);
+const IconCity = ({ className = "w-4 h-4" }) => (
+  <svg className={className} {...svgProps}><path d="M4 21V7l7-4v18M11 21V11l9 3v7M3 21h18M7 10h1M7 14h1M15 17h1" {...stroke} /></svg>
+);
+const IconHome = ({ className = "w-4 h-4" }) => (
+  <svg className={className} {...svgProps}><path d="M3 11l9-7 9 7M5 10v10h14V10M10 20v-5h4v5" {...stroke} /></svg>
+);
+const LEVEL_STYLE = {
+  regions:        { Icon: IconGlobe, color: "bg-teal-50 text-teal-600" },
+  provinces:      { Icon: IconPin,   color: "bg-blue-50 text-blue-600" },
+  municipalities: { Icon: IconCity,  color: "bg-yellow-50 text-yellow-600" },
+  barangays:      { Icon: IconHome,  color: "bg-green-50 text-green-600" },
+};
+
+// ─── Sort header — same look as the Bookings table ───────────────────────────
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} {...svgProps}><path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} {...svgProps}>
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableTh({ label, active, dir, onSort }) {
+  return (
+    <th className="px-5 py-3 text-left select-none">
+      <button
+        onClick={onSort}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={dir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
 
 // One cascading filter dropdown. Top-level (not defined inside the page) so it
 // isn't remounted on every render.
@@ -284,6 +321,7 @@ export default function Addresses() {
   const [municipalityF, setMunicipalityF] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
+  const [sortDir, setSortDir] = useState(null); // null = grouped by parent (default), "asc" / "desc" = by name
 
   const [dialog, setDialog] = useState(null);   // { existing } — existing null = adding
   const [toDelete, setToDelete] = useState(null);
@@ -336,7 +374,7 @@ export default function Addresses() {
   );
 
   const resetView = (key) => {
-    setLevelKey(key); setRegionF(""); setProvinceF(""); setMunicipalityF(""); setSearch(""); setPage(0);
+    setLevelKey(key); setRegionF(""); setProvinceF(""); setMunicipalityF(""); setSearch(""); setPage(0); setSortDir(null);
   };
 
   // ── rows for the current level ──
@@ -357,8 +395,9 @@ export default function Addresses() {
       });
     }
     if (q) list = list.filter((x) => (x[level.nameField] || "").toLowerCase().includes(q));
+    if (sortDir) list = [...list].sort((a, b) => cmp(a[level.nameField], b[level.nameField]) * (sortDir === "asc" ? 1 : -1));
     return { rows: list, total: all.length };
-  }, [bundle, levelKey, regionF, provinceF, municipalityF, search, lk, level.nameField]);
+  }, [bundle, levelKey, regionF, provinceF, municipalityF, search, sortDir, lk, level.nameField]);
 
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -368,11 +407,11 @@ export default function Addresses() {
   const headers = {
     regions: ["Provinces"],
     provinces: ["Region", "Municipalities"],
-    municipalities: ["Province", "Region"],
+    municipalities: ["Province", "Region", "Barangays"],
     barangays: ["Municipality", "Province / Region"],
   }[levelKey];
 
-  const parentPill = (text, id) => (text ? <Pill tone={toneFor(id)}>{text}</Pill> : <span className="text-gray-400">—</span>);
+  const parentPill = (text) => (text ? <Pill tone="gray">{text}</Pill> : <span className="text-gray-400">—</span>);
   const countText = (n = 0, one, many) => `${n} ${n === 1 ? one : many}`;
 
   const cellsFor = (row) => {
@@ -383,7 +422,11 @@ export default function Addresses() {
         return [parentPill(lk.regionName[row.regionID], row.regionID), countText(lk.municipalitiesPerProvince[row.provinceID], "municipality", "municipalities")];
       case "municipalities": {
         const regID = lk.regionOfProvince(row.provinceID);
-        return [parentPill(lk.provinceName(row.provinceID), row.provinceID), parentPill(lk.regionName[regID], regID)];
+        return [
+          parentPill(lk.provinceName(row.provinceID), row.provinceID),
+          parentPill(lk.regionName[regID], regID),
+          countText(lk.barangaysPerMunicipality[row.municipalityID], "barangay", "barangays"),
+        ];
       }
       default: {
         const provID = lk.provinceOfMunicipality(row.municipalityID);
@@ -415,6 +458,7 @@ export default function Addresses() {
       patchLevel(levelKey, (list) => list.filter((x) => x[level.idField] !== id));
       showToast(`${level.singular} deleted.`);
       setToDelete(null);
+      setViewing(null);
     } catch (e) {
       showToast(`Failed to delete: ${e.message}`, "error");
     } finally {
@@ -441,24 +485,26 @@ export default function Addresses() {
         </button>
       </div>
 
-      {/* ── Level cards ── */}
+      {/* ── Level cards (same look as the Bookings stat cards) ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         {LEVELS.map((l) => {
           const active = l.key === levelKey;
+          const { Icon, color } = LEVEL_STYLE[l.key];
           return (
             <button
               key={l.key}
               onClick={() => resetView(l.key)}
-              className={`text-left bg-white rounded-2xl border p-4 shadow-soft transition ${
-                active ? "border-teal-400 ring-2 ring-teal-100" : "border-gray-100 hover:border-teal-200"
-              }`}
+              className={`p-4 rounded-2xl border text-left transition-all ${active ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}
             >
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{l.label}</p>
-              {loading ? (
-                <div className="h-7 w-14 mt-1 rounded bg-gray-100 animate-pulse" />
-              ) : (
-                <p className="text-2xl font-bold text-gray-800 mt-0.5">{bundle[l.key].length.toLocaleString()}</p>
-              )}
+              <div className="flex items-start justify-between">
+                <div className={`text-2xl font-bold ${active ? "text-teal-600" : "text-gray-800"}`}>
+                  {loading ? "…" : bundle[l.key].length.toLocaleString()}
+                </div>
+                <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${color}`}>
+                  <Icon className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-xs text-gray-400 mt-0.5">{l.label}</div>
             </button>
           );
         })}
@@ -466,13 +512,15 @@ export default function Addresses() {
 
       {/* ── Filters ── */}
       <div className="flex flex-wrap gap-3 items-end mb-4">
-        <input
-          type="text"
-          placeholder={`Search ${level.label.toLowerCase()}…`}
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-          className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 w-56"
-        />
+        {levelKey !== "regions" && (
+          <input
+            type="text"
+            placeholder={`Search ${level.label.toLowerCase()}…`}
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 w-56"
+          />
+        )}
         {levelKey !== "regions" && (
           <FilterSelect
             label="Region" value={regionF}
@@ -514,7 +562,7 @@ export default function Addresses() {
         <table className="w-full text-sm font-sans min-w-[560px]">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              <th className={thCls}>{level.singular}</th>
+              <SortableTh label={level.singular} active={!!sortDir} dir={sortDir} onSort={() => { setSortDir((d) => (d === "asc" ? "desc" : "asc")); setPage(0); }} />
               {headers.map((h) => <th key={h} className={thCls}>{h}</th>)}
               <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
             </tr>
@@ -536,11 +584,7 @@ export default function Addresses() {
                       <td key={i} className="px-5 py-3 text-gray-600">{cell}</td>
                     ))}
                     <td className="px-5 py-3">
-                      <RowActions
-                        onView={() => setViewing({ levelKey, row })}
-                        onEdit={() => setDialog({ existing: row })}
-                        onDelete={canDelete ? () => setToDelete(row) : null}
-                      />
+                      <RowActions onView={() => setViewing({ levelKey, row })} />
                     </td>
                   </tr>
                 );
@@ -564,7 +608,16 @@ export default function Addresses() {
       )}
 
       {viewing && (
-        <ViewDialog levelKey={viewing.levelKey} row={viewing.row} bundle={bundle} onClose={() => setViewing(null)} />
+        <ViewDialog
+          levelKey={viewing.levelKey}
+          row={viewing.row}
+          bundle={bundle}
+          canDelete={canDelete}
+          onClose={() => setViewing(null)}
+          // The view is a snapshot, so it closes when the editor opens (the table refreshes after a save).
+          onEdit={() => { setDialog({ existing: viewing.row }); setViewing(null); }}
+          onDelete={() => setToDelete(viewing.row)}
+        />
       )}
 
       {dialog && (
@@ -599,7 +652,7 @@ export default function Addresses() {
 // ─── View: the same tree as the editor, read-only ────────────────────────────
 const CHILD_OF = { regions: "provinces", provinces: "municipalities", municipalities: "barangays", barangays: null };
 
-function ViewDialog({ levelKey, row, bundle, onClose }) {
+function ViewDialog({ levelKey, row, bundle, canDelete, onClose, onEdit, onDelete }) {
   const [resolved] = useState(() => resolveRoot(bundle, levelKey, row));
   const [{ nodes, rootKey }] = useState(() => buildDraft(bundle, resolved.rootLevelKey, resolved.rootRow));
   const [open, setOpen] = useState(() => new Set(resolved.pathKeys));
@@ -618,7 +671,15 @@ function ViewDialog({ levelKey, row, bundle, onClose }) {
       title={`${level.singular}: ${row[level.nameField] || "—"}`}
       onClose={onClose}
       width="max-w-3xl"
-      footer={<button onClick={onClose} className={btnPrimary}>Close</button>}
+      footer={
+        <>
+          {canDelete && (
+            <button onClick={onDelete} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>Delete</button>
+          )}
+          <button onClick={onEdit} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
+          <button onClick={onClose} className={btnGhost}>Close</button>
+        </>
+      }
     >
       <div className="space-y-3 pb-2">
         <p className="text-xs text-gray-400 leading-relaxed">
