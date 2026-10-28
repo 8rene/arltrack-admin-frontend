@@ -689,6 +689,27 @@ const stampParts = (d) => d && ({
   time: d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }),
 });
 
+// Local "YYYY-MM-DD" of a date value — what the Requested / Updated date picker is compared against.
+const dayKeyOf = (val) => {
+  const d = toDate(val);
+  return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : null;
+};
+// The note shown in the Reason column (same wording), so it can be searched.
+const reasonTextOf = (r) => isDeposit(r) ? "Security deposit return"
+  : isDiscount(r) ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount"))
+  : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "");
+// "Search by" options — mirror the table's columns. Status (and the Type buttons) have their own controls.
+// Booking ID, Payment ID and Request ID have no column on every tab but stay searchable.
+const REFUND_SEARCH_BY = [
+  { key: "requested", label: "Requested",  type: "date" },
+  { key: "updated",   label: "Updated",    type: "date", notOnPending: true },   // there is no Updated column on Request Pending
+  { key: "customer",  label: "Customer",   type: "text" },
+  { key: "bookingID", label: "Booking ID", type: "text" },
+  { key: "paymentID", label: "Payment ID", type: "text" },
+  { key: "requestID", label: "Request ID", type: "text" },
+  { key: "reason",    label: "Reason",     type: "text" },
+];
+
 export default function RefundRequests() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -702,6 +723,8 @@ export default function RefundRequests() {
   const [statusF, setStatusF]   = useState("All");
   const [typeF, setTypeF]       = useState("all");   // Under Process + History: all | refund | staff | deposit | discount
   const [search, setSearch]     = useState("");
+  const [searchBy, setSearchBy] = useState("customer");
+  const [dateValue, setDateValue] = useState("");   // "YYYY-MM-DD" from the date picker
   const [toast, setToast]       = useState(null);
   const [busyId, setBusyId]     = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null); // request being rejected
@@ -742,8 +765,9 @@ export default function RefundRequests() {
   useEffect(() => {
     const q = searchParams.get("search");
     if (!q) return;
-    setSearch(q);
     const hit = items.find((r) => r.refundRequestID === q || r.paymentID === q || r.bookingID === q);
+    setSearchBy(hit ? (hit.refundRequestID === q ? "requestID" : hit.paymentID === q ? "paymentID" : "bookingID") : "bookingID");
+    setSearch(q);
     if (hit) setTab(tabOf(hit));
     else if (loading) return;
     setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete("search"); return n; }, { replace: true });
@@ -751,6 +775,10 @@ export default function RefundRequests() {
 
   const activeTab = TABS.find((t) => t.key === tab) || TABS[0];
   const tabKey = activeTab.key;
+  // The Updated option doesn't exist on Request Pending; if it was picked on another tab, fall back to Customer.
+  const searchOptions = REFUND_SEARCH_BY.filter((o) => !(o.notOnPending && tabKey === "pending"));
+  const searchByKey = searchOptions.some((o) => o.key === searchBy) ? searchBy : "customer";
+  const searchOpt = searchOptions.find((o) => o.key === searchByKey);
 
   const switchTab = (key) => {
     setTab(key);
@@ -967,12 +995,20 @@ export default function RefundRequests() {
 
   const hasTypeFilter = tabKey === "processing" || tabKey === "history";   // type buttons show on these two tabs
   const filtered = items.filter((r) => {
-    const q = search.toLowerCase();
-    const matchQ = !q
-      || (r.refundRequestID || "").toLowerCase().includes(q)
-      || (r.customerName || "").toLowerCase().includes(q)
-      || (r.bookingID || "").toLowerCase().includes(q)
-      || (r.paymentID || "").toLowerCase().includes(q);
+    const q = search.trim().toLowerCase();
+    let matchQ = true;
+    if (searchOpt.type === "date") {
+      if (dateValue) matchQ = dayKeyOf(searchByKey === "updated" ? updatedOf(r) : toDate(r.createdAt)) === dateValue;
+    } else if (q) {
+      const hay = {
+        customer:  r.customerName,
+        bookingID: r.bookingID,
+        paymentID: r.paymentID,
+        requestID: r.refundRequestID,
+        reason:    reasonTextOf(r),
+      }[searchByKey];
+      matchQ = String(hay || "").toLowerCase().includes(q);
+    }
     const matchTab = tabOf(r) === tabKey;
     const matchS = chipMatches(tabKey, statusF, r);
     const matchT = !hasTypeFilter || typeF === "all" || typeKeyOf(r) === typeF;
@@ -1010,7 +1046,7 @@ export default function RefundRequests() {
   });
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, statusF, typeF, tabKey, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, statusF, typeF, tabKey, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const pendingCount    = items.filter((r) => tabOf(r) === "pending").length;
@@ -1018,8 +1054,8 @@ export default function RefundRequests() {
   const processingCount = processingItems.length;
   const failedCount     = processingItems.filter((r) => waitKeyOf(r) === "failed").length;
   const tabItems        = items.filter((r) => tabOf(r) === tabKey);   // what the type buttons count
-  const filtersActive   = !!search || statusF !== "All" || typeF !== "all";
-  const clearFilters    = () => { setSearch(""); setStatusF("All"); setTypeF("all"); };
+  const filtersActive   = !!search.trim() || !!dateValue || statusF !== "All" || typeF !== "all";
+  const clearFilters    = () => { setSearch(""); setDateValue(""); setStatusF("All"); setTypeF("all"); };
 
   // Open on the tab that needs someone: requests to review first, otherwise what is still in flight.
   useEffect(() => {
@@ -1236,14 +1272,33 @@ export default function RefundRequests() {
       </p>
 
       {/* Filters */}
-      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-center">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by customer, booking, or payment ID…"
-          className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
-        />
+      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-end">
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+          <div className="relative">
+            <select value={searchByKey} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+              className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white">
+              {searchOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+            <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+        {searchOpt.type === "date" ? (
+          <input
+            type="date"
+            value={dateValue}
+            onChange={(e) => setDateValue(e.target.value)}
+            className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
+          />
+        ) : (
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={`Enter ${searchOpt.label.toLowerCase()}…`}
+            className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
+          />
+        )}
         {activeTab.chips.length > 0 && (
           <div className="relative">
             <select value={statusF} onChange={(e) => setStatusF(e.target.value)}

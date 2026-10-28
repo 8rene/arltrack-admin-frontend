@@ -154,6 +154,14 @@ function StatusBadge({ status }) {
 
 const PAGE_SIZE = 15;
 const STATUSES  = ["All", "Pending", "Partial", "Completed", "For Refund", "Refunded", "Cancelled", "Failed"];
+// "Search by" options. Status, Method and the date range each have their own dropdown, so they are not here.
+// Booking ID and Payment ID have no column but stay searchable (the old single box matched them too).
+const PAYMENT_SEARCH_BY = [
+  { key: "customer",  label: "Customer",   get: (p) => p.customerName },
+  { key: "bookingID", label: "Booking ID", get: (p) => p.bookingID },
+  { key: "paymentID", label: "Payment ID", get: (p) => p.paymentID },
+  { key: "vehicle",   label: "Vehicle",    get: (p) => p.vehicleName },
+];
 const stageOf   = (p) => p.paymentStage || p.status;
 
 const CHANNEL_LABEL = { gcash: "GCash", paymaya: "Maya", qrph: "QRPH" };
@@ -250,6 +258,7 @@ export default function Payments() {
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState(null);
   const [search, setSearch]               = useState("");
+  const [searchBy, setSearchBy]           = useState("customer");
   const [statusF, setStatusF]             = useState("All");
   const [methodF, setMethodF]             = useState("All");
   const [timeF, setTimeF]                 = useState("All Time");
@@ -352,6 +361,7 @@ export default function Payments() {
     const bookingID = searchParams.get("bookingID");
     const key = paymentID || bookingID;
     if (!key || payments.length === 0) return;
+    setSearchBy(paymentID ? "paymentID" : "bookingID");
     setSearch(key);
     const matches = paymentID
       ? payments.filter((p) => p.paymentID === paymentID || p.id === paymentID)
@@ -637,11 +647,9 @@ export default function Payments() {
   const methods = ["All", ...new Set(payments.map((p) => p.paymentMethod).filter((m) => m && m !== "—"))];
 
   const filtered = payments.filter((p) => {
-    const q = search.toLowerCase();
-    const matchQ = !q || (p.paymentID || "").toLowerCase().includes(q)
-      || (p.customerName || "").toLowerCase().includes(q)
-      || (p.bookingID || "").toLowerCase().includes(q)
-      || (p.vehicleName || "").toLowerCase().includes(q);
+    const q = search.trim().toLowerCase();
+    const field = PAYMENT_SEARCH_BY.find((o) => o.key === searchBy) || PAYMENT_SEARCH_BY[0];
+    const matchQ = !q || String(field.get(p) || "").toLowerCase().includes(q);
     const matchS = statusF === "All" || stageOf(p) === statusF;
     const matchM = methodF === "All" || p.paymentMethod === methodF;
     const matchT = inTimeRange(p.createdAt, timeF, customFrom, customTo);
@@ -662,7 +670,9 @@ export default function Payments() {
   });
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
-  useEffect(() => setPage(1), [search, statusF, methodF, timeF, customFrom, customTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hasFilters = !!search.trim() || statusF !== "All" || methodF !== "All" || timeF !== "All Time";
+  const clearFilters = () => { setSearch(""); setStatusF("All"); setMethodF("All"); setTimeF("All Time"); setCustomFrom(""); setCustomTo(""); };
+  useEffect(() => setPage(1), [search, searchBy, statusF, methodF, timeF, customFrom, customTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── stat cards ──
   const totalCollected = payments.filter(p => ["Approved","Paid"].includes(p.status)).reduce((s,p) => s + p.amountPaid, 0);
@@ -1181,21 +1191,31 @@ export default function Payments() {
       </div>
 
       {/* Filter Bar */}
-      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-center">
-        <input type="text" placeholder="Search by customer, ref, booking…"
+      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-end">
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+          <div className="relative">
+            <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); }}
+              className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
+              {PAYMENT_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+            <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+        <input type="text" placeholder={`Enter ${(PAYMENT_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}…`}
           value={search} onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
         <div className="relative">
           <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
             className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
-            {STATUSES.map((s) => <option key={s}>{s}</option>)}
+            {STATUSES.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
           </select>
           <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
         <div className="relative">
           <select value={methodF} onChange={(e) => setMethodF(e.target.value)}
             className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
-            {methods.map((m) => <option key={m}>{m}</option>)}
+            {methods.map((m) => <option key={m} value={m}>{m === "All" ? "All methods" : m}</option>)}
           </select>
           <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
@@ -1216,6 +1236,11 @@ export default function Payments() {
               min={customFrom || undefined}
               className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
           </div>
+        )}
+        {hasFilters && (
+          <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+            Clear
+          </button>
         )}
         <button onClick={fetchPayments} disabled={loading}
           className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">

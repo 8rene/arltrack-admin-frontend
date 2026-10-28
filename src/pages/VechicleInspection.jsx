@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   collection, getDocs, query, where, doc, getDoc,
@@ -54,6 +55,8 @@ const partNameToFieldKey = (str = "") => {
     .join("");
   return camel ? `${camel}Url` : "";
 };
+
+const NEEDS_DRIVER_MSG = "This booking is With Chauffeur but has no driver assigned yet. Assign a driver in Driver Dispatch first, then record the inspection.";
 
 const fmtDate = (val) => {
   if (!val) return "—";
@@ -147,6 +150,7 @@ const BOOKING_STATUS_STYLE = {
 ═══════════════════════════════════════════════ */
 export default function VehicleDocs() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { user, effectiveRole } = useAuth();
   const isDriver         = user?.role === "Driver";
   // Direct edit of past-trip history — Admin only. effectiveRole (not raw
@@ -199,6 +203,24 @@ export default function VehicleDocs() {
   // selectCar always used for picking the default "target" booking.
   const [upcomingBookings, setUpcomingBookings]     = useState([]);
   const [activeBookingIndex, setActiveBookingIndex] = useState(0);
+  // A "With Chauffeur" booking can't have its inspection saved until a driver is assigned (the backend enforces it
+  // too — see assertDriverAssignedForInspection in vehicleDocumentation.service.js). Counts an "assigned" OR "completed" assignment, same as the backend.
+  // If the assignments can't be read from here, this stays false and the backend is the one that refuses.
+  const [driverMissing, setDriverMissing] = useState(false);
+  useEffect(() => {
+    setDriverMissing(false);
+    const key = activeBooking?.bookingID || activeBooking?.id;
+    const st  = activeBooking?.status?.toLowerCase();
+    if (!key || st === "cancelled" || st === "stolen") return undefined;
+    if (!(activeBooking?.modeOfDriving || "").toLowerCase().includes("chauffeur")) return undefined;
+    let alive = true;
+    getDocs(query(collection(db, "driverAssignments"), where("bookingID", "==", key)))
+      .then((snap) => {
+        if (alive) setDriverMissing(!snap.docs.some((d) => ["assigned", "completed"].includes(d.data().status)));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [activeBooking]);
   // True only while goToUpcomingIndex is fetching the next booking's data —
   // deliberately separate from bookingLoading (which still gates the full
   // panel skeleton on the *first* load of a car). Scoped this narrowly so
@@ -910,6 +932,7 @@ export default function VehicleDocs() {
 
   const uploadSlot = async (fieldKey) => {
     if (!uploads[fieldKey] || !selectedCar || !activeBooking) return;
+    if (driverMissing) { showToast(NEEDS_DRIVER_MSG, "error"); return; }
     setUploading(prev => ({ ...prev, [fieldKey]: true }));
 
     const bID    = activeBooking.bookingID || activeBooking.id;
@@ -970,6 +993,7 @@ export default function VehicleDocs() {
 
   const saveAll = async () => {
     if (!activeBooking) { showToast("No active booking to link photos to.", "error"); return false; }
+    if (driverMissing) { showToast(NEEDS_DRIVER_MSG, "error"); return false; }
     if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return false; }
     const pending = Object.keys(uploads);
     const currentStatusEdits = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
@@ -1072,6 +1096,7 @@ export default function VehicleDocs() {
   // the confirmation always covers exactly what is on screen. The backend then stamps the record and notifies the customer.
   const confirmInspection = async () => {
     if (!activeBooking || !selectedCar) return;
+    if (driverMissing) { showToast(NEEDS_DRIVER_MSG, "error"); return; }
     if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return; }
     setConfirmingInspection(true);
     try {
@@ -1570,6 +1595,25 @@ export default function VehicleDocs() {
                         : "🏁 After Trip — Take photos AFTER the customer returns the vehicle. Documents any new damage or changes."}
                     </div>
 
+                    {/* Chauffeur booking with no driver yet: inspection can't be saved */}
+                    {driverMissing && (
+                      <div className="flex items-start justify-between gap-3 bg-amber-50 border border-amber-300 p-3 rounded-xl text-xs text-amber-800">
+                        <div className="flex items-start gap-2">
+                          <span className="shrink-0">🚫</span>
+                          <p>
+                            <span className="font-semibold">No driver assigned yet.</span> This is a With Chauffeur booking, so the inspection can't be saved until a driver is assigned.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => navigate("/driver-dispatch", { state: { assignBookingId: activeBooking.bookingID || activeBooking.id } })}
+                          className="shrink-0 px-3 py-1.5 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-700 transition-colors"
+                        >
+                          Driver Dispatch
+                        </button>
+                      </div>
+                    )}
+
                     {/* After trip locked notice */}
                     {isAfterTripLocked && (
                       <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 p-3 rounded-xl text-xs text-amber-800">
@@ -1656,8 +1700,8 @@ export default function VehicleDocs() {
                                 className="text-xs text-amber-600 hover:underline font-semibold">Discard</button>
                             )}
                             <button onClick={handleSave}
-                              disabled={saving || confirmingInspection || !canSaveInspection || (!hasUnsavedChanges && hasPartsRecord && !!currentDoc?.inspectionConfirmed)}
-                              title={canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
+                              disabled={saving || confirmingInspection || driverMissing || !canSaveInspection || (!hasUnsavedChanges && hasPartsRecord && !!currentDoc?.inspectionConfirmed)}
+                              title={driverMissing ? NEEDS_DRIVER_MSG : canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
                               className="text-sm bg-teal-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-50">
                               {saving || confirmingInspection ? "Saving..." : currentDoc?.inspectionConfirmed ? "Save" : "Save & confirm"}
                             </button>
@@ -2209,7 +2253,7 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
               <th className="px-3 py-2"><SortableHeader label="Before Inspection" sortKey="before" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
               <th className="px-3 py-2"><SortableHeader label="After Inspection" sortKey="after" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
               <th className="px-3 py-2 w-[120px]"><SortableHeader label="Status" sortKey="status" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-5 py-2 w-[90px] text-right"><span className={th}>Action</span></th>
+              <th className="pl-3 pr-7 py-2 w-[110px] text-right"><span className={th}>Action</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -2248,11 +2292,11 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
                       {status?.replace("_", " ") || "—"}
                     </span>
                   </td>
-                  <td className="px-5 py-2.5 text-right">
+                  <td className="pl-3 pr-7 py-2.5 text-right">
                     <button
                       type="button"
                       onClick={() => onToggleRow(booking)}
-                      className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-teal-400 hover:text-teal-600 transition-colors font-medium"
+                      className="text-xs px-3.5 py-1 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition-colors font-semibold"
                     >
                       View
                     </button>
@@ -2295,7 +2339,7 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
 }
 
 /* ── One past trip's full inspection record, shown over the table instead of
-   expanding inline. z-40 so the photo lightbox (z-50) opens on top of it. ── */
+   expanding inline. z-[60] (portaled) so it clears the page header; the photo lightbox (z-[70]) opens on top of it. ── */
 function TripHistoryModal({ booking, customerName, record, parts, carID, getPartFieldKey, onViewPhoto, canEditHistory, onEditPart, onReplacePhoto, onClose, escDisabled }) {
   const bID    = booking.bookingID || booking.id;
   const status = booking.status?.toLowerCase();
@@ -2307,22 +2351,25 @@ function TripHistoryModal({ booking, customerName, record, parts, carID, getPart
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, escDisabled]);
 
-  return (
-    <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={onClose}>
+  // Portaled to <body> so the page header (relative z-50) can't sit on top of
+  // the modal and clip its title/top row. z-[60] keeps it above the header
+  // while staying below the photo lightbox (z-[70]).
+  return createPortal(
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center px-4 py-10 sm:py-14" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-full flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-gray-100">
+        <div className="flex items-start justify-between gap-6 px-7 pt-6 pb-5 border-b border-gray-100">
           <div className="min-w-0 flex-1">
-            <h3 className="font-bold text-gray-800 text-sm mb-3">Trip Inspection Record</h3>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 text-xs">
+            <h3 className="font-bold text-gray-800 text-base mb-4">Trip Inspection Record</h3>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3 text-xs">
               <div className="flex gap-2 min-w-0">
-                <dt className="w-20 shrink-0 text-gray-400">Customer</dt>
+                <dt className="w-24 shrink-0 text-gray-400">Customer</dt>
                 <dd className="font-semibold text-gray-700 truncate">{customerName || record?.userFullName || "—"}</dd>
               </div>
               <div className="flex gap-2 items-center min-w-0">
-                <dt className="w-20 shrink-0 text-gray-400">Status</dt>
+                <dt className="w-24 shrink-0 text-gray-400">Status</dt>
                 <dd>
                   <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
                     {status?.replace("_", " ") || "—"}
@@ -2330,20 +2377,24 @@ function TripHistoryModal({ booking, customerName, record, parts, carID, getPart
                 </dd>
               </div>
               <div className="flex gap-2 min-w-0">
-                <dt className="w-20 shrink-0 text-gray-400">Booking ID</dt>
+                <dt className="w-24 shrink-0 text-gray-400">Booking ID</dt>
                 <dd className="font-mono text-gray-600 truncate" title={bID}>{bID}</dd>
               </div>
               <div className="flex gap-2 min-w-0">
-                <dt className="w-20 shrink-0 text-gray-400">Duration</dt>
+                <dt className="w-24 shrink-0 text-gray-400">Duration</dt>
                 <dd className="text-gray-700">{tripDays(booking)}</dd>
               </div>
-              <div className="flex gap-2 min-w-0 sm:col-span-2">
-                <dt className="w-20 shrink-0 text-gray-400">Trip Dates</dt>
-                <dd className="text-gray-700">{fmtDate(booking.startDateTime)} – {fmtDate(booking.endDateTime)}</dd>
+              <div className="flex gap-2 min-w-0">
+                <dt className="w-24 shrink-0 text-gray-400">Start Date</dt>
+                <dd className="text-gray-700">{fmtDate(booking.startDateTime)}</dd>
+              </div>
+              <div className="flex gap-2 min-w-0">
+                <dt className="w-24 shrink-0 text-gray-400">End Date</dt>
+                <dd className="text-gray-700">{fmtDate(booking.endDateTime)}</dd>
               </div>
             </dl>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-3 shrink-0">
             <button
               type="button"
               onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
@@ -2355,7 +2406,7 @@ function TripHistoryModal({ booking, customerName, record, parts, carID, getPart
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4">
+        <div className="flex-1 overflow-y-auto px-7 py-5">
           {!record || record.loading ? (
             <div className="h-32 flex items-center justify-center text-gray-400 text-xs">Loading trip record…</div>
           ) : (
@@ -2373,7 +2424,8 @@ function TripHistoryModal({ booking, customerName, record, parts, carID, getPart
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2388,25 +2440,35 @@ function PastTripDetail({ record, parts, getPartFieldKey, onViewPhoto, canEditHi
   const currentPhotoDoc = isBeforeTab ? record.beforePhoto : record.afterPhoto;
 
   return (
-    <div className="space-y-3 pt-1">
+    <div className="space-y-3">
       {record.userFullName && record.userFullName !== "—" && (
         <p className="text-xs text-gray-500">Customer: <span className="text-gray-700 font-medium">{record.userFullName}</span></p>
       )}
 
-      <div className="flex bg-gray-50 border border-gray-100 rounded-xl p-1 gap-1 w-fit">
-        <button
-          onClick={() => setRowTab("before")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${isBeforeTab ? "bg-white shadow-sm text-arl-dark" : "text-gray-400 hover:text-gray-600"}`}
-        >🔍 Before Trip</button>
-        <button
-          onClick={() => setRowTab("after")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${!isBeforeTab ? "bg-white shadow-sm text-arl-dark" : "text-gray-400 hover:text-gray-600"}`}
-        >🔎 After Trip</button>
-      </div>
+      {/* Boxed tabs: tab bar and content share one bordered card */}
+      <div className="rounded-2xl border border-gray-200 overflow-hidden bg-white">
+        <div className="flex bg-gray-50 border-b border-gray-200" role="tablist">
+          {[["before", "🔍 Before Trip"], ["after", "🔎 After Trip"]].map(([key, label]) => {
+            const active = rowTab === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setRowTab(key)}
+                className={`flex-1 px-4 py-3 text-xs font-semibold transition-colors border-b-2 -mb-px ${active ? "bg-white text-teal-700 border-teal-600" : "text-gray-400 border-transparent hover:text-gray-600"}`}
+              >{label}</button>
+            );
+          })}
+        </div>
 
-      <HistoryPartsTable record={currentRecord} parts={parts} photoDoc={currentPhotoDoc} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} canEditHistory={canEditHistory}
-        onEditPart={canEditHistory ? (carPartID, newStatus) => onEditPart(bID, carID, rowTab, carPartID, newStatus) : null}
-        onReplacePhoto={canEditHistory ? (fieldKey, file) => onReplacePhoto(bID, carID, rowTab, fieldKey, file) : null} />
+        <div className="p-5">
+          <HistoryPartsTable record={currentRecord} parts={parts} photoDoc={currentPhotoDoc} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} canEditHistory={canEditHistory}
+            onEditPart={canEditHistory ? (carPartID, newStatus) => onEditPart(bID, carID, rowTab, carPartID, newStatus) : null}
+            onReplacePhoto={canEditHistory ? (fieldKey, file) => onReplacePhoto(bID, carID, rowTab, fieldKey, file) : null} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -2509,7 +2571,7 @@ function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPho
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between px-1">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${isGood ? "bg-green-500" : "bg-red-500"}`} />
           <p className="text-xs font-semibold text-gray-700 capitalize">
@@ -2637,7 +2699,7 @@ function PhotoLightbox({ photo, onClose }) {
   const [failed, setFailed] = useState(false);
   return (
     <div
-      className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-6"
+      className="fixed inset-0 bg-black/70 z-[70] flex items-center justify-center p-6"
       onClick={onClose}
     >
       <div

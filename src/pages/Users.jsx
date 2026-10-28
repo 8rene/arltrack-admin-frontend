@@ -263,8 +263,8 @@ function dayKey(val) {
 }
 
 // "Search by" options — mirror the table's columns. Account status / ID Status
-// are NOT here: they have their own dropdown. User ID and Referral Code have no
-// column but stay searchable (they were covered by the old single search box).
+// are NOT here: they have their own dropdown. User ID has no column but stays
+// searchable (it was covered by the old single search box).
 // The "name" label is swapped for the role's singular label (Customer, Driver…).
 const SEARCH_BY = [
   { key: "joined",   label: "Joined",      type: "date" },
@@ -720,7 +720,7 @@ export default function Users() {
         <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showBookings={activeRole.key === "customer"} showVerification={showVerification}
           filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole} />
       ) : subTab === "documents" ? (
-        <DocumentsTab users={pendingDocs} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts} />
+        <DocumentsTab users={users} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts} />
       ) : (
         <EditRequestsTab roleUserIDs={roleUserIDs} onCountChange={fetchEditReqCounts} />
       )}
@@ -790,6 +790,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
         throw new Error(err.message || "Delete failed");
       }
       setConfirmDelete(null);
+      setDetailUser(null); // the View window was open behind the confirm — the user is gone now
       onRefresh();
     } catch (e) {
       console.error("Delete/archive error:", e);
@@ -912,10 +913,11 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                   <SortableTh label={roleLabelSingular} sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">Email</th>
                   <th className="px-5 py-3 text-left">Contact No.</th>
+                  <SortableTh label="Referral" sortKey="invited" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">ID Status</th>
                   {showBookings && <SortableTh label="Bookings" sortKey="bookings" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />}
                   <SortableTh label="Account" sortKey="account" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <th className="px-5 py-3"></th>
+                  <th className="px-5 py-3 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -946,6 +948,14 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                       </td>
                       <td className="px-5 py-3 text-gray-600 break-all">{u.email || "—"}</td>
                       <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{u.phone || "—"}</td>
+                      <td className="px-5 py-3 whitespace-nowrap">
+                        {u.referral?.code ? (
+                          <>
+                            <p className="font-medium text-gray-700">{u.referral.code}</p>
+                            <p className="text-xs text-gray-400">{u.referral.invitedCount || 0} invited</p>
+                          </>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="px-5 py-3">
                         {u.isVerified
                           ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-green-700 font-medium">
@@ -966,17 +976,6 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                       </td>
                       <td className="px-5 py-3">
                         <div className="flex gap-2 justify-end">
-                          {canDelete && (
-                            <button onClick={() => setConfirmDelete(u)}
-                              className="p-1.5 border border-red-200 rounded-lg text-red-500 hover:bg-red-50">
-                              <Icons.Trash className="w-4 h-4" />
-                            </button>
-                          )}
-                          <button onClick={() => setEditUser(u)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
-                            <Icons.Edit className="w-3.5 h-3.5" />
-                            Edit
-                          </button>
                           <button onClick={() => setDetailUser(u)}
                             className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
                             View
@@ -993,7 +992,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
-      {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} viewerRole={viewerRole} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
+      {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} viewerRole={viewerRole} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} onDelete={canDelete ? () => setConfirmDelete(detailUser) : undefined} />}
       {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }}
         viewerRole={viewerRole} currentRoleName={currentRoleName} onDocumentsChanged={onRefresh} />}
       {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} error={deleteError} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => { setConfirmDelete(null); setDeleteError(null); }} />}
@@ -1002,7 +1001,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
 }
 
 // ─── VIEW DETAILS MODAL (Information / Documents sub-tabs) ────────────────────
-function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose, onEdit }) {
+function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose, onEdit, onDelete }) {
   const [tab, setTab] = useState("information"); // "information" | "documents" | "activity"
   // Activity exists for Customers (recent feed), Drivers (current trips + history), and Supervisors / Admins (their audit-log entries).
   const hasActivity = ["Customer", "Driver", "Supervisor", "Admin"].includes(roleLabelSingular);
@@ -1085,6 +1084,12 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
             </div>
           </div>
           <div className="flex gap-2 items-center self-start">
+            {onDelete && (
+              <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50">
+                <Icons.Trash className="w-4 h-4" />
+                Delete
+              </button>
+            )}
             {onEdit && (
               <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
                 <Icons.Edit className="w-4 h-4" />
@@ -1421,13 +1426,15 @@ function RequestStatusPill({ status }) {
   return <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border capitalize ${map[status] || map.cancelled}`}>{status}</span>;
 }
 
-// Date on top, time underneath — used for the "Submitted" first column.
+// "date | time" on one line — same look as "Joined" in the Directory. Used for
+// Submitted / Reviewed in the New ID and Resubmit ID tables.
 function DateTimeCell({ value }) {
   if (!value) return <span className="text-gray-300">—</span>;
+  const t = fmtTime(value);
   return (
     <>
-      <p className="text-gray-700">{fmtDate(value)}</p>
-      <p className="text-xs text-gray-400">{fmtTime(value)}</p>
+      <span className="text-gray-700">{fmtDate(value)}</span>
+      {t && (<><span className="mx-1.5 text-gray-300">|</span><span className="text-gray-500">{t}</span></>)}
     </>
   );
 }
@@ -1506,12 +1513,101 @@ function PendingHistorySwitch({ view, setView, pendingCount, historyCount }) {
   );
 }
 
-// ─── NEW ID SUBMISSIONS (first-time ID verification queue) ───────────────────
-function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
+// ─── ID SUBMISSION FILTERS (shared by New ID + Resubmit ID) ──────────────────
+// There is no separate Pending / History view any more: every submission lives in
+// one table and the Status dropdown (default Pending) picks what you see.
+const ID_SEARCH_BY = [
+  { key: "name",      label: "Submitted by", type: "text" },
+  { key: "submitted", label: "Submitted",    type: "date" },
+];
+// New IDs only have two states in the data: a user is verified (approved) or not (pending).
+// A rejected new ID is stored exactly like a pending one (isVerified stays false), so
+// there is no "Rejected" option here — resubmissions do keep a real status.
+const NEW_ID_STATUS_OPTIONS = [
+  { key: "all",      label: "All statuses" },
+  { key: "pending",  label: "Pending" },
+  { key: "approved", label: "Approved" },
+];
+const RESUBMIT_STATUS_OPTIONS = [
+  { key: "all",       label: "All statuses" },
+  { key: "pending",   label: "Pending" },
+  { key: "approved",  label: "Approved" },
+  { key: "rejected",  label: "Rejected" },
+  { key: "cancelled", label: "Cancelled" },
+];
+const newIdStatus = (u) => (u.isVerified === true ? "approved" : "pending");
+
+// Name of whoever reviewed — looked up from the all-users lookup. Old approvals
+// (from before reviewer tracking) have no reviewer saved.
+const reviewerLabel = (uid, lookup) => {
+  if (!uid) return "Not recorded";
+  return lookup?.[uid]?.name || "Removed account";
+};
+
+// New ID | Resubmit ID — the outermost switch of the Document Request tab.
+// The badges count what is still pending in each.
+function IdTypeSwitch({ view, setView, newCount, resubmitCount }) {
+  const btn = (key, label, n) => (
+    <button onClick={() => setView(key)}
+      className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${view === key ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+      {label}
+      <span title="Pending" className={`text-xs px-1.5 py-0.5 rounded-full ${n > 0 ? "bg-yellow-100 text-yellow-700" : "bg-gray-100 text-gray-500"}`}>{n}</span>
+    </button>
+  );
+  return (
+    <div className="inline-flex p-1 bg-gray-100 rounded-xl gap-1">
+      {btn("new", "New ID", newCount)}
+      {btn("resubmit", "Resubmit ID", resubmitCount)}
+    </div>
+  );
+}
+
+// Search by (Submitted by / Submitted date) + Status — same look as the Directory's bar.
+function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setDateValue, status, setStatus, statusOptions, hasFilters, onClear }) {
+  return (
+    <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+        <select
+          value={searchBy}
+          onChange={e => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+          className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+        >
+          {ID_SEARCH_BY.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+        </select>
+      </div>
+      {searchBy === "submitted" ? (
+        <input type="date" value={dateValue} onChange={e => setDateValue(e.target.value)}
+          className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
+      ) : (
+        <input type="text" placeholder="Enter name or username..." value={search} onChange={e => setSearch(e.target.value)}
+          className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
+      )}
+      <select value={status} onChange={e => setStatus(e.target.value)}
+        className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+        {statusOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+      </select>
+      {hasFilters && (
+        <button onClick={onClear} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+          Clear
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── NEW ID SUBMISSIONS (first-time ID verification) ─────────────────────────
+// `users` is everyone in the open role tab. Rows = people still waiting for approval
+// (Pending) plus verified people who actually uploaded an ID (Approved).
+function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers", userLookup = {} }) {
   const [detailUser, setDetailUser] = useState(null);
   const [loadingId, setLoadingId]   = useState(null);
   const [sortKey, setSortKey]       = useState("submitted"); // newest submissions on top
   const [sortDir, setSortDir]       = useState("desc");
+  const [search, setSearch]         = useState("");
+  const [searchBy, setSearchBy]     = useState("name");
+  const [dateValue, setDateValue]   = useState("");
+  const [statusFilter, setStatusFilter] = useState("pending");
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -1528,7 +1624,22 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
     return `${fn} ${ln}`.trim() || u.username || u.email || "—";
   };
 
-  const sorted = [...users].sort((a, b) => {
+  const hasUploads = (u) => {
+    const imgs = getDocImages(u.document || {});
+    return Object.values(imgs).some(v => v && v.trim() !== "");
+  };
+
+  const rows = users.filter(u => u.isVerified !== true || hasUploads(u));
+
+  const filtered = rows.filter(u => {
+    if (statusFilter !== "all" && newIdStatus(u) !== statusFilter) return false;
+    if (searchBy === "submitted") return !dateValue || dayKey(u.document?.createdAt) === dateValue;
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return `${u.details?.firstName || ""} ${u.details?.lastName || ""} ${u.username || ""}`.toLowerCase().includes(q);
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
     if (!sortKey) return 0;
     if (sortKey === "name") return sortDir === "asc"
       ? fullNameOf(a).localeCompare(fullNameOf(b))
@@ -1559,29 +1670,32 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
     finally { setLoadingId(null); }
   };
 
-  const hasUploads = (u) => {
-    const imgs = getDocImages(u.document || {});
-    return Object.values(imgs).some(v => v && v.trim() !== "");
-  };
+  const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "pending";
+  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("pending"); };
 
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
-  useEffect(() => { setPage(1); }, [users]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [users, search, searchBy, dateValue, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-        <div className="px-5 py-4 border-b">
-          <h2 className="font-bold text-lg text-gray-800">New ID Submissions <span className="text-gray-400 text-sm font-normal">({users.length})</span></h2>
-          <p className="text-xs text-gray-400 mt-0.5">{roleLabel} awaiting ID approval</p>
-        </div>
-        {users.length === 0 ? (
+        <IdFilterBar searchBy={searchBy} setSearchBy={setSearchBy} search={search} setSearch={setSearch}
+          dateValue={dateValue} setDateValue={setDateValue} status={statusFilter} setStatus={setStatusFilter}
+          statusOptions={NEW_ID_STATUS_OPTIONS} hasFilters={hasFilters} onClear={clearFilters} />
+        {filtered.length === 0 ? (
           <div className="text-center text-gray-400 py-16">
-            <div className="flex justify-center mb-3">
-              <div className="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center">
-                <Icons.CheckCircle className="w-7 h-7 text-green-500" />
-              </div>
-            </div>
-            <p>No pending verifications</p>
+            {statusFilter === "pending" && !hasFilters ? (
+              <>
+                <div className="flex justify-center mb-3">
+                  <div className="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center">
+                    <Icons.CheckCircle className="w-7 h-7 text-green-500" />
+                  </div>
+                </div>
+                <p>No pending verifications</p>
+              </>
+            ) : (
+              <p>No ID submissions found.</p>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -1593,9 +1707,9 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
                   <th className="px-5 py-3 text-left">Document Type</th>
                   <th className="px-5 py-3 text-left">Document No.</th>
                   <th className="px-5 py-3 text-left">Referred By</th>
-                  <th className="px-5 py-3 text-left">ID Status</th>
+                  <th className="px-5 py-3 text-left">Status</th>
                   <th className="px-5 py-3 text-left">Flagged</th>
-                  <th className="px-5 py-3"></th>
+                  <th className="px-5 py-3 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -1607,6 +1721,7 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
                   const uploaded = hasUploads(u);
                   const hasLicense = !!u.document?.driverLicenseUrl;
                   const isLoading = loadingId === u.id;
+                  const status = newIdStatus(u);
 
                   return (
                     <tr key={u.id} className="border-t hover:bg-gray-50 transition-colors">
@@ -1627,11 +1742,7 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
                       <td className="px-5 py-3 text-gray-600 text-xs">
                         {referrerLabel(u.referral?.referredBy) || <span className="text-gray-300">—</span>}
                       </td>
-                      <td className="px-5 py-3">
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending
-                        </span>
-                      </td>
+                      <td className="px-5 py-3"><RequestStatusPill status={status} /></td>
                       <td className="px-5 py-3">
                         {u.isFlagged
                           ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-black font-medium">
@@ -1647,17 +1758,21 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
                             className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
                             View IDs
                           </button>
-                          <button onClick={() => handleVerify(u, false)} disabled={isLoading || !uploaded}
-                            className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed">
-                            <Icons.X className="w-3.5 h-3.5" />
-                            {isLoading ? "..." : "Reject"}
-                          </button>
-                          <button onClick={() => handleVerify(u, true)} disabled={isLoading || !uploaded || hasLicense}
-                            title={hasLicense ? "Use 'View IDs' to enter the license expiry date before approving" : undefined}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                            <Icons.Check className="w-3.5 h-3.5" />
-                            {isLoading ? "..." : "Approve"}
-                          </button>
+                          {status === "pending" && (
+                            <>
+                              <button onClick={() => handleVerify(u, false)} disabled={isLoading || !uploaded}
+                                className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                                <Icons.X className="w-3.5 h-3.5" />
+                                {isLoading ? "..." : "Reject"}
+                              </button>
+                              <button onClick={() => handleVerify(u, true)} disabled={isLoading || !uploaded || hasLicense}
+                                title={hasLicense ? "Use 'View IDs' to enter the license expiry date before approving" : undefined}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                                <Icons.Check className="w-3.5 h-3.5" />
+                                {isLoading ? "..." : "Approve"}
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1673,6 +1788,8 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
       {detailUser && (
         <DocDetailModal
           user={detailUser}
+          reviewed={newIdStatus(detailUser) === "approved"}
+          reviewerName={reviewerLabel(detailUser.idReviewedBy, userLookup)}
           onClose={() => setDetailUser(null)}
           onApprove={(expiry) => { handleVerify(detailUser, true, expiry);  setDetailUser(null); }}
           onReject={()  => { handleVerify(detailUser, false); setDetailUser(null); }}
@@ -1682,76 +1799,102 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers" }) {
   );
 }
 
-// ─── RESUBMISSION TABLE (license / document photo resubmits) ────────────────
-// mode "pending" → just the queue; mode "history" → also Status + Reviewed.
-function ResubmitTable({ rows, mode, userLookup, onOpen }) {
-  const [sortDir, setSortDir] = useState("desc"); // newest submitted first
-  const history = mode === "history";
+// ─── RESUBMIT ID TABLE (license / document photo resubmits) ──────────────────
+// One table for every resubmission; the Status dropdown replaces the old Pending / History
+// views. The Reviewed column only appears once the filter can include reviewed rows.
+function ResubmitTable({ rows, loading, userLookup, onOpen, statusFilter, setStatusFilter }) {
+  const [sortDir, setSortDir]     = useState("desc"); // newest submitted first
+  const [search, setSearch]       = useState("");
+  const [searchBy, setSearchBy]   = useState("name");
+  const [dateValue, setDateValue] = useState("");
+  const showReviewed = statusFilter !== "pending";
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter(req => {
+      if (statusFilter !== "all" && req.status !== statusFilter) return false;
+      if (searchBy === "submitted") return !dateValue || dayKey(req.createdAt) === dateValue;
+      if (!q) return true;
+      const u = userLookup[req.userID] || {};
+      return `${u.name || ""} ${u.username || ""}`.toLowerCase().includes(q);
+    });
+  }, [rows, statusFilter, searchBy, search, dateValue, userLookup]);
+
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...rows].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       const x = toMillis(a.createdAt), y = toMillis(b.createdAt);
       return dir * ((x > y) - (x < y));
     });
-  }, [rows, sortDir]);
+  }, [filtered, sortDir]);
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
-  useEffect(() => { setPage(1); }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [rows, search, searchBy, dateValue, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "pending";
+  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("pending"); };
 
   return (
-    <>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-gray-400 text-xs uppercase bg-gray-50">
-            <tr>
-              <SortableTh label="Submitted Date" sortKey="submitted" sortKeyState="submitted" sortDir={sortDir}
-                onSort={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))} />
-              <th className="px-5 py-3 text-left">Submitted Time</th>
-              <th className="px-5 py-3 text-left">User</th>
-              <th className="px-5 py-3 text-left">Type</th>
-              {history && <th className="px-5 py-3 text-left">Status</th>}
-              {history && <th className="px-5 py-3 text-left">Reviewed Date</th>}
-              {history && <th className="px-5 py-3 text-left">Reviewed Time</th>}
-              <th className="px-5 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {pageItems.map(req => {
-              const u = userLookup[req.userID] || {};
-              const isLicense = (req.documentKind || "license") === "license";
-              return (
-                <tr key={req.id} className="border-t hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-3 whitespace-nowrap"><DateOnlyCell value={req.createdAt} /></td>
-                  <td className="px-5 py-3 whitespace-nowrap"><TimeOnlyCell value={req.createdAt} /></td>
-                  <td className="px-5 py-3">
-                    <p className="font-semibold text-gray-800">{u.name || req.userID}</p>
-                    <p className="text-xs text-gray-400">@{u.username || "—"}</p>
-                  </td>
-                  <td className="px-5 py-3 text-gray-600">{isLicense ? "Driver's License" : "Document"}</td>
-                  {history && <td className="px-5 py-3"><RequestStatusPill status={req.status} /></td>}
-                  {history && <td className="px-5 py-3 whitespace-nowrap"><DateOnlyCell value={req.reviewedAt} /></td>}
-                  {history && <td className="px-5 py-3 whitespace-nowrap"><TimeOnlyCell value={req.reviewedAt} /></td>}
-                  <td className="px-5 py-3">
-                    <div className="flex justify-end">
-                      <button onClick={() => onOpen(req.id)}
-                        className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
-                        View
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+    <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+      <IdFilterBar searchBy={searchBy} setSearchBy={setSearchBy} search={search} setSearch={setSearch}
+        dateValue={dateValue} setDateValue={setDateValue} status={statusFilter} setStatus={setStatusFilter}
+        statusOptions={RESUBMIT_STATUS_OPTIONS} hasFilters={hasFilters} onClear={clearFilters} />
+      {loading ? (
+        <div className="p-5 space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center text-gray-400 py-16">
+          {statusFilter === "pending" && !hasFilters ? "No pending resubmissions." : "No resubmissions found."}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-gray-400 text-xs uppercase bg-gray-50">
+              <tr>
+                <SortableTh label="Submitted" sortKey="submitted" sortKeyState="submitted" sortDir={sortDir}
+                  onSort={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))} />
+                <th className="px-5 py-3 text-left">User</th>
+                <th className="px-5 py-3 text-left">Type</th>
+                <th className="px-5 py-3 text-left">Status</th>
+                {showReviewed && <th className="px-5 py-3 text-left">Reviewed</th>}
+                <th className="px-5 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageItems.map(req => {
+                const u = userLookup[req.userID] || {};
+                const isLicense = (req.documentKind || "license") === "license";
+                return (
+                  <tr key={req.id} className="border-t hover:bg-gray-50 transition-colors">
+                    <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={req.createdAt} /></td>
+                    <td className="px-5 py-3">
+                      <p className="font-semibold text-gray-800">{u.name || req.userID}</p>
+                      <p className="text-xs text-gray-400">@{u.username || "—"}</p>
+                    </td>
+                    <td className="px-5 py-3 text-gray-600">{isLicense ? "Driver's License" : "Document"}</td>
+                    <td className="px-5 py-3"><RequestStatusPill status={req.status} /></td>
+                    {showReviewed && <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={req.reviewedAt} /></td>}
+                    <td className="px-5 py-3">
+                      <div className="flex justify-end">
+                        <button onClick={() => onOpen(req.id)}
+                          className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
+                          View
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
       <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
-    </>
+    </div>
   );
 }
 
 // Review one resubmitted license/document: current vs new photo, expiry entry
 // (license only), approve / reject. Read-only once the request is reviewed.
-function ResubmitReviewModal({ req, user, busy, onClose, onApprove, onReject }) {
+function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove, onReject }) {
   const isLicense = (req.documentKind || "license") === "license";
   const currentUrl = isLicense ? req.currentLicenseUrl : req.currentDocumentUrl;
   const newUrl     = isLicense ? req.newLicenseUrl     : req.newDocumentUrl;
@@ -1801,15 +1944,19 @@ function ResubmitReviewModal({ req, user, busy, onClose, onApprove, onReject }) 
                 <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Submitted Time</p>
                 <p className="text-sm font-medium text-gray-800 mt-0.5">{fmtTime(req.createdAt) || "—"}</p>
               </div>
-              {!pending && req.reviewedAt && (
+              {!pending && (
                 <>
                   <div>
                     <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Reviewed Date</p>
-                    <p className="text-sm font-medium text-gray-800 mt-0.5">{fmtDate(req.reviewedAt)}</p>
+                    <p className="text-sm font-medium text-gray-800 mt-0.5">{req.reviewedAt ? fmtDate(req.reviewedAt) : "—"}</p>
                   </div>
                   <div>
                     <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Reviewed Time</p>
                     <p className="text-sm font-medium text-gray-800 mt-0.5">{fmtTime(req.reviewedAt) || "—"}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Reviewed By</p>
+                    <p className="text-sm font-medium text-gray-800 mt-0.5">{reviewerName || "—"}</p>
                   </div>
                 </>
               )}
@@ -1873,12 +2020,14 @@ function ResubmitReviewModal({ req, user, busy, onClose, onApprove, onReject }) 
 }
 
 // ─── DOCUMENT REQUEST TAB ────────────────────────────────────────────────────
-// Pending: first-time ID submissions (users not yet verified) + resubmitted
-// license/document photos waiting for review. History: reviewed resubmissions.
+// Two tabs: New ID (first-time ID verification) and Resubmit ID (replacement
+// license / document photos). Each is a single searchable table with a Status
+// filter — there is no separate Pending / History view any more.
 // (Resubmits used to live under "Edit Request"; they're document reviews, so
 // they sit here now.)
 function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", onCountChange }) {
-  const [view, setView]               = useState("pending"); // "pending" | "history"
+  const [idTab, setIdTab]             = useState("new"); // "new" | "resubmit"
+  const [resubStatus, setResubStatus] = useState("pending");
   const [allIdReqs, setIdReqs]        = useState([]);
   // Only the resubmissions that belong to the role tab that is open.
   const idReqs = useMemo(() => allIdReqs.filter(r => roleUserIDs?.has(r.userID)), [allIdReqs, roleUserIDs]);
@@ -1914,7 +2063,8 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
     const mine = idReqs.filter(r => r.userID === openID);
     if (mine.length) {
       const target = mine.find(r => r.status === "pending") || mine[0];
-      setView(target.status === "pending" ? "pending" : "history");
+      setIdTab("resubmit");
+      setResubStatus(target.status === "pending" ? "pending" : "all");
       setReviewID(target.id);
     }
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
@@ -1947,47 +2097,19 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
     finally { setBusyId(null); }
   };
 
-  const pendingReqs = idReqs.filter(r => r.status === "pending");
-  const historyReqs = idReqs.filter(r => r.status !== "pending");
-  const reviewReq   = idReqs.find(r => r.id === reviewID);
+  const pendingNewCount    = users.filter(u => u.isVerified !== true).length;
+  const pendingResubCount  = idReqs.filter(r => r.status === "pending").length;
+  const reviewReq          = idReqs.find(r => r.id === reviewID);
 
   return (
     <div className="space-y-4">
-      <PendingHistorySwitch view={view} setView={setView}
-        pendingCount={users.length + pendingReqs.length} historyCount={historyReqs.length} />
+      <IdTypeSwitch view={idTab} setView={setIdTab} newCount={pendingNewCount} resubmitCount={pendingResubCount} />
 
-      {view === "pending" ? (
-        <>
-          <NewIdSubmissions users={users} onRefresh={onRefresh} roleLabel={roleLabel} />
-
-          <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-            <div className="px-5 py-4 border-b">
-              <h2 className="font-bold text-lg text-gray-800">ID Resubmissions <span className="text-gray-400 text-sm font-normal">({pendingReqs.length})</span></h2>
-              <p className="text-xs text-gray-400 mt-0.5">New license or document photos submitted for review</p>
-            </div>
-            {reqLoading ? (
-              <div className="p-5 space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
-            ) : pendingReqs.length === 0 ? (
-              <div className="text-center text-gray-400 py-10">No pending resubmissions.</div>
-            ) : (
-              <ResubmitTable rows={pendingReqs} mode="pending" userLookup={userLookup} onOpen={setReviewID} />
-            )}
-          </div>
-        </>
+      {idTab === "new" ? (
+        <NewIdSubmissions users={users} onRefresh={onRefresh} roleLabel={roleLabel} userLookup={userLookup} />
       ) : (
-        <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <div className="px-5 py-4 border-b">
-            <h2 className="font-bold text-lg text-gray-800">Resubmission History <span className="text-gray-400 text-sm font-normal">({historyReqs.length})</span></h2>
-            <p className="text-xs text-gray-400 mt-0.5">Approved and rejected license / document resubmissions</p>
-          </div>
-          {reqLoading ? (
-            <div className="p-5 space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
-          ) : historyReqs.length === 0 ? (
-            <div className="text-center text-gray-400 py-10">No reviewed resubmissions yet.</div>
-          ) : (
-            <ResubmitTable rows={historyReqs} mode="history" userLookup={userLookup} onOpen={setReviewID} />
-          )}
-        </div>
+        <ResubmitTable rows={idReqs} loading={reqLoading} userLookup={userLookup} onOpen={setReviewID}
+          statusFilter={resubStatus} setStatusFilter={setResubStatus} />
       )}
 
       {reviewReq && (
@@ -1995,6 +2117,7 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
           key={reviewReq.id}
           req={reviewReq}
           user={userLookup[reviewReq.userID]}
+          reviewerName={reviewerLabel(reviewReq.reviewedBy, userLookup)}
           busy={busyId === reviewReq.id}
           onClose={() => setReviewID(null)}
           onApprove={handleApprove}
@@ -2314,7 +2437,7 @@ function RejectNoteModal({ onCancel, onConfirm }) {
 }
 
 
-function DocDetailModal({ user, onClose, onApprove, onReject }) {
+function DocDetailModal({ user, reviewed = false, reviewerName, onClose, onApprove, onReject }) {
   const det  = user.details  || {};
   const docu = user.document || {};
   const fullName = `${det.firstName || ""} ${det.lastName || ""}`.trim() || user.username || "—";
@@ -2344,7 +2467,7 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
         </div>
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3 text-sm">
-            {[["Document Type", docu.documentType], ["Document No.", docu.documentNumber], ["ID Status", "Pending"]].map(([label, val]) => (
+            {[["Document Type", docu.documentType], ["Document No.", docu.documentNumber], ["ID Status", reviewed ? "Approved" : "Pending"]].map(([label, val]) => (
               <div key={label} className="bg-gray-50 rounded-xl p-3">
                 <p className="text-xs text-gray-400">{label}</p>
                 <p className="font-medium text-gray-800 mt-0.5">{val || "—"}</p>
@@ -2359,6 +2482,19 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
             </p>
           </div>
 
+          {reviewed && (
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="bg-gray-50 rounded-xl p-3">
+                <p className="text-xs text-gray-400">Reviewed By</p>
+                <p className="font-medium text-gray-800 mt-0.5">{reviewerName || "—"}</p>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3">
+                <p className="text-xs text-gray-400">Reviewed</p>
+                <p className="font-medium text-gray-800 mt-0.5"><DateTimeCell value={user.idReviewedAt} /></p>
+              </div>
+            </div>
+          )}
+
           <div>
             <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Uploaded IDs</h3>
             {!hasUploads ? (
@@ -2368,7 +2504,7 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
                 <DocImg label="Driver License"  url={imgs.driverLicense} />
                 <DocImg label="Government ID"   url={imgs.documentImage} />
                 <DocImg label="Selfie with ID"  url={imgs.selfieWithId} />
-                {imgs.driverLicense && (
+                {imgs.driverLicense && !reviewed && (
                   <div className="bg-gray-50 rounded-xl p-3">
                     <label className="text-xs text-gray-400 block mb-1">
                       License Expiry Date <span className="text-red-500">*</span>
@@ -2390,7 +2526,7 @@ function DocDetailModal({ user, onClose, onApprove, onReject }) {
 
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Close</button>
-            {hasUploads && (
+            {hasUploads && !reviewed && (
               <>
                 <button onClick={onReject}  className="flex items-center gap-2 px-5 py-2 border border-red-200 text-red-500 rounded-xl text-sm font-medium hover:bg-red-50">
                   <Icons.X className="w-4 h-4" /> Reject

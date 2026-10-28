@@ -147,6 +147,24 @@ function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, classN
   );
 }
 
+// Local "YYYY-MM-DD" of a date value — what the Created At date picker is compared against.
+const dayKeyOf = (val) => {
+  const d = toDate(val);
+  if (!d || isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+// "Search by" options — mirror the table's columns. The Status column has its own dropdown.
+const PENALTY_SEARCH_BY = [
+  { key: "date",     label: "Created At",  type: "date" },
+  { key: "charges",  label: "Charges",     type: "text" },
+  { key: "customer", label: "Customer",    type: "text" },
+  { key: "car",      label: "Car / Plate", type: "text" },
+  { key: "booking",  label: "Booking ID",  type: "text" },
+];
+// Same wording as the Status badges in the table (the computed settlementStatus).
+const PENALTY_STATUS_OPTIONS = ["All", "Under Review", "Pending", "Partially Paid", "Paid", "Waived", "Voided", "Discarded"];
+
 // Order used when sorting the Status column — most urgent first when ascending.
 const SETTLEMENT_RANK = { "Under Review": -1, Pending: 0, "Partially Paid": 1, Paid: 2, Waived: 3, Voided: 4, Discarded: 5 };
 
@@ -1350,7 +1368,9 @@ export default function Penalties() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState("");
-  const [reviewOnly, setReviewOnly] = useState(false); // checkbox: list only penalties still under review
+  const [searchBy, setSearchBy] = useState("customer");
+  const [dateValue, setDateValue] = useState("");      // "YYYY-MM-DD" from the Created At date picker
+  const [statusFilter, setStatusFilter] = useState("All"); // one of PENALTY_STATUS_OPTIONS
   const [toast, setToast]     = useState(null);
   const [activeStatFilter, setActiveStatFilter] = useState(null); // null | "review" | "pending" | "settled" | "voidedWaived"
   const [showCreate, setShowCreate] = useState(false);
@@ -1545,16 +1565,20 @@ export default function Penalties() {
   });
 
   const filtered = sorted.filter((p) => {
-    if (reviewOnly && p.status !== "UnderReview") return false;
-    const q = search.toLowerCase();
+    if (statusFilter !== "All" && p.settlementStatus !== statusFilter) return false;
+    if (searchBy === "date") return !dateValue || dayKeyOf(p.createdAt) === dateValue;
+    const q = search.trim().toLowerCase();
     if (!q) return true;
-    return (
-      (p.customerName || "").toLowerCase().includes(q) ||
-      (p.plateNumber  || "").toLowerCase().includes(q) ||
-      (p.bookingID    || "").toLowerCase().includes(q) ||
-      (p.lineItems || []).some((i) => (i.description || "").toLowerCase().includes(q))
-    );
+    const hay = {
+      customer: p.customerName,
+      booking:  p.bookingID,
+      car:      `${p.brandName || ""} ${p.modelName || ""} ${p.plateNumber || ""}`,
+      charges:  (p.lineItems || []).map((i) => i.description).join(" "),
+    }[searchBy];
+    return String(hay || "").toLowerCase().includes(q);
   });
+  const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "All";
+  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("All"); };
 
   // `groups` (defined below, after renderRow) when grouped by booking: pages hold whole bookings, so a booking's
   // penalties are never split across two pages.
@@ -1683,7 +1707,7 @@ export default function Penalties() {
   };
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(groupByBooking ? groups : filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, activeStatFilter, sortKey, sortDir, groupByBooking, reviewOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, statusFilter, activeStatFilter, sortKey, sortDir, groupByBooking]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   return (
@@ -1820,17 +1844,31 @@ export default function Penalties() {
       )}
 
       {/* Filter Bar */}
-      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-center">
-        <input type="text" placeholder="Search by customer, booking, charges…"
-          value={search} onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
-        <label className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm cursor-pointer select-none transition-colors ${
-          reviewOnly ? "border-amber-300 bg-amber-50 text-amber-800" : "border-gray-200 text-gray-600 hover:bg-gray-50"
-        }`}>
-          <input type="checkbox" checked={reviewOnly} onChange={(e) => setReviewOnly(e.target.checked)} className="accent-amber-500" />
-          Under review
-          <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{review}</span>
-        </label>
+      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-end">
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+          <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+            className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-arl-light">
+            {PENALTY_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+        </div>
+        {searchBy === "date" ? (
+          <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)}
+            className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+        ) : (
+          <input type="text" placeholder={`Enter ${(PENALTY_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}…`}
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
+        )}
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-arl-light">
+          {PENALTY_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
+        </select>
+        {hasFilters && (
+          <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+            Clear
+          </button>
+        )}
         <button onClick={fetchAll} disabled={loading}
           className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
           {loading ? "…" : "Refresh"}
@@ -1881,7 +1919,7 @@ export default function Penalties() {
               ))
             ) : filtered.length === 0 ? (
               <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">
-                {search || activeStatFilter || reviewOnly ? "No penalties match your filters." : "No penalties found."}
+                {hasFilters || activeStatFilter ? "No penalties match your filters." : "No penalties found."}
               </td></tr>
             ) : groupByBooking
               ? paginated.map((g, gi) => renderGroup(g, gi))

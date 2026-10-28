@@ -994,6 +994,45 @@ const STEP_STYLE = {
   stopped: { dot: "bg-red-500 text-white border-red-500",                          text: "text-red-700" },
 };
 
+// Which step of the booking tracker (the 9 steps in ViewModal) a booking is on, for the table's "Phase" column.
+// Booked and Paid are left out on purpose: every booking in the list is already booked, and payment has its own
+// page. Same rules as ViewModal's step checks, so the list and the popup agree. Returns the NEXT unfinished step.
+//   Driver → Pre-rental → Pickup/Monitor → Post-rental → Maintenance → Penalty → Deposit → Done
+// Maintenance / Penalty only show while something is actually open (work filed and unfinished / a penalty waiting
+// for review); a booking with none filed doesn't stall there. Cancelled / stolen bookings have no stage ("—").
+function getBookingStage(b) {
+  const status = (b.status || "").toLowerCase();
+  if (status === "cancelled" || status === "stolen") return { label: "—", tone: "none" };
+  if (status === "to pay") return { label: "—", tone: "none" };
+
+  const isChauffeur = (b.modeOfDriving || "").toLowerCase().includes("chauffeur");
+  const completed   = status === "completed";
+  const started     = !!b.startedAt || status === "ongoing" || completed;
+  const droppedOff  = !!b.droppedOffTime || completed;
+  const inspDone    = (chk) => !!chk?.parts && !!chk?.photos;
+  const depStatus   = b.deposit?.status || (b.paymentStatus === "Refunded" ? "Refunded" : null);
+  const hasDeposit  = !!b.deposit || Number(b.securityDeposit) > 0;
+  const depClosed   = ["Settled", "Refunded", "Forfeited", "Waived"].includes(depStatus);
+
+  let label = null;
+  if (isChauffeur && !b.driverID)            label = "Driver";
+  else if (!inspDone(b.beforeInspection))    label = "Pre-rental";
+  else if (!droppedOff)                      label = started ? "Monitor" : "Pickup";
+  else if (!inspDone(b.afterInspection))     label = "Post-rental";
+  else if (Number(b.maintenancePending) > 0) label = "Maintenance";
+  else if (Number(b.penaltyReview) > 0)      label = "Penalty";
+  else if (hasDeposit && !depClosed)         label = "Deposit";
+
+  if (!label) return { label: "Done", tone: "done" };
+  // A finished booking that still has an earlier step open (e.g. completed from Payments before the inspection) is flagged.
+  return { label, tone: completed ? "warn" : "pending" };
+}
+const STAGE_STYLE = {
+  pending: "bg-teal-50 text-teal-700 border-teal-200",
+  warn:    "bg-amber-50 text-amber-700 border-amber-300",
+  done:    "bg-green-50 text-green-700 border-green-200",
+};
+
 function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelete }) {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
@@ -1139,6 +1178,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   const status        = (booking.status || "").toLowerCase();
   const dead          = status === "cancelled" || status === "stolen";
   const isStolen      = status === "stolen";
+  const isCancelled   = status === "cancelled";
   const isChauffeur   = (booking.modeOfDriving || "").toLowerCase().includes("chauffeur");
   const before        = inventoryCheck?.before || null;
   const after         = inventoryCheck?.after || null;
@@ -1203,7 +1243,8 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
           ].filter(Boolean).join(" · "),
     },
     {
-      key: "driver", title: "Driver assigned", done: !isChauffeur || !!booking.driverID,
+      // On a cancelled booking "self-drive, no driver needed" is not something that got done, so only a real assignment counts.
+      key: "driver", title: "Driver assigned", done: isCancelled ? !!booking.driverID : (!isChauffeur || !!booking.driverID),
       sub: !isChauffeur ? "Self-drive — no driver needed" : booking.driverID ? (booking.driverName || "Assigned") : "No driver yet",
     },
     { key: "before", title: "Before-trip inspection", done: inspectionDone(before, beforeChk), sub: inspectionSub(before, beforeChk, "Not recorded") },
@@ -1244,7 +1285,10 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
         : penaltyCount ? `${penaltyCount} noted` : status === "completed" ? "None noted" : "None noted yet",
     },
     {
-      key: "deposit", title: "Deposit & completion", done: depositClosed,
+      // A cancelled booking never completed: its refund / forfeit (already shown under "Paid") writes the deposit
+      // status as Refunded/Forfeited, which used to turn this step green. It now shows as stopped, with the outcome.
+      key: "deposit", title: "Deposit & completion", done: depositClosed && !isCancelled,
+      stoppedSub: isCancelled && refundNote ? `Cancelled — ${refundNote}` : null,
       sub: depStatus || (Number(booking.securityDeposit) > 0 ? "Not settled yet" : "No deposit"),
     },
   ];
@@ -1397,7 +1441,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                         <div className="min-w-0 flex-1 basis-40">
                           <p className={`text-sm font-semibold leading-snug ${sty.text}`}>{st.n}. {st.title}</p>
                           <p className={`text-xs mt-0.5 ${st.warn ? "text-red-600 font-semibold" : "text-gray-400"}`}>
-                            {st.state === "stopped" ? (isStolen ? "Not completed — car flagged stolen" : "Cancelled — did not happen") : st.sub}
+                            {st.state === "stopped" ? (isStolen ? "Not completed — car flagged stolen" : st.stoppedSub || "Cancelled — did not happen") : st.sub}
                           </p>
                         </div>
                         {actions.length > 0 && (
@@ -1561,7 +1605,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
         {(onEdit || onRefund || onDelete) && (
           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">
             {onEdit && canEdit(booking.status) && (
-              <button onClick={() => onEdit(booking)} className="flex-1 px-3 py-2 border border-teal-400 text-teal-600 rounded-xl text-sm hover:bg-teal-50 transition-colors">Edit</button>
+              <button onClick={() => onEdit(booking)} className="flex-1 px-3 py-2 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Edit</button>
             )}
             {onRefund && canRefundCancel(booking.status) && (
               <button onClick={() => onRefund(booking)} className="flex-1 px-3 py-2 border border-orange-300 text-orange-600 rounded-xl text-sm hover:bg-orange-50 transition-colors whitespace-nowrap">Refund / Cancel</button>
@@ -1585,10 +1629,42 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   );
 }
 
+// Booking ID with a copy icon beside it. Shows the first 8 characters (full ID
+// on hover and what actually gets copied) so the column stays narrow.
+function CopyableId({ value }) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return <span className="text-gray-300">—</span>;
+  const copy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(String(value));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked — nothing to do */ }
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="font-mono text-xs text-gray-600" title={value}>{String(value).slice(0, 8)}…</span>
+      <button
+        type="button"
+        onClick={copy}
+        title={copied ? "Copied!" : "Copy booking ID"}
+        aria-label="Copy booking ID"
+        className={`p-1 rounded-md transition-colors ${copied ? "text-teal-600 bg-teal-50" : "text-gray-400 hover:text-teal-600 hover:bg-teal-50"}`}
+      >
+        {copied ? (
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+        ) : (
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" /><path strokeLinecap="round" d="M5 15V6a2 2 0 012-2h9" /></svg>
+        )}
+      </button>
+    </span>
+  );
+}
+
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 
 export default function Bookings() {
-  const { fmt } = useCurrency();
   const { getToken, effectiveRole } = useAuth();
   const canRefundRole = [ROLES.ADMIN, ROLES.OWNER].includes(effectiveRole);
   const [refundBooking, setRefundBooking] = useState(null);
@@ -1712,8 +1788,6 @@ export default function Bookings() {
     : allBookings.filter((b) => b.status?.toLowerCase() === activeTab.toLowerCase());
 
   const searchType = SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
-  const hasFilters = !!search.trim() || !!dateValue || activeTab !== "All";
-  const clearFilters = () => { setSearch(""); setDateValue(""); setActiveTab("All"); };
 
   const filtered = tabFiltered.filter((b) => {
     if (searchType === "date") {
@@ -1833,11 +1907,6 @@ export default function Bookings() {
           >
             {STATUS_TABS.map((t) => <option key={t} value={t}>{t === "All" ? "All statuses" : t}</option>)}
           </select>
-          {hasFilters && (
-            <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
-              Clear
-            </button>
-          )}
           <button
             onClick={fetchBookings}
             className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5"
@@ -1851,16 +1920,16 @@ export default function Bookings() {
             <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
               <tr>
                 <SortableTh label="Created At" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left">Phase</th>
                 <th className="px-4 py-3 text-left">Customer</th>
                 <th className="px-4 py-3 text-left">Contact No.</th>
                 <th className="px-4 py-3 text-left">Vehicle</th>
                 <SortableTh label="Trip Start" sortKey="start" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Trip End" sortKey="end" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Duration</th>
-                <SortableTh label="Total Fee" sortKey="fee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-3 text-left">Phase</th>
+                <th className="px-4 py-3 text-left">Booking ID</th>
                 <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3"></th>
+                <th className="pl-4 pr-8 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -1884,6 +1953,17 @@ export default function Bookings() {
                         <span className="mx-1.5 text-gray-300">|</span>
                         <span className="text-gray-500">{fmtTime(b.createdAt)}</span>
                       </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {(() => {
+                          const stage = getBookingStage(b);
+                          return stage.tone === "none"
+                            ? <span className="text-gray-300">—</span>
+                            : <span
+                                title={stage.tone === "warn" ? "Booking is completed but this step is still open" : stage.tone === "done" ? "All steps finished" : "Next step to do"}
+                                className={`inline-flex items-center text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${STAGE_STYLE[stage.tone]}`}
+                              >{stage.label}</span>;
+                        })()}
+                      </td>
                       <td className="px-4 py-3">
                         <button
                           onClick={() => setProfileUserID(b.userID)}
@@ -1903,14 +1983,10 @@ export default function Bookings() {
                         {fmtDuration(b.totalDays)}
                         {b.durationType && <span className="text-xs text-gray-400 ml-1">· {b.durationType}</span>}
                       </td>
-                      <td className="px-4 py-3 font-semibold text-gray-800">{fmt(b.totalFee)}</td>
-                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                        {b.paymentStage && b.paymentStage !== "—" ? b.paymentStage : "—"}
-                        {Number(b.balance) > 0 && ![ "For Refund", "Refunded", "Cancelled" ].includes(b.paymentStage) && <div className="text-xs text-orange-600">{fmt(b.balance)} remaining</div>}
-                      </td>
+                      <td className="px-4 py-3"><CopyableId value={b.bookingID || b.id} /></td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => setViewBooking(b)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
+                      <td className="pl-4 pr-8 py-3 text-right">
+                        <button onClick={() => setViewBooking(b)} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
                       </td>
                     </tr>
                   );
