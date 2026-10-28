@@ -87,6 +87,7 @@ export default function TripMapCard({ destination, label = "Location" }) {
     destMarker.current = L.marker([destination.lat, destination.lng], { icon: destIcon }).addTo(mapRef.current);
 
     return () => {
+      mapRef.current?.stop();
       mapRef.current?.remove();
       mapRef.current = null;
     };

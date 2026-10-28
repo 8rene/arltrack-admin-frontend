@@ -226,6 +226,7 @@ export default function TripMapModal({ open, onClose, title = "Trip Route", stop
     return () => {
       clearTimeout(settleTimer);
       window.removeEventListener("resize", onResize);
+      mapRef.current?.stop();
       mapRef.current?.remove();
       mapRef.current = null;
       markersRef.current = {};

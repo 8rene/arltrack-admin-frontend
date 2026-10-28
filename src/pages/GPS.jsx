@@ -147,6 +147,9 @@ export default function GPSTracking() {
     }).addTo(leafletMap.current);
     return () => {
       if (leafletMap.current) {
+        // .stop() cancels any zoom/fly animation still in flight; otherwise its
+        // end callback fires after remove() and throws "_leaflet_pos" of undefined.
+        leafletMap.current.stop();
         leafletMap.current.remove();
         leafletMap.current = null;
         activeMarker.current = null;
@@ -225,8 +228,12 @@ export default function GPSTracking() {
       return;
     }
 
+    // If the selection changes (or the page unmounts) while the fetch is in
+    // flight, this run is stale — don't touch the map with its result.
+    let cancelled = false;
     (async () => {
       const loc = await fetchOneLocation(device.gpsDeviceID);
+      if (cancelled) return;
       setLocationMap(prev => ({ ...prev, [selected]: loc || null }));
       setLastPoll(new Date());
 
@@ -244,6 +251,7 @@ export default function GPSTracking() {
         leafletMap.current.setView([loc.lat, loc.lng], 15, { animate: true });
       }
     })();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, gpsDevices]);
 

@@ -520,3 +520,38 @@ fleet refund ithousl be a full refund
 
 checkthe more than 1k payment
 retry on inprogress
+
+
+users fix
+
+query
+GPS] bounded session lookup failed, using full read: 9 FAILED_PRECONDITION: The qu
+ery requires an index. You can create it here: https://console.firebase.google.com/
+v1/r/project/arltrack-carrentalservices/firestore/indexes?create_composite=CmJwcm9q
+ZWN0cy9hcmx0cmFjay1jYXJyZW50YWxzZXJ2aWNlcy9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25
+Hcm91cHMvYm9va2luZ1Nlc3Npb25zL2luZGV4ZXMvXxABGgkKBWNhcklEEAEaDQoJc3RhcnRlZEF0EAIaDA
+oIX19uYW1lX18QAg
+[GPS] bounded session lookup failed, using full read: 9 FAILED_PRECONDITION: The qu
+ery requires an index. You can create it here: https://console.firebase.google.com/
+v1/r/project/arltrack-carrentalservices/firestore/indexes?create_composite=Cmlwcm9q
+ZWN0cy9hcmx0cmFjay1jYXJyZW50YWxzZXJ2aWNlcy9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25
+Hcm91cHMvYm9va2luZ1Nlc3Npb25BcmNoaXZlcy9pbmRleGVzL18QARoJCgVjYXJJRBABGg0KCXN0YXJ0ZW
+RBdBACGgwKCF9fbmFtZV9fEAI
+[GPS] bounded session lookup failed, using full read: 9 FAILED_PRECONDITION: The qu
+ery requires an index. You can create it here: https://console.firebase.google.com/
+v1/r/project/arltrack-carrentalservices/firestore/indexes?create_composite=Cmlwcm9q
+ZWN0cy9hcmx0cmFjay1jYXJyZW50YWxzZXJ2aWNlcy9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25
+Hcm91cHMvYm9va2luZ1Nlc3Npb25BcmNoaXZlcy9pbmRleGVzL18QARoJCgVjYXJJRBABGg0KCXN0YXJ0ZW
+RBdBACGgwKCF9fbmFtZV9fEAI
+[GPS] bounded session lookup failed, using full read: 9 FAILED_PRECONDITION: The qu
+ery requires an index. You can create it here: https://console.firebase.google.com/
+v1/r/project/arltrack-carrentalservices/firestore/indexes?create_composite=CmJwcm9q
+ZWN0cy9hcmx0cmFjay1jYXJyZW50YWxzZXJ2aWNlcy9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25
+Hcm91cHMvYm9va2luZ1Nlc3Npb25zL2luZGV4ZXMvXxABGgkKBWNhcklEEAEaDQoJc3RhcnRlZEF0EAIaDA
+oIX19uYW1lX18QAg
+[GPS] bounded session lookup failed, using full read: 9 FAILED_PRECONDITION: The qu
+ery requires an index. You can create it here: https://console.firebase.google.com/
+v1/r/project/arltrack-carrentalservices/firestore/indexes?create_composite=Cmlwcm9q
+ZWN0cy9hcmx0cmFjay1jYXJyZW50YWxzZXJ2aWNlcy9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25
+Hcm91cHMvYm9va2luZ1Nlc3Npb25BcmNoaXZlcy9pbmRleGVzL18QARoJCgVjYXJJRBABGg0KCXN0YXJ0ZW
+RBdBACGgwKCF9fbmFtZV9fEAI

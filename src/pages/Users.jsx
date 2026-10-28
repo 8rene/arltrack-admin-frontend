@@ -253,6 +253,38 @@ function fmtTime(val) {
   return new Date(ms).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
 }
 
+// "YYYY-MM-DD" (local day) of any date value the table shows, or null — what
+// the date picker in "Search by" is compared against.
+function dayKey(val) {
+  const ms = toMillis(val);
+  if (!isFinite(ms)) return null;
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// "Search by" options — mirror the table's columns. Account status / ID Status
+// are NOT here: they have their own dropdown. User ID and Referral Code have no
+// column but stay searchable (they were covered by the old single search box).
+// The "name" label is swapped for the role's singular label (Customer, Driver…).
+const SEARCH_BY = [
+  { key: "joined",   label: "Joined",      type: "date" },
+  { key: "name",     label: null,          type: "text" },
+  { key: "email",    label: "Email",       type: "text" },
+  { key: "phone",    label: "Contact No.", type: "text" },
+  { key: "userID",   label: "User ID",     type: "text" },
+  { key: "referral", label: "Referral Code", type: "text" },
+];
+
+// Status dropdown options — same values the stat cards above the table set.
+const STATUS_OPTIONS = [
+  { key: "All",      label: "All statuses" },
+  { key: "active",   label: "Active" },
+  { key: "inactive", label: "Inactive" },
+  { key: "locked",   label: "Locked" },
+  { key: "verified", label: "ID Verified", needsVerification: true },
+  { key: "flagged",  label: "Flagged",     needsVerification: true },
+];
+
 // ─── SORT HEADER ────────────────────────────────────────────────────────────
 // Clickable <th> that toggles asc/desc on the given sortKey. Shows a neutral
 // up/down chevrons icon when the column isn't the active sort (so it reads
@@ -685,7 +717,7 @@ export default function Users() {
           {[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}
         </div>
       ) : subTab === "directory" ? (
-        <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showBookings={activeRole.key === "customer"}
+        <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showBookings={activeRole.key === "customer"} showVerification={showVerification}
           filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole} />
       ) : subTab === "documents" ? (
         <DocumentsTab users={pendingDocs} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts} />
@@ -697,8 +729,10 @@ export default function Users() {
 }
 
 // ─── DIRECTORY TAB (used for Customers, Drivers, Supervisors, Admins) ─────────
-function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showBookings, filterStatus, setFilterStatus, viewerRole, currentRoleName }) {
+function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showBookings, showVerification, filterStatus, setFilterStatus, viewerRole, currentRoleName }) {
   const [search, setSearch]       = useState("");
+  const [searchBy, setSearchBy]   = useState("name");
+  const [dateValue, setDateValue] = useState(""); // "YYYY-MM-DD" from the date picker
   const [detailUser, setDetailUser]       = useState(null);
   const [editUser, setEditUser]           = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -763,13 +797,29 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
     }
   };
 
+  const searchType = SEARCH_BY.find(o => o.key === searchBy)?.type || "text";
+  const searchLabel = searchBy === "name" ? roleLabelSingular : (SEARCH_BY.find(o => o.key === searchBy)?.label || "");
+  const hasFilters = !!search.trim() || !!dateValue || filterStatus !== "All";
+  const clearFilters = () => { setSearch(""); setDateValue(""); setFilterStatus("All"); };
+
   const filtered = users.filter(u => {
-    const q = search.trim().toLowerCase();
-    const fullName = `${u.details?.firstName || ""} ${u.details?.lastName || ""}`.toLowerCase();
-    const matchSearch = !q || fullName.includes(q) || (u.email || "").toLowerCase().includes(q) || (u.username || "").toLowerCase().includes(q)
-      || (u.phone || "").toLowerCase().includes(q)
-      || (u.referral?.code || "").toLowerCase().includes(q)
-      || String(u.id || "").toLowerCase().includes(q); // search by user ID
+    let matchSearch = true;
+    if (searchType === "date") {
+      if (dateValue) matchSearch = dayKey(u.createdAt) === dateValue;
+    } else {
+      const q = search.trim().toLowerCase();
+      if (q) {
+        const hay = {
+          // "name" covers the full name and the @username shown under it
+          name:     `${u.details?.firstName || ""} ${u.details?.lastName || ""} ${u.username || ""}`,
+          email:    u.email,
+          phone:    u.phone,
+          userID:   u.id,
+          referral: u.referral?.code,
+        }[searchBy];
+        matchSearch = String(hay || "").toLowerCase().includes(q);
+      }
+    }
     const matchStatus =
       filterStatus === "All" ||
       (filterStatus === "flagged"  && u.isFlagged) ||
@@ -806,19 +856,50 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
 
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   // Jump back to page 1 whenever the visible set changes shape (new search/filter/role tab).
-  useEffect(() => { setPage(1); }, [search, filterStatus, users]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, filterStatus, users]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
-      <div className="flex flex-wrap gap-3 items-center">
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name, email, phone or user ID..."
-          className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-      </div>
-
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-        <div className="px-5 py-4 border-b">
-          <h2 className="font-bold text-lg text-gray-800">All {roleLabel} <span className="text-gray-400 text-sm font-normal">({filtered.length})</span></h2>
+        <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select
+              value={searchBy}
+              onChange={e => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+            >
+              {SEARCH_BY.map(o => <option key={o.key} value={o.key}>{o.key === "name" ? roleLabelSingular : o.label}</option>)}
+            </select>
+          </div>
+          {searchType === "date" ? (
+            <input
+              type="date"
+              value={dateValue}
+              onChange={e => setDateValue(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+            />
+          ) : (
+            <input
+              type="text"
+              placeholder={`Enter ${searchLabel.toLowerCase()}...`}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+            />
+          )}
+          <select
+            value={filterStatus}
+            onChange={e => setFilterStatus(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+          >
+            {STATUS_OPTIONS.filter(o => !o.needsVerification || showVerification).map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+          {hasFilters && (
+            <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+              Clear
+            </button>
+          )}
         </div>
         {filtered.length === 0 ? (
           <div className="text-center text-gray-400 py-16">No {roleLabel.toLowerCase()} found.</div>

@@ -1786,55 +1786,6 @@ export default function Bookings() {
         })}
       </div>
 
-      {/* SEARCH */}
-      <div className="flex flex-wrap gap-3 items-end bg-white p-4 rounded-2xl border">
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
-          <select
-            value={searchBy}
-            onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
-            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
-          >
-            {SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </select>
-        </div>
-        {searchType === "date" ? (
-          <input
-            type="date"
-            value={dateValue}
-            onChange={(e) => setDateValue(e.target.value)}
-            className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
-          />
-        ) : (
-          <input
-            type="text"
-            placeholder={`Enter ${(SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
-          />
-        )}
-        <select
-          value={activeTab}
-          onChange={(e) => setActiveTab(e.target.value)}
-          className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
-        >
-          {STATUS_TABS.map((t) => <option key={t} value={t}>{t === "All" ? "All statuses" : t}</option>)}
-        </select>
-        {hasFilters && (
-          <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
-            Clear
-          </button>
-        )}
-        <button
-          onClick={fetchBookings}
-          className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5"
-        >
-          <IconRefresh className="w-3.5 h-3.5" />
-          Refresh
-        </button>
-      </div>
-
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex justify-between items-center">
           <span className="flex items-center gap-2">
@@ -1847,11 +1798,53 @@ export default function Bookings() {
 
       {/* TABLE */}
       <div className="bg-white rounded-2xl border overflow-hidden">
-        <div className="px-5 py-4 border-b flex items-center justify-between">
-          <h3 className="font-semibold text-gray-800">
-            {activeTab === "All" ? "All Bookings" : `${activeTab} Bookings`}
-            <span className="text-gray-400 text-sm font-normal ml-2">{filtered.length} results</span>
-          </h3>
+        {/* SEARCH + FILTERS */}
+        <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select
+              value={searchBy}
+              onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+            >
+              {SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+          {searchType === "date" ? (
+            <input
+              type="date"
+              value={dateValue}
+              onChange={(e) => setDateValue(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
+            />
+          ) : (
+            <input
+              type="text"
+              placeholder={`Enter ${(SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
+            />
+          )}
+          <select
+            value={activeTab}
+            onChange={(e) => setActiveTab(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+          >
+            {STATUS_TABS.map((t) => <option key={t} value={t}>{t === "All" ? "All statuses" : t}</option>)}
+          </select>
+          {hasFilters && (
+            <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+              Clear
+            </button>
+          )}
+          <button
+            onClick={fetchBookings}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5"
+          >
+            <IconRefresh className="w-3.5 h-3.5" />
+            Refresh
+          </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

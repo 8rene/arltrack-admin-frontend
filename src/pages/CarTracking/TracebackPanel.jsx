@@ -440,7 +440,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
     if (!mapRef.current || leafletMap.current) return;
     leafletMap.current = L.map(mapRef.current, { zoomControl: true }).setView([14.5995, 120.9842], 12);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors", maxZoom: 19 }).addTo(leafletMap.current);
-    return () => { if (leafletMap.current) { leafletMap.current.remove(); leafletMap.current = null; } };
+    return () => { if (leafletMap.current) { leafletMap.current.stop(); leafletMap.current.remove(); leafletMap.current = null; } };
   }, []);
 
   const fetchAll = useCallback(async (targetDate, force = false) => {
