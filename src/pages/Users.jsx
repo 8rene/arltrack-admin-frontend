@@ -1414,16 +1414,36 @@ function ReplaceDocumentModal({ user, kind, onClose, onSaved }) {
 }
 
 function DocImg({ label, url }) {
+  const [zoom, setZoom] = useState(false);
+  useEffect(() => {
+    if (!zoom) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setZoom(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoom]);
   if (!url || (typeof url === "string" && url.trim() === "")) return null;
   return (
     <div>
       <p className="text-xs text-gray-400 mb-1">{label}</p>
-      <img src={url} alt={label} className="w-full h-36 object-cover rounded-xl border"
+      <img src={url} alt={label} title="Click to enlarge" onClick={() => setZoom(true)}
+        className="w-full h-36 object-cover rounded-xl border cursor-zoom-in hover:opacity-90 transition-opacity"
         onError={e => { e.target.style.display="none"; e.target.nextSibling && (e.target.nextSibling.style.display="flex"); }}
       />
       <div style={{display:"none"}} className="w-full h-36 border rounded-xl items-center justify-center text-xs text-gray-400 bg-gray-50">
         Could not load image
       </div>
+      {zoom && (
+        <div className="fixed inset-0 z-[80] bg-black/85 flex flex-col items-center justify-center p-6 cursor-zoom-out"
+          onClick={(e) => { e.stopPropagation(); setZoom(false); }}>
+          <button onClick={(e) => { e.stopPropagation(); setZoom(false); }}
+            className="absolute top-4 right-4 text-white/80 hover:text-white p-2" aria-label="Close">
+            <Icons.X className="w-6 h-6" />
+          </button>
+          <img src={url} alt={label} onClick={(e) => e.stopPropagation()}
+            className="max-w-full max-h-[85vh] rounded-xl object-contain cursor-default" />
+          <p className="text-white/80 text-sm mt-3">{label}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1533,20 +1553,19 @@ const ID_SEARCH_BY = [
   { key: "name",      label: "Submitted by", type: "text" },
   { key: "submitted", label: "Submitted",    type: "date" },
 ];
-// New IDs only have two states in the data: a user is verified (approved) or not (pending).
-// A rejected new ID is stored exactly like a pending one (isVerified stays false), so
-// there is no "Rejected" option here — resubmissions do keep a real status.
-const NEW_ID_STATUS_OPTIONS = [
-  { key: "all",      label: "All statuses" },
-  { key: "pending",  label: "Pending" },
-  { key: "approved", label: "Approved" },
-];
-const RESUBMIT_STATUS_OPTIONS = [
+// One status list for the merged table. New IDs only ever show Pending / Approved (a rejected new
+// ID is stored like a pending one); resubmissions also keep Rejected / Cancelled.
+const ID_STATUS_OPTIONS = [
   { key: "all",       label: "All statuses" },
   { key: "pending",   label: "Pending" },
   { key: "approved",  label: "Approved" },
   { key: "rejected",  label: "Rejected" },
   { key: "cancelled", label: "Cancelled" },
+];
+const ID_REQUEST_OPTIONS = [
+  { key: "all",      label: "All requests" },
+  { key: "new",      label: "New ID" },
+  { key: "resubmit", label: "Resubmission" },
 ];
 const newIdStatus = (u) => (u.isVerified === true ? "approved" : "pending");
 
@@ -1557,26 +1576,15 @@ const reviewerLabel = (uid, lookup) => {
   return lookup?.[uid]?.name || "Removed account";
 };
 
-// New ID | Resubmit ID — the outermost switch of the Document Request tab.
-// The badges count what is still pending in each.
-function IdTypeSwitch({ view, setView, newCount, resubmitCount }) {
-  const btn = (key, label, n) => (
-    <button onClick={() => setView(key)}
-      className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${view === key ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
-      {label}
-      <span title="Pending" className={`text-xs px-1.5 py-0.5 rounded-full ${n > 0 ? "bg-yellow-100 text-yellow-700" : "bg-gray-100 text-gray-500"}`}>{n}</span>
-    </button>
-  );
-  return (
-    <div className="inline-flex p-1 bg-gray-100 rounded-xl gap-1">
-      {btn("new", "New ID", newCount)}
-      {btn("resubmit", "Resubmit ID", resubmitCount)}
-    </div>
-  );
+// Pill showing whether a row is a first-time ID or a replacement.
+function RequestTypePill({ kind }) {
+  return kind === "new"
+    ? <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border bg-teal-50 border-teal-200 text-teal-700 whitespace-nowrap">New ID</span>
+    : <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border bg-indigo-50 border-indigo-200 text-indigo-700 whitespace-nowrap">Resubmission</span>;
 }
 
 // Search by (Submitted by / Submitted date) + Status — same look as the Directory's bar.
-function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setDateValue, status, setStatus, statusOptions, hasFilters, onClear }) {
+function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setDateValue, status, setStatus, statusOptions, requestType, setRequestType, hasFilters, onClear }) {
   return (
     <div className="flex flex-wrap gap-3 items-end p-4 border-b">
       <div className="flex flex-col gap-1">
@@ -1596,6 +1604,10 @@ function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setD
         <input type="text" placeholder="Enter name or username..." value={search} onChange={e => setSearch(e.target.value)}
           className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
       )}
+      <select value={requestType} onChange={e => setRequestType(e.target.value)}
+        className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+        {ID_REQUEST_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+      </select>
       <select value={status} onChange={e => setStatus(e.target.value)}
         className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
         {statusOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
@@ -1609,71 +1621,90 @@ function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setD
   );
 }
 
-// ─── NEW ID SUBMISSIONS (first-time ID verification) ─────────────────────────
-// `users` is everyone in the open role tab. Rows = people still waiting for approval
-// (Pending) plus verified people who actually uploaded an ID (Approved).
-function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers", userLookup = {} }) {
+// ─── ID REQUESTS TABLE (New ID + Resubmission in ONE table) ──────────────────
+// Every first-time ID and every replacement photo lives here. The "Request" column says which
+// it is; the Request and Status dropdowns narrow the list (Status defaults to Pending).
+function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onOpenResub, statusFilter, setStatusFilter,
+                           requestType, setRequestType, roleLabel = "Customers", openNewUserID, onNewOpened }) {
   const [detailUser, setDetailUser] = useState(null);
   const [loadingId, setLoadingId]   = useState(null);
-  const [sortKey, setSortKey]       = useState("submitted"); // newest submissions on top
-  const [sortDir, setSortDir]       = useState("desc");
+  const [sortDir, setSortDir]       = useState("desc"); // newest submitted first
   const [search, setSearch]         = useState("");
   const [searchBy, setSearchBy]     = useState("name");
   const [dateValue, setDateValue]   = useState("");
-  const [statusFilter, setStatusFilter] = useState("pending");
 
-  const handleSort = (key) => {
-    if (sortKey === key) {
-      setSortDir(d => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir(key === "submitted" ? "desc" : "asc");
-    }
-  };
+  const hasUploads = (u) => Object.values(getDocImages(u.document || {})).some(v => v && v.trim() !== "");
 
-  const fullNameOf = (u) => {
-    const fn = u.details?.firstName || "";
-    const ln = u.details?.lastName  || "";
-    return `${fn} ${ln}`.trim() || u.username || u.email || "—";
-  };
+  // Normalise both kinds into one row shape.
+  const allRows = useMemo(() => {
+    const newRows = users.filter(u => u.isVerified !== true || hasUploads(u)).map(u => {
+      const fn = u.details?.firstName || "";
+      const ln = u.details?.lastName  || "";
+      return {
+        key: `new-${u.id}`, kind: "new", user: u, userID: u.id,
+        name: `${fn} ${ln}`.trim() || u.username || u.email || "—",
+        username: u.username || "",
+        initials: ((fn[0] || u.email?.[0] || "?") + (ln[0] || "")).toUpperCase(),
+        createdAt: u.document?.createdAt,
+        status: newIdStatus(u),
+        reviewedAt: u.idReviewedAt || null,
+        docType: u.document?.documentType || "—",
+        docNo: u.document?.documentNumber || "—",
+        isFlagged: u.isFlagged === true,
+      };
+    });
+    const reRows = resubRows.map(req => {
+      const lu = userLookup[req.userID] || {};
+      const isLicense = (req.documentKind || "license") === "license";
+      return {
+        key: `re-${req.id}`, kind: "resubmit", req, userID: req.userID,
+        name: lu.name || req.userID, username: lu.username || "", initials: (lu.name || "?").slice(0, 2).toUpperCase(),
+        createdAt: req.createdAt,
+        status: req.status,
+        reviewedAt: req.reviewedAt || null,
+        docType: isLicense ? "Driver's License" : (req.documentType || "Document"),
+        docNo: isLicense ? "—" : (req.documentNumber || "—"),
+        isFlagged: lu.isFlagged === true,
+      };
+    });
+    return [...newRows, ...reRows];
+  }, [users, resubRows, userLookup]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const hasUploads = (u) => {
-    const imgs = getDocImages(u.document || {});
-    return Object.values(imgs).some(v => v && v.trim() !== "");
-  };
-
-  const rows = users.filter(u => u.isVerified !== true || hasUploads(u));
-
-  const filtered = rows.filter(u => {
-    if (statusFilter !== "all" && newIdStatus(u) !== statusFilter) return false;
-    if (searchBy === "submitted") return !dateValue || dayKey(u.document?.createdAt) === dateValue;
+  const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return `${u.details?.firstName || ""} ${u.details?.lastName || ""} ${u.username || ""}`.toLowerCase().includes(q);
-  });
+    return allRows.filter(r => {
+      if (requestType !== "all" && r.kind !== requestType) return false;
+      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (searchBy === "submitted") return !dateValue || dayKey(r.createdAt) === dateValue;
+      if (!q) return true;
+      return `${r.name} ${r.username}`.toLowerCase().includes(q);
+    });
+  }, [allRows, requestType, statusFilter, searchBy, search, dateValue]);
 
-  const sorted = [...filtered].sort((a, b) => {
-    if (!sortKey) return 0;
-    if (sortKey === "name") return sortDir === "asc"
-      ? fullNameOf(a).localeCompare(fullNameOf(b))
-      : fullNameOf(b).localeCompare(fullNameOf(a));
-    if (sortKey === "submitted") {
-      const av = toMillis(a.document?.createdAt);
-      const bv = toMillis(b.document?.createdAt);
-      return sortDir === "asc" ? av - bv : bv - av;
-    }
-    return 0;
-  });
+  const sorted = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      const x = toMillis(a.createdAt), y = toMillis(b.createdAt);
+      return dir * ((x > y) - (x < y));
+    });
+  }, [filtered, sortDir]);
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
+  useEffect(() => { setPage(1); }, [users, resubRows, search, searchBy, dateValue, statusFilter, requestType]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deep-link from a notification: open that person's New ID review.
+  useEffect(() => {
+    if (!openNewUserID) return;
+    const u = users.find(x => x.id === openNewUserID);
+    if (u) setDetailUser(u);
+    onNewOpened?.();
+  }, [openNewUserID, users, onNewOpened]);
 
   const handleVerify = async (user, approve, driverLicenseExpiry) => {
     setLoadingId(user.id);
     try {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/verify`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
         body: JSON.stringify({ isVerified: approve, ...(driverLicenseExpiry ? { driverLicenseExpiry } : {}) }),
       });
       const json = await res.json();
@@ -1683,19 +1714,20 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers", userLooku
     finally { setLoadingId(null); }
   };
 
-  const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "pending";
-  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("pending"); };
-
-  const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
-  useEffect(() => { setPage(1); }, [users, search, searchBy, dateValue, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "pending" || requestType !== "all";
+  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("pending"); setRequestType("all"); };
+  const showReviewed = statusFilter !== "pending";
 
   return (
     <>
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
         <IdFilterBar searchBy={searchBy} setSearchBy={setSearchBy} search={search} setSearch={setSearch}
           dateValue={dateValue} setDateValue={setDateValue} status={statusFilter} setStatus={setStatusFilter}
-          statusOptions={NEW_ID_STATUS_OPTIONS} hasFilters={hasFilters} onClear={clearFilters} />
-        {filtered.length === 0 ? (
+          statusOptions={ID_STATUS_OPTIONS} requestType={requestType} setRequestType={setRequestType}
+          hasFilters={hasFilters} onClear={clearFilters} />
+        {loading ? (
+          <div className="p-5 space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
+        ) : filtered.length === 0 ? (
           <div className="text-center text-gray-400 py-16">
             {statusFilter === "pending" && !hasFilters ? (
               <>
@@ -1704,10 +1736,10 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers", userLooku
                     <Icons.CheckCircle className="w-7 h-7 text-green-500" />
                   </div>
                 </div>
-                <p>No pending verifications</p>
+                <p>No pending document requests</p>
               </>
             ) : (
-              <p>No ID submissions found.</p>
+              <p>No document requests found.</p>
             )}
           </div>
         ) : (
@@ -1715,63 +1747,57 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers", userLooku
             <table className="w-full text-sm">
               <thead className="text-gray-400 text-xs uppercase bg-gray-50">
                 <tr>
-                  <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <SortableTh label={roleLabel.replace(/s$/, "")} sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="Submitted" sortKey="submitted" sortKeyState="submitted" sortDir={sortDir}
+                    onSort={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))} />
+                  <th className="px-5 py-3 text-left">{roleLabel.replace(/s$/, "")}</th>
+                  <th className="px-5 py-3 text-left">Request</th>
                   <th className="px-5 py-3 text-left">Document Type</th>
                   <th className="px-5 py-3 text-left">Document No.</th>
-                  <th className="px-5 py-3 text-left">Referred By</th>
-                  <th className="px-5 py-3 text-left">Status</th>
                   <th className="px-5 py-3 text-left">Flagged</th>
+                  <th className="px-5 py-3 text-left">Status</th>
+                  {showReviewed && <th className="px-5 py-3 text-left">Reviewed</th>}
                   <th className="px-5 py-3 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {pageItems.map(u => {
-                  const fn = u.details?.firstName || "";
-                  const ln = u.details?.lastName  || "";
-                  const fullName = `${fn} ${ln}`.trim() || u.username || u.email || "—";
-                  const initials = ((fn[0] || u.email?.[0] || "?") + (ln[0] || "")).toUpperCase();
-                  const uploaded = hasUploads(u);
-                  const hasLicense = !!u.document?.driverLicenseUrl;
-                  const isLoading = loadingId === u.id;
-                  const status = newIdStatus(u);
-
+                {pageItems.map(r => {
+                  const isNew = r.kind === "new";
+                  const u = r.user;
+                  const uploaded = isNew && hasUploads(u);
+                  const hasLicense = isNew && !!u.document?.driverLicenseUrl;
+                  const isLoading = isNew && loadingId === u.id;
                   return (
-                    <tr key={u.id} className="border-t hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={u.document?.createdAt} /></td>
+                    <tr key={r.key} className="border-t hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={r.createdAt} /></td>
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
-                          <UserAvatar key={u.profileImage || "none"} src={u.profileImage} initials={initials} />
+                          {isNew && <UserAvatar key={u.profileImage || "none"} src={u.profileImage} initials={r.initials} />}
                           <div>
-                            <p className="font-semibold text-gray-800 flex items-center gap-1.5">
-                              {fullName}
-                            </p>
-                            <p className="text-xs text-gray-400">@{u.username || "—"}</p>
+                            <p className="font-semibold text-gray-800">{r.name}</p>
+                            <p className="text-xs text-gray-400">@{r.username || "—"}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-5 py-3 text-gray-600">{u.document?.documentType || "—"}</td>
-                      <td className="px-5 py-3 text-gray-600">{u.document?.documentNumber || "—"}</td>
-                      <td className="px-5 py-3 text-gray-600 text-xs">
-                        {referrerLabel(u.referral?.referredBy) || <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-5 py-3"><RequestStatusPill status={status} /></td>
+                      <td className="px-5 py-3"><RequestTypePill kind={r.kind} /></td>
+                      <td className="px-5 py-3 text-gray-600">{r.docType}</td>
+                      <td className="px-5 py-3 text-gray-600">{r.docNo}</td>
                       <td className="px-5 py-3">
-                        {u.isFlagged
+                        {r.isFlagged
                           ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-black font-medium">
                               <Icons.Flag className="w-3 h-3 text-red-500 fill-red-500 stroke-red-500" />
                               Flagged
                             </span>
-                          : <span className="text-gray-400 text-xs">—</span>
-                        }
+                          : <span className="text-gray-400 text-xs">—</span>}
                       </td>
+                      <td className="px-5 py-3"><RequestStatusPill status={r.status} /></td>
+                      {showReviewed && <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={r.reviewedAt} /></td>}
                       <td className="px-5 py-3">
                         <div className="flex gap-2 justify-end">
-                          <button onClick={() => setDetailUser(u)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
-                            View IDs
+                          <button onClick={() => (isNew ? setDetailUser(u) : onOpenResub(r.req.id))}
+                            className="px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+                            View
                           </button>
-                          {status === "pending" && (
+                          {isNew && r.status === "pending" && (
                             <>
                               <button onClick={() => handleVerify(u, false)} disabled={isLoading || !uploaded}
                                 className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed">
@@ -1779,7 +1805,7 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers", userLooku
                                 {isLoading ? "..." : "Reject"}
                               </button>
                               <button onClick={() => handleVerify(u, true)} disabled={isLoading || !uploaded || hasLicense}
-                                title={hasLicense ? "Use 'View IDs' to enter the license expiry date before approving" : undefined}
+                                title={hasLicense ? "Use 'View' to enter the license expiry date before approving" : undefined}
                                 className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed">
                                 <Icons.Check className="w-3.5 h-3.5" />
                                 {isLoading ? "..." : "Approve"}
@@ -1809,115 +1835,6 @@ function NewIdSubmissions({ users, onRefresh, roleLabel = "Customers", userLooku
         />
       )}
     </>
-  );
-}
-
-// ─── RESUBMIT ID TABLE (license / document photo resubmits) ──────────────────
-// One table for every resubmission; the Status dropdown replaces the old Pending / History
-// views. The Reviewed column only appears once the filter can include reviewed rows.
-function ResubmitTable({ rows, loading, userLookup, onOpen, statusFilter, setStatusFilter }) {
-  const [sortDir, setSortDir]     = useState("desc"); // newest submitted first
-  const [search, setSearch]       = useState("");
-  const [searchBy, setSearchBy]   = useState("name");
-  const [dateValue, setDateValue] = useState("");
-  const showReviewed = statusFilter !== "pending";
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter(req => {
-      if (statusFilter !== "all" && req.status !== statusFilter) return false;
-      if (searchBy === "submitted") return !dateValue || dayKey(req.createdAt) === dateValue;
-      if (!q) return true;
-      const u = userLookup[req.userID] || {};
-      return `${u.name || ""} ${u.username || ""}`.toLowerCase().includes(q);
-    });
-  }, [rows, statusFilter, searchBy, search, dateValue, userLookup]);
-
-  const sorted = useMemo(() => {
-    const dir = sortDir === "asc" ? 1 : -1;
-    return [...filtered].sort((a, b) => {
-      const x = toMillis(a.createdAt), y = toMillis(b.createdAt);
-      return dir * ((x > y) - (x < y));
-    });
-  }, [filtered, sortDir]);
-  const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
-  useEffect(() => { setPage(1); }, [rows, search, searchBy, dateValue, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "pending";
-  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("pending"); };
-
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-      <IdFilterBar searchBy={searchBy} setSearchBy={setSearchBy} search={search} setSearch={setSearch}
-        dateValue={dateValue} setDateValue={setDateValue} status={statusFilter} setStatus={setStatusFilter}
-        statusOptions={RESUBMIT_STATUS_OPTIONS} hasFilters={hasFilters} onClear={clearFilters} />
-      {loading ? (
-        <div className="p-5 space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center text-gray-400 py-16">
-          {statusFilter === "pending" && !hasFilters ? "No pending resubmissions." : "No resubmissions found."}
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-gray-400 text-xs uppercase bg-gray-50">
-              <tr>
-                <SortableTh label="Submitted" sortKey="submitted" sortKeyState="submitted" sortDir={sortDir}
-                  onSort={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))} />
-                <th className="px-5 py-3 text-left">User</th>
-                <th className="px-5 py-3 text-left">Type</th>
-                <th className="px-5 py-3 text-left">Flagged</th>
-                <th className="px-5 py-3 text-left">Status</th>
-                {showReviewed && <th className="px-5 py-3 text-left">Reviewed</th>}
-                <th className="px-5 py-3 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageItems.map(req => {
-                const u = userLookup[req.userID] || {};
-                const isLicense = (req.documentKind || "license") === "license";
-                return (
-                  <tr key={req.id} className="border-t hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={req.createdAt} /></td>
-                    <td className="px-5 py-3">
-                      <p className="font-semibold text-gray-800">{u.name || req.userID}</p>
-                      <p className="text-xs text-gray-400">@{u.username || "—"}</p>
-                    </td>
-                    <td className="px-5 py-3 text-gray-600">
-                      {isLicense ? "Driver's License" : (
-                        <>
-                          <p>Document</p>
-                          {req.documentType && <p className="text-xs text-gray-400">{req.documentType}</p>}
-                        </>
-                      )}
-                    </td>
-                    <td className="px-5 py-3">
-                      {u.isFlagged
-                        ? <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-black font-medium">
-                            <Icons.Flag className="w-3 h-3 text-red-500 fill-red-500 stroke-red-500" />
-                            Flagged
-                          </span>
-                        : <span className="text-gray-400 text-xs">—</span>}
-                    </td>
-                    <td className="px-5 py-3"><RequestStatusPill status={req.status} /></td>
-                    {showReviewed && <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={req.reviewedAt} /></td>}
-                    <td className="px-5 py-3">
-                      <div className="flex justify-end">
-                        <button onClick={() => onOpen(req.id)}
-                          className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
-                          View
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
-    </div>
   );
 }
 
@@ -2049,14 +1966,14 @@ function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove
 }
 
 // ─── DOCUMENT REQUEST TAB ────────────────────────────────────────────────────
-// Two tabs: New ID (first-time ID verification) and Resubmit ID (replacement
-// license / document photos). Each is a single searchable table with a Status
-// filter — there is no separate Pending / History view any more.
+// One table for first-time IDs and replacement license / document photos; the
+// "Request" column tells them apart (New ID / Resubmission).
 // (Resubmits used to live under "Edit Request"; they're document reviews, so
 // they sit here now.)
 function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", onCountChange }) {
-  const [idTab, setIdTab]             = useState("new"); // "new" | "resubmit"
-  const [resubStatus, setResubStatus] = useState("pending");
+  const [requestType, setRequestType] = useState("all"); // "all" | "new" | "resubmit"
+  const [statusFilter, setStatusFilter] = useState("pending");
+  const [openNewUserID, setOpenNewUserID] = useState(null);
   const [allIdReqs, setIdReqs]        = useState([]);
   // Only the resubmissions that belong to the role tab that is open.
   const idReqs = useMemo(() => allIdReqs.filter(r => roleUserIDs?.has(r.userID)), [allIdReqs, roleUserIDs]);
@@ -2084,20 +2001,25 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
   }, []);
   useEffect(() => { fetchResubmits(); }, [fetchResubmits]);
 
-  // Deep-link from Dashboard / notifications: ?open=<uid> opens that person's
-  // resubmission (the pending one if there is one) once the data has loaded.
+  // Deep-link from Dashboard / notifications: ?open=<request id OR uid>. Opens that person's
+  // resubmission (pending first) or, failing that, their New ID review, once data has loaded.
   useEffect(() => {
     const openID = searchParams.get("open");
     if (!openID || reqLoading) return;
-    const mine = idReqs.filter(r => r.userID === openID);
-    if (mine.length) {
-      const target = mine.find(r => r.status === "pending") || mine[0];
-      setIdTab("resubmit");
-      setResubStatus(target.status === "pending" ? "pending" : "all");
-      setReviewID(target.id);
+    const mine = idReqs.filter(r => r.id === openID || r.userID === openID);
+    const newUser = users.find(u => u.id === openID);
+    const pendingResub = mine.find(r => r.status === "pending");
+    if (pendingResub) {
+      setRequestType("all"); setStatusFilter("pending"); setReviewID(pendingResub.id);
+    } else if (newUser && newUser.isVerified !== true) {
+      setRequestType("all"); setStatusFilter("pending"); setOpenNewUserID(newUser.id);
+    } else if (mine.length) {
+      setRequestType("all"); setStatusFilter("all"); setReviewID(mine[0].id);
+    } else if (newUser) {
+      setRequestType("all"); setStatusFilter("all"); setOpenNewUserID(newUser.id);
     }
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
-  }, [searchParams, reqLoading, idReqs, setSearchParams]);
+  }, [searchParams, reqLoading, idReqs, users, setSearchParams]);
 
   // Approve: the new photo becomes the license/document of record. License
   // needs the reviewer's expiry date (also enforced server-side — see
@@ -2126,20 +2048,15 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
     finally { setBusyId(null); }
   };
 
-  const pendingNewCount    = users.filter(u => u.isVerified !== true).length;
-  const pendingResubCount  = idReqs.filter(r => r.status === "pending").length;
   const reviewReq          = idReqs.find(r => r.id === reviewID);
 
   return (
     <div className="space-y-4">
-      <IdTypeSwitch view={idTab} setView={setIdTab} newCount={pendingNewCount} resubmitCount={pendingResubCount} />
-
-      {idTab === "new" ? (
-        <NewIdSubmissions users={users} onRefresh={onRefresh} roleLabel={roleLabel} userLookup={userLookup} />
-      ) : (
-        <ResubmitTable rows={idReqs} loading={reqLoading} userLookup={userLookup} onOpen={setReviewID}
-          statusFilter={resubStatus} setStatusFilter={setResubStatus} />
-      )}
+      <IdRequestsTable users={users} resubRows={idReqs} loading={reqLoading} userLookup={userLookup}
+        onRefresh={onRefresh} onOpenResub={setReviewID} roleLabel={roleLabel}
+        statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+        requestType={requestType} setRequestType={setRequestType}
+        openNewUserID={openNewUserID} onNewOpened={() => setOpenNewUserID(null)} />
 
       {reviewReq && (
         <ResubmitReviewModal
@@ -2257,7 +2174,7 @@ function EditRequestsTab({ roleUserIDs, onCountChange }) {
   useEffect(() => {
     const openID = searchParams.get("open");
     if (!openID || loading) return;
-    const mine = profileReqs.filter(r => r.userID === openID);
+    const mine = profileReqs.filter(r => r.id === openID || r.userID === openID);
     if (mine.length) {
       const target = mine.find(r => r.status === "pending") || mine[0];
       setView(target.status === "pending" ? "pending" : "history");

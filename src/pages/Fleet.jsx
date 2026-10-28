@@ -942,7 +942,7 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, notice, onNext,
 // StatusChangeFlow.submitBatch and changeCarStatus() on the backend.
 // How staff can settle one upcoming booking when its car goes to Maintenance / Inactive. Same four choices as the Cancel
 // button on the Bookings page, and the server runs exactly the one picked (see changeCarStatus -> refundChoices).
-const REFUND_CHOICE_LABEL = { full: "Full refund", normal: "Normal refund", no_show: "No-show refund", cancel: "Cancel only (no refund)" };
+const REFUND_CHOICE_LABEL = { full: "Full refund", normal: "Normal refund", no_show: "No Deposit Refund", cancel: "Cancel only (no refund)" };
 // The money of one choice, read from the booking's refundPreview (Full at the top level, `normal` and `noShow` blocks).
 const refundFigures = (pv, choice) => {
   const p = pv || {};
@@ -997,7 +997,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
   const dateRange = (b) => `${fmtDateTime(b.startDateTime)} – ${fmtDateTime(b.endDateTime)}`;
 
   const resolvedLabel = (r) => {
-    if (r.outcome === "refunded") return `${r.depositForfeited > 0 ? "No-show refund" : r.gatewayFeeKept > 0 ? "Normal refund" : "Refunded"} ${fmt(r.amount || 0)}`;
+    if (r.outcome === "refunded") return `${r.depositForfeited > 0 ? "No Deposit Refund" : r.gatewayFeeKept > 0 ? "Normal refund" : "Refunded"} ${fmt(r.amount || 0)}`;
     if (r.outcome === "cancelled_no_refund") return "Cancelled — no refund, customer's money kept";
     if (r.outcome === "already_refunded") return "Cancelled — already refunded earlier";
     if (r.outcome === "nothing_owed") return "Cancelled — nothing had been paid";
@@ -1190,7 +1190,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+      <div className="bg-white rounded-lg border border-gray-300 w-full max-w-xl p-7 space-y-4 max-h-[88vh] overflow-y-auto">
         <h4 className="font-bold text-gray-800 text-lg">
           {booking.staged ? `Already confirmed — ${cancelOnlyLabel(booking)}` : "Confirm this booking"}
         </h4>
@@ -1285,18 +1285,18 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
               const open = !!pv.existingRequest;
               const nm = pv.normal, ns = pv.noShow;
               const rows = [
-                { v: "full", title: "Full refund", desc: `Our issue. The deposit and the online payment fee are both returned: ${fmt(pv.total || 0)}.`, off: null },
+                { v: "full", title: "Full refund", desc: "Our issue. The deposit and the online payment fee are both returned to the customer.", off: null },
                 { v: "normal", title: "Normal refund",
-                  desc: nm && nm.available ? `The deposit is returned but the ${fmt(nm.gatewayFeeKept)} online payment fee is not: ${fmt(nm.total)}.` : "The deposit is returned but the online payment fee is not.",
+                  desc: "The deposit is returned, but the online payment fee is not.",
                   off: open ? "Not available while the customer's own refund request is open." : !(nm && nm.available) ? "No online payment fee on this booking, so it would be the same as a Full refund." : null },
-                { v: "no_show", title: "No-show refund",
-                  desc: ns && ns.pickupPassed ? `The ${fmt(ns.forfeit)} deposit is not returned, the rest is: ${fmt(ns.total)}.` : "The customer didn't show up. The deposit is not returned, everything else is.",
-                  off: open ? "Not available while the customer's own refund request is open." : !(ns && ns.pickupPassed) ? "Only available once the pickup time has passed." : null },
+                { v: "no_show", title: "No Deposit Refund",
+                  desc: "The deposit is not returned. Everything else the customer paid is refunded.",
+                  off: open ? "Not available while the customer's own refund request is open." : !ns ? "Not available for this booking." : null },
                 { v: "cancel", title: "Cancel only (no refund)", desc: "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.",
                   off: open ? "The customer has an open refund request: approve or reject it first, or choose Full refund." : null },
               ];
               return rows.map((o) => (
-                <label key={o.v} className={`flex items-start gap-3 p-2.5 rounded-xl border ${o.off ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${choice === o.v ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
+                <label key={o.v} className={`flex items-start gap-3 px-3.5 py-2.5 rounded-md border ${o.off ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${choice === o.v ? "border-teal-600 bg-teal-50" : "border-gray-200 hover:bg-gray-50"}`}`}>
                   <input type="radio" className="mt-1" checked={choice === o.v} disabled={!!o.off || !!booking.staged} onChange={() => setChoice(o.v)} />
                   <div>
                     <p className="text-sm font-semibold text-gray-800">{o.title}</p>
@@ -1316,7 +1316,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
                     <p className="text-xs text-red-700">No money is returned. The customer keeps nothing back and is told no refund was issued.</p>
                   ) : (
                     <>
-                      {choice === "no_show" && pv.noShow && <p className="text-xs text-amber-700">Deposit kept (no-show): -{fmt(pv.noShow.forfeit)}</p>}
+                      {choice === "no_show" && pv.noShow && <p className="text-xs text-amber-700">Deposit not refunded: -{fmt(pv.noShow.forfeit)}</p>}
                       {choice === "normal" && pv.normal && <p className="text-xs text-amber-700">Online payment fee kept: -{fmt(pv.normal.gatewayFeeKept)}</p>}
                       <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(f.total)}</span></p>
                       {pv.existingRequest && (

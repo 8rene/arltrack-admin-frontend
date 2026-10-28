@@ -66,6 +66,8 @@ const timeAgo = (ts) => {
 const ROUTE_BY_COLLECTION = {
   bookings: "/bookings",
   user: "/users",
+  idResubmitRequests: "/users",
+  editRequests: "/users",
   cars: "/car-tracking",
   refundRequests: "/refund-requests",
   maintenance: "/maintenance",
@@ -106,6 +108,8 @@ const META_BY_TYPE = {
   inspection_return_needed: { bg: "bg-orange-100", emoji: "📋", title: "Return Inspection Needed" },
   // Sent to the requester themself once an Owner/Admin reviews their
   // profile-edit or ID/license resubmission request.
+  id_resubmit_request:  { bg: "bg-indigo-100", emoji: "🪪", title: "ID Resubmission" },
+  edit_request:         { bg: "bg-blue-100",   emoji: "✏️", title: "Profile Edit Request" },
   profile_edit_approved: { bg: "bg-green-100", emoji: "✅", title: "Profile Update" },
   profile_edit_rejected: { bg: "bg-red-100",   emoji: "❌", title: "Profile Update" },
   id_resubmit_approved:  { bg: "bg-green-100", emoji: "✅", title: "Document/License Update" },
@@ -356,6 +360,15 @@ export default function Header({ title = "Dashboard" }) {
     }
     if (n.refCollection === "cars" && n.refID) {
       navigate("/car-tracking", { state: { selectCarId: n.refID } });
+      return;
+    }
+    // Document resubmission / profile edit requests → the exact modal on the Users page.
+    // requesterRole (stored on the notification) picks the right role tab; older
+    // notifications without it fall back to Customers.
+    if ((n.refCollection === "idResubmitRequests" || n.refCollection === "editRequests") && n.refID) {
+      const role = String(n.requesterRole || "customer").toLowerCase();
+      const tab  = n.refCollection === "idResubmitRequests" ? "documents" : "editRequests";
+      navigate(`/users?role=${role}&tab=${tab}&open=${n.refID}`);
       return;
     }
     const base = ROUTE_BY_COLLECTION[n.refCollection];
