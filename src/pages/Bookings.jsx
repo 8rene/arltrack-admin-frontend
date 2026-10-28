@@ -611,21 +611,24 @@ function EditModal({ booking, onClose, onSave }) {
 }
 
 // ─── REFUND & CANCEL MODAL ────────────────────────────────────────────────────
-// Admin/Owner only. "Refund & cancel" hits POST /api/bookings/:id/refund-cancel,
-// which sends the PayMongo refund(s), cancels the booking + GPS session, flips
-// the refund-request/payment records and notifies the customer. "Cancel only"
-// cancels without returning any money.
+// Admin/Owner only. Three refund types, each hitting the server, which sends the PayMongo refund(s), cancels the booking
+// + GPS session, flips the refund-request/payment records and notifies the customer:
+//   Full refund      -- our issue: deposit returned, gateway fee returned     POST /refund-cancel { refundType: "full" }
+//   Normal refund    -- deposit returned, gateway fee kept                    POST /refund-cancel { refundType: "normal" }
+//   No-show refund   -- pickup time passed: deposit kept, gateway fee returned POST /no-show
+// "Cancel only" cancels without returning any money.
 
 function RefundCancelModal({ booking, onClose, onDone }) {
   const { fmt } = useCurrency();
   const { getToken } = useAuth();
   const [preview, setPreview]   = useState(null);
   const [loading, setLoading]   = useState(true);
-  const [mode, setMode]         = useState("refund"); // "refund" | "cancel" | "no_show"
+  const [mode, setMode]         = useState("full"); // "full" | "normal" | "no_show" | "cancel"
   const [reason, setReason]     = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]       = useState(null);
   const [notice, setNotice]     = useState(null); // set when part of the money has to be settled by staff after the cancel went through
+  const [confirming, setConfirming] = useState(false); // "Cancel only" keeps the customer's money: ask once more first
   const navigate = useNavigate();
   const api = `${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`;
 
@@ -645,10 +648,27 @@ function RefundCancelModal({ booking, onClose, onDone }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booking.id]);
 
+  useEffect(() => { setConfirming(false); }, [mode]);
+
   const hasMoney = (preview?.total || 0) > 0;
   const blocked  = !!preview?.existingRequest && (mode === "cancel" || mode === "no_show");
   const ns       = preview?.noShow;
+  const nm       = preview?.normal;
   const canNoShow = !!ns && ns.pickupPassed && !preview?.alreadyRefunded;
+  // A customer's open refund request is approved as a Full refund, so Normal / No-show can't be chosen meanwhile.
+  const hasOpenRequest = !!preview?.existingRequest;
+  const canNormal = !!nm && nm.available && !hasOpenRequest && !preview?.alreadyRefunded;
+  const isRefundMode = mode === "full" || mode === "normal" || mode === "no_show";
+  // The figures of the option that is selected.
+  const sel = mode === "full" ? { total: preview?.total || 0, online: preview?.onlineAmount || 0, manual: preview?.manualAmount || 0, scheduled: false, sendAfter: null }
+    : mode === "normal" && nm ? { total: nm.total, online: nm.onlineAmount, manual: nm.manualAmount, scheduled: !!nm.scheduled, sendAfter: nm.sendAfter }
+    : mode === "no_show" && ns ? { total: ns.total, online: ns.onlineAmount, manual: ns.manualAmount, scheduled: !!ns.scheduled, sendAfter: ns.sendAfter }
+    : null;
+  const paidSoFar = ns?.grossPaid ?? nm?.grossPaid ?? 0;
+  const sendDay = (v) => {
+    const d = v ? new Date(v) : null;
+    return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" }) : "after midnight";
+  };
 
   const submit = async () => {
     setSubmitting(true); setError(null);
@@ -657,7 +677,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
       const res  = await fetch(mode === "no_show" ? `${api}/no-show` : `${api}/refund-cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-        body: JSON.stringify(mode === "no_show" ? { reason: reason.trim() } : { reason: reason.trim(), refund: mode === "refund" }),
+        body: JSON.stringify(mode === "no_show" ? { reason: reason.trim() } : { reason: reason.trim(), refund: mode !== "cancel", refundType: mode === "normal" ? "normal" : "full" }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Request failed.");
@@ -669,12 +689,14 @@ function RefundCancelModal({ booking, onClose, onDone }) {
     finally { setSubmitting(false); }
   };
 
-  const opt = (value, title, desc) => (
-    <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${mode === value ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}>
-      <input type="radio" className="mt-1" checked={mode === value} onChange={() => setMode(value)} />
+  // disabledWhy: when set the option is greyed out and this says why (instead of the option silently disappearing).
+  const opt = (value, title, desc, disabledWhy = null) => (
+    <label className={`flex items-start gap-3 p-3 rounded-xl border ${disabledWhy ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${mode === value ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
+      <input type="radio" className="mt-1" checked={mode === value} disabled={!!disabledWhy} onChange={() => setMode(value)} />
       <div>
         <p className="text-sm font-semibold text-gray-800">{title}</p>
         <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+        {disabledWhy && <p className="text-xs text-amber-700 mt-0.5">{disabledWhy}</p>}
       </div>
     </label>
   );
@@ -728,42 +750,59 @@ function RefundCancelModal({ booking, onClose, onDone }) {
           <>
             {preview.alreadyRefunded ? (
               <div className="text-sm bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">This payment was already refunded — cancelling will just close the booking.</div>
-            ) : hasMoney ? (
-              <div className="text-sm bg-gray-50 border border-gray-200 p-3 rounded-xl space-y-1">
-                <div className="flex justify-between"><span className="text-gray-500">Total to refund</span><span className="font-semibold">{fmt(preview.total)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Via PayMongo (automatic)</span><span>{fmt(preview.onlineAmount)}</span></div>
-                {preview.manualAmount > 0 && <div className="flex justify-between"><span className="text-gray-500">Hand back in person</span><span>{fmt(preview.manualAmount)}</span></div>}
-              </div>
-            ) : (
+            ) : hasMoney ? null : (
               <div className="text-sm bg-gray-50 border border-gray-200 text-gray-600 p-3 rounded-xl">{preview.unrefundableAmount > 0 ? "Nothing can be refunded through PayMongo for this booking." : "Nothing has been paid on this booking, so there is nothing to refund."}</div>
             )}
 
             {!preview.alreadyRefunded && preview.unrefundableAmount > 0 && (
               <div className="text-sm bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl">
                 <span className="font-semibold">{fmt(preview.unrefundableAmount)} — Payment ID does not exist.</span>{" "}
-                It was paid online but no PayMongo payment ID is on record, so it can't be refunded through PayMongo{hasMoney ? " (the amount above is only the part that can be)" : ""}. Fix the payment record or refund it from the PayMongo dashboard.
+                It was paid online but no PayMongo payment ID is on record, so it can't be refunded through PayMongo{hasMoney ? " (the amount below is only the part that can be)" : ""}. Fix the payment record or refund it from the PayMongo dashboard.
               </div>
             )}
 
             {preview.existingRequest && (
               <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">
-                The customer already has a refund request ({preview.existingRequest.status}). Refunding here will approve that same request — no double refund.
+                The customer already has a refund request ({preview.existingRequest.status}). Refunding here will approve that same request as a Full refund — no double refund.
               </div>
             )}
 
             {hasMoney && (
               <div className="space-y-2">
-                {opt("refund", "Refund & cancel", "Sends the PayMongo refund automatically, cancels the booking and emails the customer. Full refund, no fee.")}
+                {opt("full", "Full refund", `Use this when it's our issue. The deposit and the online payment fee are both returned: ${fmt(preview.total)} back to the customer.`)}
+                {opt(
+                  "normal",
+                  "Normal refund",
+                  nm && nm.available
+                    ? `The deposit is returned but the ${fmt(nm.gatewayFeeKept)} online payment fee is not: ${fmt(nm.total)} back to the customer.`
+                    : "The deposit is returned but the online payment fee is not.",
+                  canNormal ? null : hasOpenRequest ? "Not available while the customer's own refund request is open." : "This booking has no online payment fee to keep, so it would be the same as a Full refund."
+                )}
+                {opt(
+                  "no_show",
+                  "No-show refund",
+                  ns && ns.pickupPassed
+                    ? `The pickup time has passed. The ${fmt(ns.forfeit)} deposit is not returned, the rest is: ${fmt(ns.total)} back to the customer.`
+                    : "The customer didn't show up. The deposit is not returned, everything else is.",
+                  canNoShow ? null : "Only available once the pickup time has passed."
+                )}
                 {opt("cancel", "Cancel only (no refund)", "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.")}
-                {canNoShow && opt("no_show", "Customer didn't show up (no-show)", `Pickup time has passed. Keeps the ${fmt(ns.forfeit)} deposit and refunds the rest (${fmt(ns.total)}).`)}
               </div>
             )}
-            {mode === "no_show" && canNoShow && (
-              <div className="text-sm bg-amber-50 border border-amber-200 p-3 rounded-xl space-y-1">
-                <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(ns.grossPaid)}</span></div>
-                <div className="flex justify-between text-amber-700"><span>Deposit kept (no-show)</span><span className="font-semibold">-{fmt(ns.forfeit)}</span></div>
-                <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(ns.total)}</span></div>
-                {ns.manualAmount > 0 && <p className="text-xs text-orange-600">{fmt(ns.manualAmount)} of this must be handed back in person.</p>}
+
+            {hasMoney && isRefundMode && sel && (
+              <div className={`text-sm border p-3 rounded-xl space-y-1 ${mode === "full" ? "bg-gray-50 border-gray-200" : "bg-amber-50 border-amber-200"}`}>
+                {paidSoFar > 0 && <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(paidSoFar)}</span></div>}
+                {mode === "no_show" && ns && <div className="flex justify-between text-amber-700"><span>Deposit kept (no-show)</span><span className="font-semibold">-{fmt(ns.forfeit)}</span></div>}
+                {mode === "normal" && nm && <div className="flex justify-between text-amber-700"><span>Online payment fee kept</span><span className="font-semibold">-{fmt(nm.gatewayFeeKept)}</span></div>}
+                <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(sel.total)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Via PayMongo (automatic)</span><span>{fmt(sel.online)}</span></div>
+                {sel.manual > 0 && <div className="flex justify-between"><span className="text-gray-500">Hand back in person</span><span>{fmt(sel.manual)}</span></div>}
+                {sel.scheduled && (
+                  <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-2 mt-1">
+                    The customer paid today, and PayMongo can't send a partial refund on the day of payment. The booking is cancelled now and {fmt(sel.online)} is sent by PayMongo on {sendDay(sel.sendAfter)} (after midnight). The customer is told.
+                  </p>
+                )}
               </div>
             )}
 
@@ -771,19 +810,155 @@ function RefundCancelModal({ booking, onClose, onDone }) {
               <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
                 className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" />
             </label>
-            {blocked && <p className="text-xs text-red-600">Resolve the customer's open refund request first, or choose Refund & cancel.</p>}
+            {blocked && <p className="text-xs text-red-600">Resolve the customer's open refund request first, or choose Full refund.</p>}
+            {confirming && (
+              <div className="text-sm bg-red-50 border border-red-300 text-red-800 p-3 rounded-xl space-y-1">
+                <p className="font-semibold">Cancel without a refund?</p>
+                <p className="text-xs">
+                  The customer's money ({fmt(preview?.total || 0)}) is kept, the deposit is not returned, and the customer is told no refund was issued.
+                  If you change your mind, a refund can still be recorded afterwards from the cancelled booking's details.
+                </p>
+              </div>
+            )}
           </>
         )}
 
         <div className="flex gap-3 justify-end pt-1">
           <button onClick={onClose} disabled={submitting} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Back</button>
           <button
-            onClick={submit}
+            onClick={() => (mode === "cancel" && hasMoney && !confirming ? setConfirming(true) : submit())}
             disabled={submitting || loading || !preview || !reason.trim() || blocked}
             className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
           >
-            {submitting ? "Processing…" : mode === "no_show" ? "Mark as No-show" : mode === "refund" && hasMoney ? "Refund & Cancel" : "Cancel Booking"}
+            {submitting ? "Processing…" : confirming ? "Yes, cancel without refund" : !hasMoney || mode === "cancel" ? "Cancel Booking" : mode === "no_show" ? "No-show Refund & Cancel" : mode === "normal" ? "Normal Refund & Cancel" : "Full Refund & Cancel"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── REFUND AFTER CANCEL MODAL ────────────────────────────────────────────────
+// Admin/Owner only. For a booking that was cancelled WITHOUT a refund ("Cancel only"): record that some of the money goes back.
+// Nothing is sent to PayMongo. It is handed back in store and marked as handed back on the Refund Requests page.
+//   Full refund      -- our issue: nothing kept
+//   Normal refund    -- deposit returned, gateway fee kept (the customer's loss is the fee)
+//   No-show / late   -- deposit kept, gateway fee returned (the customer's loss is the deposit)
+//   Custom amount    -- staff type the amount, up to what the customer paid
+function RefundAfterCancelModal({ booking, onClose, onDone }) {
+  const { fmt } = useCurrency();
+  const { getToken } = useAuth();
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode]       = useState("full"); // "full" | "normal" | "no_show" | "manual"
+  const [amount, setAmount]   = useState("");
+  const [reason, setReason]   = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]     = useState(null);
+  const api = `${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`;
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${api}/refund-after-cancel-preview`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!alive) return;
+        if (!ok) throw new Error(j.message || "Could not load the refund options.");
+        setPreview(j.data);
+      })
+      .catch((e) => alive && setError(e.message))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking.id]);
+
+  const opts   = preview?.options;
+  const paid   = preview?.paid || 0;
+  const typed  = Number(amount);
+  const manualOk = Number.isFinite(typed) && typed > 0 && typed <= (opts?.manual?.max || 0);
+  // What the selected option returns and what the customer loses.
+  const refund = !opts ? 0 : mode === "full" ? opts.full.total : mode === "normal" ? opts.normal.total : mode === "no_show" ? opts.no_show.total : (manualOk ? typed : 0);
+  const kept   = Math.max(0, Math.round((paid - refund) * 100) / 100);
+  const canSubmit = !!opts && !!reason.trim() && !submitting && (mode !== "manual" || manualOk)
+    && (mode !== "normal" || opts.normal.available) && (mode !== "no_show" || opts.no_show.available);
+
+  const submit = async () => {
+    setSubmitting(true); setError(null);
+    try {
+      const res = await fetch(`${api}/refund-after-cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ option: mode, reason: reason.trim(), ...(mode === "manual" ? { amount: typed } : {}) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Request failed.");
+      onDone(json.message || "Refund recorded.");
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
+  };
+
+  const opt = (value, title, desc, disabledWhy = null) => (
+    <label className={`flex items-start gap-3 p-3 rounded-xl border ${disabledWhy ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${mode === value ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
+      <input type="radio" className="mt-1" checked={mode === value} disabled={!!disabledWhy} onChange={() => setMode(value)} />
+      <div className="flex-1">
+        <p className="text-sm font-semibold text-gray-800">{title}</p>
+        <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+        {disabledWhy && <p className="text-xs text-amber-700 mt-0.5">{disabledWhy}</p>}
+        {value === "manual" && mode === "manual" && (
+          <input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)}
+            placeholder={`Amount (up to ${fmt(opts?.manual?.max || 0)})`}
+            className="mt-2 w-full border rounded-lg px-3 py-2 text-sm outline-none" />
+        )}
+      </div>
+    </label>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h2 className="font-bold text-lg text-gray-800">Refund Cancelled Booking</h2>
+        <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
+        {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
+
+        {loading ? (
+          <div className="text-sm text-gray-400">Checking payment…</div>
+        ) : preview && !preview.eligible ? (
+          <div className="text-sm bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">{preview.blockedReason || "A refund can't be recorded for this booking."}</div>
+        ) : opts && (
+          <>
+            <p className="text-xs text-gray-500">This booking was cancelled without a refund, so the customer's money is being kept. Choose what goes back. It is handed back in store, nothing is sent to PayMongo.</p>
+            <div className="space-y-2">
+              {opt("full", "Full refund", `Our issue. Everything the customer paid goes back: ${fmt(opts.full.total)}.`)}
+              {opt("normal", "Normal refund",
+                opts.normal.available ? `The deposit goes back but the ${fmt(opts.normal.gatewayFeeKept)} online payment fee is not returned: ${fmt(opts.normal.total)} back.` : "The deposit goes back but the online payment fee is not.",
+                opts.normal.available ? null : "This booking has no online payment fee to keep, so it would be the same as a Full refund.")}
+              {opt("no_show", "No-show / late cancellation",
+                opts.no_show.available ? `The ${fmt(opts.no_show.forfeit)} deposit is kept, the rest goes back: ${fmt(opts.no_show.total)} back.` : "The deposit is kept, everything else goes back.",
+                opts.no_show.available ? null : "The deposit is all that was paid, so nothing would go back.")}
+              {opt("manual", "Custom amount", `You decide how much goes back (up to ${fmt(opts.manual.max)}). The rest is kept.`)}
+            </div>
+
+            <div className={`text-sm border p-3 rounded-xl space-y-1 ${kept > 0 ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"}`}>
+              <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(paid)}</span></div>
+              {kept > 0 && <div className="flex justify-between text-amber-700"><span>Kept (customer's loss)</span><span className="font-semibold">-{fmt(kept)}</span></div>}
+              <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Hand back in store</span><span className="font-black">{fmt(refund)}</span></div>
+            </div>
+
+            <label className="block text-sm font-medium text-gray-700">Reason (kept in the audit log)
+              <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
+                className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" />
+            </label>
+          </>
+        )}
+
+        <div className="flex gap-3 justify-end pt-1">
+          <button onClick={onClose} disabled={submitting} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Back</button>
+          {preview?.eligible && (
+            <button onClick={submit} disabled={!canSubmit}
+              className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-teal-700 transition-colors">
+              {submitting ? "Recording…" : "Record refund"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1609,15 +1784,23 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                   <InfoField label="Cancelled By" value={
                     booking.cancelledBy === "system" ? "System (auto-cancelled)"
                     : booking.cancelledBy === "customer" ? `${booking.cancelledByName || booking.customerName || "Customer"} · Customer`
-                    : booking.cancelledBy === "staff" ? (booking.cancelledByName ? `${booking.cancelledByName} · Staff` : "Staff · name not recorded")
+                    : booking.cancelledBy === "staff" ? (booking.cancelledByName ? `${booking.cancelledByName} · ${booking.cancelledByRole || "Staff"}` : "Staff · name not recorded")
                     : "Not recorded"
                   } />
                   <InfoField label="Cancelled At" value={booking.cancelledAt ? fmtDateTime(booking.cancelledAt) : null} />
-                  {booking.approvedByName && <InfoField label="Approved By" value={`${booking.approvedByName} · Staff`} />}
+                  {booking.approvedByName && <InfoField label="Approved By" value={`${booking.approvedByName} · ${booking.approvedByRole || "Staff"}`} />}
                   <InfoField wide label="Reason" value={booking.cancelDisplayReason} />
+                  {booking.refundSummary?.byStaff && (
+                    <InfoField wide label="Refund Type" value={
+                      booking.refundSummary.depositForfeited > 0 ? `No-show refund · ${fmt(booking.refundSummary.depositForfeited)} deposit not returned`
+                      : booking.refundSummary.gatewayFeeKept > 0 ? `Normal refund · ${fmt(booking.refundSummary.gatewayFeeKept)} payment fee not returned`
+                      : booking.refundSummary.bookingPaid > (booking.refundSummary.amount || 0) ? `Partial refund · ${fmt(booking.refundSummary.bookingPaid - booking.refundSummary.amount)} not returned`
+                      : "Full refund"
+                    } />
+                  )}
                   <InfoField wide label="Refund" value={(booking.refundSummary?.status || refundNote) ? (
                     <span className="flex items-center justify-between gap-3">
-                      <span>{booking.refundSummary?.status || refundNote}</span>
+                      <span>{booking.refundSummary?.status || refundNote}{booking.refundSummary?.scheduled ? " · sends after midnight" : ""}</span>
                       {booking.refundSummary?.refundRequestID && (
                         <button
                           type="button"
@@ -1669,6 +1852,9 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
             )}
             {onRefund && canRefundCancel(booking.status) && (
               <button onClick={() => onRefund(booking)} className="flex-1 px-3 py-2 border border-orange-300 text-orange-600 rounded-xl text-sm hover:bg-orange-50 transition-colors whitespace-nowrap">Refund / Cancel</button>
+            )}
+            {onRefund && status === "cancelled" && !booking.refundSummary && (refundNote === "No refund" || refundNote === "Deposit kept") && (
+              <button onClick={() => onRefund(booking)} className="flex-1 px-3 py-2 border border-orange-300 text-orange-600 rounded-xl text-sm hover:bg-orange-50 transition-colors whitespace-nowrap">Refund (cancelled)</button>
             )}
             {onDelete && (
               <button onClick={() => onDelete(booking)} className="flex-1 px-3 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 transition-colors">Delete</button>
@@ -2069,7 +2255,14 @@ export default function Bookings() {
         />
       )}
       {editBooking   && <EditModal booking={editBooking} onClose={() => setEditBooking(null)} onSave={() => { setEditBooking(null); fetchBookings(); }} />}
-      {refundBooking && (
+      {refundBooking && String(refundBooking.status || "").toLowerCase() === "cancelled" && (
+        <RefundAfterCancelModal
+          booking={refundBooking}
+          onClose={() => setRefundBooking(null)}
+          onDone={(msg) => { setRefundBooking(null); showToast(msg, "success"); fetchBookings(); }}
+        />
+      )}
+      {refundBooking && String(refundBooking.status || "").toLowerCase() !== "cancelled" && (
         <RefundCancelModal
           booking={refundBooking}
           onClose={() => setRefundBooking(null)}

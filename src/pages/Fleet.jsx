@@ -681,11 +681,12 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [lastResults, setLastResults] = useState(null); // refundResults from a stopped attempt, for context on retry
-  // bookingIDs staff already confirmed on the last screen. Kept HERE (not
+  // The bookings staff already confirmed on the last screen, with HOW each one is to be refunded:
+  // { [bookingID]: "full" | "normal" | "no_show" | "cancel" }. Kept HERE (not
   // inside the modal) so that if the verification code turns out to be
   // expired at the final click, staff get a fresh code and come back to the
-  // same confirmed rows instead of re-confirming every booking from scratch.
-  const [stagedIDs, setStagedIDs] = useState([]);
+  // same confirmed rows (and the same refund choices) instead of re-confirming every booking from scratch.
+  const [stagedChoices, setStagedChoices] = useState({});
   const [otpNotice, setOtpNotice] = useState(null); // why we're back on the code screen
   const [reloadKey, setReloadKey] = useState(0); // remounts the confirm list after a partial batch
 
@@ -695,7 +696,7 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
     try {
       const data = await apiFetch(`/api/fleet/cars/${car.id}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ status: targetStatus, statusReason: reason, otp }),
+        body: JSON.stringify({ status: targetStatus, statusReason: reason, otp, refundChoices: stagedChoices }),
       });
       if (data.statusChanged) {
         onDone(targetStatus, reason);
@@ -707,7 +708,7 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
       // stay on this screen, show what happened, and reload the list (via
       // the key bump) so already-resolved bookings drop out of "upcoming".
       setLastResults(data.refundResults || []);
-      setStagedIDs([]);
+      setStagedChoices({});
       setSubmitError(data.message || "The batch stopped partway. Review the remaining bookings and try again.");
       setReloadKey((k) => k + 1);
     } catch (e) {
@@ -771,8 +772,8 @@ function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
       reason={reason}
       submitting={submitting}
       submitError={submitError}
-      initialStaged={stagedIDs}
-      onStagedChange={setStagedIDs}
+      initialStaged={stagedChoices}
+      onStagedChange={setStagedChoices}
       onSubmit={submitBatch}
       onCancel={onCancel}
     />
@@ -939,11 +940,27 @@ function OtpConfirmModal({ carLabel, targetStatus, priorResults, notice, onNext,
 // server: it fires the whole batch (refunds + cancels + the status write)
 // in one call, all or nothing up to the first real failure — see
 // StatusChangeFlow.submitBatch and changeCarStatus() on the backend.
+// How staff can settle one upcoming booking when its car goes to Maintenance / Inactive. Same four choices as the Cancel
+// button on the Bookings page, and the server runs exactly the one picked (see changeCarStatus -> refundChoices).
+const REFUND_CHOICE_LABEL = { full: "Full refund", normal: "Normal refund", no_show: "No-show refund", cancel: "Cancel only (no refund)" };
+// The money of one choice, read from the booking's refundPreview (Full at the top level, `normal` and `noShow` blocks).
+const refundFigures = (pv, choice) => {
+  const p = pv || {};
+  if (choice === "normal" && p.normal) return { total: p.normal.total || 0, online: p.normal.onlineAmount || 0, manual: p.normal.manualAmount || 0, scheduled: !!p.normal.scheduled, sendAfter: p.normal.sendAfter || null };
+  if (choice === "no_show" && p.noShow) return { total: p.noShow.total || 0, online: p.noShow.onlineAmount || 0, manual: p.noShow.manualAmount || 0, scheduled: !!p.noShow.scheduled, sendAfter: p.noShow.sendAfter || null };
+  if (choice === "cancel") return { total: 0, online: 0, manual: 0, scheduled: false, sendAfter: null };
+  return { total: p.total || 0, online: p.onlineAmount || 0, manual: p.manualAmount || 0, scheduled: false, sendAfter: null };
+};
+const sendDayLabel = (v) => {
+  const d = v ? new Date(v) : null;
+  return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" }) : "after midnight";
+};
+
 function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting, submitError, initialStaged = [], onStagedChange, onSubmit, onCancel }) {
   const { fmt } = useCurrency();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
-  const [upcoming, setUpcoming] = useState([]); // [{ ...booking, refundPreview, staged }]
+  const [upcoming, setUpcoming] = useState([]); // [{ ...booking, refundPreview, staged, choice }]
   const [ongoing, setOngoing] = useState([]);
   const [resolved, setResolved] = useState([]);
   // bookingID of the row whose mini confirm modal is open, or null. Clicking
@@ -961,7 +978,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
     apiFetch(`/api/fleet/cars/${car.id}/status-change-preview`)
       .then((data) => {
         if (cancelled) return;
-        setUpcoming((data?.upcoming || []).map((b) => ({ ...b, staged: initialStagedRef.current.includes(b.bookingID) })));
+        setUpcoming((data?.upcoming || []).map((b) => ({ ...b, staged: !!initialStagedRef.current[b.bookingID], choice: initialStagedRef.current[b.bookingID] || null })));
         setOngoing(data?.ongoing || []);
         setResolved(data?.resolved || []);
       })
@@ -970,16 +987,18 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
     return () => { cancelled = true; };
   }, [car.id]);
 
-  const toggleStaged = (bookingID) => {
-    const next = upcoming.map((b) => b.bookingID === bookingID ? { ...b, staged: !b.staged } : b);
+  // Confirm (with the chosen refund type) or un-confirm one booking.
+  const toggleStaged = (bookingID, choice = "full") => {
+    const next = upcoming.map((b) => b.bookingID === bookingID ? (b.staged ? { ...b, staged: false, choice: null } : { ...b, staged: true, choice }) : b);
     setUpcoming(next);
-    onStagedChange?.(next.filter((b) => b.staged).map((b) => b.bookingID)); // remembered by StatusChangeFlow
+    onStagedChange?.(Object.fromEntries(next.filter((b) => b.staged).map((b) => [b.bookingID, b.choice || "full"]))); // remembered by StatusChangeFlow
   };
 
   const dateRange = (b) => `${fmtDateTime(b.startDateTime)} – ${fmtDateTime(b.endDateTime)}`;
 
   const resolvedLabel = (r) => {
-    if (r.outcome === "refunded") return `Refunded ${fmt(r.amount || 0)}`;
+    if (r.outcome === "refunded") return `${r.depositForfeited > 0 ? "No-show refund" : r.gatewayFeeKept > 0 ? "Normal refund" : "Refunded"} ${fmt(r.amount || 0)}`;
+    if (r.outcome === "cancelled_no_refund") return "Cancelled — no refund, customer's money kept";
     if (r.outcome === "already_refunded") return "Cancelled — already refunded earlier";
     if (r.outcome === "nothing_owed") return "Cancelled — nothing had been paid";
     if (r.outcome === "deposit_forfeited") return "Cancelled — deposit kept, nothing to refund";
@@ -1027,7 +1046,13 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
                           <p className="text-xs text-amber-700 mt-1">No payment record found — this will just cancel the booking.</p>
                         ) : (
                           <>
-                            <p className="text-xs text-gray-500">{fmt(b.refundPreview?.total || 0)} to refund</p>
+                            {b.staged ? (
+                              <p className="text-xs text-emerald-700">
+                                {REFUND_CHOICE_LABEL[b.choice] || "Full refund"} · {b.choice === "cancel" ? "no money returned" : `${fmt(refundFigures(b.refundPreview, b.choice).total)} to refund`}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-gray-500">Choose how to refund this booking (up to {fmt(b.refundPreview?.total || 0)})</p>
+                            )}
                             {b.refundPreview?.existingRequest && (
                               <p className="text-xs text-blue-700 mt-0.5">Customer already requested a refund — confirming will approve it.</p>
                             )}
@@ -1047,7 +1072,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
                           ? "Confirmed ✓"
                           : (b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment)
                             ? "Confirm cancel"
-                            : `Refund ${fmt(b.refundPreview?.total || 0)}`}
+                            : "Choose refund"}
                       </button>
                     </div>
                   ))}
@@ -1095,8 +1120,9 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
 
         {!loading && !loadError && upcoming.length > 0 && (() => {
           const toRefund = upcoming.filter((b) => !b.refundPreview?.alreadyRefunded && !b.refundPreview?.noPayment);
-          const total = toRefund.reduce((sum, b) => sum + (b.refundPreview?.total || 0), 0);
-          const manual = toRefund.reduce((sum, b) => sum + (b.refundPreview?.manualAmount || 0), 0);
+          const figs = (b) => refundFigures(b.refundPreview, b.staged ? b.choice : "full");   // a confirmed row counts its chosen option
+          const total = toRefund.reduce((sum, b) => sum + figs(b).total, 0);
+          const manual = toRefund.reduce((sum, b) => sum + figs(b).manual, 0);
           return (
             <div className="border-t pt-3 space-y-1">
               <div className="flex items-center justify-between text-sm">
@@ -1132,7 +1158,7 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
         <BookingConfirmModal
           booking={activeBooking}
           fmt={fmt}
-          onConfirm={() => { toggleStaged(activeBooking.bookingID); setActiveBookingID(null); }}
+          onConfirm={(choice) => { toggleStaged(activeBooking.bookingID, choice); setActiveBookingID(null); }}
           onUnconfirm={() => { toggleStaged(activeBooking.bookingID); setActiveBookingID(null); }}
           onClose={() => setActiveBookingID(null)}
         />
@@ -1147,7 +1173,9 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
 // own real Confirm button. Nothing gets staged just from clicking the row
 // button anymore; this is the actual "are you sure about THIS one"
 // step — the row button only opens it.
+const cancelOnlyLabel = (b) => (b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment) ? "cancel" : (REFUND_CHOICE_LABEL[b.choice] || "Full refund");
 function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) {
+  const [choice, setChoice] = useState(booking.choice || "full"); // full | normal | no_show | cancel
   const already = booking.refundPreview?.alreadyRefunded;
   const noPayment = !!booking.refundPreview?.noPayment;
   const cancelOnly = already || noPayment;
@@ -1164,7 +1192,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4 max-h-[85vh] overflow-y-auto">
         <h4 className="font-bold text-gray-800 text-lg">
-          {booking.staged ? "Already confirmed" : "Confirm this booking"}
+          {booking.staged ? `Already confirmed — ${cancelOnlyLabel(booking)}` : "Confirm this booking"}
         </h4>
 
         {/* Booking details */}
@@ -1242,7 +1270,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
           </div>
         )}
 
-        {/* What confirming this row actually does */}
+        {/* What confirming this row actually does: the staff member picks HOW this booking is refunded */}
         {cancelOnly ? (
           <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             {noPayment
@@ -1250,21 +1278,66 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
               : "Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued."}
           </p>
         ) : (
-          <div className="text-sm bg-gray-50 border rounded-lg px-3 py-2 space-y-0.5">
-            <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(booking.refundPreview?.total || 0)}</span></p>
-            {booking.refundPreview?.existingRequest && (
-              <p className="text-xs text-blue-700">The customer already requested a refund — confirming approves that request.</p>
-            )}
-            {hasManual && (
-              <p className="text-xs text-gray-500">
-                {fmt(booking.refundPreview.onlineAmount || 0)} via PayMongo + {fmt(booking.refundPreview.manualAmount)} handed back in person
-              </p>
-            )}
-            {!cancelOnly && (booking.refundPreview?.unrefundableAmount || 0) > 0 && (
-              <p className="text-xs text-red-600 font-semibold">
-                {fmt(booking.refundPreview.unrefundableAmount)} not refundable — Payment ID does not exist
-              </p>
-            )}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-gray-500">What kind of refund?</p>
+            {(() => {
+              const pv = booking.refundPreview || {};
+              const open = !!pv.existingRequest;
+              const nm = pv.normal, ns = pv.noShow;
+              const rows = [
+                { v: "full", title: "Full refund", desc: `Our issue. The deposit and the online payment fee are both returned: ${fmt(pv.total || 0)}.`, off: null },
+                { v: "normal", title: "Normal refund",
+                  desc: nm && nm.available ? `The deposit is returned but the ${fmt(nm.gatewayFeeKept)} online payment fee is not: ${fmt(nm.total)}.` : "The deposit is returned but the online payment fee is not.",
+                  off: open ? "Not available while the customer's own refund request is open." : !(nm && nm.available) ? "No online payment fee on this booking, so it would be the same as a Full refund." : null },
+                { v: "no_show", title: "No-show refund",
+                  desc: ns && ns.pickupPassed ? `The ${fmt(ns.forfeit)} deposit is not returned, the rest is: ${fmt(ns.total)}.` : "The customer didn't show up. The deposit is not returned, everything else is.",
+                  off: open ? "Not available while the customer's own refund request is open." : !(ns && ns.pickupPassed) ? "Only available once the pickup time has passed." : null },
+                { v: "cancel", title: "Cancel only (no refund)", desc: "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.",
+                  off: open ? "The customer has an open refund request: approve or reject it first, or choose Full refund." : null },
+              ];
+              return rows.map((o) => (
+                <label key={o.v} className={`flex items-start gap-3 p-2.5 rounded-xl border ${o.off ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${choice === o.v ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
+                  <input type="radio" className="mt-1" checked={choice === o.v} disabled={!!o.off || !!booking.staged} onChange={() => setChoice(o.v)} />
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">{o.title}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{o.desc}</p>
+                    {o.off && <p className="text-xs text-amber-700 mt-0.5">{o.off}</p>}
+                  </div>
+                </label>
+              ));
+            })()}
+
+            {(() => {
+              const f = refundFigures(booking.refundPreview, choice);
+              const pv = booking.refundPreview || {};
+              return (
+                <div className={`text-sm border rounded-lg px-3 py-2 space-y-0.5 ${choice === "full" ? "bg-gray-50" : "bg-amber-50 border-amber-200"}`}>
+                  {choice === "cancel" ? (
+                    <p className="text-xs text-red-700">No money is returned. The customer keeps nothing back and is told no refund was issued.</p>
+                  ) : (
+                    <>
+                      {choice === "no_show" && pv.noShow && <p className="text-xs text-amber-700">Deposit kept (no-show): -{fmt(pv.noShow.forfeit)}</p>}
+                      {choice === "normal" && pv.normal && <p className="text-xs text-amber-700">Online payment fee kept: -{fmt(pv.normal.gatewayFeeKept)}</p>}
+                      <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(f.total)}</span></p>
+                      {pv.existingRequest && (
+                        <p className="text-xs text-blue-700">The customer already requested a refund — confirming approves that request as a Full refund.</p>
+                      )}
+                      {f.manual > 0 && (
+                        <p className="text-xs text-gray-500">{fmt(f.online)} via PayMongo + {fmt(f.manual)} handed back in person</p>
+                      )}
+                      {f.scheduled && (
+                        <p className="text-xs text-blue-700">The customer paid today, so PayMongo can't send a partial refund yet: {fmt(f.online)} is sent on {sendDayLabel(f.sendAfter)} (after midnight). The booking is cancelled now.</p>
+                      )}
+                    </>
+                  )}
+                  {(pv.unrefundableAmount || 0) > 0 && choice !== "cancel" && (
+                    <p className="text-xs text-red-600 font-semibold">
+                      {fmt(pv.unrefundableAmount)} not refundable — Payment ID does not exist
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -1279,9 +1352,9 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
               Un-confirm
             </button>
           ) : (
-            <button onClick={onConfirm}
-              className={`flex-1 px-4 py-2 text-white rounded-xl text-sm font-medium ${cancelOnly ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
-              {cancelOnly ? "Confirm cancel" : `Confirm refund ${fmt(booking.refundPreview?.total || 0)}`}
+            <button onClick={() => onConfirm(cancelOnly ? "full" : choice)}
+              className={`flex-1 px-4 py-2 text-white rounded-xl text-sm font-medium ${cancelOnly || choice === "cancel" ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
+              {cancelOnly ? "Confirm cancel" : choice === "cancel" ? "Confirm cancel only" : `Confirm ${REFUND_CHOICE_LABEL[choice].toLowerCase()} ${fmt(refundFigures(booking.refundPreview, choice).total)}`}
             </button>
           )}
         </div>
