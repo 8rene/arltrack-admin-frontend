@@ -6,6 +6,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
+import { govIdTypeOptions } from "../utils/govIdTypes";
 
 // How many days out an expiring (not yet expired) license starts showing
 // the amber warning. Kept in sync by hand with the admin backend's
@@ -762,6 +763,10 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
   const [expiry, setExpiry]   = useState("");
   const [docType, setDocType]     = useState(current.documentType || "");
   const [docNumber, setDocNumber] = useState(current.documentNumber || "");
+  const [licenseNo, setLicenseNo] = useState(current.driversLicenseNumber || "");
+  // Government ID only: the selfie holding the ID goes with the photo. A driver's license needs no selfie.
+  const [selfieFile, setSelfieFile]       = useState(null);
+  const [selfiePreview, setSelfiePreview] = useState(null);
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState(null);
 
@@ -777,6 +782,13 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
     if (!f) return;
     setFile(f);
     setPreview(URL.createObjectURL(f));
+  };
+
+  const handleSelfie = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setSelfieFile(f);
+    setSelfiePreview(URL.createObjectURL(f));
   };
 
   const authedFetch = async (path, body) => {
@@ -797,6 +809,8 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
     if (!file) { setError(`Please choose a photo of your ${isLicense ? "license" : "document"} first.`); return; }
     if (canEditDirectly && isLicense && !expiry) { setError("Please enter the expiry date shown on the card."); return; }
     if (!isLicense && (!docType.trim() || !docNumber.trim())) { setError("Please fill in the document type and number shown on the card."); return; }
+    if (isLicense && !licenseNo.trim()) { setError("Please enter the driver's license number."); return; }
+    if (!isLicense && !selfieFile) { setError("Please add a selfie holding your ID — it's required for a government ID."); return; }
     setSaving(true);
     setError(null);
     try {
@@ -805,12 +819,22 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
       await uploadBytes(storageRef, file);
       const newUrl = await getDownloadURL(storageRef);
 
+      let newSelfieUrl;
+      if (!isLicense) {
+        // Same folder as the ID photo (the one the Storage rules already allow for this flow); the name marks it as the selfie.
+        const selfieRef = ref(storage, `documentResubmit/${current.uid}_${Date.now()}_selfie_${selfieFile.name.replace(/[^\w.-]/g, "_")}`);
+        await uploadBytes(selfieRef, selfieFile);
+        newSelfieUrl = await getDownloadURL(selfieRef);
+      }
+
       if (canEditDirectly) {
         // Owner/Admin — applies immediately, no review step.
         await authedFetch("/api/profile/document", {
           documentKind,
           newUrl,
-          ...(isLicense ? { driverLicenseExpiry: expiry } : { documentType: docType.trim(), documentNumber: docNumber.trim() }),
+          ...(isLicense
+            ? { driverLicenseExpiry: expiry, driversLicenseNumber: licenseNo.trim() }
+            : { documentType: docType.trim(), documentNumber: docNumber.trim(), newSelfieUrl }),
         });
       } else {
         // Driver/Supervisor — goes to admin for review; expiry (for
@@ -823,7 +847,9 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
           documentKind,
           currentUrl: currentUrl || "",
           newUrl,
-          ...(isLicense ? {} : { documentType: docType.trim(), documentNumber: docNumber.trim() }),
+          ...(isLicense
+            ? { driversLicenseNumber: licenseNo.trim() }
+            : { documentType: docType.trim(), documentNumber: docNumber.trim(), currentSelfieUrl: current.selfieWithIdUrl || "", newSelfieUrl }),
         });
       }
       onSubmitted();
@@ -867,6 +893,20 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
             )}
           </label>
 
+          {isLicense && (
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">
+                License Number <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={licenseNo}
+                onChange={(e) => setLicenseNo(e.target.value)}
+                className="w-full text-sm border rounded-lg px-3 py-1.5"
+              />
+            </div>
+          )}
+
           {canEditDirectly && isLicense && (
             <div>
               <label className="text-xs text-gray-400 block mb-1">
@@ -882,31 +922,55 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
           )}
 
           {!isLicense && (
-            <div className="grid grid-cols-2 gap-3">
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">
+                    Document Type <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={docType}
+                    onChange={(e) => setDocType(e.target.value)}
+                    className="w-full text-sm border rounded-lg px-3 py-1.5 bg-white"
+                  >
+                    <option value="">Select ID type…</option>
+                    {govIdTypeOptions(current.documentType).map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">
+                    Document Number <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={docNumber}
+                    onChange={(e) => setDocNumber(e.target.value)}
+                    className="w-full text-sm border rounded-lg px-3 py-1.5"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="text-xs text-gray-400 block mb-1">
-                  Document Type <span className="text-red-500">*</span>
+                  Selfie holding the ID <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  value={docType}
-                  onChange={(e) => setDocType(e.target.value)}
-                  placeholder="e.g. Passport"
-                  className="w-full text-sm border rounded-lg px-3 py-1.5"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">
-                  Document Number <span className="text-red-500">*</span>
+                {current.selfieWithIdUrl && !selfiePreview && (
+                  <img src={current.selfieWithIdUrl} alt="Current selfie with ID" className="w-full h-24 object-cover rounded-xl border mb-2" />
+                )}
+                <label className="block border-2 border-dashed rounded-xl p-3 text-center cursor-pointer hover:bg-gray-50">
+                  <input type="file" accept="image/*" onChange={handleSelfie} className="hidden" />
+                  {selfiePreview ? (
+                    <img src={selfiePreview} alt="Selected selfie" className="w-full h-24 object-cover rounded-lg mx-auto" />
+                  ) : (
+                    <div className="flex flex-col items-center gap-1 text-gray-400 py-2">
+                      <IconUpload className="w-5 h-5" />
+                      <span className="text-sm">Tap to choose a selfie</span>
+                    </div>
+                  )}
                 </label>
-                <input
-                  type="text"
-                  value={docNumber}
-                  onChange={(e) => setDocNumber(e.target.value)}
-                  className="w-full text-sm border rounded-lg px-3 py-1.5"
-                />
+                <p className="text-[11px] text-gray-400 mt-1">Required with a government ID. A driver's license doesn't need one.</p>
               </div>
-            </div>
+            </>
           )}
 
           {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
@@ -1041,6 +1105,8 @@ export default function Account() {
         documentImageUrl: documentDoc?.data()?.documentImageUrl || "",
         documentType: documentDoc?.data()?.documentType || "",
         documentNumber: documentDoc?.data()?.documentNumber || "",
+        driversLicenseNumber: documentDoc?.data()?.driversLicenseNumber || "",
+        selfieWithIdUrl: documentDoc?.data()?.selfieWithIdUrl || "",
         _detailsDocId: detailsDoc?.id || null,
         _addressDocId: addressDoc?.id || null,
       });
@@ -1359,11 +1425,14 @@ export default function Account() {
               )}
               {/* "pending admin review" only makes sense when there is a photo, or a submission, to review */}
               {(profile?.driverLicenseUrl || pendingIdKinds.license) && (
+                <>
+                <DetailRow icon={<IconUser />} label="License No." value={profile.driversLicenseNumber || "—"} />
                 <DetailRow
                   icon={<IconWarning />}
                   label="Expiry Date"
                   value={expiryDate ? expiryDate.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : canEditDirectly ? "Not set" : "Not set — pending admin review"}
                 />
+                </>
               )}
             </div>
 
@@ -1390,6 +1459,21 @@ export default function Account() {
                 <>
                   <DetailRow icon={<IconUser />} label="ID Type"   value={profile.documentType} />
                   <DetailRow icon={<IconUser />} label="ID Number" value={profile.documentNumber} />
+                  {profile?.documentImageUrl && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <p className="text-xs text-gray-400">Selfie with ID</p>
+                        {profile?.selfieWithIdUrl && (
+                          <ViewButton onClick={() => setViewImage({ title: "Selfie with ID", src: profile.selfieWithIdUrl })} />
+                        )}
+                      </div>
+                      {profile?.selfieWithIdUrl ? (
+                        <img src={profile.selfieWithIdUrl} alt="Selfie with ID" className="w-full h-32 object-cover rounded-xl border" />
+                      ) : (
+                        <p className="text-xs text-gray-400 bg-gray-50 rounded-xl p-3 text-center">No selfie with ID on file</p>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </div>

@@ -8,6 +8,7 @@ import { db, storage } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
 import UserActivityTab from "../components/UserActivityTab";
+import { govIdTypeOptions } from "../utils/govIdTypes";
 
 // ─── ROLE TABS ───────────────────────────────────────────────────────────────
 // Role IDs are no longer resolved here at all (previously: hardcoded, then
@@ -1236,6 +1237,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
               <Section title="Document Info" icon={Icons.IdCard}>
                 <Field label="Document Type"   value={docu.documentType} />
                 <Field label="Document Number" value={docu.documentNumber} />
+                <Field label="Driver's License No." value={docu.driversLicenseNumber} />
                 <Field label="ID Status"       value={user.isVerified ? "✓ Verified" : "Pending"} />
               </Section>
               {hasImgs ? (
@@ -1315,10 +1317,15 @@ function ReplaceDocumentModal({ user, kind, onClose, onSaved }) {
   const [expiry, setExpiry] = useState(toDateInputValue(docu.driverLicenseExpiry));
   const [docType, setDocType] = useState(docu.documentType || "");
   const [docNumber, setDocNumber] = useState(docu.documentNumber || "");
+  const [licenseNo, setLicenseNo] = useState(docu.driversLicenseNumber || "");
+  // Government ID only: the selfie holding the ID goes with the photo. A driver's license needs no selfie.
+  const [selfieFile, setSelfieFile] = useState(null);
+  const [selfiePreview, setSelfiePreview] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+  useEffect(() => () => { if (selfiePreview) URL.revokeObjectURL(selfiePreview); }, [selfiePreview]);
 
   const pick = (e) => {
     const f = e.target.files?.[0];
@@ -1328,22 +1335,41 @@ function ReplaceDocumentModal({ user, kind, onClose, onSaved }) {
     setError(null); setFile(f); setPreview(URL.createObjectURL(f));
   };
 
+  const pickSelfie = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith("image/")) return setError("Please choose an image file for the selfie.");
+    if (f.size > 8 * 1024 * 1024) return setError("The selfie is larger than 8 MB.");
+    setError(null); setSelfieFile(f); setSelfiePreview(URL.createObjectURL(f));
+  };
+
   const handleSave = async () => {
     if (!file) return setError(`Choose a photo of the ${isLicense ? "driver's license" : "ID document"} first.`);
+    if (isLicense && !licenseNo.trim()) return setError("Enter the driver's license number.");
     if (isLicense && !expiry) return setError("Enter the expiry date shown on the license.");
     if (!isLicense && (!docType.trim() || !docNumber.trim())) return setError("Enter the document type and number shown on the ID.");
+    if (!isLicense && !selfieFile) return setError("Add a selfie holding the ID — it is required as proof for a government ID.");
     setSaving(true); setError(null);
     try {
       const folder = isLicense ? "driverLicenseResubmit" : "documentResubmit";
       const sRef = storageRef(storage, `${folder}/${user.id}_${Date.now()}_${file.name.replace(/[^\w.-]/g, "_")}`);
       await uploadBytes(sRef, file);
       const newUrl = await getDownloadURL(sRef);
+      let newSelfieUrl;
+      if (!isLicense) {
+        // Same folder as the ID photo (the one the Storage rules already allow for this flow); the name marks it as the selfie.
+        const selfieRef = storageRef(storage, `documentResubmit/${user.id}_${Date.now()}_selfie_${selfieFile.name.replace(/[^\w.-]/g, "_")}`);
+        await uploadBytes(selfieRef, selfieFile);
+        newSelfieUrl = await getDownloadURL(selfieRef);
+      }
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/document/replace`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
         body: JSON.stringify({
           documentKind: kind, newUrl,
-          ...(isLicense ? { driverLicenseExpiry: expiry } : { documentType: docType.trim(), documentNumber: docNumber.trim() }),
+          ...(isLicense
+            ? { driverLicenseExpiry: expiry, driversLicenseNumber: licenseNo.trim() }
+            : { documentType: docType.trim(), documentNumber: docNumber.trim(), newSelfieUrl }),
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -1384,21 +1410,56 @@ function ReplaceDocumentModal({ user, kind, onClose, onSaved }) {
           </label>
 
           {isLicense ? (
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">License expiry date</label>
-              <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} disabled={saving} className={modalInput} />
-            </div>
-          ) : (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Document type</label>
-                <input value={docType} onChange={(e) => setDocType(e.target.value)} disabled={saving} placeholder="e.g. Passport" className={modalInput} />
+                <label className="block text-xs font-medium text-gray-500 mb-1">License number</label>
+                <input value={licenseNo} onChange={(e) => setLicenseNo(e.target.value)} disabled={saving} className={modalInput} />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Document number</label>
-                <input value={docNumber} onChange={(e) => setDocNumber(e.target.value)} disabled={saving} className={modalInput} />
+                <label className="block text-xs font-medium text-gray-500 mb-1">License expiry date</label>
+                <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} disabled={saving} className={modalInput} />
               </div>
             </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Document type</label>
+                  <select value={docType} onChange={(e) => setDocType(e.target.value)} disabled={saving} className={modalInput}>
+                    <option value="">Select ID type…</option>
+                    {govIdTypeOptions(docu.documentType).map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Document number</label>
+                  <input value={docNumber} onChange={(e) => setDocNumber(e.target.value)} disabled={saving} className={modalInput} />
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Selfie holding the ID <span className="text-red-500">*</span></p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-xs text-gray-400 mb-1">Current</p>
+                    {docu.selfieWithIdUrl
+                      ? <img src={docu.selfieWithIdUrl} alt="Current selfie with ID" className="w-full h-32 object-cover rounded-xl border" />
+                      : <div className="w-full h-32 rounded-xl border bg-gray-50 flex items-center justify-center text-xs text-gray-400">None uploaded</div>}
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 mb-1">New</p>
+                    {selfiePreview
+                      ? <img src={selfiePreview} alt="New selfie with ID" className="w-full h-32 object-cover rounded-xl border" />
+                      : <div className="w-full h-32 rounded-xl border-2 border-dashed bg-gray-50 flex items-center justify-center text-xs text-gray-400">No selfie chosen</div>}
+                  </div>
+                </div>
+                <label className="block mt-2">
+                  <span className="inline-block px-4 py-2 border border-teal-200 text-teal-700 rounded-xl text-sm font-medium hover:bg-teal-50 cursor-pointer">
+                    {selfieFile ? "Choose a different selfie" : "Choose selfie"}
+                  </span>
+                  <input type="file" accept="image/*" className="hidden" onChange={pickSelfie} disabled={saving} />
+                </label>
+                <p className="text-[11px] text-gray-400 mt-1">Required with a government ID. A driver's license doesn't need one.</p>
+              </div>
+            </>
           )}
           {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3">{error}</p>}
         </div>
@@ -1663,7 +1724,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
         status: req.status,
         reviewedAt: req.reviewedAt || null,
         docType: isLicense ? "Driver's License" : (req.documentType || "Document"),
-        docNo: isLicense ? "—" : (req.documentNumber || "—"),
+        docNo: isLicense ? (req.driversLicenseNumber || "—") : (req.documentNumber || "—"),
         isFlagged: lu.isFlagged === true,
       };
     });
@@ -1877,6 +1938,27 @@ function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove
             </div>
           </section>
 
+          {/* A government ID travels with the selfie holding it; a driver's license has none. */}
+          {!isLicense && (
+            <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-4 py-2.5 bg-gray-50 border-b">
+                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Selfie with ID</h3>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <BeforeAfterImg label="Before — Previous Selfie" url={req.currentSelfieUrl} emptyText="No previous selfie on file" />
+                  <BeforeAfterImg label={`After — ${req.status === "approved" ? "Approved" : req.status === "rejected" ? "Rejected" : "Submitted"} Selfie`} url={req.newSelfieUrl} emptyText="No selfie sent with this request" />
+                </div>
+                {pending && !req.newSelfieUrl && (
+                  <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3">
+                    This request came without a selfie holding the ID. Approving keeps the selfie already on the account; reject it
+                    if a new selfie is needed.
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+
           <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
             <div className="px-4 py-2.5 bg-gray-50 border-b">
               <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Submission</h3>
@@ -1923,6 +2005,18 @@ function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove
                   <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Document Number</p>
                   <p className="text-sm font-medium text-gray-800 mt-0.5">{req.documentNumber || "—"}</p>
                 </div>
+              </div>
+            </section>
+          )}
+
+          {isLicense && req.driversLicenseNumber && (
+            <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-4 py-2.5 bg-gray-50 border-b">
+                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">License Info</h3>
+              </div>
+              <div className="p-4">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">License Number</p>
+                <p className="text-sm font-medium text-gray-800 mt-0.5">{req.driversLicenseNumber}</p>
               </div>
             </section>
           )}
@@ -2413,7 +2507,7 @@ function DocDetailModal({ user, reviewed = false, reviewerName, onClose, onAppro
         </div>
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3 text-sm">
-            {[["Document Type", docu.documentType], ["Document No.", docu.documentNumber], ["ID Status", reviewed ? "Approved" : "Pending"]].map(([label, val]) => (
+            {[["Document Type", docu.documentType], ["Document No.", docu.documentNumber], ["License No.", docu.driversLicenseNumber], ["ID Status", reviewed ? "Approved" : "Pending"]].map(([label, val]) => (
               <div key={label} className="bg-gray-50 rounded-xl p-3">
                 <p className="text-xs text-gray-400">{label}</p>
                 <p className="font-medium text-gray-800 mt-0.5">{val || "—"}</p>
@@ -2559,6 +2653,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
     driverLicenseExpiry: toDateInputValue(docu.driverLicenseExpiry),
     documentType: docu.documentType || "",
     documentNumber: docu.documentNumber || "",
+    driversLicenseNumber: docu.driversLicenseNumber || "",
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [user.id]);
   const [docForm, setDocForm] = useState(initialDoc);
@@ -2718,11 +2813,18 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
                     <input type="date" value={docForm.driverLicenseExpiry} disabled={saving} className={inputCls2}
                       onChange={(e) => setDocForm((d) => ({ ...d, driverLicenseExpiry: e.target.value }))} />
                   </div>
-                  <div />
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">License number</label>
+                    <input value={docForm.driversLicenseNumber} disabled={saving} className={inputCls2}
+                      onChange={(e) => setDocForm((d) => ({ ...d, driversLicenseNumber: e.target.value }))} />
+                  </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">ID document type</label>
-                    <input value={docForm.documentType} disabled={saving} className={inputCls2} placeholder="e.g. Passport"
-                      onChange={(e) => setDocForm((d) => ({ ...d, documentType: e.target.value }))} />
+                    <select value={docForm.documentType} disabled={saving} className={inputCls2}
+                      onChange={(e) => setDocForm((d) => ({ ...d, documentType: e.target.value }))}>
+                      <option value="">Select ID type…</option>
+                      {govIdTypeOptions(initialDoc.documentType).map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">ID document number</label>
@@ -2737,7 +2839,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
                   </button>
                   <button type="button" onClick={() => setDocReplace("document")} disabled={saving}
                     className="px-3 py-1.5 border border-teal-200 text-teal-700 rounded-lg text-xs font-semibold hover:bg-teal-50 disabled:opacity-50">
-                    Replace ID photo
+                    Replace ID photo + selfie
                   </button>
                 </div>
               </div>
