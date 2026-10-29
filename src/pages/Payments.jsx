@@ -204,7 +204,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
         </button>
         {dedup.map((n, i) => (
           <span key={n} className="flex items-center">
-            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">...</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
                 n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
@@ -682,6 +682,11 @@ export default function Payments() {
   // Nothing is owed on cancelled/rejected bookings, failed payments, or refunded ones.
   const totalBal  = payments.filter(p => !["Cancelled","Rejected","Failed","Refunded"].includes(p.status)).reduce((s,p) => s + p.balance, 0);
 
+  // A refunded payment has amountPaid 0 on purpose (the money is no longer held). Show what the customer actually
+  // paid, taken from the money movements, so the figures read: paid, refunded, nothing left.
+  const isRefunded = !!selected && String(selected.status || "").toLowerCase() === "refunded";
+  const paidBeforeRefund = isRefunded && entriesSummary && entriesSummary.paidIn > 0 ? entriesSummary.paidIn : null;
+
   return (
     <div className="w-full px-4 space-y-5">
 
@@ -719,7 +724,7 @@ export default function Payments() {
             onClick={(e) => e.stopPropagation()}
           >
             {detailLoading ? (
-              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm py-20">Loading…</div>
+              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm py-20">Loading...</div>
             ) : selected && (
               <>
                 {/* Header */}
@@ -780,7 +785,11 @@ export default function Payments() {
                     {/* The three numbers staff look for first. */}
                     <div className="grid grid-cols-3 border-y border-gray-100 py-4 mb-5">
                       <KeyFigure label="Total fee" value={peso(selected.totalFee, fmtCurrency)} />
-                      <KeyFigure label="Amount paid" value={peso(selected.amountPaid, fmtCurrency)} />
+                      <KeyFigure
+                        label="Amount paid"
+                        value={peso(paidBeforeRefund ?? selected.amountPaid, fmtCurrency)}
+                        note={paidBeforeRefund != null ? "Refunded in full" : undefined}
+                      />
                       <KeyFigure
                         label="Balance"
                         value={peso(selected.balance, fmtCurrency)}
@@ -834,7 +843,7 @@ export default function Payments() {
                             <div className="flex flex-wrap gap-2">
                               <button onClick={handleNotifyBalance} disabled={notifying}
                                 className="px-4 py-2 text-sm font-semibold rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition disabled:opacity-50">
-                                {notifying ? "Sending…" : "Notify customer to pay"}
+                                {notifying ? "Sending..." : "Notify customer to pay"}
                               </button>
                               {canRecordInStore && !inStoreOpen && (
                                 <button onClick={() => setInStoreOpen(true)}
@@ -880,7 +889,8 @@ export default function Payments() {
                               {selected.discountAmount > 0
                                 ? <InfoField label={several ? "Discounts Given (total)" : "Discount Given"} value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
                                 : <InfoField label="Discount Given" value={peso(0, fmtCurrency)} color="text-gray-400" />}
-                              <InfoField label="Amount Paid" value={peso(selected.amountPaid, fmtCurrency)} bold />
+                              <InfoField label="Amount Paid" value={peso(paidBeforeRefund ?? selected.amountPaid, fmtCurrency)} bold
+                                note={paidBeforeRefund != null ? "Refunded in full" : undefined} />
                               {refundedOut > 0
                                 ? <InfoField label="Refunded Amount" value={`−${peso(refundedOut, fmtCurrency)}`} bold color="text-purple-700" />
                                 : <div />}
@@ -935,7 +945,7 @@ export default function Payments() {
                                     <div className="flex flex-wrap gap-2 pt-1">
                                       <button type="button" onClick={handleRetryDepositReturn} disabled={retryingRefund}
                                         className="px-4 py-2 rounded-full text-sm font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
-                                        {retryingRefund ? "Retrying…" : `Retry ${peso(dr.amount, fmtCurrency)} refund`}
+                                        {retryingRefund ? "Retrying..." : `Retry ${peso(dr.amount, fmtCurrency)} refund`}
                                       </button>
                                       <button type="button" onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(selected.bookingID || "")}`)}
                                         className="px-4 py-2 rounded-full text-sm font-semibold border border-red-300 text-red-700 bg-white hover:bg-red-50">
@@ -1171,7 +1181,7 @@ export default function Payments() {
               </button>
               <button onClick={submitDiscount} disabled={applyingDiscount || !discountReason.trim()}
                 className="flex-1 px-4 py-2 bg-arl-dark text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50">
-                {applyingDiscount ? "Saving…" : `Yes, give ${peso(Number(discountInput) || 0, fmtCurrency)}`}
+                {applyingDiscount ? "Saving..." : `Yes, give ${peso(Number(discountInput) || 0, fmtCurrency)}`}
               </button>
             </div>
           </div>
@@ -1304,7 +1314,12 @@ export default function Payments() {
                       )
                       : <span className="text-gray-300">—</span>}
                   </td>
-                  <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{peso(p.amountPaid, fmtCurrency)}</td>
+                  <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">
+                    {peso(p.amountPaid, fmtCurrency)}
+                    {String(p.status || "").toLowerCase() === "refunded" && (
+                      <span className="block text-[10px] font-semibold text-purple-700">Refunded</span>
+                    )}
+                  </td>
                   <td className={`px-4 py-3 font-semibold whitespace-nowrap ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
                     {peso(p.balance, fmtCurrency)}
                   </td>
@@ -1468,7 +1483,7 @@ function DiscountRefundCard({ payment, fmt, canAct, canEdit = false, onRetry, re
                         className="w-28 border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white text-black" />
                       <button type="button" onClick={onEditSave} disabled={savingEdit || bad}
                         className="px-3 py-1 text-xs font-semibold rounded-lg bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
-                        {savingEdit ? "Saving…" : "Save"}
+                        {savingEdit ? "Saving..." : "Save"}
                       </button>
                       <button type="button" onClick={() => onEditChange(null)} disabled={savingEdit}
                         className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-white disabled:opacity-50">Cancel</button>
@@ -1496,7 +1511,7 @@ function DiscountRefundCard({ payment, fmt, canAct, canEdit = false, onRetry, re
       {dr.state === "failed" && (canAct ? (
         <button onClick={onRetry} disabled={retrying}
           className="px-4 py-2 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition disabled:opacity-50">
-          {retrying ? "Sending…" : `Retry ${peso(dr.amount, fmt)} refund`}
+          {retrying ? "Sending..." : `Retry ${peso(dr.amount, fmt)} refund`}
         </button>
       ) : (
         <p className="text-xs text-gray-500">Only a Supervisor, Admin or Owner can retry this.</p>
@@ -1746,7 +1761,7 @@ function GainBreakdown({ payment, summary, fmt }) {
   if (!summary) {
     return (
       <InfoSection title="Booking Gain / Loss" flush>
-        <p className="px-4 py-4 text-xs text-gray-400">Calculating from the money movements…</p>
+        <p className="px-4 py-4 text-xs text-gray-400">Calculating from the money movements...</p>
       </InfoSection>
     );
   }
@@ -1997,7 +2012,7 @@ function InStoreForm({ amountLabel, method, setMethod, reference, setReference, 
         )}
         <button onClick={onSubmit} disabled={saving || (needsRef && !reference.trim())}
           className="flex-1 px-4 py-2 rounded-xl text-sm font-semibold bg-arl-dark text-white hover:opacity-90 disabled:opacity-50">
-          {saving ? "Saving…" : submitLabel}
+          {saving ? "Saving..." : submitLabel}
         </button>
       </div>
     </div>

@@ -107,6 +107,13 @@ const IconPlus = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 const toDate = (val) => {
@@ -136,7 +143,7 @@ function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, classN
       <button
         onClick={() => onSort(key)}
         className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
-          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
         }`}
       >
         {label}
@@ -1014,8 +1021,10 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
                     <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">
                       {toDate(p.createdAt) ? toDate(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—"}
                     </td>
-                    <td className="px-3 py-2.5 text-gray-800">
-                      <div className="max-w-[220px] truncate" title={chargesText}>{chargesText || "—"}</div>
+                    {/* w-full + max-w-0: this column takes only the space the other columns leave and cuts the text with "…",
+                        so the table never gets wider than the window (no sideways scrollbar). The full text is in the tooltip. */}
+                    <td className="px-3 py-2.5 text-gray-800 w-full max-w-0 min-w-[110px]">
+                      <div className="truncate" title={chargesText}>{chargesText || "—"}</div>
                       {p.status === "UnderReview" && p.createdByName && (
                         <div className="text-[11px] text-gray-400 mt-0.5">noted by {p.createdByName}</div>
                       )}
@@ -1617,8 +1626,6 @@ export default function Penalties() {
     }[searchBy];
     return String(hay || "").toLowerCase().includes(q);
   });
-  const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "All";
-  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("All"); };
 
   // `groups` (defined below, after renderRow) when grouped by booking: pages hold whole bookings, so a booking's
   // penalties are never split across two pages.
@@ -1643,10 +1650,10 @@ export default function Penalties() {
     const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(p);
     const rowClass = statMatch ? "bg-red-50/40 ring-1 ring-inset ring-red-100"
       : p.status === "UnderReview" ? "bg-amber-50/40"
-      : i % 2 === 1 ? "bg-gray-50/30" : "";
+      : "";
     const chargesText = (p.lineItems || []).map((li) => li.description).join(", ");
     return (
-        <tr key={p.id} onClick={() => setDetailsModal(p)} className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-arl-light/30 transition-colors ${rowClass}`}>
+        <tr key={p.id} onClick={() => setDetailsModal(p)} className={`border-t cursor-pointer hover:bg-gray-50 transition-colors ${rowClass}`}>
           <td className="px-4 py-3 text-sm whitespace-nowrap">
             {toDate(p.createdAt) ? (
               <>
@@ -1668,7 +1675,7 @@ export default function Penalties() {
           <td className="px-4 py-3 text-sm font-semibold text-gray-800 whitespace-nowrap">{fmt(p.amount)}</td>
           <td className="px-4 py-3 text-sm font-semibold text-gray-800 whitespace-nowrap">{fmt(p.paidAmount)}</td>
           <td className="px-4 py-3"><SettlementBadge status={p.settlementStatus} /></td>
-          <td className="px-4 py-3 text-left whitespace-nowrap">
+          <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
             <button onClick={(e) => { e.stopPropagation(); setDetailsModal(p); }}
               className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
           </td>
@@ -1712,7 +1719,7 @@ export default function Penalties() {
     const d = g.latest ? new Date(g.latest) : null;
     return (
       <tr key={g.key} onClick={() => setBookingModalID(g.first.bookingID)}
-        className={`border-b border-gray-100 border-l-4 cursor-pointer hover:bg-arl-light/30 transition-colors ${g.reviewCount > 0 ? "bg-amber-50/60 border-l-amber-400" : "bg-teal-50/40 border-l-teal-500"}`}>
+        className={`border-t border-l-4 cursor-pointer hover:bg-arl-light/30 transition-colors ${g.reviewCount > 0 ? "bg-amber-50/60 border-l-amber-400" : "bg-teal-50/40 border-l-teal-500"}`}>
         <td className="px-4 py-3 text-sm whitespace-nowrap text-gray-500">
           {d ? d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "--"}
         </td>
@@ -1738,7 +1745,7 @@ export default function Penalties() {
         </td>
         <td className="px-4 py-3 text-sm font-semibold text-gray-800 whitespace-nowrap">{fmt(g.paid)}</td>
         <td className="px-4 py-3"><SettlementBadge status={g.worst} /></td>
-        <td className="px-4 py-3 text-left whitespace-nowrap">
+        <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
           <button onClick={(e) => { e.stopPropagation(); setBookingModalID(g.first.bookingID); }}
             className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">View all ›</button>
         </td>
@@ -1885,49 +1892,36 @@ export default function Penalties() {
         </p>
       )}
 
-      {/* Filter Bar */}
-      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-end">
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
-          <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
-            className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-arl-light">
-            {PENALTY_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+      {/* TABLE: the search + filters sit on top of the table inside one box, same as Bookings */}
+      <div className="bg-white rounded-2xl border overflow-hidden">
+        {/* SEARCH + FILTERS */}
+        <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+              {PENALTY_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+          {searchBy === "date" ? (
+            <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          ) : (
+            <input type="text" placeholder={`Enter ${(PENALTY_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          )}
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+            {PENALTY_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
           </select>
-        </div>
-        {searchBy === "date" ? (
-          <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)}
-            className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
-        ) : (
-          <input type="text" placeholder={`Enter ${(PENALTY_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}…`}
-            value={search} onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
-        )}
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-arl-light">
-          {PENALTY_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
-        </select>
-        {hasFilters && (
-          <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
-            Clear
+          <button onClick={fetchAll} disabled={loading}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            <IconRefresh className="w-3.5 h-3.5" />
+            Refresh
           </button>
-        )}
-        <button onClick={fetchAll} disabled={loading}
-          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
-          {loading ? "…" : "Refresh"}
-        </button>
-      </div>
-
-      {/* Table */}
-      <div className="bg-white rounded-2xl shadow-soft border border-gray-100">
-        <div className="flex justify-between items-center px-5 py-4 border-b border-gray-100">
-          <h2 className="font-bold text-arl-dark">
-            All Penalty Records{" "}
-            <span className="text-gray-400 text-sm font-normal">
-              ({groupByBooking ? `${groups.length} booking${groups.length === 1 ? "" : "s"} · ${filtered.length} penalties` : `${filtered.length} results`})
-            </span>
-          </h2>
           {/* One row per booking (its penalties underneath), or every penalty on its own row. */}
-          <div className="inline-flex rounded-xl border border-gray-200 p-0.5 text-xs font-semibold">
+          <div className="inline-flex rounded-xl border border-gray-200 p-0.5 text-xs font-semibold ml-auto">
             {[[true, "By booking"], [false, "All penalties"]].map(([val, label]) => (
               <button key={label} onClick={() => setGroupByBooking(val)}
                 className={`px-3 py-1.5 rounded-[10px] transition-colors ${groupByBooking === val ? "bg-teal-600 text-white" : "text-gray-500 hover:text-gray-700"}`}>
@@ -1937,37 +1931,37 @@ export default function Penalties() {
           </div>
         </div>
         <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[900px]">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
-              <SortableTh label="Created At" sortKey="date"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Charges"    sortKey="charges"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Customer"   sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Car"        sortKey="car"      sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Amount"     sortKey="amount"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Paid"       sortKey="paid"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Status"     sortKey="status"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              Array.from({ length: 6 }).map((_, i) => (
-                <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 8 }).map((_, j) => (
-                    <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
-                  ))}
-                </tr>
-              ))
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">
-                {hasFilters || activeStatFilter ? "No penalties match your filters." : "No penalties found."}
-              </td></tr>
-            ) : groupByBooking
-              ? paginated.map((g, gi) => renderGroup(g, gi))
-              : paginated.map((p, i) => renderRow(p, i))}
-          </tbody>
-        </table>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+              <tr>
+                <SortableTh label="Created At" sortKey="date"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Charges"    sortKey="charges"  sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Customer"   sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Car"        sortKey="car"      sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Amount"     sortKey="amount"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Paid"       sortKey="paid"     sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Status"     sortKey="status"   sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="pl-4 pr-8 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-t">
+                    {Array.from({ length: 8 }).map((__, j) => (
+                      <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
+                    ))}
+                  </tr>
+                ))
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={8} className="text-center text-gray-400 py-12">
+                  {search.trim() || dateValue || statusFilter !== "All" || activeStatFilter ? "No penalties match your filters." : "No penalties found."}
+                </td></tr>
+              ) : groupByBooking
+                ? paginated.map((g, gi) => renderGroup(g, gi))
+                : paginated.map((p, i) => renderRow(p, i))}
+            </tbody>
+          </table>
         </div>
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>

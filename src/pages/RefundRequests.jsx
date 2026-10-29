@@ -11,9 +11,10 @@ const IconCheck = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-const IconChevronDown = ({ className = "w-4 h-4" }) => (
+const IconRefresh = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 const IconClock = ({ className = "w-5 h-5" }) => (
@@ -36,20 +37,21 @@ const IconAlertCircle = ({ className = "w-5 h-5" }) => (
 );
 
 // Clickable summary card, same look as the Payments page's. Click to filter by that type; click again to clear.
-function StatCard({ icon, value, label, sub, color, onClick, active }) {
+function StatCard({ icon, value, label, sub, color, onClick, active, hint }) {
   const bgColors = {
     teal:   "bg-teal-50 text-teal-600",
     yellow: "bg-yellow-50 text-yellow-600",
     purple: "bg-purple-50 text-purple-600",
     blue:   "bg-blue-50 text-blue-600",
     red:    "bg-red-50 text-red-500",
+    green:  "bg-green-50 text-green-600",
   };
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={!!active}
-      title={active ? "Click to clear this filter" : `Show only ${label}`}
+      title={active ? "Click to clear this filter" : (hint || `Show only ${label}`)}
       className={`bg-white rounded-2xl shadow-soft p-4 flex items-center gap-4 text-left w-full transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-arl-light ${active ? "ring-2 ring-arl-light" : ""}`}
     >
       <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>{icon}</div>
@@ -160,10 +162,7 @@ const fmtWaiting = (r) => {
   return { text: hours < 48 ? `${Math.max(1, Math.floor(hours))}h` : `${Math.floor(hours / 24)}d`, late: hours >= 72 };
 };
 
-// "Active" = still an open queue item admin needs to act on or is waiting
-// on PayMongo for. "History" = resolved, permanent record — money already
-// moved (or definitively didn't). Tab lives above the status chips; the
-// chips themselves narrow further within whichever tab is selected.
+// One table for every refund. The cards at the top and the status dropdown are the same filter (see statusKeyOf below).
 const PAGE_SIZE = 15;
 
 // --- PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Users.jsx) -----
@@ -219,11 +218,12 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
   );
 }
 
-// Three tabs, split by WHO has to act:
-//   Request Pending  a customer asked; staff must approve or reject
-//   Under Process    money is on its way back (PayMongo confirming / cash to hand back), or something failed and needs
-//                    a person. Refund requests AND discount refunds both live here: both wait on PayMongo.
-//   History          finished: refunded or rejected
+// One table, one status filter (the cards and the dropdown both set it). Statuses, split by WHO has to act:
+//   pending     a customer asked; staff must approve or reject
+//   scheduled / paymongo / handback   money is on its way back (a same-day send waiting for its time, PayMongo confirming,
+//               or cash to hand back). Refund requests AND discount refunds both live here: both wait on PayMongo.
+//   failed      something failed and needs a person
+//   refunded / rejected   finished
 const DISCOUNT_STATES = { processing: "paymongo", awaiting_handback: "handback", failed: "failed", refunded: "done" };
 // "Discount" rows and "deposit return" rows are both money that went (or is going) back through PayMongo and carry a
 // `refund` object, so every place that handles `isDiscount` handles both. isDeposit tells them apart for wording and actions.
@@ -232,42 +232,47 @@ const isDiscount = (r) => !!r && (r.kind === "discount" || r.kind === "deposit")
 // A discount whose credit went back as its OWN payout (a ledger discount) is retried / handed back through the deposit-return
 // routes, which act on whichever payout of the booking failed (the deposit's, the discount's, or both).
 const viaDepositRoutes = (r) => isDeposit(r) || !!(r && r.ledger);
-// Which tab an item belongs to.
-const tabOf = (r) => {
-  if (isDiscount(r)) return r.refund.state === "refunded" ? "history" : "processing";
+// The one status an item is in. This is what the cards, the dropdown, the default order and the sub-counts all read.
+const statusKeyOf = (r) => {
+  if (isDiscount(r)) {
+    const k = DISCOUNT_STATES[r.refund.state] || "paymongo";
+    if (k === "paymongo" && r.refund.sendAfter) return "scheduled";   // same-day payment: waiting for its send time, not for PayMongo yet
+    return k === "done" ? "refunded" : k;
+  }
   if (r.status === "Pending") return "pending";
-  if (r.status === "Approved" || r.status === "Failed") return "processing";   // a Failed request needs manual follow-up: not history
-  return "history";
-};
-// What an item is waiting on: the sub-filter inside Under Process.
-const waitKeyOf = (r) => {
-  if (isDiscount(r)) return DISCOUNT_STATES[r.refund.state];
-  if (r.status === "Failed") return "failed";
+  if (r.status === "Failed") return "failed";      // a Failed request needs manual follow-up
   if (r.status === "Approved") return stageOf(r);
-  return null;
+  return String(r.status || "").toLowerCase();     // Refunded, Rejected
 };
-// What KIND of item it is: the type buttons in Under Process filter on this.
-const typeKeyOf = (r) => (isDeposit(r) ? "deposit" : isDiscount(r) ? "discount" : r.source === "staff" ? "staff" : "refund");
-const TYPE_BUTTONS = [
-  { key: "refund",   label: "Refunds" },
-  { key: "staff",    label: "Staff cancels" },
-  { key: "deposit",  label: "Deposit returns" },
-  { key: "discount", label: "Discounts" },
+// "Under process" = the three in-flight statuses (a Failed one has its own card).
+const IN_PROCESS = ["scheduled", "paymongo", "handback"];
+const STATUS_OPTIONS = [
+  { key: "pending",   label: "Request pending" },
+  { key: "inprocess", label: "Under process (all)" },
+  { key: "scheduled", label: "Scheduled" },
+  { key: "paymongo",  label: "Waiting for PayMongo" },
+  { key: "handback",  label: "Waiting for hand-back" },
+  { key: "failed",    label: "Failed" },
+  { key: "refunded",  label: "Refunded" },
+  { key: "rejected",  label: "Rejected" },
 ];
-const TABS = [
-  { key: "pending",    label: "Request Pending", chips: [] },
-  { key: "processing", label: "Under Process",   chips: [
-    { key: "scheduled", label: "Scheduled" }, { key: "paymongo", label: "Waiting for PayMongo" }, { key: "handback", label: "Waiting for hand-back" }, { key: "failed", label: "Failed" } ] },
-  { key: "history",    label: "History",         chips: [
-    { key: "Refunded", label: "Refunded" }, { key: "Rejected", label: "Rejected" } ] },
-];
-const chipMatches = (tab, chip, r) => {
-  if (chip === "All") return true;
-  if (tab === "processing") return waitKeyOf(r) === chip;
-  if (tab === "history") return (isDiscount(r) ? "Refunded" : r.status) === chip;
-  return true;
+const statusMatches = (filter, r) => {
+  if (filter === "All") return true;
+  const k = statusKeyOf(r);
+  return filter === "inprocess" ? IN_PROCESS.includes(k) : k === filter;
 };
-// A discount refund shaped like a request row, so the table, search, sort and tabs treat both the same way.
+// When a scheduled refund will be sent (the next Manila midnight after approval), as a date; null when it isn't scheduled.
+const sendDateText = (r) => {
+  if (statusKeyOf(r) !== "scheduled") return null;
+  const d = toDate(isDiscount(r) ? r.refund.sendAfter : r.sendAfter);
+  return d ? d.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric" }) : null;
+};
+// Default order: what needs a person first (pending, then failed), then in-flight, then finished.
+const priorityOf = (r) => {
+  const k = statusKeyOf(r);
+  return k === "pending" ? 0 : k === "failed" ? 1 : IN_PROCESS.includes(k) ? 2 : 3;
+};
+// A discount refund shaped like a request row, so the table, search, sort and filters treat both the same way.
 const toDiscountItem = (d) => ({ ...d, kind: "discount", refundRequestID: `discount_${d.paymentID}`, amount: d.refund.amount, createdAt: d.discountAt, updatedAt: d.refund.at, status: d.refund.state });
 
 // A security-deposit return sent through PayMongo, shaped the same way.
@@ -279,9 +284,10 @@ const DISCOUNT_BADGE = {
   awaiting_handback: { label: "Waiting for hand-back", dot: "bg-orange-500", bg: "bg-orange-50 border border-orange-200" },
   failed:            { label: "Refund failed",         dot: "bg-red-500",    bg: "bg-red-50 border border-red-200" },
   refunded:          { label: "Refunded",              dot: "bg-green-500",  bg: "bg-green-50 border border-green-200" },
+  scheduled:         { label: "Scheduled",             dot: "bg-violet-500", bg: "bg-violet-50 border border-violet-200" },
 };
-const DiscountBadge = ({ state }) => {
-  const b = DISCOUNT_BADGE[state] || DISCOUNT_BADGE.processing;
+const DiscountBadge = ({ state, scheduled }) => {
+  const b = (scheduled ? DISCOUNT_BADGE.scheduled : DISCOUNT_BADGE[state]) || DISCOUNT_BADGE.processing;
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${b.bg}`}>
       <span className={`w-2 h-2 rounded-full shrink-0 ${b.dot}`} />{b.label}
@@ -295,17 +301,24 @@ const updatedOf = (r) => (isDiscount(r) ? toDate(r.refund.at) : updatedDate(r));
 const policyOf = (r) => {
   const pv = r.status === "Pending" ? r.planPreview : null;
   const tier = pv ? pv.tier : (r.policyTier || (typeof r.returnDeposit === "boolean" ? (r.returnDeposit ? "full" : "late") : null));
-  return { tier, kept: pv ? Number(pv.forfeit) || 0 : Number(r.depositForfeited) || 0, hours: pv ? pv.hoursBeforePickup : null };
+  return { tier, kept: pv ? Number(pv.forfeit) || 0 : Number(r.depositForfeited) || 0, gw: pv ? Number(pv.gatewayFeeKept) || 0 : Number(r.gatewayFeeKept) || 0, hours: pv ? pv.hoursBeforePickup : null };
 };
-const TIER_LABEL = { full: "Full refund", late: "Under 48h", no_show: "No-show" };
-
+// The type is read from what is kept, the same way the backend does it (refundKindOf):
+//   deposit kept                  -> No deposit refund  (asked under 48h before pickup, or after it: the gateway fee goes back)
+//   gateway fee kept              -> Normal refund      (asked 48h+ before pickup, or inside the 2-hour grace: the deposit goes back)
+//   nothing kept                  -> Full refund        (only staff give this, when the cancellation is the business's own issue)
+const TYPE_STYLE = {
+  no_deposit: { label: "No deposit refund", cls: "bg-amber-100 text-amber-700 border-amber-200" },
+  normal:     { label: "Normal refund",     cls: "bg-blue-100 text-blue-700 border-blue-200" },
+  full:       { label: "Full refund",       cls: "bg-green-100 text-green-700 border-green-200" },
+};
 function TypeBadge({ r }) {
   if (isDeposit(r)) return <span className="inline-block rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700">Deposit return</span>;
   if (isDiscount(r)) return <span className="inline-block rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">Discount</span>;
-  const { tier } = policyOf(r);
+  const { tier, kept, gw } = policyOf(r);
   if (!tier) return <span className="inline-block rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-semibold text-gray-600">{r.source === "staff" ? "Staff cancel" : "Refund"}</span>;
-  const cls = tier === "full" ? "bg-green-100 text-green-700 border-green-200" : "bg-amber-100 text-amber-700 border-amber-200";
-  return <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${cls}`}>{TIER_LABEL[tier] || "Under 48h"}</span>;
+  const t = TYPE_STYLE[kept > 0 ? "no_deposit" : gw > 0 ? "normal" : "full"];
+  return <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${t.cls}`}>{t.label}</span>;
 }
 
 // HOW the money went (or is going) back: through PayMongo, handed over in store, or both. Its own column, separate from
@@ -362,19 +375,136 @@ const Stamp = ({ date }) => {
   );
 };
 
-// One labelled line in the View modal.
-const Line = ({ label, children }) => (
-  <div className="flex items-start justify-between gap-4 py-1.5 text-sm">
-    <span className="text-gray-500 shrink-0">{label}</span>
-    <span className="text-right text-gray-800 min-w-0 break-words">{children}</span>
+// View modal building blocks: the same card + label-over-value cells as Bookings' details window (InfoSection / InfoField).
+// A Block is a two-column grid; a <Line wide> takes the full row, and notes (<p>) and buttons placed directly in a Block span it too.
+const Line = ({ label, wide, children }) => (
+  <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+    <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+    <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{children || "—"}</div>
   </div>
 );
 const Block = ({ title, children }) => (
-  <div className="rounded-xl border border-gray-100 p-4">
-    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">{title}</p>
-    {children}
-  </div>
+  <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+    <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+      <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+    </div>
+    <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4 [&>p]:col-span-2 [&>button]:col-span-2 [&>button]:justify-self-start">{children}</div>
+  </section>
 );
+
+// Who last acted on a request (approved, rejected, handed back), by name. The backend sends updatedByName / updatedByRole.
+// A request nobody has touched yet (Pending) and discount / deposit rows have none; a decided request with no staff on it was done by the system.
+const updatedByText = (r) => {
+  if (!r || isDiscount(r) || r.status === "Pending") return null;
+  if (r.updatedByName) return r.updatedByName;
+  return r.processedBy ? "Staff · name not recorded" : "System";
+};
+// The Cancellation section of the Bookings details window, for a refund request: who cancelled, when, why, and what the money does.
+const stripStaffPrefix = (t) => String(t || "").replace(/^Cancelled by (staff|admin):\s*/i, "").trim();
+function CancellationBlock({ r, fmt }) {
+  const pending  = r.status === "Pending";
+  const rejected = r.status === "Rejected";
+  const isStaff  = r.source === "staff";
+  const pv = pending ? r.planPreview : null;
+  const staffLabel = r.updatedByName ? `${r.updatedByName} · ${r.updatedByRole || "Staff"}` : (r.processedBy ? "Staff · name not recorded" : "System (auto-approved)");
+  const cancelledBy = isStaff ? staffLabel : `${r.customerName || "Customer"} · Customer`;
+  const cancelledAt = pending ? "Not cancelled yet — waiting for approval" : rejected ? "Not cancelled — request rejected" : stampText(toDate(r.processedAt) || updatedDate(r));
+  const rawReason = r.customerReason !== undefined ? r.customerReason : r.reason;
+  const reason = isStaff ? stripStaffPrefix(rawReason) : String(rawReason || "").trim();
+  // Same wording as Bookings' "Refund Type"
+  const { kept } = policyOf(r);
+  const gw   = Number(pv ? pv.gatewayFeeKept : r.gatewayFeeKept) || 0;
+  const paid = Number(pv ? (pv.bookingPaid ?? pv.grossPaid) : r.bookingPaid) || 0;
+  const amt  = Number(pv ? pv.total : r.amount) || 0;
+  const refundType = rejected ? "No refund"
+    : kept > 0 ? `No Deposit Refund · ${fmt(kept)} deposit not returned`
+    : gw > 0 ? `Normal refund · ${fmt(gw)} payment fee not returned`
+    : paid > amt ? `Partial refund · ${fmt(paid - amt)} not returned`
+    : paid > 0 ? "Full refund" : null;
+  const stage = stageOf(r);
+  const refundText = pending ? "Awaiting approval"
+    : rejected ? "No refund — request rejected"
+    : r.status === "Approved" ? ((stage && WAIT_STAGE[stage]?.label) || "Approved")
+    : r.status === "Failed" ? "Failed — needs follow-up"
+    : "Refunded";
+  return (
+    <Block title="Cancellation Details">
+      <Line label="Requested">{stampText(toDate(r.createdAt))}</Line>
+      <Line label={pending || rejected ? "Requested By" : "Cancelled By"}>{cancelledBy}</Line>
+      <Line label="Cancelled At">{cancelledAt}</Line>
+      {!isStaff && !pending && <Line label={rejected ? "Rejected By" : "Approved By"}>{staffLabel}</Line>}
+      <Line wide label="Reason">{reason}</Line>
+      {r.notes && <Line wide label="Notes">{r.notes}</Line>}
+      {rejected && r.rejectReason && <Line wide label="Rejected because"><span className="text-red-600">{r.rejectReason}</span></Line>}
+      {refundType && <Line wide label="Refund Type">{refundType}</Line>}
+      <Line wide label="Refund Status">{refundText}</Line>
+    </Block>
+  );
+}
+
+// The money of a refund as a table (same look as the table lists on the other pages): what the customer paid and what is kept
+// while the request is still Pending, then every PayMongo refund and the in-person hand-back with its status and reference.
+function MoneyTable({ r, pv, fmt }) {
+  const rows = [];
+  if (pv) {
+    rows.push({ item: "Customer paid", amount: fmt(pv.bookingPaid ?? pv.grossPaid) });
+    if (pv.forfeit > 0) rows.push({ item: "Deposit kept", amount: `−${fmt(pv.forfeit)}`, amountCls: "text-amber-700" });
+    if (pv.gatewayFeeKept > 0) rows.push({ item: "Gateway fee kept", amount: `−${fmt(pv.gatewayFeeKept)}`, amountCls: "text-amber-700" });
+    rows.push({ item: "Via PayMongo", amount: fmt(pv.onlineAmount), status: pv.scheduled && pv.sendAfter ? `Scheduled — ${stampText(toDate(pv.sendAfter))}` : "Sent when approved", statusCls: pv.scheduled ? "text-violet-700" : "text-gray-500" });
+    if (pv.manualAmount > 0) rows.push({ item: "Hand back in person", amount: fmt(pv.manualAmount), amountCls: "text-orange-600", status: "To hand back", statusCls: "text-orange-600 font-semibold" });
+    if (pv.unrefundableAmount > 0) rows.push({ item: "Not refundable", amount: fmt(pv.unrefundableAmount), amountCls: "text-red-600", status: "Payment ID does not exist", statusCls: "text-red-600" });
+  }
+  (Array.isArray(r.parts) ? r.parts : []).forEach((pt) => {
+    const sent = !pt.paymongoRefundID && r.sendAfter && !r.scheduledSentAt;
+    rows.push({
+      item: pt.kind === "balance" ? "Balance" : "Deposit",
+      amount: fmt(pt.amount),
+      status: pt.handedBack ? "Handed back" : pt.status === "succeeded" ? "Refunded" : pt.status === "failed" ? "Failed" : sent ? `Scheduled — ${stampText(toDate(r.sendAfter))}` : "Processing at PayMongo",
+      statusCls: pt.status === "succeeded" || pt.handedBack ? "text-green-600" : pt.status === "failed" ? "text-red-600" : sent ? "text-violet-700" : "text-blue-600",
+      note: pt.status === "failed" && pt.error ? pt.error : pt.handedBack ? "PayMongo could not refund this part, so it was paid back by hand." : null,
+      noteCls: pt.status === "failed" ? "text-red-600" : "text-gray-400",
+      ref: pt.handedBack ? [pt.handedBack.method, pt.handedBack.referenceNumber].filter(Boolean).join(" · ") : pt.paymongoRefundID,
+    });
+  });
+  if (r.manualRefund) {
+    const m = r.manualRefund;
+    rows.push({
+      item: "In person", amount: fmt(m.amount),
+      status: m.issued ? "Handed back" : "Not yet handed back",
+      statusCls: m.issued ? "text-green-600" : "text-orange-600 font-semibold",
+      ref: m.issued ? [m.method, m.referenceNumber].filter(Boolean).join(" · ") : null,
+    });
+  }
+  if (!pv && Number(r.unrefundableAmount) > 0) rows.push({ item: "Not refunded", amount: fmt(r.unrefundableAmount), amountCls: "text-red-600", status: "Payment ID does not exist", statusCls: "text-red-600" });
+  if (!rows.length) return null;
+  return (
+    <div className="col-span-2 overflow-x-auto rounded-xl border">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+          <tr>
+            <th className="px-4 py-2.5 text-left">Item</th>
+            <th className="px-4 py-2.5 text-left">Amount</th>
+            <th className="px-4 py-2.5 text-left">Status</th>
+            <th className="px-4 py-2.5 text-left">Reference</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-t">
+              <td className="px-4 py-2.5 text-gray-700 whitespace-nowrap">{row.item}</td>
+              <td className={`px-4 py-2.5 font-semibold whitespace-nowrap ${row.amountCls || "text-gray-800"}`}>{row.amount}</td>
+              <td className="px-4 py-2.5">
+                {row.status ? <span className={row.statusCls || "text-gray-600"}>{row.status}</span> : <span className="text-gray-300">—</span>}
+                {row.note && <span className={`block text-[11px] ${row.noteCls || "text-gray-400"}`}>{row.note}</span>}
+              </td>
+              <td className="px-4 py-2.5 font-mono text-[11px] text-gray-500 break-all">{row.ref || <span className="text-gray-300">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // Everything about one refund / discount refund. The table stays simple; the detail, the money movements and the
 // actions (approve, reject, hand back, retry) all live here.
@@ -397,143 +527,112 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
   const when = hours !== null && hours !== undefined ? `${Math.max(0, Math.round(hours * 10) / 10)} hours before pickup` : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4 border-b border-gray-100">
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{isDeposit(r) ? "Deposit return" : disc ? "Discount refund" : "Refund request"}</p>
-            <h3 className="font-bold text-arl-dark text-lg truncate">{r.customerName || "—"}</h3>
-            <div className="mt-1.5">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</div>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+        <div className="px-6 pt-5 pb-3 shrink-0 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <h2 className="font-bold text-lg text-gray-800">{isDeposit(r) ? "Deposit Return Details" : disc ? "Discount Refund Details" : "Refund Details"}</h2>
+              {disc ? <DiscountBadge state={r.refund.state} scheduled={statusKeyOf(r) === "scheduled"} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0"><IconX className="w-5 h-5" /></button>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
+          <p className="text-sm text-gray-500 mt-1 truncate">{r.customerName || "—"}</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
-          <Block title="Summary">
-            <Line label="Booking">
-              {r.bookingID ? (
-                <span className="inline-flex items-center gap-2">
-                  <span className="font-medium text-gray-700">{r.bookingID}</span>
-                  <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)} className="text-xs text-teal-600 hover:underline">View in Bookings →</button>
-                </span>
-              ) : "—"}
-            </Line>
-            <Line label="Type"><TypeBadge r={r} /></Line>
-            <Line label="Amount"><span className="font-semibold">{fmt(pv ? pv.total : disc ? r.refund.amount : r.amount)}</span></Line>
-            <Line label="Requested">{stampText(toDate(r.createdAt))}</Line>
-            <Line label="Updated">{stampText(updatedOf(r))}</Line>
-            {w && <Line label="Waiting"><span className={w.late ? "font-semibold text-amber-600" : ""}>{w.text}{w.late ? " — worth checking" : ""}</span></Line>}
-            <Line label={isDeposit(r) ? "Reason" : disc ? "Discount reason" : "Reason"}>{isDeposit(r) ? "Security deposit returned after the trip" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—")}</Line>
-            {!disc && r.notes && <Line label="Notes">{r.notes}</Line>}
-            {!disc && r.status === "Rejected" && r.rejectReason && <Line label="Rejected because"><span className="text-red-600">{r.rejectReason}</span></Line>}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-3">
+          <Block title="Booking Details">
+            <Line label="Booking ID">{r.bookingID || "—"}</Line>
+            <Line label="Customer">{r.customerName || "—"}</Line>
+            {r.bookingID && (
+              <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
+                title="Open this booking in Bookings"
+                className="px-3 py-1.5 rounded-xl border text-xs font-semibold text-teal-700 hover:bg-teal-50">
+                View Booking →
+              </button>
+            )}
           </Block>
 
-          {disc ? (
-            <Block title={isDeposit(r) ? "Deposit return" : "Discount"}>
-              {!isDeposit(r) && <Line label="Discount given">{fmt(r.discountAmount)}</Line>}
-              <Line label={isDeposit(r) ? "Returned to customer" : "Sent back to customer"}>{fmt(r.refund.amount)} {r.refund.via === "in_store" ? "in store" : "via PayMongo"}</Line>
-              {r.refund.referenceNumber && r.refund.via === "paymongo" && <Line label="PayMongo ref"><span className="font-mono text-xs">{r.refund.referenceNumber}</span></Line>}
-              {r.refund.state === "failed" && <p className="text-xs text-red-600 mt-2">PayMongo could not complete this refund, so the customer has not received it.{r.refund.errorNote ? ` (${r.refund.errorNote})` : ""}</p>}
-              {r.refund.state === "processing" && r.refund.sendAfter && <p className="text-xs text-violet-700 mt-2">The payment was made today, so PayMongo can't send a partial refund yet. It is scheduled and will be sent automatically on {new Date(r.refund.sendAfter).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" })}. If it can't be sent, it moves to Failed and can be retried or handed back in store.</p>}
-              {r.refund.state === "processing" && !r.refund.sendAfter && <p className="text-xs text-blue-700 mt-2">PayMongo is processing this refund. It can take up to 24 hours.</p>}
-              {viaDepositRoutes(r) && r.refund.state === "failed" && <p className="text-xs text-gray-500 mt-1">{isDeposit(r) ? "The deposit is" : "The trip is"} already settled. Retry the PayMongo refund, or hand the money back in store and record it here. Check your PayMongo payout balance if it keeps failing.</p>}
-              {r.refund.state === "awaiting_handback" && <p className="text-xs text-orange-700 mt-2">Paid in store, so it can't go through PayMongo. Return it in store, then record it on the payment.</p>}
-            </Block>
-          ) : (
-            <>
-              {(tier || kept > 0) && (
-                <Block title="Deposit">
-                  {tier && <Line label="Policy"><TypeBadge r={r} /></Line>}
-                  {when && <Line label="Requested">{when}</Line>}
-                  <Line label="Deposit">
+          {!disc && <CancellationBlock r={r} fmt={fmt} />}
+
+          <Block title="Refund Details">
+            <Line label="Type"><TypeBadge r={r} /></Line>
+            <Line label="Amount"><span className="font-semibold">{fmt(pv ? pv.total : disc ? r.refund.amount : r.amount)}</span></Line>
+            {disc && <Line label="Date">{stampText(toDate(r.createdAt))}</Line>}
+            <Line label="Updated">{stampText(updatedOf(r))}</Line>
+            {updatedByText(r) && <Line label="Updated by">{updatedByText(r)}</Line>}
+            {w && <Line label="Waiting"><span className={w.late ? "font-semibold text-amber-600" : ""}>{w.text}{w.late ? " — worth checking" : ""}</span></Line>}
+
+            {disc ? (
+              <>
+                <Line wide label={isDeposit(r) ? "Reason" : "Discount reason"}>{isDeposit(r) ? "Security deposit returned after the trip" : (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount"))}</Line>
+                {!isDeposit(r) && <Line label="Discount given">{fmt(r.discountAmount)}</Line>}
+                <Line wide label={isDeposit(r) ? "Returned to customer" : "Sent back to customer"}>{fmt(r.refund.amount)} {r.refund.via === "in_store" ? "in store" : "via PayMongo"}</Line>
+                {r.refund.referenceNumber && r.refund.via === "paymongo" && <Line label="PayMongo ref"><span className="font-mono text-xs">{r.refund.referenceNumber}</span></Line>}
+                {r.refund.state === "failed" && <p className="text-xs text-red-600">PayMongo could not complete this refund, so the customer has not received it.{r.refund.errorNote ? ` (${r.refund.errorNote})` : ""}</p>}
+                {r.refund.state === "processing" && r.refund.sendAfter && <p className="text-xs text-violet-700">The payment was made today, so PayMongo can't send a partial refund yet. It is scheduled and will be sent automatically on {new Date(r.refund.sendAfter).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" })}. If it can't be sent, it moves to Failed and can be retried or handed back in store.</p>}
+                {r.refund.state === "processing" && !r.refund.sendAfter && <p className="text-xs text-blue-700">PayMongo is processing this refund. It can take up to 24 hours.</p>}
+                {viaDepositRoutes(r) && r.refund.state === "failed" && <p className="text-xs text-gray-500">{isDeposit(r) ? "The deposit is" : "The trip is"} already settled. Retry the PayMongo refund, or hand the money back in store and record it here. Check your PayMongo payout balance if it keeps failing.</p>}
+                {r.refund.state === "awaiting_handback" && <p className="text-xs text-orange-700">Paid in store, so it can't go through PayMongo. Return it in store, then record it on the payment.</p>}
+              </>
+            ) : (
+              <>
+                {when && <Line label="Timing">{when}</Line>}
+                {(tier || kept > 0) && (
+                  <Line wide label="Deposit">
                     {kept > 0
                       ? <span className="font-semibold text-amber-700">{fmt(kept)} kept (48-hour policy)</span>
                       : <span className="text-green-700 font-semibold">Not kept{r.forfeitWaived ? " — forfeit waived" : ""}</span>}
                   </Line>
-                  {r.forfeitWaived && r.forfeitWaivedReason && <Line label="Waived because">{r.forfeitWaivedReason}</Line>}
-                </Block>
-              )}
+                )}
+                {r.forfeitWaived && r.forfeitWaivedReason && <Line wide label="Waived because">{r.forfeitWaivedReason}</Line>}
 
-              {(pv || (Array.isArray(r.parts) && r.parts.length > 0) || r.manualRefund || Number(r.unrefundableAmount) > 0) && (
-                <Block title="Where the money goes">
-                  {paidWithList(r).length > 0 && <Line label="Paid with"><PaidWithBadge r={r} /></Line>}
-                  {((pv && Number(pv.qrphAmount) > 0) || (r.status === "Approved" && paidWithList(r).includes("qrph"))) && (
-                    <p className="text-[11px] text-orange-700 mb-1">{QRPH_NOTE}</p>
-                  )}
-                  {pv && (
-                    <>
-                      <Line label="Customer paid">{fmt(pv.bookingPaid ?? pv.grossPaid)}</Line>
-                      {Number(pv.heldCredit) > 0 && (
-                        <p className="text-[11px] text-gray-500 mb-1">Includes {fmt(pv.heldCredit)} of discount credit the customer had already paid. It goes back with this refund; nothing is deducted for the discount.</p>
-                      )}
-                      {pv.forfeit > 0 && <Line label="Deposit kept"><span className="text-amber-700">−{fmt(pv.forfeit)}</span></Line>}
-                      {pv.gatewayFeeKept > 0 && <Line label="Gateway fee kept"><span className="text-amber-700">−{fmt(pv.gatewayFeeKept)}</span></Line>}
-                      <Line label="Via PayMongo">{fmt(pv.onlineAmount)}</Line>
-                      {pv.scheduled && pv.sendAfter && (
-                        <p className="text-[11px] text-violet-700 mb-1">The payment was made today, so PayMongo can't send a partial refund yet. If you approve now, the booking is cancelled and the money is sent automatically on {stampText(toDate(pv.sendAfter))}.</p>
-                      )}
-                      {pv.manualAmount > 0 && <Line label="Hand back in person"><span className="text-orange-600 font-semibold">{fmt(pv.manualAmount)}</span></Line>}
-                      {pv.unrefundableAmount > 0 && <Line label="Not refundable"><span className="text-red-600 font-semibold">{fmt(pv.unrefundableAmount)} — Payment ID does not exist</span></Line>}
-                      {pv.total !== r.amount && <p className="text-[11px] text-gray-400 mt-1">Was {fmt(r.amount)} when requested.</p>}
-                    </>
-                  )}
-                  {Array.isArray(r.parts) && r.parts.map((pt, i) => (
-                    <Line key={i} label={`${pt.kind === "balance" ? "Balance" : "Deposit"} ${fmt(pt.amount)}`}>
-                      <span className={pt.status === "succeeded" ? "text-green-600" : pt.status === "failed" ? "text-red-600" : "text-blue-600"}>
-                        {pt.handedBack
-                          ? `handed back${pt.handedBack.method ? ` (${pt.handedBack.method})` : ""}${pt.handedBack.referenceNumber ? ` · ref ${pt.handedBack.referenceNumber}` : ""}`
-                          : pt.status === "succeeded" ? "refunded" : pt.status === "failed" ? "failed"
-                          : (!pt.paymongoRefundID && r.sendAfter && !r.scheduledSentAt) ? `scheduled — sends ${stampText(toDate(r.sendAfter))}` : "processing at PayMongo"}
-                      </span>
-                      {pt.paymongoRefundID && <span className="block font-mono text-[11px] text-gray-400">{pt.paymongoRefundID}</span>}
-                      {pt.status === "failed" && pt.error && <span className="block text-[11px] text-red-600">{pt.error}</span>}
-                      {pt.handedBack && <span className="block text-[11px] text-gray-400">PayMongo could not refund this part, so it was paid back by hand.</span>}
+                {paidWithList(r).length > 0 && <Line label="Paid with"><PaidWithBadge r={r} /></Line>}
+                {((pv && Number(pv.qrphAmount) > 0) || (r.status === "Approved" && paidWithList(r).includes("qrph"))) && (
+                  <p className="text-[11px] text-orange-700">{QRPH_NOTE}</p>
+                )}
+                {pv && Number(pv.heldCredit) > 0 && (
+                  <p className="text-[11px] text-gray-500">Includes {fmt(pv.heldCredit)} of discount credit the customer had already paid. It goes back with this refund; nothing is deducted for the discount.</p>
+                )}
+                {pv && pv.scheduled && pv.sendAfter && (
+                  <p className="text-[11px] text-violet-700">The payment was made today, so PayMongo can't send a partial refund yet. If you approve now, the booking is cancelled and the money is sent automatically on {stampText(toDate(pv.sendAfter))}.</p>
+                )}
+                <MoneyTable r={r} pv={pv} fmt={fmt} />
+                {pv && pv.total !== r.amount && <p className="text-[11px] text-gray-400">Was {fmt(r.amount)} when requested.</p>}
+
+                {isScheduled(r) && (
+                  <>
+                    <Line label="Sends after">{stampText(toDate(r.sendAfter))}</Line>
+                    {scheduleLastError(r) && <Line wide label="Last error"><span className="text-red-600">{scheduleLastError(r)}</span></Line>}
+                    <p className="text-[11px] text-gray-500">
+                      {scheduleLastError(r)
+                        ? "The automatic send failed and will not be retried by itself. Fix the cause (for example the PayMongo balance), then press Retry now, or hand the money back in store."
+                        : "PayMongo can't partially refund a payment on the day it was made. It is sent automatically by the nightly job; the customer has already been told the date."}
+                    </p>
+                  </>
+                )}
+
+                {r.discount && DISCOUNT_WAIT[r.discount.refund.state] && (
+                  <>
+                    <Line label="Discount given">{fmt(r.discount.amount)}</Line>
+                    <Line label="Discount refund">
+                      <button type="button" onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)} className={`hover:underline ${DISCOUNT_WAIT[r.discount.refund.state].cls}`}>
+                        {DISCOUNT_WAIT[r.discount.refund.state].label}
+                      </button>
                     </Line>
-                  ))}
-                  {r.manualRefund && (
-                    <Line label={`In person ${fmt(r.manualRefund.amount)}`}>
-                      <span className={r.manualRefund.issued ? "text-green-600" : "text-orange-600 font-semibold"}>
-                        {r.manualRefund.issued ? `handed back${r.manualRefund.method ? ` (${r.manualRefund.method})` : ""}${r.manualRefund.referenceNumber ? ` · ref ${r.manualRefund.referenceNumber}` : ""}` : "not yet handed back"}
-                      </span>
-                    </Line>
-                  )}
-                  {!pv && Number(r.unrefundableAmount) > 0 && <Line label="Not refunded"><span className="text-red-600 font-semibold">{fmt(r.unrefundableAmount)} — Payment ID does not exist</span></Line>}
-                  {r.paymentID && (
-                    <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
-                      title="Open this payment — receipts, slips and every money movement are there"
-                      className="mt-2 px-3 py-1.5 rounded-xl border text-xs font-semibold text-teal-700 hover:bg-teal-50">
-                      View in Payments →
-                    </button>
-                  )}
-                </Block>
-              )}
+                  </>
+                )}
+              </>
+            )}
 
-              {isScheduled(r) && (
-                <Block title="Scheduled send">
-                  <Line label="Sends after">{stampText(toDate(r.sendAfter))}</Line>
-                  {scheduleLastError(r) && <Line label="Last error"><span className="text-red-600">{scheduleLastError(r)}</span></Line>}
-                  <p className="text-[11px] text-gray-500 mt-1">
-                    {scheduleLastError(r)
-                      ? "The automatic send failed and will not be retried by itself. Fix the cause (for example the PayMongo balance), then press Retry now, or hand the money back in store."
-                      : "PayMongo can't partially refund a payment on the day it was made. It is sent automatically by the nightly job; the customer has already been told the date."}
-                  </p>
-                </Block>
-              )}
-
-              {r.discount && DISCOUNT_WAIT[r.discount.refund.state] && (
-                <Block title="Discount on this payment">
-                  <Line label="Discount given">{fmt(r.discount.amount)}</Line>
-                  <Line label="Its refund">
-                    <button type="button" onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)} className={`hover:underline ${DISCOUNT_WAIT[r.discount.refund.state].cls}`}>
-                      {DISCOUNT_WAIT[r.discount.refund.state].label}
-                    </button>
-                  </Line>
-                </Block>
-              )}
-            </>
-          )}
-
+            {r.paymentID && (
+              <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
+                title="Open this payment — receipts, slips and every money movement are there"
+                className="px-3 py-1.5 rounded-xl border text-xs font-semibold text-teal-700 hover:bg-teal-50">
+                View in Payments →
+              </button>
+            )}
+          </Block>
         </div>
 
         {/* Hand-back form: pinned with the buttons below, so it never scrolls out of view. */}
@@ -566,7 +665,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
         )}
 
         <div className="shrink-0 border-t border-gray-100 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50">Close</button>
+          <button onClick={onClose} className="px-4 py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
           <div className="flex items-center justify-end gap-2 flex-wrap">
             {!disc && r.status === "Pending" && (
               <>
@@ -647,11 +746,11 @@ const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
 function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
   const active = sortKeyState === key;
   return (
-    <th className={`px-5 py-3 text-left select-none ${className}`}>
+    <th className={`px-4 py-3 text-left select-none ${className}`}>
       <button
         onClick={() => onSort(key)}
-        className={`flex items-center gap-1.5 uppercase tracking-wider text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
-          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
         }`}
       >
         {label}
@@ -699,10 +798,11 @@ const reasonTextOf = (r) => isDeposit(r) ? "Security deposit return"
   : isDiscount(r) ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount"))
   : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "");
 // "Search by" options — mirror the table's columns. Status (and the Type buttons) have their own controls.
-// Booking ID, Payment ID and Request ID have no column on every tab but stay searchable.
+// Booking ID, Payment ID, Request ID and Reason have no column (Reason is in the View window) but stay searchable.
 const REFUND_SEARCH_BY = [
   { key: "requested", label: "Requested",  type: "date" },
-  { key: "updated",   label: "Updated",    type: "date", notOnPending: true },   // there is no Updated column on Request Pending
+  { key: "updated",   label: "Updated",    type: "date" },
+  { key: "updatedBy", label: "Updated by", type: "text" },
   { key: "customer",  label: "Customer",   type: "text" },
   { key: "bookingID", label: "Booking ID", type: "text" },
   { key: "paymentID", label: "Payment ID", type: "text" },
@@ -714,14 +814,12 @@ export default function RefundRequests() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
-  const [tab, setTab]           = useState(null);          // null until the list loads, then the most useful tab (see below)
   const [depositReturns, setDepositReturns] = useState([]);   // security deposits sent back through PayMongo
   const [discounts, setDiscounts] = useState([]);           // discount refunds (money a staff discount sent back)
   const [retryingId, setRetryingId] = useState(null);
   const [syncingId, setSyncingId] = useState(null);
   const [viewId, setViewId]   = useState(null);   // refundRequestID of the item open in the View modal
   const [statusF, setStatusF]   = useState("All");
-  const [typeF, setTypeF]       = useState("all");   // Under Process + History: all | refund | staff | deposit | discount
   const [search, setSearch]     = useState("");
   const [searchBy, setSearchBy] = useState("customer");
   const [dateValue, setDateValue] = useState("");   // "YYYY-MM-DD" from the date picker
@@ -760,31 +858,24 @@ export default function RefundRequests() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Linked in with ?search=<refundRequestID | paymentID | bookingID> (e.g. Payments' "View refund request"): fills the
-  // search bar and opens the tab the request is in (Active Queue or History), then strips the param. It waits for the
-  // list to load so the right tab can be picked.
+  // search bar (and clears the status filter so the request is not hidden by it), then strips the param. It waits for the
+  // list to load.
   useEffect(() => {
     const q = searchParams.get("search");
     if (!q) return;
     const hit = items.find((r) => r.refundRequestID === q || r.paymentID === q || r.bookingID === q);
     setSearchBy(hit ? (hit.refundRequestID === q ? "requestID" : hit.paymentID === q ? "paymentID" : "bookingID") : "bookingID");
     setSearch(q);
-    if (hit) setTab(tabOf(hit));
+    if (hit) setStatusF("All");
     else if (loading) return;
     setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete("search"); return n; }, { replace: true });
   }, [searchParams, items, loading, setSearchParams]);
 
-  const activeTab = TABS.find((t) => t.key === tab) || TABS[0];
-  const tabKey = activeTab.key;
-  // The Updated option doesn't exist on Request Pending; if it was picked on another tab, fall back to Customer.
-  const searchOptions = REFUND_SEARCH_BY.filter((o) => !(o.notOnPending && tabKey === "pending"));
-  const searchByKey = searchOptions.some((o) => o.key === searchBy) ? searchBy : "customer";
-  const searchOpt = searchOptions.find((o) => o.key === searchByKey);
+  const searchByKey = REFUND_SEARCH_BY.some((o) => o.key === searchBy) ? searchBy : "customer";
+  const searchOpt = REFUND_SEARCH_BY.find((o) => o.key === searchByKey);
 
-  const switchTab = (key) => {
-    setTab(key);
-    setStatusF("All"); // reset the sub-filter so switching tabs doesn't hide everything
-    setTypeF("all");
-  };
+  // Clicking a card filters by that status; clicking the active card clears it.
+  const toggleStatus = (key) => setStatusF((cur) => (cur === key ? "All" : key));
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -993,7 +1084,6 @@ export default function RefundRequests() {
     finally { setBusyId(null); }
   };
 
-  const hasTypeFilter = tabKey === "processing" || tabKey === "history";   // type buttons show on these two tabs
   const filtered = items.filter((r) => {
     const q = search.trim().toLowerCase();
     let matchQ = true;
@@ -1006,61 +1096,49 @@ export default function RefundRequests() {
         paymentID: r.paymentID,
         requestID: r.refundRequestID,
         reason:    reasonTextOf(r),
+        updatedBy: updatedByText(r),
       }[searchByKey];
       matchQ = String(hay || "").toLowerCase().includes(q);
     }
-    const matchTab = tabOf(r) === tabKey;
-    const matchS = chipMatches(tabKey, statusF, r);
-    const matchT = !hasTypeFilter || typeF === "all" || typeKeyOf(r) === typeF;
-    return matchQ && matchTab && matchS && matchT;
+    return matchQ && statusMatches(statusF, r);
   });
 
   // Numbered pagination (same shared component as Bookings/Payments). The hook
   // clamps the page if approving/rejecting shrinks the list underneath us.
-  // Sort after search/tab/status filtering, before pagination, so Page 1 is the
+  // Sort after search/status filtering, before pagination, so Page 1 is the
   // top of whatever sort is active.
-  const activeSort = tabKey === "pending" && sortKey === "updated" ? null : sortKey;   // no Updated column on Pending
+  const ms = (d) => { const t = toMillis(d); return Number.isFinite(t) ? t : 0; };   // a pending row has no Updated date
   const sorted = [...filtered].sort((a, b) => {
-    if (!activeSort) {
-      // Under Process: Failed ones first (they need a person), then the most recently updated on top.
-      // (The "Waiting" column still shows how long each has been stuck; click Updated to sort oldest first.)
-      if (tabKey === "processing") {
-        const fa = waitKeyOf(a) === "failed" ? 1 : 0, fb = waitKeyOf(b) === "failed" ? 1 : 0;
-        if (fa !== fb) return fb - fa;
-        return waitStartMs(b) - waitStartMs(a);
-      }
-      // History: most recently finished on top
-      if (tabKey === "history") { const x = toMillis(updatedOf(a)), y = toMillis(updatedOf(b)); return x === y ? 0 : y > x ? 1 : -1; }
-      return 0;
+    if (!sortKey) {
+      // Default: pending first, then Failed, then in-flight, then finished; newest first inside each group.
+      // (A pending request is dated by when it was requested, everything else by its last update.)
+      const pa = priorityOf(a), pb = priorityOf(b);
+      if (pa !== pb) return pa - pb;
+      const when = (r) => (statusKeyOf(r) === "pending" ? ms(toDate(r.createdAt)) : (ms(updatedOf(r)) || waitStartMs(r)));
+      return when(b) - when(a);
     }
-    if (activeSort === "customer") {
+    if (sortKey === "customer") {
       const c = (a.customerName || "").localeCompare(b.customerName || "", undefined, { sensitivity: "base" });
       return sortDir === "asc" ? c : -c;
     }
     let av, bv;
-    if (activeSort === "amount")         { av = Number(a.amount) || 0;             bv = Number(b.amount) || 0; }
-    else if (activeSort === "requested") { av = toMillis(toDate(a.createdAt));     bv = toMillis(toDate(b.createdAt)); }
-    else if (activeSort === "updated")   { av = toMillis(updatedOf(a));            bv = toMillis(updatedOf(b)); }
+    if (sortKey === "amount")         { av = Number(a.amount) || 0;             bv = Number(b.amount) || 0; }
+    else if (sortKey === "requested") { av = ms(toDate(a.createdAt));           bv = ms(toDate(b.createdAt)); }
+    else if (sortKey === "updated")   { av = ms(updatedOf(a));                  bv = ms(updatedOf(b)); }
     else return 0;
     return sortDir === "asc" ? av - bv : bv - av;
   });
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, statusF, typeF, tabKey, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, statusF, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
-  const pendingCount    = items.filter((r) => tabOf(r) === "pending").length;
-  const processingItems = items.filter((r) => tabOf(r) === "processing");
-  const processingCount = processingItems.length;
-  const failedCount     = processingItems.filter((r) => waitKeyOf(r) === "failed").length;
-  const tabItems        = items.filter((r) => tabOf(r) === tabKey);   // what the type buttons count
-  const filtersActive   = !!search.trim() || !!dateValue || statusF !== "All" || typeF !== "all";
-  const clearFilters    = () => { setSearch(""); setDateValue(""); setStatusF("All"); setTypeF("all"); };
-
-  // Open on the tab that needs someone: requests to review first, otherwise what is still in flight.
-  useEffect(() => {
-    if (tab === null && !loading) setTab(pendingCount > 0 ? "pending" : processingCount > 0 ? "processing" : "pending");
-  }, [tab, loading, pendingCount, processingCount]);
+  const countOf = (pred) => items.filter((r) => pred(statusKeyOf(r))).length;
+  const pendingCount   = countOf((k) => k === "pending");
+  const inProcessCount = countOf((k) => IN_PROCESS.includes(k));
+  const failedCount    = countOf((k) => k === "failed");
+  const refundedCount  = countOf((k) => k === "refunded");
+  const filtersActive  = !!search.trim() || !!dateValue || statusF !== "All";
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -1208,186 +1286,147 @@ export default function RefundRequests() {
           <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">Refunds</h1>
           <p className="text-sm text-gray-500">
             {pendingCount > 0 ? `${pendingCount} request${pendingCount > 1 ? "s" : ""} to review` : "No requests to review"}
-            {processingCount > 0 && <> · {processingCount} under process</>}
+            {inProcessCount > 0 && <> · {inProcessCount} under process</>}
+            {failedCount > 0 && <> · <span className="font-semibold text-red-600">{failedCount} failed</span></>}
           </p>
         </div>
       </div>
 
-      {/* Status cards, same look as Payments / Penalties. Click one to jump to that list (click the active one to go back
-          to all statuses). Failed is the one that needs a person, so it is a card of its own instead of a line of text. */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* Status cards, same look as Payments / Penalties. Click one to filter the table to it (click the active one again to
+          clear). They set the same filter as the status dropdown below. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           icon={<IconClock className="w-5 h-5" />} value={pendingCount} label="Request pending" color="yellow"
-          active={tabKey === "pending"}
-          onClick={() => switchTab("pending")}
+          hint="Customers asking for a refund. Approve or reject each one. (Deposit returns and discount refunds need no approval, so they never wait here.)"
+          active={statusF === "pending"}
+          onClick={() => toggleStatus("pending")}
         />
         <StatCard
-          icon={<IconHourglass className="w-5 h-5" />} value={processingCount - failedCount} label="Under process" color="blue"
-          active={tabKey === "processing" && statusF !== "failed"}
-          onClick={() => { switchTab("processing"); }}
+          icon={<IconHourglass className="w-5 h-5" />} value={inProcessCount} label="Under process" color="blue"
+          hint="Approved refunds, deposit returns and discount refunds whose money isn't back with the customer yet. PayMongo can take up to 24 hours."
+          active={statusF === "inprocess"}
+          onClick={() => toggleStatus("inprocess")}
         />
         <StatCard
           icon={<IconAlertCircle className="w-5 h-5" />} value={failedCount} label="Failed — needs you" color="red"
-          active={tabKey === "processing" && statusF === "failed"}
-          onClick={() => { switchTab("processing"); setStatusF("failed"); }}
+          hint="PayMongo refused part of the refund. A person has to follow up: retry it or hand the money back in store."
+          active={statusF === "failed"}
+          onClick={() => toggleStatus("failed")}
+        />
+        <StatCard
+          icon={<IconCheck className="w-5 h-5" />} value={refundedCount} label="Refunded" color="green"
+          hint="Finished: the money went back to the customer, online or in store."
+          active={statusF === "refunded"}
+          onClick={() => toggleStatus("refunded")}
         />
       </div>
 
-      {/* Request Pending / Under Process / History */}
-      <div className="flex gap-1 border-b border-gray-100">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => switchTab(t.key)}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
-              tabKey === t.key ? "border-arl-dark text-arl-dark" : "border-transparent text-gray-400 hover:text-gray-600"
-            }`}
+      {/* Table card: the search + filters sit on top of the table, like Bookings */}
+      <div className="bg-white rounded-2xl border overflow-hidden">
+        <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select
+              value={searchByKey}
+              onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+            >
+              {REFUND_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+          {searchOpt.type === "date" ? (
+            <input
+              type="date"
+              value={dateValue}
+              onChange={(e) => setDateValue(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
+            />
+          ) : (
+            <input
+              type="text"
+              placeholder={`Enter ${searchOpt.label.toLowerCase()}...`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
+            />
+          )}
+          <select
+            value={statusF}
+            onChange={(e) => setStatusF(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
           >
-            {t.label}
-            {(() => {
-              const n = t.key === "pending" ? pendingCount : t.key === "processing" ? processingCount : 0;
-              if (n <= 0) return null;
-              return (
-                <span
-                  className={`ml-2 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[11px] font-bold ${
-                    tabKey === t.key ? "bg-arl-dark text-white" : "bg-gray-100 text-gray-500"
-                  }`}
-                  title={t.key === "pending" ? "Needs review" : "Money on its way back, or needing follow-up"}
-                >{n}</span>
-              );
-            })()}
-            {t.key === "processing" && failedCount > 0 && (
-              <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-red-500 align-middle" title={`${failedCount} failed — needs follow-up`} />
-            )}
+            {[{ key: "All", label: "All statuses" }, ...STATUS_OPTIONS].map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </select>
+          <button
+            onClick={fetchRequests}
+            disabled={loading}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            <IconRefresh className="w-3.5 h-3.5" />
+            Refresh
           </button>
-        ))}
-      </div>
-
-      {/* What this tab means, in one line */}
-      <p className="text-sm text-gray-500 -mt-2 max-w-3xl leading-relaxed">
-        {tabKey === "pending" && "Customers asking for a refund. Approve or reject each one. (Deposit returns and discount refunds need no approval, so they never wait here.)"}
-        {tabKey === "processing" && "Approved refunds, deposit returns and discount refunds whose money isn't back with the customer yet. PayMongo can take up to 24 hours; anything marked Failed needs a person."}
-        {tabKey === "processing" && failedCount > 0 && <span className="ml-1 font-semibold text-red-600">{failedCount} failed.</span>}
-        {tabKey === "history" && "Finished: the money went back (online or in store), or the request was rejected."}
-      </p>
-
-      {/* Filters */}
-      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-end">
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
-          <div className="relative">
-            <select value={searchByKey} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
-              className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white">
-              {searchOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-            </select>
-            <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
         </div>
-        {searchOpt.type === "date" ? (
-          <input
-            type="date"
-            value={dateValue}
-            onChange={(e) => setDateValue(e.target.value)}
-            className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
-          />
-        ) : (
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={`Enter ${searchOpt.label.toLowerCase()}…`}
-            className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light"
-          />
-        )}
-        {activeTab.chips.length > 0 && (
-          <div className="relative">
-            <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
-              className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
-              {[{ key: "All", label: "All statuses" }, ...activeTab.chips].map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-            </select>
-            <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        )}
-        <button onClick={fetchRequests} disabled={loading}
-          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
-          {loading ? "…" : "Refresh"}
-        </button>
-        {filtersActive && (
-          <button onClick={clearFilters} className="px-3 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50">Clear filters</button>
-        )}
-        {hasTypeFilter && (
-          <div className="basis-full flex flex-wrap items-center gap-2">
-            {[{ key: "all", label: "All" }, ...TYPE_BUTTONS].map((b) => {
-              const n = b.key === "all" ? tabItems.length : tabItems.filter((r) => typeKeyOf(r) === b.key).length;
-              if (b.key !== "all" && n === 0 && typeF !== b.key) return null;   // nothing of that kind on this tab
-              const on = typeF === b.key;
-              return (
-                <button key={b.key} type="button" onClick={() => setTypeF(b.key)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${on ? "bg-arl-dark text-white border-arl-dark" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}>
-                  {b.label} <span className={on ? "text-white/70" : "text-gray-400"}>{n}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Table */}
-      <div className="rounded-2xl border border-gray-100 bg-white shadow-soft overflow-hidden">
         <div className="overflow-x-auto">
           {loading ? (
-            <div className="p-10 text-center text-sm text-gray-400">Loading refund requests…</div>
+            <table className="w-full text-sm">
+              <tbody>
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-t first:border-t-0">
+                    {Array.from({ length: 10 }).map((__, j) => (
+                      <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           ) : error ? (
             <div className="p-10 text-center text-sm text-red-500">{error}</div>
           ) : filtered.length === 0 ? (
             <div className="p-10 text-center text-sm text-gray-400">
-              {filtersActive ? "Nothing matches these filters." : tabKey === "history" ? "No finished refunds yet." : tabKey === "processing" ? "Nothing is waiting on PayMongo or on a hand-back." : "No requests waiting for review."}
+              {filtersActive ? "Nothing matches these filters." : "No refunds yet."}
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wider text-gray-400 border-b border-gray-100">
+              <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+                <tr>
                   <SortableTh label="Requested" sortKey="requested" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  {tabKey === "pending" && <th className="px-5 py-3 font-semibold">Booking</th>}
-                  <th className="px-5 py-3 font-semibold">Reason</th>
+                  <th className="px-4 py-3 text-left">Booking</th>
                   <SortableTh label="Amount" sortKey="amount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <th className="px-5 py-3 font-semibold">Type</th>
-                  <th className="px-5 py-3 font-semibold">Paid with</th>
-                  {tabKey !== "pending" && <th className="px-5 py-3 font-semibold">Via</th>}
-                  {tabKey !== "pending" && <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />}
-                  <th className="px-5 py-3 font-semibold">Status</th>
-                  <th className="px-5 py-3 font-semibold text-right">Actions</th>
+                  <th className="px-4 py-3 text-left">Type</th>
+                  <th className="px-4 py-3 text-left">Paid with</th>
+                  <th className="px-4 py-3 text-left">Via</th>
+                  <SortableTh label="Updated" sortKey="updated" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th className="px-4 py-3 text-left">Status</th>
+                  <th className="pl-4 pr-8 py-3 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {paginated.map((r) => {
                   const disc = isDiscount(r);
                   return (
-                    <tr key={r.refundRequestID} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
-                      <td className="px-5 py-4"><Stamp date={toDate(r.createdAt)} /></td>
-                      <td className="px-5 py-4"><p className="font-semibold text-arl-dark">{r.customerName || "—"}</p></td>
-                      {tabKey === "pending" && <td className="px-5 py-4 whitespace-nowrap font-medium text-gray-700">{r.bookingID || "—"}</td>}
-                      <td className="px-5 py-4">
-                        {(() => {
-                          const note = isDeposit(r) ? "Security deposit return" : disc ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount")) : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "—");
-                          const full = isDeposit(r) ? "Security deposit return" : disc ? r.discountReason : (r.customerReason !== undefined ? r.customerReason : r.reason);
-                          // Every tab: only the first 16 letters, so the Actions column stays on screen (the whole note is in View)
-                          const shown = note.length > 16 ? `${note.slice(0, 16).trimEnd()}…` : note;
-                          return <p className="text-gray-700 max-w-[140px] truncate" title={full || note}>{shown}</p>;
-                        })()}
-                      </td>
-                      <td className="px-5 py-4 font-semibold text-arl-dark whitespace-nowrap">
+                    <tr key={r.refundRequestID} className="border-t hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3"><Stamp date={toDate(r.createdAt)} /></td>
+                      <td className="px-4 py-3"><p className="font-medium text-gray-800">{r.customerName || "—"}</p></td>
+                      <td className="px-4 py-3 whitespace-nowrap text-gray-700">{r.bookingID || "—"}</td>
+                      <td className="px-4 py-3 font-semibold text-arl-dark whitespace-nowrap">
                         {fmt(disc ? r.refund.amount : (r.planPreview ? r.planPreview.total : r.amount))}
                       </td>
-                      <td className="px-5 py-4 whitespace-nowrap"><TypeBadge r={r} /></td>
-                      <td className="px-5 py-4"><PaidWithBadge r={r} /></td>
-                      {tabKey !== "pending" && <td className="px-5 py-4 whitespace-nowrap"><ViaBadge r={r} /></td>}
-                      {tabKey !== "pending" && <td className="px-5 py-4"><Stamp date={updatedOf(r)} /></td>}
-                      <td className="px-5 py-4">{disc ? <DiscountBadge state={r.refund.state} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}</td>
-                      <td className="px-5 py-4 text-right">
+                      <td className="px-4 py-3 whitespace-nowrap"><TypeBadge r={r} /></td>
+                      <td className="px-4 py-3"><PaidWithBadge r={r} /></td>
+                      <td className="px-4 py-3 whitespace-nowrap"><ViaBadge r={r} /></td>
+                      <td className="px-4 py-3"><Stamp date={updatedOf(r)} /></td>
+                      <td className="px-4 py-3">
+                        {disc ? <DiscountBadge state={r.refund.state} scheduled={statusKeyOf(r) === "scheduled"} /> : <StatusBadge status={r.status} stage={stageOf(r)} />}
+                        {sendDateText(r) && (
+                          <p className={`mt-1 text-[11px] whitespace-nowrap ${!disc && scheduleLastError(r) ? "text-red-600 font-semibold" : "text-violet-700"}`}>
+                            {!disc && scheduleLastError(r) ? "Send failed — open to retry" : `Sends ${sendDateText(r)}`}
+                          </p>
+                        )}
+                      </td>
+                      <td className="pl-4 pr-8 py-3 text-right">
                         <button onClick={() => setViewId(r.refundRequestID)}
-                          className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
                       </td>
                     </tr>
                   );

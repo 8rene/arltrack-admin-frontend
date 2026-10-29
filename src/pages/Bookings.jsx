@@ -840,7 +840,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
 // Nothing is sent to PayMongo. It is handed back in store and marked as handed back on the Refund Requests page.
 //   Full refund      -- our issue: nothing kept
 //   Normal refund    -- deposit returned, gateway fee kept (the customer's loss is the fee)
-//   No-show / late   -- deposit kept, gateway fee returned (the customer's loss is the deposit)
+//   No deposit refund -- deposit kept, gateway fee returned (the customer's loss is the deposit)
 //   Custom amount    -- staff type the amount, up to what the customer paid
 function RefundAfterCancelModal({ booking, onClose, onDone }) {
   const { fmt } = useCurrency();
@@ -929,7 +929,7 @@ function RefundAfterCancelModal({ booking, onClose, onDone }) {
               {opt("normal", "Normal refund",
                 opts.normal.available ? `The deposit goes back but the ${fmt(opts.normal.gatewayFeeKept)} online payment fee is not returned: ${fmt(opts.normal.total)} back.` : "The deposit goes back but the online payment fee is not.",
                 opts.normal.available ? null : "This booking has no online payment fee to keep, so it would be the same as a Full refund.")}
-              {opt("no_show", "No-show / late cancellation",
+              {opt("no_show", "No deposit refund",
                 opts.no_show.available ? `The ${fmt(opts.no_show.forfeit)} deposit is kept, the rest goes back: ${fmt(opts.no_show.total)} back.` : "The deposit is kept, everything else goes back.",
                 opts.no_show.available ? null : "The deposit is all that was paid, so nothing would go back.")}
               {opt("manual", "Custom amount", `You decide how much goes back (up to ${fmt(opts.manual.max)}). The rest is kept.`)}
