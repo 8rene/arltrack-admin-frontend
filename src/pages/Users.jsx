@@ -1688,11 +1688,15 @@ function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setD
 function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onOpenResub, statusFilter, setStatusFilter,
                            requestType, setRequestType, roleLabel = "Customers", openNewUserID, onNewOpened }) {
   const [detailUser, setDetailUser] = useState(null);
-  const [loadingId, setLoadingId]   = useState(null);
-  const [sortDir, setSortDir]       = useState("desc"); // newest submitted first
+  const [sortKey, setSortKey]       = useState("submitted"); // newest submitted first
+  const [sortDir, setSortDir]       = useState("desc");
   const [search, setSearch]         = useState("");
   const [searchBy, setSearchBy]     = useState("name");
   const [dateValue, setDateValue]   = useState("");
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(key === "submitted" ? "desc" : "asc"); }
+  };
 
   const hasUploads = (u) => Object.values(getDocImages(u.document || {})).some(v => v && v.trim() !== "");
 
@@ -1744,11 +1748,17 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
+    const byTime = (a, b) => toMillis(b.createdAt) - toMillis(a.createdAt); // tie-break: newest first
     return [...filtered].sort((a, b) => {
-      const x = toMillis(a.createdAt), y = toMillis(b.createdAt);
-      return dir * ((x > y) - (x < y));
+      let c = 0;
+      if (sortKey === "submitted")     { const x = toMillis(a.createdAt), y = toMillis(b.createdAt); c = (x > y) - (x < y); }
+      else if (sortKey === "name")     c = a.name.localeCompare(b.name);
+      else if (sortKey === "request")  c = a.kind.localeCompare(b.kind);
+      else if (sortKey === "status")   c = a.status.localeCompare(b.status);
+      else if (sortKey === "reviewed") { const x = toMillis(a.reviewedAt), y = toMillis(b.reviewedAt); c = (x > y) - (x < y); }
+      return c !== 0 ? dir * c : byTime(a, b);
     });
-  }, [filtered, sortDir]);
+  }, [filtered, sortKey, sortDir]);
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   useEffect(() => { setPage(1); }, [users, resubRows, search, searchBy, dateValue, statusFilter, requestType]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1761,7 +1771,6 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
   }, [openNewUserID, users, onNewOpened]);
 
   const handleVerify = async (user, approve, driverLicenseExpiry) => {
-    setLoadingId(user.id);
     try {
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/users/${user.id}/verify`, {
         method: "PATCH",
@@ -1772,7 +1781,6 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
       if (!res.ok) throw new Error(json.message || "Verify failed.");
       onRefresh();
     } catch (e) { console.error("Verify error:", e); }
-    finally { setLoadingId(null); }
   };
 
   const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "pending" || requestType !== "all";
@@ -1808,15 +1816,14 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
             <table className="w-full text-sm">
               <thead className="text-gray-400 text-xs uppercase bg-gray-50">
                 <tr>
-                  <SortableTh label="Submitted" sortKey="submitted" sortKeyState="submitted" sortDir={sortDir}
-                    onSort={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))} />
-                  <th className="px-5 py-3 text-left">{roleLabel.replace(/s$/, "")}</th>
-                  <th className="px-5 py-3 text-left">Request</th>
+                  <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label={roleLabel.replace(/s$/, "")} sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="Request" sortKey="request" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">Document Type</th>
                   <th className="px-5 py-3 text-left">Document No.</th>
                   <th className="px-5 py-3 text-left">Flagged</th>
-                  <th className="px-5 py-3 text-left">Status</th>
-                  {showReviewed && <th className="px-5 py-3 text-left">Reviewed</th>}
+                  <SortableTh label="Status" sortKey="status" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  {showReviewed && <SortableTh label="Reviewed" sortKey="reviewed" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />}
                   <th className="px-5 py-3 text-right">Action</th>
                 </tr>
               </thead>
@@ -1824,9 +1831,6 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
                 {pageItems.map(r => {
                   const isNew = r.kind === "new";
                   const u = r.user;
-                  const uploaded = isNew && hasUploads(u);
-                  const hasLicense = isNew && !!u.document?.driverLicenseUrl;
-                  const isLoading = isNew && loadingId === u.id;
                   return (
                     <tr key={r.key} className="border-t hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={r.createdAt} /></td>
@@ -1853,26 +1857,11 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
                       <td className="px-5 py-3"><RequestStatusPill status={r.status} /></td>
                       {showReviewed && <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={r.reviewedAt} /></td>}
                       <td className="px-5 py-3">
-                        <div className="flex gap-2 justify-end">
+                        <div className="flex justify-end">
                           <button onClick={() => (isNew ? setDetailUser(u) : onOpenResub(r.req.id))}
-                            className="px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+                            className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
                             View
                           </button>
-                          {isNew && r.status === "pending" && (
-                            <>
-                              <button onClick={() => handleVerify(u, false)} disabled={isLoading || !uploaded}
-                                className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed">
-                                <Icons.X className="w-3.5 h-3.5" />
-                                {isLoading ? "..." : "Reject"}
-                              </button>
-                              <button onClick={() => handleVerify(u, true)} disabled={isLoading || !uploaded || hasLicense}
-                                title={hasLicense ? "Use 'View' to enter the license expiry date before approving" : undefined}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                                <Icons.Check className="w-3.5 h-3.5" />
-                                {isLoading ? "..." : "Approve"}
-                              </button>
-                            </>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -1899,6 +1888,54 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
   );
 }
 
+// ─── REVIEW MODAL BUILDING BLOCKS ────────────────────────────────────────────
+// Same card look as the user details window (View on a user) so every review modal matches it.
+function ReviewSection({ title, icon: Icon, children }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="flex items-center gap-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
+          {Icon && <Icon className="w-4 h-4 text-teal-600" />}
+          {title}
+        </h3>
+      </div>
+      <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>
+    </section>
+  );
+}
+function ReviewField({ label, value, wide }) {
+  return (
+    <div className={wide ? "col-span-2" : ""}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</div>
+    </div>
+  );
+}
+// Fixed header + scrolling body + fixed footer, so Reject / Approve / Close never scroll away.
+function ReviewModalShell({ title, subtitle, statusPill, onClose, footer, children }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-start gap-3 p-5 border-b shrink-0">
+          <div className="min-w-0">
+            <h2 className="font-bold text-lg text-gray-800 truncate">{title}</h2>
+            <p className="text-xs text-gray-400">{subtitle}</p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {statusPill}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><Icons.Close className="w-5 h-5" /></button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">{children}</div>
+        <div className="flex justify-end gap-2 p-4 border-t bg-white shrink-0">{footer}</div>
+      </div>
+    </div>
+  );
+}
+const btnReject  = "flex items-center gap-1.5 px-4 py-2 border border-red-200 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed";
+const btnApprove = "flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed";
+const btnClose   = "px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50";
+
 // Review one resubmitted license/document: current vs new photo, expiry entry
 // (license only), approve / reject. Read-only once the request is reviewed.
 function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove, onReject }) {
@@ -1908,154 +1945,93 @@ function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove
   const pending = req.status === "pending";
   const [expiry, setExpiry] = useState("");
   const needsExpiry = isLicense && pending && !expiry;
+  const kindLabel = isLicense ? "License" : "Document";
+  const afterLabel = `After — ${req.status === "approved" ? "Approved" : req.status === "rejected" ? "Rejected" : "Submitted"} ${kindLabel}`;
+
+  const photos = (
+    <div className="col-span-2 grid grid-cols-2 gap-3">
+      {/* "Before" is stored on the request, so it stays the previous photo even after approval. */}
+      <BeforeAfterImg label={`Before — Previous ${kindLabel}`} url={currentUrl} emptyText="No previous photo on file" />
+      <BeforeAfterImg label={afterLabel} url={newUrl} emptyText="No photo" />
+    </div>
+  );
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-start gap-3 p-5 border-b sticky top-0 bg-white z-10">
-          <div className="min-w-0">
-            <h2 className="font-bold text-lg text-gray-800 truncate">{user?.name || req.userID}</h2>
-            <p className="text-xs text-gray-400">
-              @{user?.username || "—"} · {isLicense ? "Driver's License" : "Document"} resubmission
-            </p>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <RequestStatusPill status={req.status} />
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><Icons.X className="w-5 h-5" /></button>
-          </div>
-        </div>
-
-        <div className="p-5 space-y-4">
-          <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-            <div className="px-4 py-2.5 bg-gray-50 border-b">
-              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Before &amp; After</h3>
-            </div>
-            <div className="p-4 grid grid-cols-2 gap-3">
-              {/* "Before" is the photo on file when the user submitted (stored on the
-                  request), so it stays the PREVIOUS photo in History even after approval. */}
-              <BeforeAfterImg label={`Before — Previous ${isLicense ? "License" : "Document"}`} url={currentUrl} emptyText="No previous photo on file" />
-              <BeforeAfterImg label={`After — ${req.status === "approved" ? "Approved" : req.status === "rejected" ? "Rejected" : "Submitted"} ${isLicense ? "License" : "Document"}`} url={newUrl} emptyText="No photo" />
-            </div>
-          </section>
-
-          {/* A government ID travels with the selfie holding it; a driver's license has none. */}
-          {!isLicense && (
-            <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-              <div className="px-4 py-2.5 bg-gray-50 border-b">
-                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Selfie with ID</h3>
-              </div>
-              <div className="p-4 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <BeforeAfterImg label="Before — Previous Selfie" url={req.currentSelfieUrl} emptyText="No previous selfie on file" />
-                  <BeforeAfterImg label={`After — ${req.status === "approved" ? "Approved" : req.status === "rejected" ? "Rejected" : "Submitted"} Selfie`} url={req.newSelfieUrl} emptyText="No selfie sent with this request" />
-                </div>
-                {pending && !req.newSelfieUrl && (
-                  <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3">
-                    This request came without a selfie holding the ID. Approving keeps the selfie already on the account; reject it
-                    if a new selfie is needed.
-                  </p>
-                )}
-              </div>
-            </section>
-          )}
-
-          <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-            <div className="px-4 py-2.5 bg-gray-50 border-b">
-              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Submission</h3>
-            </div>
-            <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Submitted Date</p>
-                <p className="text-sm font-medium text-gray-800 mt-0.5">{fmtDate(req.createdAt)}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Submitted Time</p>
-                <p className="text-sm font-medium text-gray-800 mt-0.5">{fmtTime(req.createdAt) || "—"}</p>
-              </div>
-              {!pending && (
-                <>
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Reviewed Date</p>
-                    <p className="text-sm font-medium text-gray-800 mt-0.5">{req.reviewedAt ? fmtDate(req.reviewedAt) : "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Reviewed Time</p>
-                    <p className="text-sm font-medium text-gray-800 mt-0.5">{fmtTime(req.reviewedAt) || "—"}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Reviewed By</p>
-                    <p className="text-sm font-medium text-gray-800 mt-0.5">{reviewerName || "—"}</p>
-                  </div>
-                </>
-              )}
-            </div>
-          </section>
-
-          {!isLicense && (req.documentType || req.documentNumber) && (
-            <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-              <div className="px-4 py-2.5 bg-gray-50 border-b">
-                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Document Info</h3>
-              </div>
-              <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">
-                <div>
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Document Type</p>
-                  <p className="text-sm font-medium text-gray-800 mt-0.5">{req.documentType || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Document Number</p>
-                  <p className="text-sm font-medium text-gray-800 mt-0.5">{req.documentNumber || "—"}</p>
-                </div>
-              </div>
-            </section>
-          )}
-
-          {isLicense && req.driversLicenseNumber && (
-            <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-              <div className="px-4 py-2.5 bg-gray-50 border-b">
-                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">License Info</h3>
-              </div>
-              <div className="p-4">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">License Number</p>
-                <p className="text-sm font-medium text-gray-800 mt-0.5">{req.driversLicenseNumber}</p>
-              </div>
-            </section>
-          )}
-
-          {isLicense && pending && (
-            <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-              <div className="px-4 py-2.5 bg-gray-50 border-b">
-                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                  License Expiry Date <span className="text-red-500">*</span>
-                </h3>
-              </div>
-              <div className="p-4">
-                <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)}
-                  className="w-full text-sm border rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-teal-400" />
-                <p className="text-[11px] text-gray-400 mt-1">Required to approve — enter the date shown on the new card above.</p>
-              </div>
-            </section>
-          )}
-
-          {req.status === "rejected" && req.reviewNote && (
-            <p className="text-xs text-red-500 bg-red-50 rounded-lg p-3">Reason: {req.reviewNote}</p>
-          )}
-
+    <ReviewModalShell
+      title={user?.name || req.userID}
+      subtitle={`@${user?.username || "—"} · Resubmission`}
+      statusPill={<RequestStatusPill status={req.status} />}
+      onClose={onClose}
+      footer={
+        <>
           {pending && (
-            <div className="flex justify-end gap-2">
-              <button onClick={() => onReject(req)} disabled={busy}
-                className="flex items-center gap-1.5 px-4 py-2 border border-red-200 rounded-xl text-sm text-red-500 hover:bg-red-50 disabled:opacity-40">
+            <>
+              <button onClick={() => onReject(req)} disabled={busy} className={btnReject}>
                 <Icons.X className="w-4 h-4" /> Reject
               </button>
               <button onClick={() => onApprove(req, expiry)} disabled={busy || needsExpiry}
-                title={needsExpiry ? "Enter the license expiry date first" : undefined}
-                className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700 disabled:opacity-40">
+                title={needsExpiry ? "Enter the license expiry date first" : undefined} className={btnApprove}>
                 <Icons.Check className="w-4 h-4" /> {busy ? "..." : "Approve"}
               </button>
-            </div>
+            </>
           )}
-        </div>
-      </div>
-    </div>
+          <button onClick={onClose} className={btnClose}>Close</button>
+        </>
+      }
+    >
+      <ReviewSection title="Requester Information" icon={Icons.Users}>
+        <ReviewField label="Name"        value={user?.name || req.userID} />
+        <ReviewField label="Username"    value={user?.username ? `@${user.username}` : ""} />
+        <ReviewField label="Email"       value={user?.email} />
+        <ReviewField label="Request"     value={<RequestTypePill kind="resubmit" />} />
+        <ReviewField label="Submitted"   value={<DateTimeCell value={req.createdAt} />} />
+        <ReviewField label="Flagged"     value={user?.isFlagged ? "Yes" : "No"} />
+      </ReviewSection>
+
+      {isLicense ? (
+        <ReviewSection title="Driver's License" icon={Icons.Document}>
+          {photos}
+          {req.driversLicenseNumber && <ReviewField wide label="License No." value={req.driversLicenseNumber} />}
+          {pending ? (
+            <div className="col-span-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                License Expiry Date <span className="text-red-500">*</span>
+              </p>
+              <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)}
+                className="w-full mt-1 text-sm border rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-teal-400" />
+              <p className="text-[11px] text-gray-400 mt-1">Required to approve — enter the date shown on the new card above.</p>
+            </div>
+          ) : null}
+        </ReviewSection>
+      ) : (
+        <ReviewSection title="Supporting ID" icon={Icons.Document}>
+          <ReviewField label="Document Type" value={req.documentType} />
+          <ReviewField label="Document No."  value={req.documentNumber} />
+          {photos}
+          {/* A government ID travels with the selfie holding it; a driver's license has none. */}
+          <div className="col-span-2 grid grid-cols-2 gap-3">
+            <BeforeAfterImg label="Before — Previous Selfie" url={req.currentSelfieUrl} emptyText="No previous selfie on file" />
+            <BeforeAfterImg label={`After — ${req.status === "approved" ? "Approved" : req.status === "rejected" ? "Rejected" : "Submitted"} Selfie`} url={req.newSelfieUrl} emptyText="No selfie sent with this request" />
+          </div>
+          {pending && !req.newSelfieUrl && (
+            <p className="col-span-2 text-xs text-amber-700 bg-amber-50 rounded-lg p-3">
+              This request came without a selfie holding the ID. Approving keeps the selfie already on the account; reject it
+              if a new selfie is needed.
+            </p>
+          )}
+        </ReviewSection>
+      )}
+
+      {!pending && (
+        <ReviewSection title="Review" icon={Icons.Shield}>
+          <ReviewField label="Reviewed By" value={reviewerName} />
+          <ReviewField label="Reviewed"    value={req.reviewedAt ? <DateTimeCell value={req.reviewedAt} /> : ""} />
+          {req.status === "rejected" && req.reviewNote && (
+            <ReviewField wide label="Reason" value={<span className="text-red-500">{req.reviewNote}</span>} />
+          )}
+        </ReviewSection>
+      )}
+    </ReviewModalShell>
   );
 }
 
@@ -2484,107 +2460,86 @@ function DocDetailModal({ user, reviewed = false, reviewerName, onClose, onAppro
   const imgs = getDocImages(docu);
   const hasUploads = Object.values(imgs).some(v => v && v.trim() !== "");
 
-  // Captured here rather than via ExpiryField's own independent save
-  // button — the whole point is that Approve and "enter the expiry you
-  // see on the card" happen as ONE action, not two separate steps an
-  // admin could forget to pair up. ExpiryField itself stays unchanged
-  // for its other use (ViewDetailsModal's Documents tab — correcting/
-  // renewing a date outside of this approval moment).
+  // Approve and "enter the expiry you see on the card" happen as ONE action, so an admin
+  // can't approve a license without a date.
   const [licenseExpiry, setLicenseExpiry] = useState(toDateInputValue(docu.driverLicenseExpiry));
   const needsExpiry = !!imgs.driverLicense && !licenseExpiry;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
-          <div>
-            <h2 className="font-bold text-lg text-gray-800">{fullName}</h2>
-            <p className="text-sm text-gray-400">@{user.username || "—"}</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-            <Icons.Close className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            {[["Document Type", docu.documentType], ["Document No.", docu.documentNumber], ["License No.", docu.driversLicenseNumber], ["ID Status", reviewed ? "Approved" : "Pending"]].map(([label, val]) => (
-              <div key={label} className="bg-gray-50 rounded-xl p-3">
-                <p className="text-xs text-gray-400">{label}</p>
-                <p className="font-medium text-gray-800 mt-0.5">{val || "—"}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="bg-gray-50 rounded-xl p-3 text-sm">
-            <p className="text-xs text-gray-400">Referred By</p>
-            <p className="font-medium text-gray-800 mt-0.5">
-              {referrerLabel(user.referral?.referredBy) || "No referral code used"}
-            </p>
-          </div>
-
-          {reviewed && (
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="bg-gray-50 rounded-xl p-3">
-                <p className="text-xs text-gray-400">Reviewed By</p>
-                <p className="font-medium text-gray-800 mt-0.5">{reviewerName || "—"}</p>
-              </div>
-              <div className="bg-gray-50 rounded-xl p-3">
-                <p className="text-xs text-gray-400">Reviewed</p>
-                <p className="font-medium text-gray-800 mt-0.5"><DateTimeCell value={user.idReviewedAt} /></p>
-              </div>
-            </div>
+    <ReviewModalShell
+      title={fullName}
+      subtitle={`@${user.username || "—"} · New ID`}
+      statusPill={<RequestStatusPill status={reviewed ? "approved" : "pending"} />}
+      onClose={onClose}
+      footer={
+        <>
+          {hasUploads && !reviewed && (
+            <>
+              <button onClick={onReject} className={btnReject}><Icons.X className="w-4 h-4" /> Reject</button>
+              <button onClick={() => onApprove(licenseExpiry)} disabled={needsExpiry}
+                title={needsExpiry ? "Enter the license expiry date first" : undefined} className={btnApprove}>
+                <Icons.Check className="w-4 h-4" /> Approve
+              </button>
+            </>
           )}
+          <button onClick={onClose} className={btnClose}>Close</button>
+        </>
+      }
+    >
+      <ReviewSection title="Requester Information" icon={Icons.Users}>
+        <ReviewField label="Name"        value={fullName} />
+        <ReviewField label="Username"    value={user.username ? `@${user.username}` : ""} />
+        <ReviewField label="Email"       value={user.email} />
+        <ReviewField label="Contact No." value={user.phone} />
+        <ReviewField label="Request"     value={<RequestTypePill kind="new" />} />
+        <ReviewField label="Submitted"   value={<DateTimeCell value={docu.createdAt} />} />
+        <ReviewField label="Referred By" wide value={referrerLabel(user.referral?.referredBy) || "No referral code used"} />
+        <ReviewField label="Flagged"     value={user.isFlagged ? "Yes" : "No"} />
+      </ReviewSection>
 
-          <div>
-            <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Uploaded IDs</h3>
-            {!hasUploads ? (
-              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No documents uploaded yet</p>
+      <ReviewSection title="Driver's License" icon={Icons.Document}>
+        {imgs.driverLicense ? (
+          <>
+            <div className="col-span-2"><DocImg label="Driver's License" url={imgs.driverLicense} /></div>
+            <ReviewField wide label="License No." value={docu.driversLicenseNumber} />
+            {reviewed ? (
+              <ReviewField wide label="License Expiry Date" value={docu.driverLicenseExpiry ? fmtDate(docu.driverLicenseExpiry) : ""} />
             ) : (
-              <div className="space-y-3">
-                <DocImg label="Driver License"  url={imgs.driverLicense} />
-                <DocImg label="Government ID"   url={imgs.documentImage} />
-                <DocImg label="Selfie with ID"  url={imgs.selfieWithId} />
-                {imgs.driverLicense && !reviewed && (
-                  <div className="bg-gray-50 rounded-xl p-3">
-                    <label className="text-xs text-gray-400 block mb-1">
-                      License Expiry Date <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={licenseExpiry}
-                      onChange={(e) => setLicenseExpiry(e.target.value)}
-                      className="w-full text-sm border rounded-lg px-3 py-1.5"
-                    />
-                    <p className="text-[11px] text-gray-400 mt-1">
-                      Required to approve — enter the date shown on the card above.
-                    </p>
-                  </div>
-                )}
+              <div className="col-span-2">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                  License Expiry Date <span className="text-red-500">*</span>
+                </p>
+                <input type="date" value={licenseExpiry} onChange={(e) => setLicenseExpiry(e.target.value)}
+                  className="w-full mt-1 text-sm border rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-teal-400" />
+                <p className="text-[11px] text-gray-400 mt-1">Required to approve — enter the date shown on the card above.</p>
               </div>
             )}
-          </div>
+          </>
+        ) : (
+          <p className="col-span-2 text-sm text-gray-400 text-center py-2">No driver's license uploaded</p>
+        )}
+      </ReviewSection>
 
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Close</button>
-            {hasUploads && !reviewed && (
-              <>
-                <button onClick={onReject}  className="flex items-center gap-2 px-5 py-2 border border-red-200 text-red-500 rounded-xl text-sm font-medium hover:bg-red-50">
-                  <Icons.X className="w-4 h-4" /> Reject
-                </button>
-                <button
-                  onClick={() => onApprove(licenseExpiry)}
-                  disabled={needsExpiry}
-                  title={needsExpiry ? "Enter the license expiry date first" : undefined}
-                  className="flex items-center gap-2 px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-teal-600"
-                >
-                  <Icons.Check className="w-4 h-4" /> Approve
-                </button>
-              </>
-            )}
+      <ReviewSection title="Supporting ID" icon={Icons.Document}>
+        <ReviewField label="Document Type" value={docu.documentType} />
+        <ReviewField label="Document No."  value={docu.documentNumber} />
+        {imgs.documentImage || imgs.selfieWithId ? (
+          <div className="col-span-2 grid grid-cols-2 gap-3">
+            <DocImg label="Government ID"  url={imgs.documentImage} />
+            <DocImg label="Selfie with ID" url={imgs.selfieWithId} />
           </div>
-        </div>
-      </div>
-    </div>
+        ) : (
+          <p className="col-span-2 text-sm text-gray-400 text-center py-2">No supporting ID uploaded</p>
+        )}
+      </ReviewSection>
+
+      {reviewed && (
+        <ReviewSection title="Review" icon={Icons.Shield}>
+          <ReviewField label="Reviewed By" value={reviewerName} />
+          <ReviewField label="Reviewed"    value={user.idReviewedAt ? <DateTimeCell value={user.idReviewedAt} /> : ""} />
+        </ReviewSection>
+      )}
+    </ReviewModalShell>
   );
 }
 

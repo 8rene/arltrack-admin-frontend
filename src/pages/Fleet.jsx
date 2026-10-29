@@ -1179,7 +1179,6 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
   const already = booking.refundPreview?.alreadyRefunded;
   const noPayment = !!booking.refundPreview?.noPayment;
   const cancelOnly = already || noPayment;
-  const hasManual = !cancelOnly && (booking.refundPreview?.manualAmount || 0) > 0;
   const p = booking.paymentDetails; // full detail from getPaymentDetailsByBookingID — may be null if lookup failed
 
   const stageColor = {
@@ -1190,7 +1189,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg border border-gray-300 w-full max-w-xl p-7 space-y-4 max-h-[88vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl w-full max-w-xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
         <h4 className="font-bold text-gray-800 text-lg">
           {booking.staged ? `Already confirmed — ${cancelOnlyLabel(booking)}` : "Confirm this booking"}
         </h4>
@@ -1296,7 +1295,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
                   off: open ? "The customer has an open refund request: approve or reject it first, or choose Full refund." : null },
               ];
               return rows.map((o) => (
-                <label key={o.v} className={`flex items-start gap-3 px-3.5 py-2.5 rounded-md border ${o.off ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${choice === o.v ? "border-teal-600 bg-teal-50" : "border-gray-200 hover:bg-gray-50"}`}`}>
+                <label key={o.v} className={`flex items-start gap-3 p-2.5 rounded-xl border ${o.off ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${choice === o.v ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
                   <input type="radio" className="mt-1" checked={choice === o.v} disabled={!!o.off || !!booking.staged} onChange={() => setChoice(o.v)} />
                   <div>
                     <p className="text-sm font-semibold text-gray-800">{o.title}</p>

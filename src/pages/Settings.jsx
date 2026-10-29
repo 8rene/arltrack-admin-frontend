@@ -42,6 +42,12 @@ const DEPOSIT_FIELDS = [
   { key: "lateFeeGraceMinutes", label: "Late Fee Grace Period (minutes)", hint: "Minutes late that are forgiven before the late fee starts accruing.", unit: "min" },
 ];
 
+// Penalty settings. penaltyThreshold decides when the online payment (gateway) fee is added to a penalty paid online: only when
+// the penalty's own amount is HIGHER than this. At or below it there is no fee. (Was a hardcoded 1,000.)
+const PENALTY_FIELDS = [
+  { key: "penaltyThreshold", label: "Penalty Fee Threshold", hint: "A penalty above this amount carries the gateway fee when paid online. A penalty at or below it has no fee. 0 = every penalty carries the fee." },
+];
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 //
 // System Settings — Owner & Admin only (see config/pagePermissions.js).
@@ -135,7 +141,7 @@ export default function Settings() {
   const arraysEqual = (a = [], b = []) => a.length === b.length && a.every((v, i) => v === b[i]);
 
   const isDirty = !!(form && saved) && (
-    FLAT_FEE_FIELDS.concat(AREA_FEE_FIELDS, DEPOSIT_FIELDS).some(({ key }) => String(form[key]) !== String(saved[key])) ||
+    FLAT_FEE_FIELDS.concat(AREA_FEE_FIELDS, DEPOSIT_FIELDS, PENALTY_FIELDS).some(({ key }) => String(form[key]) !== String(saved[key])) ||
     !arraysEqual(form.baseAreaKeywords, saved.baseAreaKeywords)
   );
 
@@ -153,6 +159,7 @@ export default function Settings() {
         securityDepositAmount: Number(form.securityDepositAmount),
         lateFeeRatePerHour: Number(form.lateFeeRatePerHour),
         lateFeeGraceMinutes: Number(form.lateFeeGraceMinutes),
+        penaltyThreshold: Number(form.penaltyThreshold ?? 1000),
         baseAreaKeywords: form.baseAreaKeywords || [],
       };
 
@@ -359,6 +366,38 @@ export default function Settings() {
                       onChange={(e) => handleNumberChange(key, e.target.value)}
                       disabled={!editMode}
                       className={`${inputCls} ${unit === "₱" ? "pl-6" : "pr-10"}`}
+                    />
+                  </div>
+                  <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>{hint}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Penalty online fee */}
+          <div className={`${card} space-y-4`}>
+            <div>
+              <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
+                <IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Penalties
+              </h2>
+              <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
+                When a customer pays a penalty online, the gateway fee is added only if the penalty is above this amount. It is judged
+                on the penalty's own amount, however it is paid. Changing it applies to penalties that are still unpaid; payments already made
+                and their receipts are not affected.
+              </p>
+            </div>
+            <div className="grid sm:grid-cols-3 gap-4">
+              {PENALTY_FIELDS.map(({ key, label, hint, unit = "₱" }) => (
+                <div key={key} className="space-y-1">
+                  <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>{label}</label>
+                  <div className="relative">
+                    <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
+                    <input
+                      type="number" min="0" step="1"
+                      value={form[key] ?? 1000}
+                      onChange={(e) => handleNumberChange(key, e.target.value)}
+                      disabled={!editMode}
+                      className={`${inputCls} pl-6`}
                     />
                   </div>
                   <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>{hint}</p>

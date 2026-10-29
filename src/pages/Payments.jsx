@@ -45,9 +45,10 @@ const IconX = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
-const IconChevronDown = ({ className = "w-4 h-4" }) => (
+const IconRefresh = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
@@ -77,7 +78,7 @@ function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, classN
       <button
         onClick={() => onSort(key)}
         className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
-          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
         }`}
       >
         {label}
@@ -863,39 +864,32 @@ export default function Payments() {
                       </Section>
 
                       {/* What the booking cost, what was paid, and what happened to the deposit / discount / refund. */}
-                      <Section title="Fee Breakdown">
-                        <Row label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
-                        <Row label="Extra Fee" value={peso(selected.extraFee, fmtCurrency)} />
-                        {selected.driversFee > 0 && <Row label="Driver's Fee" value={peso(selected.driversFee, fmtCurrency)} />}
-                        <Row label={selected.serviceFeeRate > 0 ? `Service Fee (${selected.serviceFeeRate}% of rental)` : "Service Fee"} value={peso(selected.serviceFee, fmtCurrency)} />
-                        {selected.gatewayFee > 0 && <Row label={selected.gatewayFeeRate > 0 ? `Gateway Fee (${selected.gatewayFeeRate}% of ${peso(selected.gatewayFeeBase, fmtCurrency)})` : "Gateway Fee"} value={peso(selected.gatewayFee, fmtCurrency)} />}
-                        {selected.securityDeposit > 0 && <Row label="Security Deposit (refundable)" value={peso(selected.securityDeposit, fmtCurrency)} />}
-                        <div className="border-t border-gray-100 mt-2 pt-2">
-                          <Row label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} bold />
-                          {selected.discountAmount > 0 ? (
+                      <InfoSection title="Fee Breakdown" cols={3}>
+                        <InfoField label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
+                        <InfoField label="Extra Fee" value={peso(selected.extraFee, fmtCurrency)} />
+                        {selected.driversFee > 0 && <InfoField label="Driver's Fee" value={peso(selected.driversFee, fmtCurrency)} />}
+                        <InfoField label={selected.serviceFeeRate > 0 ? `Service Fee (${selected.serviceFeeRate}% of rental)` : "Service Fee"} value={peso(selected.serviceFee, fmtCurrency)} />
+                        {selected.gatewayFee > 0 && <InfoField label={selected.gatewayFeeRate > 0 ? `Gateway Fee (${selected.gatewayFeeRate}% of ${peso(selected.gatewayFeeBase, fmtCurrency)})` : "Gateway Fee"} value={peso(selected.gatewayFee, fmtCurrency)} />}
+                        {selected.securityDeposit > 0 && <InfoField label="Security Deposit (refundable)" value={peso(selected.securityDeposit, fmtCurrency)} />}
+                        <TotalRow label="Total Fee" value={peso(selected.totalFee, fmtCurrency)} />
+                        {(() => {
+                          const several = (selected.discount?.events || []).filter((e) => e.kind === "balance" || e.kind === "credit").length > 1;
+                          const refundedOut = entriesSummary && entriesSummary.refundedOut > 0 ? entriesSummary.refundedOut : 0;
+                          return (
                             <>
-                              {(() => {
-                                const several = (selected.discount?.events || []).filter((e) => e.kind === "balance" || e.kind === "credit").length > 1;
-                                return (
-                                  <>
-                                    <Row label={several ? "Discounts Given (total)" : "Discount Given"} value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
-                                    {selected.discountReason && <Row label={several ? "Latest Discount Reason" : "Discount Reason"} value={selected.discountReason} />}
-                                    {selected.discountAt && <Row label={several ? "Latest Discount Given On" : "Discount Given On"} value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
-                                  </>
-                                );
-                              })()}
+                              {selected.discountAmount > 0
+                                ? <InfoField label={several ? "Discounts Given (total)" : "Discount Given"} value={`−${peso(selected.discountAmount, fmtCurrency)}`} bold color="text-red-500" />
+                                : <InfoField label="Discount Given" value={peso(0, fmtCurrency)} color="text-gray-400" />}
+                              <InfoField label="Amount Paid" value={peso(selected.amountPaid, fmtCurrency)} bold />
+                              {refundedOut > 0
+                                ? <InfoField label="Refunded Amount" value={`−${peso(refundedOut, fmtCurrency)}`} bold color="text-purple-700" />
+                                : <div />}
+                              {selected.discountAmount > 0 && selected.discountReason && <InfoField wide label={several ? "Latest Discount Reason" : "Discount Reason"} value={selected.discountReason} />}
+                              {selected.discountAmount > 0 && selected.discountAt && <InfoField label={several ? "Latest Discount Given On" : "Discount Given On"} value={`${fmtDate(selected.discountAt)}${selected.discountBy ? ` · ${selected.discountBy}` : ""}`} />}
                             </>
-                          ) : (
-                            <Row label="Discount Given" value={peso(0, fmtCurrency)} color="text-gray-400" />
-                          )}
-                          <Row label="Amount Paid" value={peso(selected.amountPaid, fmtCurrency)} bold />
-                        </div>
-                        {entriesSummary && entriesSummary.refundedOut > 0 && (
-                          <div className="border-t border-gray-100 mt-2 pt-2">
-                            <Row label="Refunded Amount" value={`−${peso(entriesSummary.refundedOut, fmtCurrency)}`} bold color="text-purple-700" />
-                          </div>
-                        )}
-                      </Section>
+                          );
+                        })()}
+                      </InfoSection>
 
                       {/* Gateway fee received (payment + penalty) vs. PayMongo's transaction fees (payment + penalty). */}
                       <GatewayBreakdown payment={selected} fmt={fmtCurrency} />
@@ -998,10 +992,10 @@ export default function Payments() {
                       {/* LAST on the summary: where the security deposit stands, and where it is handed back. Penalties are
                           deducted from it first (Deposit Settled), the rest goes back to the customer (Deposit Returned). */}
                       {selected.securityDeposit > 0 && (
-                        <Section title="Deposit Breakdown">
-                          <Row label="Security Deposit" value={peso(selected.securityDeposit, fmtCurrency)} />
-                          {selected.depositStatus && <Row label="Deposit Status" value={selected.depositStatus} />}
-                          <Row label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />
+                        <InfoSection title="Deposit Breakdown" cols={3}>
+                          <InfoField label="Security Deposit" value={peso(selected.securityDeposit, fmtCurrency)} />
+                          {selected.depositStatus && <InfoField label="Deposit Status" value={selected.depositStatus} />}
+                          <InfoField label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />
                           {(() => {
                             // depositReturned is what settlement decided to hand back. Only count it as returned once the money
                             // really went (in store, or PayMongo confirmed). A failed / still-processing online return is NOT returned.
@@ -1009,12 +1003,13 @@ export default function Payments() {
                             const notYet = dr && ["failed", "processing"].includes(dr.state) ? Math.min(Number(dr.amount) || 0, selected.depositReturned || 0) : 0;
                             return (
                               <>
-                                <Row label="Deposit Returned" value={peso(Math.max(0, (selected.depositReturned || 0) - notYet), fmtCurrency)} />
+                                <InfoField label="Deposit Returned" value={peso(Math.max(0, (selected.depositReturned || 0) - notYet), fmtCurrency)} />
                                 {notYet > 0 && (
-                                  <div className={`flex justify-between text-sm ${dr.state === "failed" ? "text-red-600" : "text-blue-600"}`}>
-                                    <span>{dr.state === "failed" ? "Deposit return failed (not received)" : "Deposit return processing"}</span>
-                                    <span className="font-medium">{peso(notYet, fmtCurrency)}</span>
-                                  </div>
+                                  <InfoField
+                                    label={dr.state === "failed" ? "Deposit return failed (not received)" : "Deposit return processing"}
+                                    value={peso(notYet, fmtCurrency)}
+                                    color={dr.state === "failed" ? "text-red-600" : "text-blue-600"}
+                                  />
                                 )}
                               </>
                             );
@@ -1033,24 +1028,25 @@ export default function Payments() {
                             const depositLeft = Math.max(0, (selected.securityDeposit || 0) - (selected.depositSettled || 0));
                             return (
                               <>
-                                <Row label="Discount Held for Customer" value={peso(held, fmtCurrency)} />
-                                {settledBack > 0 && <Row label="Discount Returned" value={peso(back, fmtCurrency)} />}
+                                <InfoField label="Discount Held for Customer" value={peso(held, fmtCurrency)} />
+                                {settledBack > 0 && <InfoField label="Discount Returned" value={peso(back, fmtCurrency)} />}
                                 {dNotYet > 0 && (
-                                  <div className={`flex justify-between text-sm ${dRef.state === "failed" ? "text-red-600" : "text-blue-600"}`}>
-                                    <span>{dRef.state === "failed" ? "Discount return failed (not received)" : "Discount return processing"}</span>
-                                    <span className="font-medium">{peso(dNotYet, fmtCurrency)}</span>
-                                  </div>
+                                  <InfoField
+                                    label={dRef.state === "failed" ? "Discount return failed (not received)" : "Discount return processing"}
+                                    value={peso(dNotYet, fmtCurrency)}
+                                    color={dRef.state === "failed" ? "text-red-600" : "text-blue-600"}
+                                  />
                                 )}
-                                <div className="border-t border-gray-100 mt-2 pt-2">
-                                  <Row label={stillHeld ? "To Return (deposit + discount)" : "Total Returned"}
-                                    value={peso(stillHeld ? depositLeft + held : Math.max(0, (selected.depositReturned || 0) - depNotYet) + back, fmtCurrency)} />
-                                </div>
-                                {stillHeld && <p className="text-[11px] text-gray-400 mt-1">Any penalty still unpaid comes off this first. The exact amount is shown when you return it.</p>}
+                                <TotalRow
+                                  label={stillHeld ? "To Return (deposit + discount)" : "Total Returned"}
+                                  value={peso(stillHeld ? depositLeft + held : Math.max(0, (selected.depositReturned || 0) - depNotYet) + back, fmtCurrency)}
+                                />
+                                {stillHeld && <p className="col-span-full text-[11px] text-gray-400 -mt-2">Any penalty still unpaid comes off this first. The exact amount is shown when you return it.</p>}
                               </>
                             );
                           })()}
                           {canReturnDepositRole && selected.depositStatus === "Held" && ["ongoing", "completed"].includes(String(selected.bookingStatus || "").toLowerCase()) && (
-                            <div className="border-t border-gray-100 mt-2 pt-3 space-y-1.5">
+                            <div className="col-span-full border-t border-gray-100 pt-3 space-y-1.5">
                               <p className="text-xs text-gray-500">
                                 {String(selected.bookingStatus || "").toLowerCase() === "ongoing"
                                   ? "The trip is still ongoing. Returning the deposit here also marks the booking completed."
@@ -1062,8 +1058,12 @@ export default function Payments() {
                               </button>
                             </div>
                           )}
-                        </Section>
+                        </InfoSection>
                       )}
+
+                      {/* What the business actually kept on this booking: money in, minus money out, minus what still belongs
+                          to the customer, minus PayMongo's fees. A loss shows in red. */}
+                      <GainBreakdown payment={selected} summary={entriesSummary} fmt={fmtCurrency} />
                     </div>
                   </div>
 
@@ -1190,152 +1190,134 @@ export default function Payments() {
         <StatCard icon={<IconCreditCard className="w-5 h-5" />} value={peso(totalBal, fmtCurrency)} label="Total Balance Due"  color="purple" />
       </div>
 
-      {/* Filter Bar */}
-      <div className="bg-white p-4 rounded-2xl shadow-soft flex flex-wrap gap-3 items-end">
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
-          <div className="relative">
-            <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); }}
-              className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
-              {PAYMENT_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-            </select>
-            <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
-        <input type="text" placeholder={`Enter ${(PAYMENT_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}…`}
-          value={search} onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[180px] px-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
-        <div className="relative">
-          <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
-            className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
-            {STATUSES.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
-          </select>
-          <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        </div>
-        <div className="relative">
-          <select value={methodF} onChange={(e) => setMethodF(e.target.value)}
-            className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
-            {methods.map((m) => <option key={m} value={m}>{m === "All" ? "All methods" : m}</option>)}
-          </select>
-          <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        </div>
-        <div className="relative">
-          <select value={timeF} onChange={(e) => setTimeF(e.target.value)}
-            className="appearance-none pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-sm bg-white">
-            {TIME_RANGES.map((t) => <option key={t}>{t}</option>)}
-          </select>
-          <IconChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        </div>
-        {timeF === "Custom Range" && (
-          <div className="flex items-center gap-1.5">
-            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
-              max={customTo || undefined}
-              className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
-            <span className="text-gray-400 text-xs">to</span>
-            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
-              min={customFrom || undefined}
-              className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
-          </div>
-        )}
-        {hasFilters && (
-          <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
-            Clear
-          </button>
-        )}
-        <button onClick={fetchPayments} disabled={loading}
-          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
-          {loading ? "…" : "Refresh"}
-        </button>
-      </div>
-
       {/* Error */}
       {error && <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">{error}</div>}
 
-      {/* Table */}
-      <div className="bg-white rounded-2xl shadow-soft border border-gray-100">
-        <div className="flex justify-between items-center px-5 py-4 border-b border-gray-100">
-          <h2 className="font-bold text-arl-dark">
-            All Payment Records{" "}
-            <span className="text-gray-400 text-sm font-normal">({filtered.length} results)</span>
-          </h2>
+      {/* TABLE: the search + filters sit on top of the table inside one box, same as Bookings */}
+      <div className="bg-white rounded-2xl border overflow-hidden">
+        {/* SEARCH + FILTERS */}
+        <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+              {PAYMENT_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+          <input type="text" placeholder={`Enter ${(PAYMENT_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+            {STATUSES.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
+          </select>
+          <select value={methodF} onChange={(e) => setMethodF(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+            {methods.map((m) => <option key={m} value={m}>{m === "All" ? "All methods" : m}</option>)}
+          </select>
+          <select value={timeF} onChange={(e) => setTimeF(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+            {TIME_RANGES.map((t) => <option key={t}>{t}</option>)}
+          </select>
+          {timeF === "Custom Range" && (
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+                max={customTo || undefined}
+                className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white" />
+              <span className="text-gray-400 text-xs">to</span>
+              <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
+                min={customFrom || undefined}
+                className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white" />
+            </div>
+          )}
+          {hasFilters && (
+            <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+              Clear
+            </button>
+          )}
+          <button onClick={fetchPayments} disabled={loading}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            <IconRefresh className="w-3.5 h-3.5" />
+            Refresh
+          </button>
         </div>
         <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[800px]">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
-              <SortableTh label="Created At" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
-              <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Payment Type</th>
-              <SortableTh label="Discount" sortKey="discount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Balance" sortKey="balance" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Method</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              Array.from({ length: 6 }).map((_, i) => (
-                <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 10 }).map((_, j) => (
-                    <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
-                  ))}
-                </tr>
-              ))
-            ) : paginated.length === 0 ? (
-              <tr><td colSpan={10} className="text-center py-16 text-gray-400 text-sm">
-                {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
-              </td></tr>
-            ) : paginated.map((p, i) => (
-              <tr key={p.id} className={`border-b border-gray-50 last:border-0 hover:bg-arl-light/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
-                <td className="px-4 py-3 text-xs whitespace-nowrap">
-                  <span className="text-gray-700">{fmtDateOnly(p.createdAt)}</span>
-                  <span className="mx-1.5 text-gray-300">|</span>
-                  <span className="text-gray-500">{fmtTimeOnly(p.createdAt)}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="font-semibold text-gray-800 text-xs">{p.customerName}</div>
-                </td>
-                <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.totalFee, fmtCurrency)}</td>
-                <td className="px-4 py-3">
-                  {p.methodOfPayment && p.methodOfPayment !== "—" ? (
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      p.methodOfPayment.toLowerCase().includes("full")
-                        ? "bg-blue-100 text-blue-700"
-                        : p.methodOfPayment.toLowerCase().includes("down")
-                        ? "bg-purple-100 text-purple-700"
-                        : "bg-orange-100 text-orange-700"
-                    }`}>{p.methodOfPayment}</span>
-                  ) : (
-                    <span className="text-gray-300 text-xs">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs font-semibold">
-                  {p.discountAmount > 0
-                    ? (
-                      <div className="space-y-1">
-                        <span className="text-red-500">−{peso(p.discountAmount, fmtCurrency)}</span>
-                        <DiscountRefundBadge state={p.discountRefund?.state} />
-                      </div>
-                    )
-                    : <span className="text-gray-300">—</span>}
-                </td>
-                <td className="px-4 py-3 text-xs font-semibold text-gray-800">{peso(p.amountPaid, fmtCurrency)}</td>
-                <td className={`px-4 py-3 text-xs font-semibold ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
-                  {peso(p.balance, fmtCurrency)}
-                </td>
-                <td className="px-4 py-3 text-xs text-gray-600">{channelOf(p)}</td>
-                <td className="px-4 py-3"><StatusBadge status={stageOf(p)} /></td>
-                <td className="px-4 py-3">
-                  <button onClick={() => openDetail(p.id)}
-                    className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">View</button>
-                </td>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+              <tr>
+                <SortableTh label="Created At" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left">Customer</th>
+                <SortableTh label="Total Fee" sortKey="totalFee" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left">Payment Type</th>
+                <SortableTh label="Discount" sortKey="discount" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Amount Paid" sortKey="amountPaid" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Balance" sortKey="balance" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left">Method</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="pl-4 pr-8 py-3 text-right">Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-t">
+                    {Array.from({ length: 10 }).map((__, j) => (
+                      <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
+                    ))}
+                  </tr>
+                ))
+              ) : paginated.length === 0 ? (
+                <tr><td colSpan={10} className="text-center text-gray-400 py-12">
+                  {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
+                </td></tr>
+              ) : paginated.map((p) => (
+                <tr key={p.id} className="border-t hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className="text-gray-700">{fmtDateOnly(p.createdAt)}</span>
+                    <span className="mx-1.5 text-gray-300">|</span>
+                    <span className="text-gray-500">{fmtTimeOnly(p.createdAt)}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-gray-800">{p.customerName}</div>
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{peso(p.totalFee, fmtCurrency)}</td>
+                  <td className="px-4 py-3">
+                    {p.methodOfPayment && p.methodOfPayment !== "—" ? (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        p.methodOfPayment.toLowerCase().includes("full")
+                          ? "bg-blue-100 text-blue-700"
+                          : p.methodOfPayment.toLowerCase().includes("down")
+                          ? "bg-purple-100 text-purple-700"
+                          : "bg-orange-100 text-orange-700"
+                      }`}>{p.methodOfPayment}</span>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-semibold">
+                    {p.discountAmount > 0
+                      ? (
+                        <div className="space-y-1">
+                          <span className="text-red-500">−{peso(p.discountAmount, fmtCurrency)}</span>
+                          <DiscountRefundBadge state={p.discountRefund?.state} />
+                        </div>
+                      )
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{peso(p.amountPaid, fmtCurrency)}</td>
+                  <td className={`px-4 py-3 font-semibold whitespace-nowrap ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
+                    {peso(p.balance, fmtCurrency)}
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">{channelOf(p)}</td>
+                  <td className="px-4 py-3"><StatusBadge status={stageOf(p)} /></td>
+                  <td className="pl-4 pr-8 py-3 text-right">
+                    <button onClick={() => openDetail(p.id)}
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
@@ -1524,6 +1506,53 @@ function DiscountRefundCard({ payment, fmt, canAct, canEdit = false, onRetry, re
   );
 }
 
+// Card + label-over-value cells: the same look as the Bookings details window (Bookings.jsx InfoSection).
+// `flush` drops the padded grid so a real table can sit edge to edge inside the card.
+function InfoSection({ title, aside, children, cols = 2, flush = false, collapsible = true, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const colClass = cols === 3 ? "grid-cols-3" : cols === 1 ? "grid-cols-1" : "grid-cols-2";
+  const shown = !collapsible || open;
+  return (
+    <section className="mb-5 bg-white border rounded-2xl overflow-hidden shadow-sm [&+section]:border-t-0 [&+section]:pt-0">
+      <div className={`flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 ${shown ? "border-b" : ""}`}>
+        {collapsible ? (
+          <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+            title={open ? "Hide" : "Show"}
+            className="flex items-center gap-2 min-w-0 flex-1 text-left group">
+            <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+            <span className="text-[11px] font-medium text-gray-400 group-hover:text-gray-600 normal-case">{open ? "Hide" : "Show"}</span>
+            <svg className={`w-3 h-3 text-gray-400 group-hover:text-gray-600 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none">
+              <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        ) : (
+          <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        )}
+        {aside}
+      </div>
+      {shown && (flush ? <div>{children}</div> : <div className={`p-4 grid ${colClass} gap-x-6 gap-y-4`}>{children}</div>)}
+    </section>
+  );
+}
+function InfoField({ label, value, wide, full, color, bold, note }) {
+  return (
+    <div className={full ? "col-span-full min-w-0" : wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className={`text-sm mt-0.5 break-words ${bold ? "font-semibold" : "font-medium"} ${color || "text-gray-800"}`}>{value || "—"}</div>
+      {note && <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{note}</p>}
+    </div>
+  );
+}
+// The closing figure of a card, right-aligned under a hairline (like "Total Fee" in the Bookings details).
+function TotalRow({ label, value, color }) {
+  return (
+    <div className="col-span-full flex items-baseline justify-end gap-4 pt-3 border-t border-gray-100">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</span>
+      <span className={`text-base font-bold ${color || "text-gray-800"}`}>{value}</span>
+    </div>
+  );
+}
+
 function Section({ title, action = null, children }) {
   return (
     <section className="py-5 border-t border-gray-100 first:border-t-0 first:pt-0">
@@ -1660,46 +1689,162 @@ function GatewayBreakdown({ payment, fmt }) {
   const sale = round2(receivedTotal - feeTotal);
 
   return (
-    <Section title="Gateway Breakdown">
-      <Row label="Payment Gateway" hint={g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid on the booking"}
-        value={peso(paymentReceived, fmt)} color="text-green-600" />
-      {pen && (
-        <Row label="Penalty Gateway" hint="Online fee the customer paid on penalties over the threshold"
-          value={peso(penaltyReceived, fmt)} color="text-green-600" />
-      )}
-      <Row label="Total gateway received" value={peso(receivedTotal, fmt)} bold color="text-green-600" />
+    <InfoSection title="Gateway Breakdown" cols={3}>
+      <InfoField label="Payment Gateway" color="text-green-600" value={peso(paymentReceived, fmt)}
+        note={g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid on the booking"} />
+      {pen
+        ? <InfoField label="Penalty Gateway" color="text-green-600" value={peso(penaltyReceived, fmt)} note="Online fee the customer paid on penalties over the threshold" />
+        : <div />}
+      <InfoField label="Total Gateway Received" bold color="text-green-600" value={peso(receivedTotal, fmt)} />
 
       {hasFees && (
-        <div className="my-2 rounded-xl border border-red-100 bg-red-50/40 px-4 py-1.5">
-          {paymentFee !== null && (
-            <Row label="Payment Transaction Fee"
-              hint={g.fees.map((f, i) => `Payment ${i + 1} · ${PHASE_NAME[f.phase]}${f.inStore ? " (in store)" : ""}: ${peso(f.amount, fmt)}`).join(" · ") || "PayMongo's fee on the booking"}
-              value={peso(paymentFee, fmt)} color="text-red-400" />
-          )}
-          {penaltyFee !== null && (
-            <Row label="Penalty Transaction Fee"
-              hint={penItems.map((it, i) => `Penalty ${i + 1} · ${it.description}: ${it.paymongoFee === null ? "not recorded" : peso(it.paymongoFee, fmt)}`).join(" · ") || "PayMongo's fee on penalties"}
-              value={peso(penaltyFee, fmt)} color="text-red-400" />
-          )}
-          <div className="border-t border-red-100 mt-1 pt-1">
-            <Row label="Total transaction fee" value={peso(feeTotal, fmt)} bold color="text-red-600" />
-          </div>
-        </div>
-      )}
-
-      {hasFees ? (
-        <Row label="Gateway sale" hint="Total gateway received minus total transaction fee" value={signed(sale, fmt)} bold color={sale >= 0 ? "text-green-600" : "text-red-500"} />
-      ) : (
-        <p className="text-xs text-gray-400 pt-2">
-          PayMongo's own fee isn't recorded for this payment (cash payment, or paid before fee tracking started).
-        </p>
+        <>
+          <div className="col-span-full border-t border-gray-100" />
+          {paymentFee !== null
+            ? <InfoField label="Payment Transaction Fee" color="text-red-400" value={peso(paymentFee, fmt)}
+                note={g.fees.map((f, i) => `Payment ${i + 1} · ${PHASE_NAME[f.phase]}${f.inStore ? " (in store)" : ""}: ${peso(f.amount, fmt)}`).join(" · ") || "PayMongo's fee on the booking"} />
+            : <div />}
+          {penaltyFee !== null
+            ? <InfoField label="Penalty Transaction Fee" color="text-red-400" value={peso(penaltyFee, fmt)}
+                note={penItems.map((it, i) => `Penalty ${i + 1} · ${it.description}: ${it.paymongoFee === null ? "not recorded" : peso(it.paymongoFee, fmt)}`).join(" · ") || "PayMongo's fee on penalties"} />
+            : <div />}
+          <InfoField label="Total Transaction Fee" bold color="text-red-600" value={peso(feeTotal, fmt)} />
+        </>
       )}
 
       {Number(payment?.paymongoFee?.keptOnRefunds) > 0 && (
-        <Row label="PayMongo fee kept on refunds" hint="Fee PayMongo kept on charges that were refunded or returned"
-          value={peso(Number(payment.paymongoFee.keptOnRefunds), fmt)} color="text-red-400" />
+        <InfoField label="PayMongo Fee Kept on Refunds" color="text-red-400" value={peso(Number(payment.paymongoFee.keptOnRefunds), fmt)}
+          note="Fee PayMongo kept on charges that were refunded or returned" />
       )}
-    </Section>
+
+      {hasFees ? (
+        <TotalRow label="Gateway Sale" value={signed(sale, fmt)} color={sale >= 0 ? "text-green-600" : "text-red-500"} />
+      ) : (
+        <p className="col-span-full text-xs text-gray-400 pt-3 border-t border-gray-100">
+          PayMongo's own fee isn't recorded for this payment (cash payment, or paid before fee tracking started).
+        </p>
+      )}
+    </InfoSection>
+  );
+}
+
+// ─── Gain / loss on one booking ──────────────────────────────────────────────
+// What the business really kept, worked out from the money movements (not from the booking's price):
+//   + payments received      deposit + balance, with the security deposit and the gateway fee inside them
+//   + penalties paid
+//   − refunded               every settled refund / hand-back (a cancelled booking's refund, a discount refund ...)
+//   − deposit returned       the security deposit handed back after the trip
+//   − refund pending         a refund that is on its way: already owed, so not ours
+//   − still held             the security deposit / discount credit that still belongs to the customer
+//   − PayMongo fees          PayMongo's cut on every online charge, and on refunds. It stays with PayMongo even
+//                            when the customer is refunded, so a fully refunded booking is a loss of that fee.
+// The gateway fee needs no line of its own: when it is kept it is simply part of the money still in hand, and when it was
+// refunded it is part of "refunded". A forfeited deposit is kept the same way, and a deposit used for penalties too.
+// An unpaid balance is NOT counted: it is not money yet.
+function GainBreakdown({ payment, summary, fmt }) {
+  const n = (v) => Number(v) || 0;
+  if (!summary) {
+    return (
+      <InfoSection title="Booking Gain / Loss" flush>
+        <p className="px-4 py-4 text-xs text-gray-400">Calculating from the money movements…</p>
+      </InfoSection>
+    );
+  }
+  const paidIn = round2(n(summary.paidIn));
+  const penaltyIn = round2(n(summary.penaltyPaid));
+  if (paidIn <= 0 && penaltyIn <= 0) return null;          // nothing was ever received
+
+  const stage = stageOf(payment);
+  const refunded = round2(n(summary.refundedOut));
+  const depositBack = round2(n(summary.depositReturned));
+  const refundPending = round2(n(summary.refundPending));
+
+  // Cancelled, paid, and no refund opened yet: everything paid is still owed to the customer.
+  const owedAfterCancel = payment.heldAfterCancel ? round2(n(payment.amountPaid)) : 0;
+  const closed = owedAfterCancel > 0 || ["For Refund", "Refunded", "Cancelled"].includes(stage);
+  const depositHeld = !closed && payment.depositStatus === "Held"
+    ? round2(Math.max(0, n(payment.securityDeposit) - n(payment.depositSettled))) : 0;
+  const creditHeld = !closed ? round2(n(payment.discount?.credit)) : 0;
+
+  // PayMongo's fees: on the booking's online charges, on penalties paid online, and on refunds.
+  const g = buildGatewayBreakdown(payment);
+  const pen = payment.penaltyGateway || null;
+  const chargeFee = g.total !== null ? n(g.total) : 0;
+  const penaltyFee = pen && pen.paymongoFee !== null && pen.paymongoFee !== undefined ? n(pen.paymongoFee) : 0;
+  const refundFee = n(payment.paymongoFee?.keptOnRefunds);
+  const fees = round2(chargeFee + penaltyFee + refundFee);
+  const feesKnown = g.total !== null || (pen && pen.paymongoFee !== null && pen.paymongoFee !== undefined) || refundFee > 0;
+
+  const net = round2(paidIn + penaltyIn - refunded - depositBack - refundPending - owedAfterCancel - depositHeld - creditHeld - fees);
+  const gain = net > 0, loss = net < 0;
+  const tone = gain ? "text-green-600" : loss ? "text-red-500" : "text-gray-500";
+  const verdict = gain ? "Total Gain" : loss ? "Total Loss" : "Break-even";
+  const netText = `${gain ? "+" : ""}${signed(net, fmt)}`;
+
+  const notFinal = refundPending > 0 || owedAfterCancel > 0 || stage === "For Refund" || (payment.refundRequestID && !["Refunded"].includes(stage));
+  const unpaid = n(payment.balance) > 0 && stage === "Approved" ? round2(n(payment.balance)) : 0;
+
+  const Group = ({ label }) => (
+    <tr><td colSpan={2} className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</td></tr>
+  );
+  const Line = ({ label, value, sign, color, note }) => (
+    <tr className="align-top">
+      <td className="px-4 py-1.5 min-w-0">
+        <div className="text-gray-800">{label}</div>
+        {note && <div className="text-[11px] text-gray-400 leading-snug">{note}</div>}
+      </td>
+      <td className={`px-4 py-1.5 text-right font-medium whitespace-nowrap ${color || "text-gray-800"}`}>{sign}{peso(value, fmt)}</td>
+    </tr>
+  );
+
+  return (
+    <InfoSection
+      title="Booking Gain / Loss"
+      flush
+      aside={<span className={`text-xs font-bold ${tone}`}>{verdict} {netText}</span>}
+    >
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+          <tr>
+            <th className="text-left font-medium px-4 py-2">Item</th>
+            <th className="text-right font-medium px-4 py-2">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <Group label="Money in" />
+          <Line label="Payments received" sign="+" value={paidIn} note="Deposit and balance, including the security deposit and the gateway fee" />
+          {penaltyIn > 0 && <Line label="Penalties paid" sign="+" value={penaltyIn} />}
+
+          {(refunded > 0 || depositBack > 0 || refundPending > 0 || owedAfterCancel > 0) && <Group label="Money out" />}
+          {refunded > 0 && <Line label="Refunded to the customer" sign="−" value={refunded} color="text-purple-700" />}
+          {depositBack > 0 && <Line label="Security deposit returned" sign="−" value={depositBack} color="text-purple-700" />}
+          {refundPending > 0 && <Line label="Refund on its way" sign="−" value={refundPending} color="text-amber-600" note="Already owed to the customer" />}
+          {owedAfterCancel > 0 && <Line label="Cancelled, still held for the customer" sign="−" value={owedAfterCancel} color="text-amber-600" note="No refund has been opened yet" />}
+
+          {(depositHeld > 0 || creditHeld > 0) && <Group label="Still the customer's" />}
+          {depositHeld > 0 && <Line label="Security deposit still held" sign="−" value={depositHeld} note="Goes back after the trip. Penalties come off it first." />}
+          {creditHeld > 0 && <Line label="Discount credit held" sign="−" value={creditHeld} note="Goes back with the deposit" />}
+
+          <Group label="Costs" />
+          {feesKnown
+            ? <Line label="PayMongo fees" sign="−" value={fees} color="text-red-400"
+                note={[chargeFee > 0 && `charges ${peso(chargeFee, fmt)}`, penaltyFee > 0 && `penalties ${peso(penaltyFee, fmt)}`, refundFee > 0 && `kept on refunds ${peso(refundFee, fmt)}`].filter(Boolean).join(" · ") || undefined} />
+            : <tr><td colSpan={2} className="px-4 py-1.5 text-xs text-gray-400">PayMongo's fee isn't recorded for this payment (cash payment, or paid before fee tracking started).</td></tr>}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-gray-100">
+            <td className="px-4 pt-3 pb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">{verdict}</td>
+            <td className={`px-4 pt-3 pb-3 text-right text-base font-bold whitespace-nowrap ${tone}`}>{netText}</td>
+          </tr>
+        </tfoot>
+      </table>
+      {(notFinal || unpaid > 0) && (
+        <div className="px-4 pb-3 space-y-1">
+          {notFinal && <p className="text-[11px] text-amber-600">Not final yet: a refund is still pending, so this figure will change once it is completed.</p>}
+          {unpaid > 0 && <p className="text-[11px] text-gray-400">Not counted: {peso(unpaid, fmt)} balance the customer still has to pay.</p>}
+        </div>
+      )}
+    </InfoSection>
   );
 }
 
@@ -1730,67 +1875,85 @@ function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null, onVie
   const voided = round2(list.filter((p) => p.status === "Voided").reduce((n, p) => n + p.amount, 0));
   const discarded = round2(list.filter((p) => p.status === "Discarded").reduce((n, p) => n + p.amount, 0));
   return (
-    <Section title="Penalty Breakdown">
-      {list.length === 0 && <p className="text-xs text-gray-400 py-1.5">No penalties have been charged on this booking.</p>}
-      {list.map((p, i) => {
-        const st = penaltyState(p);
-        const gone = p.status !== "Confirmed";
-        return (
-          <Row
-            key={p.penaltyID}
-            label={<>
-              <span className="text-gray-400 mr-1.5">{i + 1}</span>{p.description} · <span className={st.color}>{st.label}</span>
-              {onViewPenalty && p.penaltyID && (
-                <button type="button" onClick={() => onViewPenalty(p.penaltyID)}
-                  className="ml-2 text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap">
-                  View →
-                </button>
-              )}
-            </>}
-            hint={gone
-              ? p.status === "UnderReview"
-                ? `Noted ${fmtDate(p.createdAt)} — waiting for a supervisor's review on the Penalties page. The customer hasn't been notified. Not counted as owed yet.`
-                : `${p.status} on ${fmtDate(p.createdAt)}${p.statusReason ? ` — ${p.statusReason}` : ""}. Not counted as owed.`
-              : `Charged ${fmtDate(p.createdAt)}${p.paidAmount > 0 ? ` · ${peso(Math.min(p.paidAmount, p.amount), fmt)} paid so far` : ""}`}
-            value={peso(p.amount, fmt)}
-            color={gone ? "text-gray-400 line-through" : undefined}
-          />
-        );
-      })}
-      <div className="border-t border-gray-100 mt-2 pt-2">
-        <Row label="Total charged" hint="Confirmed penalties only. Waived and voided ones are not included." value={peso(charged, fmt)} bold />
-        <Row label="Paid" hint="Covered by the held deposit, paid in store, or paid online." value={peso(paid, fmt)} />
-        <Row label="Outstanding" hint="Total charged minus paid: what the customer still owes for penalties." value={peso(outstanding, fmt)} bold color={outstanding > 0 ? "text-red-500" : "text-green-600"} />
-        <Row
-          label="Penalties waived"
-          hint="Forgiven by staff. Shown for the record; it does not change the booking's balance or discount."
-          value={waived > 0 ? `−${peso(waived, fmt)}` : peso(0, fmt)}
-          color={waived > 0 ? "text-amber-600" : "text-gray-400"}
-        />
-        {voided > 0 && <Row label="Penalties voided" hint="Removed as a mistake. Not counted as owed." value={`−${peso(voided, fmt)}`} color="text-gray-400" />}
-        {discarded > 0 && <Row label="Penalties discarded" hint="Rejected in review before being charged. The customer was never told. Not counted as owed." value={`−${peso(discarded, fmt)}`} color="text-gray-400" />}
+    <InfoSection
+      title="Penalty Breakdown"
+      flush
+      aside={onNotePenalty ? (
+        <button type="button" onClick={onNotePenalty}
+          className="text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg px-2.5 py-1 transition-colors">
+          + Note penalty
+        </button>
+      ) : null}
+    >
+      {list.length === 0 ? (
+        <p className="px-4 py-4 text-xs text-gray-400">No penalties have been charged on this booking.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="text-left font-medium px-4 py-2 w-10">#</th>
+                <th className="text-left font-medium px-2 py-2">Description</th>
+                <th className="text-left font-medium px-2 py-2">Status</th>
+                <th className="text-right font-medium px-2 py-2">Paid</th>
+                <th className="text-right font-medium px-4 py-2">Amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {list.map((p, i) => {
+                const st = penaltyState(p);
+                const gone = p.status !== "Confirmed";
+                const note = gone
+                  ? p.status === "UnderReview"
+                    ? `Noted ${fmtDate(p.createdAt)} — waiting for a supervisor's review. The customer hasn't been notified. Not counted as owed yet.`
+                    : `${p.status} on ${fmtDate(p.createdAt)}${p.statusReason ? ` — ${p.statusReason}` : ""}. Not counted as owed.`
+                  : `Charged ${fmtDate(p.createdAt)}`;
+                return (
+                  <tr key={p.penaltyID || i} className="align-top">
+                    <td className="px-4 py-2.5 text-gray-400">{i + 1}</td>
+                    <td className="px-2 py-2.5 min-w-0">
+                      <div className="font-medium text-gray-800 break-words">{p.description}</div>
+                      <div className="text-[11px] text-gray-400 mt-0.5">{note}</div>
+                      {onViewPenalty && p.penaltyID && (
+                        <button type="button" onClick={() => onViewPenalty(p.penaltyID)}
+                          className="text-[11px] font-semibold text-teal-700 hover:underline mt-0.5">
+                          View →
+                        </button>
+                      )}
+                    </td>
+                    <td className={`px-2 py-2.5 font-medium whitespace-nowrap ${st.color}`}>{st.label}</td>
+                    <td className="px-2 py-2.5 text-right text-gray-600 whitespace-nowrap">
+                      {gone ? "—" : peso(Math.min(p.paidAmount, p.amount), fmt)}
+                    </td>
+                    <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${gone ? "text-gray-400 line-through" : "text-gray-800"}`}>
+                      {peso(p.amount, fmt)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="p-4 grid grid-cols-3 gap-x-6 gap-y-4 border-t border-gray-100">
+        <InfoField label="Total Charged" bold value={peso(charged, fmt)} note="Confirmed penalties only" />
+        <InfoField label="Paid" value={peso(paid, fmt)} note="Deposit, in store or online" />
+        <InfoField label="Outstanding" bold value={peso(outstanding, fmt)} color={outstanding > 0 ? "text-red-500" : "text-green-600"} note="Charged minus paid" />
+        <InfoField label="Penalties Waived" value={waived > 0 ? `−${peso(waived, fmt)}` : peso(0, fmt)} color={waived > 0 ? "text-amber-600" : "text-gray-400"} note="Forgiven by staff" />
+        {voided > 0 && <InfoField label="Penalties Voided" value={`−${peso(voided, fmt)}`} color="text-gray-400" note="Removed as a mistake" />}
+        {discarded > 0 && <InfoField label="Penalties Discarded" value={`−${peso(discarded, fmt)}`} color="text-gray-400" note="Rejected in review" />}
         {hasDeposit && (
           <>
-            <Row
-              label="Deposit settled"
-              hint="Part of the security deposit used to pay penalties when the booking was settled."
-              value={peso(Number(payment.depositSettled) || 0, fmt)}
-              bold={Number(payment.depositSettled) > 0}
-              color={Number(payment.depositSettled) > 0 ? undefined : "text-gray-400"}
-            />
+            <InfoField label="Deposit Settled" value={peso(Number(payment.depositSettled) || 0, fmt)}
+              bold={Number(payment.depositSettled) > 0} color={Number(payment.depositSettled) > 0 ? undefined : "text-gray-400"}
+              note="Deposit used to pay penalties" />
             {(Number(payment.depositReturned) > 0 || payment.depositStatus === "Settled") && (
-              <Row label="Deposit returned" hint="What was left of the deposit and went back to the customer." value={peso(Number(payment.depositReturned) || 0, fmt)} />
+              <InfoField label="Deposit Returned" value={peso(Number(payment.depositReturned) || 0, fmt)} note="Left over and sent back" />
             )}
           </>
         )}
       </div>
-      {onNotePenalty && (
-        <button onClick={onNotePenalty}
-          className="mt-3 w-full py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">
-          + Note penalty
-        </button>
-      )}
-    </Section>
+    </InfoSection>
   );
 }
 
