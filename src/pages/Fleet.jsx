@@ -373,9 +373,7 @@ export default function Fleet() {
     <div className="p-4 space-y-5 font-sans">
       {/* HEADER — Add Vehicle is the one primary action on this page */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-gray-500">
-          {loading ? "Loading fleet…" : `${cars.length} vehicle${cars.length === 1 ? "" : "s"} in your fleet`}
-        </p>
+        
         <div className="flex items-center gap-2">
           <button onClick={() => setShowManageBrands(true)}
             className="flex items-center gap-2 px-4 py-2 border border-gray-300 bg-white rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
