@@ -261,10 +261,6 @@ export default function Inventory() {
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-arl-dark">Parts Inventory</h1>
-        <p className="text-sm text-gray-400 mt-0.5">
-          The parts catalog for each vehicle — name, type, serial number, and replacement price. Per-trip
-          condition (Good/Damaged) is recorded separately, per booking, on Vehicle Inspections.
-        </p>
       </div>
 
       <div className="flex gap-4">

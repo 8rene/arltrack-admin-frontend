@@ -326,12 +326,6 @@ export default function Holidays() {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-5">
         <div>
           <h1 className="text-2xl font-bold text-arl-dark">Holidays</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            {loading
-              ? "Loading…"
-              : `${visible.length}${month ? ` of ${holidays.length}` : ""} holiday${holidays.length === 1 ? "" : "s"} in ${displayYear}`}
-            {" · "}Number coding is suspended on these dates.
-          </p>
         </div>
         <button onClick={() => setDialog({ holiday: null, date: null })} className={btnPrimary}>
           + Add holiday

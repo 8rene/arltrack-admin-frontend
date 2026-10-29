@@ -209,10 +209,7 @@ export default function Settings() {
     <div className={`w-full px-4 space-y-5 ${isDark ? "dark" : ""}`}>
       {/* Header */}
       <div>
-        <h1 className={`text-xl font-bold ${isDark ? "text-[#F5F5F5]" : "text-arl-dark"}`}>System Settings</h1>
-        <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/50" : "text-gray-400"}`}>
-          System-wide configuration for Owner and Admin
-        </p>
+        <h1 className={`text-2xl font-bold ${isDark ? "text-[#F5F5F5]" : "text-arl-dark"}`}>System Settings</h1>
       </div>
 
       {notice && (

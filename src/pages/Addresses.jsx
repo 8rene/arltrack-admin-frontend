@@ -480,7 +480,6 @@ export default function Addresses() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-arl-dark">Addresses</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Regions, provinces, municipalities and barangays</p>
         </div>
         <button onClick={startCreate} disabled={loading} className={btnPrimary}>
           + Add region

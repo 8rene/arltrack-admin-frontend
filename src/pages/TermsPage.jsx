@@ -466,10 +466,7 @@ export default function TermsPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className={`text-xl font-bold ${isDark ? "text-[#F5F5F5]" : "text-arl-dark"}`}>Terms &amp; Conditions</h1>
-          <p className={`text-xs mt-0.5 ${muted}`}>
-            Shown to customers. Every save publishes a new version and old versions are kept, so you can always look back at what customers agreed to.
-          </p>
+          <h1 className={`text-2xl font-bold ${isDark ? "text-[#F5F5F5]" : "text-arl-dark"}`}>Terms &amp; Conditions</h1>
         </div>
         {current && (
           <span className={`text-xs px-2.5 py-1 rounded-full border ${isDark ? "border-[#4FC3F7]/30 text-[#4FC3F7]" : "border-gray-200 text-gray-600"}`}>

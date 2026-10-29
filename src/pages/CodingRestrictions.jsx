@@ -463,11 +463,6 @@ export default function CodingRestrictions() {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-5">
         <div>
           <h1 className="text-2xl font-bold text-arl-dark">Coding Restrictions</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            {loading
-              ? "Loading…"
-              : `${data.cities.length} cit${data.cities.length === 1 ? "y" : "ies"} with coding schedules. Hover a day to see its time window, or view a city for the details.`}
-          </p>
         </div>
         <button onClick={() => setCityDialog(true)} className={btnPrimary}>+ Add city</button>
       </div>

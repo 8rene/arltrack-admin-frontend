@@ -434,10 +434,7 @@ export default function AuditLog() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-arl-dark">Audit Logs</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {loading ? "Loading…" : `${filtered.length} entr${filtered.length === 1 ? "y" : "ies"} found`}
-          </p>
+          <h1 className="text-2xl font-bold text-arl-dark">Audit Logs</h1>
         </div>
       </div>
 
