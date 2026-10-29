@@ -778,8 +778,7 @@ export default function Maintenance() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-arl-dark">Maintenance</h1>
-          <p className="text-xs text-gray-400 mt-0.5">{loading ? "Loading…" : `${records.length} records`}</p>
+          <h1 className="text-2xl font-bold text-arl-dark">Maintenance</h1>
         </div>
       </div>
 

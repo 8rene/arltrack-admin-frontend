@@ -10,7 +10,7 @@ const netMsg = (e, fallback) =>
   e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : (e?.message || fallback);
 
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 
 // ─── PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Maintenance.jsx) ───
 function usePagination(items, pageSize = PAGE_SIZE) {
@@ -23,7 +23,7 @@ function usePagination(items, pageSize = PAGE_SIZE) {
 }
 
 function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null;
   const nums = [];
   const add = (n) => nums.push(n);
   add(1);
@@ -1851,8 +1851,7 @@ export default function Penalties() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-arl-dark">Penalties</h1>
-          <p className="text-xs text-gray-400 mt-0.5">{loading ? "Loading…" : `${records.length} penalties`}</p>
+          <h1 className="text-2xl font-bold text-arl-dark">Penalties</h1>
         </div>
         <button onClick={() => setShowCreate(true)}
           className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700 flex items-center gap-1.5 self-start sm:self-auto">
@@ -1960,6 +1959,11 @@ export default function Penalties() {
               ) : groupByBooking
                 ? paginated.map((g, gi) => renderGroup(g, gi))
                 : paginated.map((p, i) => renderRow(p, i))}
+              {!loading && paginated.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - paginated.length) }).map((_, i) => (
+                <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                  <td colSpan={8} className="h-[53px]">&nbsp;</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

@@ -451,28 +451,29 @@ export default function DeviceTrack() {
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
       {/* Header */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4 flex items-center justify-between">
-        <div>
-          <h2 className="font-bold text-arl-dark text-sm">GPS Setup</h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Manage GPS devices — add new hardware, assign/unassign cars, and copy each device's ID for IoT configuration.
-          </p>
-          <p className="text-xs mt-1 flex items-center gap-1.5">
+      <div className="shrink-0">
+        <h1 className="text-2xl font-bold text-arl-dark">GPS Setup</h1>
+      </div>
+
+      {/* Status + actions on one row */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-3 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs flex items-center gap-1.5 px-1">
             <span className="inline-flex items-center gap-1 text-teal-600 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-teal-500" /> {onlineCount} online
             </span>
             <span className="text-gray-300">·</span>
             <span className="text-gray-400">{gpsDevices.length} device{gpsDevices.length !== 1 ? "s" : ""} total</span>
           </p>
+          <button
+            onClick={handleAddDevice}
+            disabled={addingDevice}
+            className="flex items-center gap-1.5 px-3 py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50 shrink-0"
+          >
+            <Icons.Plus className="w-3.5 h-3.5" />
+            {addingDevice ? "Adding…" : "Add GPS Device"}
+          </button>
         </div>
-        <button
-          onClick={handleAddDevice}
-          disabled={addingDevice}
-          className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50 shrink-0"
-        >
-          <Icons.Plus className="w-3.5 h-3.5" />
-          {addingDevice ? "Adding…" : "Add GPS Device"}
-        </button>
       </div>
 
       {/* Assign-mode banner — shown when we arrived here to link a specific car */}

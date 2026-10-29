@@ -163,7 +163,7 @@ const fmtWaiting = (r) => {
 };
 
 // One table for every refund. The cards at the top and the status dropdown are the same filter (see statusKeyOf below).
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 
 // --- PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Users.jsx) -----
 function usePagination(items, pageSize = PAGE_SIZE) {
@@ -177,7 +177,7 @@ function usePagination(items, pageSize = PAGE_SIZE) {
 }
 
 function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null;
 
   const nums = [];
   const add = (n) => nums.push(n);
@@ -1281,14 +1281,9 @@ export default function RefundRequests() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between pt-2">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">Refunds</h1>
-          <p className="text-sm text-gray-500">
-            {pendingCount > 0 ? `${pendingCount} request${pendingCount > 1 ? "s" : ""} to review` : "No requests to review"}
-            {inProcessCount > 0 && <> · {inProcessCount} under process</>}
-            {failedCount > 0 && <> · <span className="font-semibold text-red-600">{failedCount} failed</span></>}
-          </p>
+          <h1 className="text-2xl font-bold text-arl-dark">Refunds</h1>
         </div>
       </div>
 
@@ -1431,6 +1426,11 @@ export default function RefundRequests() {
                     </tr>
                   );
                 })}
+                {!loading && paginated.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - paginated.length) }).map((_, i) => (
+                <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                  <td colSpan={10} className="h-[53px]">&nbsp;</td>
+                </tr>
+              ))}
               </tbody>
             </table>
           )}

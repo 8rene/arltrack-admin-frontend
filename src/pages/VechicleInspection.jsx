@@ -1291,7 +1291,6 @@ export default function VehicleDocs() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-arl-dark">Vehicle Inspections</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Before &amp; after trip photo documentation per booking</p>
         </div>
       </div>
 

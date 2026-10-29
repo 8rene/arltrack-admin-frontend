@@ -153,21 +153,24 @@ function StatusBadge({ status }) {
   );
 }
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 const STATUSES  = ["All", "Pending", "Partial", "Completed", "For Refund", "Refunded", "Cancelled", "Failed"];
-// "Search by" options. Status, Method and the date range each have their own dropdown, so they are not here.
+// "Search by" options. Status has its own dropdown, so it is not here.
 // Booking ID and Payment ID have no column but stay searchable (the old single box matched them too).
 const PAYMENT_SEARCH_BY = [
   { key: "customer",  label: "Customer",   get: (p) => p.customerName },
   { key: "bookingID", label: "Booking ID", get: (p) => p.bookingID },
   { key: "paymentID", label: "Payment ID", get: (p) => p.paymentID },
   { key: "vehicle",   label: "Vehicle",    get: (p) => p.vehicleName },
+  { key: "method",    label: "Method",     get: (p) => `${p.paymentMethod || ""} ${channelOf(p) || ""}` },
 ];
 const stageOf   = (p) => p.paymentStage || p.status;
+// The list's Amount Paid = what the customer actually paid. A refunded payment has amountPaid 0 (nothing is held any more),
+// so use paidBeforeRefund there; the status badge in the row says the money went back.
+const listPaid = (p) => (String(p.status || "").toLowerCase() === "refunded" && p.paidBeforeRefund != null ? p.paidBeforeRefund : p.amountPaid);
 
 const CHANNEL_LABEL = { gcash: "GCash", paymaya: "Maya", qrph: "QRPH" };
 const channelOf = (p) => CHANNEL_LABEL[String(p.paymongoChannel || "").toLowerCase()] || p.paymongoChannel || p.paymentMethod;
-const TIME_RANGES = ["All Time", "Today", "Last 7 Days", "This Month", "Custom Range"];
 
 // ─── PAGINATION (same shared pattern as Bookings.jsx / Users.jsx) ─────────────
 function usePagination(items, pageSize = PAGE_SIZE) {
@@ -181,7 +184,7 @@ function usePagination(items, pageSize = PAGE_SIZE) {
 }
 
 function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null;
 
   const nums = [];
   const add = (n) => nums.push(n);
@@ -222,36 +225,6 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
   );
 }
 
-// Is createdAt (ISO string) within the selected time range?
-function inTimeRange(iso, range, customFrom, customTo) {
-  if (range === "All Time") return true;
-  if (!iso) return false;
-  const d = new Date(iso);
-  if (isNaN(d)) return false;
-  const now = new Date();
-
-  if (range === "Today") {
-    return d.toDateString() === now.toDateString();
-  }
-  if (range === "Last 7 Days") {
-    const cutoff = new Date(now);
-    cutoff.setDate(cutoff.getDate() - 7);
-    return d >= cutoff && d <= now;
-  }
-  if (range === "This Month") {
-    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-  }
-  if (range === "Custom Range") {
-    if (!customFrom && !customTo) return true; // no bounds picked yet — don't filter anything out
-    const from = customFrom ? new Date(`${customFrom}T00:00:00`) : null;
-    const to   = customTo   ? new Date(`${customTo}T23:59:59`)   : null;
-    if (from && d < from) return false;
-    if (to   && d > to)   return false;
-    return true;
-  }
-  return true;
-}
-
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function Payments() {
@@ -261,10 +234,6 @@ export default function Payments() {
   const [search, setSearch]               = useState("");
   const [searchBy, setSearchBy]           = useState("customer");
   const [statusF, setStatusF]             = useState("All");
-  const [methodF, setMethodF]             = useState("All");
-  const [timeF, setTimeF]                 = useState("All Time");
-  const [customFrom, setCustomFrom]       = useState("");
-  const [customTo, setCustomTo]           = useState("");
   const [selected, setSelected]           = useState(null);
   const { effectiveRole } = useAuth();
   const canRecordInStore = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
@@ -645,16 +614,12 @@ export default function Payments() {
   };
 
   // ── filter ──
-  const methods = ["All", ...new Set(payments.map((p) => p.paymentMethod).filter((m) => m && m !== "—"))];
-
   const filtered = payments.filter((p) => {
     const q = search.trim().toLowerCase();
     const field = PAYMENT_SEARCH_BY.find((o) => o.key === searchBy) || PAYMENT_SEARCH_BY[0];
     const matchQ = !q || String(field.get(p) || "").toLowerCase().includes(q);
     const matchS = statusF === "All" || stageOf(p) === statusF;
-    const matchM = methodF === "All" || p.paymentMethod === methodF;
-    const matchT = inTimeRange(p.createdAt, timeF, customFrom, customTo);
-    return matchQ && matchS && matchM && matchT;
+    return matchQ && matchS;
   });
 
   // ── sort (numeric/date columns only — everything else stays in API/insertion order) ──
@@ -662,7 +627,7 @@ export default function Payments() {
     if (!sortKey) return 0;
     let av, bv;
     if (sortKey === "totalFee") { av = a.totalFee ?? -Infinity; bv = b.totalFee ?? -Infinity; }
-    else if (sortKey === "amountPaid") { av = a.amountPaid ?? -Infinity; bv = b.amountPaid ?? -Infinity; }
+    else if (sortKey === "amountPaid") { av = listPaid(a) ?? -Infinity; bv = listPaid(b) ?? -Infinity; }
     else if (sortKey === "balance") { av = a.balance ?? -Infinity; bv = b.balance ?? -Infinity; }
     else if (sortKey === "discount") { av = a.discountAmount ?? 0; bv = b.discountAmount ?? 0; }
     else if (sortKey === "submitted") { av = a.createdAt ? new Date(a.createdAt).getTime() : -Infinity; bv = b.createdAt ? new Date(b.createdAt).getTime() : -Infinity; }
@@ -671,9 +636,7 @@ export default function Payments() {
   });
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
-  const hasFilters = !!search.trim() || statusF !== "All" || methodF !== "All" || timeF !== "All Time";
-  const clearFilters = () => { setSearch(""); setStatusF("All"); setMethodF("All"); setTimeF("All Time"); setCustomFrom(""); setCustomTo(""); };
-  useEffect(() => setPage(1), [search, searchBy, statusF, methodF, timeF, customFrom, customTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setPage(1), [search, searchBy, statusF]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── stat cards ──
   const totalCollected = payments.filter(p => ["Approved","Paid"].includes(p.status)).reduce((s,p) => s + p.amountPaid, 0);
@@ -1189,6 +1152,13 @@ export default function Payments() {
       )}
 
 
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-arl-dark">Payments</h1>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard icon={<IconMoney      className="w-5 h-5" />} value={peso(totalCollected, fmtCurrency)} label="Total Collected"    color="teal" />
         <StatCard icon={<IconCheck      className="w-5 h-5" />} value={completed}            label="Fully Paid"         color="green"
@@ -1221,30 +1191,6 @@ export default function Payments() {
             className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
             {STATUSES.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
           </select>
-          <select value={methodF} onChange={(e) => setMethodF(e.target.value)}
-            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
-            {methods.map((m) => <option key={m} value={m}>{m === "All" ? "All methods" : m}</option>)}
-          </select>
-          <select value={timeF} onChange={(e) => setTimeF(e.target.value)}
-            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
-            {TIME_RANGES.map((t) => <option key={t}>{t}</option>)}
-          </select>
-          {timeF === "Custom Range" && (
-            <div className="flex items-center gap-1.5">
-              <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
-                max={customTo || undefined}
-                className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white" />
-              <span className="text-gray-400 text-xs">to</span>
-              <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
-                min={customFrom || undefined}
-                className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white" />
-            </div>
-          )}
-          {hasFilters && (
-            <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
-              Clear
-            </button>
-          )}
           <button onClick={fetchPayments} disabled={loading}
             className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
             <IconRefresh className="w-3.5 h-3.5" />
@@ -1278,7 +1224,7 @@ export default function Payments() {
                 ))
               ) : paginated.length === 0 ? (
                 <tr><td colSpan={10} className="text-center text-gray-400 py-12">
-                  {search || statusF !== "All" || methodF !== "All" || timeF !== "All Time" ? "No payments match your filters." : "No payments found."}
+                  {search || statusF !== "All" ? "No payments match your filters." : "No payments found."}
                 </td></tr>
               ) : paginated.map((p) => (
                 <tr key={p.id} className="border-t hover:bg-gray-50 transition-colors">
@@ -1315,10 +1261,7 @@ export default function Payments() {
                       : <span className="text-gray-300">—</span>}
                   </td>
                   <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">
-                    {peso(p.amountPaid, fmtCurrency)}
-                    {String(p.status || "").toLowerCase() === "refunded" && (
-                      <span className="block text-[10px] font-semibold text-purple-700">Refunded</span>
-                    )}
+                    {peso(listPaid(p), fmtCurrency)}
                   </td>
                   <td className={`px-4 py-3 font-semibold whitespace-nowrap ${p.balance > 0 ? "text-red-500" : "text-green-600"}`}>
                     {peso(p.balance, fmtCurrency)}
@@ -1329,6 +1272,11 @@ export default function Payments() {
                     <button onClick={() => openDetail(p.id)}
                       className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
                   </td>
+                </tr>
+              ))}
+              {!loading && paginated.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - paginated.length) }).map((_, i) => (
+                <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                  <td colSpan={10} className="h-[53px]">&nbsp;</td>
                 </tr>
               ))}
             </tbody>
@@ -1767,7 +1715,13 @@ function GainBreakdown({ payment, summary, fmt }) {
   }
   const paidIn = round2(n(summary.paidIn));
   const penaltyIn = round2(n(summary.penaltyPaid));
-  if (paidIn <= 0 && penaltyIn <= 0) return null;          // nothing was ever received
+  if (paidIn <= 0 && penaltyIn <= 0) {                     // nothing was ever received: still shown, as 0
+    return (
+      <InfoSection title="Booking Gain / Loss" flush>
+        <p className="px-4 py-4 text-xs text-gray-500">Nothing was received on this booking, so there is no gain, no loss and no PayMongo fee. Total {peso(0, fmt)}.</p>
+      </InfoSection>
+    );
+  }
 
   const stage = stageOf(payment);
   const refunded = round2(n(summary.refundedOut));
@@ -1813,11 +1767,7 @@ function GainBreakdown({ payment, summary, fmt }) {
   );
 
   return (
-    <InfoSection
-      title="Booking Gain / Loss"
-      flush
-      aside={<span className={`text-xs font-bold ${tone}`}>{verdict} {netText}</span>}
-    >
+    <InfoSection title="Booking Gain / Loss" flush>
       <table className="w-full text-sm">
         <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
           <tr>

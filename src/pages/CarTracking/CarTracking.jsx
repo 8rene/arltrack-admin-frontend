@@ -506,7 +506,6 @@ export default function CarTracking() {
   const selectedRef = useRef(null);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   const [loading,      setLoading]      = useState(true);
-  const [lastPoll,     setLastPoll]     = useState(null);
   const [notice,       setNotice]       = useState(null);
   const [actionBusyId, setActionBusyId] = useState(null); // booking doc id currently being acted on
   const [customerBooking, setCustomerBooking] = useState(null);   // small "who booked" modal
@@ -629,7 +628,6 @@ export default function CarTracking() {
         if (loc.deviceId && loc.lat && loc.lng) map[loc.deviceId] = loc;
       });
       setLocations(map);
-      setLastPoll(new Date());
     } catch (e) {
       console.error("[CarTracking] fetchLocations error:", e);
     } finally {
@@ -1240,18 +1238,37 @@ export default function CarTracking() {
     <div className="flex flex-col h-full min-h-0 gap-3">
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4 shrink-0">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-bold text-arl-dark text-sm">
-              Car Tracking — {tab === "live" ? "Live" : tab === "traceback" ? "Traceback" : tab === "history" ? "History" : "Review"}
-            </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {allCars.length} car{allCars.length !== 1 ? "s" : ""} total
-              {lastPoll && ` · Updated ${timeAgo(lastPoll.toISOString())}`}
-              {tab === "live" && holidayToday && ` · 🎌 ${holidayToday.holidayName || "Holiday"} — coding suspended today`}
-            </p>
+      <div className="shrink-0">
+        <h1 className="text-2xl font-bold text-arl-dark">Car Tracking</h1>
+        {tab === "live" && holidayToday && (
+          <p className="text-sm text-gray-400 mt-0.5">
+            🎌 {holidayToday.holidayName || "Holiday"} — coding suspended today
+          </p>
+        )}
+      </div>
+
+      {/* ── Tabs + actions on one row ───────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-3 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 w-fit">
+            {[
+              { id: "live",       label: "Live" },
+              { id: "traceback",  label: "Traceback" },
+              { id: "history",    label: "History" },
+              { id: "review",     label: "Review" },
+            ].map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  tab === t.id ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
+
           <div className="flex items-center gap-2">
             {tab === "live" && selected && (
               <button
@@ -1281,26 +1298,6 @@ export default function CarTracking() {
               </button>
             )}
           </div>
-        </div>
-
-        {/* ── Switchable tabs: Live / Traceback / History ─────────────────── */}
-        <div className="flex items-center gap-1 mt-3 bg-gray-50 rounded-xl p-1 w-fit">
-          {[
-            { id: "live",       label: "Live" },
-            { id: "traceback",  label: "Traceback" },
-            { id: "history",    label: "History" },
-            { id: "review",     label: "Review" },
-          ].map(t => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                tab === t.id ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
         </div>
       </div>
 

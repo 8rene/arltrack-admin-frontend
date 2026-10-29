@@ -398,10 +398,7 @@ export default function DriverDispatch() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-arl-dark">Driver Dispatch</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {loading ? "Loading…" : `${board.unassigned.length} awaiting a driver · ${board.drivers.length} drivers`}
-          </p>
+          <h1 className="text-2xl font-bold text-arl-dark">Driver Dispatch</h1>
         </div>
         <button onClick={fetchBoard} disabled={loading}
           className="px-3 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 self-start sm:self-auto">

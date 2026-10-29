@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import {
@@ -144,7 +144,39 @@ const Icons = {
       <polyline points="12 5 19 12 12 19" />
     </svg>
   ),
+  Check: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
+  Wrench: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.4 2.4-2.6-.6-.6-2.6 2.6-2.2z" />
+    </svg>
+  ),
+  Pause: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="10" y1="9" x2="10" y2="15" />
+      <line x1="14" y1="9" x2="14" y2="15" />
+    </svg>
+  ),
+  Search: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  ),
 };
+
+// Icon + color per status card — same color family as STATUS_STYLE / STATUS_BORDER above,
+// so a status looks the same on the card at the top as it does on the vehicle card below.
+const STAT_CARDS = [
+  { key: "All",         label: "All Vehicles", Icon: Icons.Car,    color: "bg-teal-50 text-teal-600" },
+  { key: "Active",      label: "Active",       Icon: Icons.Check,  color: "bg-green-50 text-green-600" },
+  { key: "Maintenance", label: "Maintenance",  Icon: Icons.Wrench, color: "bg-red-50 text-red-600" },
+  { key: "Inactive",    label: "Inactive",     Icon: Icons.Pause,  color: "bg-gray-100 text-gray-500" },
+];
 
 const STATUS_STYLE = {
   Active:      "bg-green-50 border border-green-200 text-black",
@@ -236,6 +268,7 @@ export default function Fleet() {
   const [models, setModels]       = useState([]);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState("");
+  const [searchBy, setSearchBy]   = useState("all");
   const [filterStatus, setFilter] = useState("All");
   const [detailCar, setDetailCar] = useState(null);
   const [editCar, setEditCar]     = useState(null);
@@ -278,10 +311,14 @@ export default function Fleet() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   // Refreshes just the brand / model lists (no page spinner), so the Brands & Models window can stay open after each change.
+  // Cars are refreshed too, so a rename shows on the vehicle cards and the "used by" counts stay right.
   const refreshBrandsAndModels = useCallback(async () => {
-    const [brandsData, modelsData] = await Promise.all([apiFetch("/api/fleet/brands"), apiFetch("/api/fleet/models")]);
+    const [brandsData, modelsData, carsData] = await Promise.all([
+      apiFetch("/api/fleet/brands"), apiFetch("/api/fleet/models"), apiFetch("/api/fleet/cars"),
+    ]);
     setBrands(brandsData || []);
     setModels(modelsData || []);
+    setCars(carsData || []);
   }, []);
 
   // Used by the "+ Add new brand / model" option inside the Add and Edit vehicle forms. They add to the lists in place
@@ -316,11 +353,13 @@ export default function Fleet() {
   const statuses = ["All", "Active", "Maintenance", "Inactive"];
   const filtered = cars.filter(c => {
     const q = search.toLowerCase();
-    const matchSearch = !search ||
-      (c.brandName || "").toLowerCase().includes(q) ||
-      (c.modelName || "").toLowerCase().includes(q) ||
-      (c.plateNumber || "").toLowerCase().includes(q) ||
-      (c.shortDescription || "").toLowerCase().includes(q);
+    const fields = {
+      brand: [c.brandName],
+      model: [c.modelName],
+      plate: [c.plateNumber],
+      all:   [c.brandName, c.modelName, c.plateNumber, c.shortDescription],
+    }[searchBy] || [];
+    const matchSearch = !search || fields.some(v => (v || "").toLowerCase().includes(q));
     const matchStatus = filterStatus === "All" || c.status === filterStatus;
     return matchSearch && matchStatus;
   });
@@ -332,43 +371,78 @@ export default function Fleet() {
 
   return (
     <div className="p-4 space-y-5 font-sans">
-      {/* TOP BAR */}
-      <div className="flex flex-wrap justify-between items-center gap-3">
-        <h1 className="text-2xl font-bold text-gray-800">Fleet Manager</h1>
-        <div className="flex gap-2 flex-wrap items-center">
-          <input
-            value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search vehicle..."
-            className="px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400 w-52"
-          />
+      {/* HEADER — Add Vehicle is the one primary action on this page */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-gray-500">
+          {loading ? "Loading fleet…" : `${cars.length} vehicle${cars.length === 1 ? "" : "s"} in your fleet`}
+        </p>
+        <div className="flex items-center gap-2">
           <button onClick={() => setShowManageBrands(true)}
-            className="flex items-center gap-2 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+            className="flex items-center gap-2 px-4 py-2 border border-gray-300 bg-white rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
             <Icons.Tag className="w-4 h-4" />
-            Brands & Models
-          </button>
-          <button onClick={fetchAll}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800">
-            <Icons.Refresh className="w-4 h-4" />
-            Refresh
+            Brands &amp; Models
           </button>
           <button onClick={() => setShowAddCar(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700">
+            className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-semibold hover:bg-teal-700 shadow-sm">
             <Icons.Plus className="w-4 h-4" />
             Add Vehicle
           </button>
         </div>
       </div>
 
-      {/* STATUS TABS */}
-      <div className="flex gap-2 flex-wrap">
-        {statuses.map(s => (
-          <button key={s} onClick={() => setFilter(s)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
-              filterStatus === s ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"
-            }`}>
-            {s} <span className="ml-1 opacity-70">{counts[s]}</span>
+      {/* STAT CARDS — click one to filter, same pattern as Bookings */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {STAT_CARDS.map(({ key, label, Icon, color }) => (
+          <button key={key} onClick={() => setFilter(key)}
+            className={`p-4 rounded-2xl border text-left transition-all ${filterStatus === key ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}>
+            <div className="flex items-start justify-between">
+              <div className={`text-2xl font-bold ${filterStatus === key ? "text-teal-600" : "text-gray-800"}`}>
+                {loading ? "…" : counts[key] ?? 0}
+              </div>
+              <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${color}`}>
+                <Icon className="w-4 h-4" />
+              </span>
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5">{label}</div>
           </button>
         ))}
+      </div>
+
+      {/* SEARCH + FILTERS */}
+      <div className="bg-white rounded-2xl border">
+        <div className="flex flex-wrap gap-3 items-end p-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select
+              value={searchBy}
+              onChange={e => { setSearchBy(e.target.value); setSearch(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+            >
+              <option value="all">All</option>
+              <option value="brand">Brand</option>
+              <option value="model">Model</option>
+              <option value="plate">Plate number</option>
+            </select>
+          </div>
+          <input
+            type="text"
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder={`Enter ${searchBy === "all" ? "brand, model or plate" : searchBy === "plate" ? "plate number" : searchBy}...`}
+            className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+          />
+          <select
+            value={filterStatus}
+            onChange={e => setFilter(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+          >
+            {statuses.map(st => <option key={st} value={st}>{st === "All" ? "All statuses" : st}</option>)}
+          </select>
+          <button onClick={fetchAll}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5">
+            <Icons.Refresh className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* GRID */}
@@ -409,7 +483,7 @@ export default function Fleet() {
           onSaved={() => { setShowAddCar(false); fetchAll(); }} />
       )}
       {showManageBrands && (
-        <ManageBrandsModal brands={brands} models={models}
+        <ManageBrandsModal brands={brands} models={models} cars={cars}
           onClose={() => setShowManageBrands(false)}
           onChanged={refreshBrandsAndModels} />
       )}
@@ -2394,26 +2468,47 @@ function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClo
 // Models tab: pick a brand from the dropdown (same look as the vehicle form), then add / remove models for that brand only.
 // The window stays open after every add or delete (the lists are refreshed in place via onChanged), so several brands or models
 // can be entered in one go.
-function ManageBrandsModal({ brands, models, onClose, onChanged }) {
-  const [newBrand, setNewBrand]         = useState("");
-  const [newModel, setNewModel]         = useState("");
-  const [modelBrandID, setModelBrandID] = useState("");
-  const [saving, setSaving]             = useState(false);
-  const [tab, setTab]                   = useState("brand");
-  const [error, setError]               = useState(null);
-  const [confirmDel, setConfirmDel]     = useState(null);
+const byName = (key) => (a, b) => (a[key] || "").localeCompare(b[key] || "");
 
-  const byName = (key) => (a, b) => (a[key] || "").localeCompare(b[key] || "");
-  const sortedBrands = [...brands].sort(byName("brandName"));
-  const brandModels  = models.filter(m => m.brandID === modelBrandID).sort(byName("modelName"));
-  const selectedBrand = brands.find(b => b.id === modelBrandID);
+function ManageBrandsModal({ brands, models, cars = [], onClose, onChanged }) {
+  const [selectedBrandID, setSelectedBrandID] = useState("");
+  const [brandSearch, setBrandSearch] = useState("");
+  const [newBrand, setNewBrand]       = useState("");
+  const [newModel, setNewModel]       = useState("");
+  const [editing, setEditing]         = useState(null);   // { type: "brand" | "model", id, value }
+  const [saving, setSaving]           = useState(false);
+  const [error, setError]             = useState(null);
+  const [confirmDel, setConfirmDel]   = useState(null);
 
-  // if the selected brand disappears (deleted), fall back to "no brand selected"
+  const sortedBrands = useMemo(() => [...brands].sort(byName("brandName")), [brands]);
+  const shownBrands  = sortedBrands.filter(b => (b.brandName || "").toLowerCase().includes(brandSearch.trim().toLowerCase()));
+  const brandModels  = useMemo(() => models.filter(m => m.brandID === selectedBrandID).sort(byName("modelName")), [models, selectedBrandID]);
+  const selectedBrand = brands.find(b => b.id === selectedBrandID);
+
+  // How many vehicles use each brand / model. The backend refuses to delete anything still in use,
+  // so we show the count and disable the button instead of letting the person hit an error.
+  const usage = useMemo(() => {
+    const byModel = {}, byBrand = {};
+    cars.forEach(c => {
+      if (c.modelID) byModel[c.modelID] = (byModel[c.modelID] || 0) + 1;
+      if (c.brandID) byBrand[c.brandID] = (byBrand[c.brandID] || 0) + 1;
+    });
+    const brandUse = {};
+    brands.forEach(b => {
+      const viaModels = models.filter(m => m.brandID === b.id).reduce((n, m) => n + (byModel[m.id] || 0), 0);
+      brandUse[b.id] = Math.max(byBrand[b.id] || 0, viaModels);
+    });
+    return { byModel, brandUse };
+  }, [cars, brands, models]);
+
+  // keep a brand selected: pick the first one when none is chosen or the chosen one was deleted
   useEffect(() => {
-    if (modelBrandID && !brands.some(b => b.id === modelBrandID)) setModelBrandID("");
-  }, [brands, modelBrandID]);
+    if (selectedBrandID && brands.some(b => b.id === selectedBrandID)) return;
+    setSelectedBrandID(sortedBrands[0]?.id || "");
+  }, [brands, sortedBrands, selectedBrandID]);
 
-  const switchTab = (t) => { setTab(t); setError(null); };
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const clearMsgs = () => setError(null);
 
   const addBrand = async () => {
     const clean = newBrand.trim();
@@ -2423,22 +2518,51 @@ function ManageBrandsModal({ brands, models, onClose, onChanged }) {
     }
     setSaving(true); setError(null);
     try {
-      await apiFetch("/api/fleet/brands", { method: "POST", body: JSON.stringify({ brandName: clean }) });
+      const created = await apiFetch("/api/fleet/brands", { method: "POST", body: JSON.stringify({ brandName: clean }) });
       setNewBrand(""); await onChanged();
+      if (created?.id) { setSelectedBrandID(created.id); setBrandSearch(""); }   // jump to the new brand so its models can be added next
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
   const addModel = async () => {
     const clean = newModel.trim();
-    if (!modelBrandID) { setError("Select a brand first."); return; }
+    if (!selectedBrandID) { setError("Select a brand first."); return; }
     if (!clean) { setError("Enter a model name."); return; }
     if (brandModels.some(m => (m.modelName || "").trim().toLowerCase() === clean.toLowerCase())) {
       setError(`"${clean}" already exists under ${selectedBrand?.brandName}.`); return;
     }
     setSaving(true); setError(null);
     try {
-      await apiFetch("/api/fleet/models", { method: "POST", body: JSON.stringify({ modelName: clean, brandID: modelBrandID }) });
-      setNewModel(""); await onChanged();   // keep the brand selected so the next model can be typed straight away
+      await apiFetch("/api/fleet/models", { method: "POST", body: JSON.stringify({ modelName: clean, brandID: selectedBrandID }) });
+      setNewModel(""); await onChanged();
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  };
+
+  const startEdit = (type, item) => {
+    setError(null);
+    setEditing({ type, id: item.id, value: type === "brand" ? item.brandName || "" : item.modelName || "" });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    const clean = editing.value.trim();
+    const isBrand = editing.type === "brand";
+    const current = isBrand ? brands.find(b => b.id === editing.id)?.brandName : models.find(m => m.id === editing.id)?.modelName;
+    if (!clean) { setError(`Enter a ${isBrand ? "brand" : "model"} name.`); return; }
+    if (clean === (current || "")) { setEditing(null); return; }   // nothing changed
+
+    const pool = isBrand ? brands.filter(b => b.id !== editing.id).map(b => b.brandName)
+                         : brandModels.filter(m => m.id !== editing.id).map(m => m.modelName);
+    if (pool.some(n => (n || "").trim().toLowerCase() === clean.toLowerCase())) {
+      setError(`"${clean}" already exists${isBrand ? "" : ` under ${selectedBrand?.brandName}`}.`); return;
+    }
+    setSaving(true); setError(null);
+    try {
+      await apiFetch(`/api/fleet/${isBrand ? "brands" : "models"}/${editing.id}`, {
+        method: "PUT",
+        body: JSON.stringify(isBrand ? { brandName: clean } : { modelName: clean }),
+      });
+      setEditing(null); await onChanged();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
@@ -2453,91 +2577,120 @@ function ManageBrandsModal({ brands, models, onClose, onChanged }) {
     } catch (e) { setConfirmDel(null); setError(e.message); } finally { setSaving(false); }
   };
 
-  const onEnter = (fn) => (e) => { if (e.key === "Enter") { e.preventDefault(); fn(); } };
-  const tabCls = (on) => `flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${on ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`;
+  const onEnter = (fn, esc) => (e) => {
+    if (e.key === "Enter") { e.preventDefault(); fn(); }
+    if (e.key === "Escape" && esc) { e.stopPropagation(); esc(); }
+  };
+
+  const iconBtn = "p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
+
+  // one list row, shared by brands and models; switches to an inline input while being renamed
+  const renderRow = ({ type, item, name, meta, used, selected, onSelect }) => {
+    const isEditing = editing?.type === type && editing?.id === item.id;
+    if (isEditing) {
+      return (
+        <div key={item.id} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-teal-400 bg-white">
+          <input autoFocus value={editing.value} disabled={saving}
+            onChange={e => { setEditing({ ...editing, value: e.target.value }); clearMsgs(); }}
+            onKeyDown={onEnter(saveEdit, () => setEditing(null))}
+            className="flex-1 min-w-0 text-sm text-gray-800 outline-none bg-transparent" />
+          <button onClick={saveEdit} disabled={saving} title="Save"
+            className={`${iconBtn} text-teal-600 hover:bg-teal-50`}><Icons.Check className="w-4 h-4" /></button>
+          <button onClick={() => setEditing(null)} disabled={saving} title="Cancel"
+            className={`${iconBtn} text-gray-400 hover:bg-gray-100`}><Icons.Close className="w-4 h-4" /></button>
+        </div>
+      );
+    }
+    return (
+      <div key={item.id} onClick={onSelect}
+        className={`flex items-center gap-2 pl-3 pr-1.5 py-2 rounded-xl border transition-colors ${
+          onSelect ? "cursor-pointer" : ""} ${selected ? "border-teal-400 bg-teal-50" : "border-transparent bg-gray-50 hover:bg-gray-100"}`}>
+        <div className="flex-1 min-w-0">
+          <div className={`text-sm font-medium truncate ${selected ? "text-teal-800" : "text-gray-700"}`}>{name}</div>
+          {meta && <div className="text-xs text-gray-400">{meta}</div>}
+        </div>
+        <button onClick={e => { e.stopPropagation(); startEdit(type, item); }} title="Rename" disabled={saving}
+          className={`${iconBtn} text-gray-400 hover:text-teal-600 hover:bg-white`}><Icons.Edit className="w-4 h-4" /></button>
+        <button onClick={e => { e.stopPropagation(); setConfirmDel({ type, item }); }} disabled={saving || used > 0}
+          title={used > 0 ? `Can't delete: used by ${plural(used, "vehicle")}` : "Delete"}
+          className={`${iconBtn} text-red-400 hover:text-red-600 hover:bg-white`}><Icons.Trash className="w-4 h-4" /></button>
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
-          <h2 className="font-bold text-lg text-gray-800">Brands & Models</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-            <Icons.Close className="w-5 h-5" />
-          </button>
+      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-start p-5 border-b">
+          <div>
+            <h2 className="font-bold text-lg text-gray-800">Brands &amp; Models</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Pick a brand on the left to manage its models. A brand or model in use by a vehicle can be renamed but not deleted.</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><Icons.Close className="w-5 h-5" /></button>
         </div>
 
-        <div className="p-5 space-y-4">
-          <div className="flex gap-2">
-            <button onClick={() => switchTab("brand")} className={tabCls(tab === "brand")}>
-              <Icons.Tag className="w-3.5 h-3.5" /> Brands
-            </button>
-            <button onClick={() => switchTab("model")} className={tabCls(tab === "model")}>
-              <Icons.Car className="w-3.5 h-3.5" /> Models
-            </button>
+        <div className="grid md:grid-cols-2 md:divide-x overflow-y-auto">
+          {/* BRANDS */}
+          <div className="p-5 space-y-3 flex flex-col min-h-0">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-700">Brands <span className="text-gray-400 font-normal">({brands.length})</span></h3>
+            </div>
+            <div className="flex gap-2">
+              <input value={newBrand} onChange={e => { setNewBrand(e.target.value); clearMsgs(); }} onKeyDown={onEnter(addBrand)}
+                placeholder="New brand (e.g. Toyota)" disabled={saving} className={FIELD_CLS} />
+              <button onClick={addBrand} disabled={saving}
+                className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50">Add</button>
+            </div>
+            {brands.length > 6 && (
+              <div className="relative">
+                <Icons.Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input value={brandSearch} onChange={e => setBrandSearch(e.target.value)} placeholder="Search brands"
+                  className={`${FIELD_CLS} pl-9`} />
+              </div>
+            )}
+            <div className="space-y-1 overflow-y-auto max-h-72 md:max-h-80 pr-1">
+              {sortedBrands.length === 0
+                ? <p className="text-sm text-gray-400 text-center py-8">No brands yet. Add your first one above.</p>
+                : shownBrands.length === 0
+                  ? <p className="text-sm text-gray-400 text-center py-8">No brand matches "{brandSearch}".</p>
+                  : shownBrands.map(b => renderRow({
+                      type: "brand", item: b, name: b.brandName,
+                      meta: `${plural(models.filter(m => m.brandID === b.id).length, "model")} · ${plural(usage.brandUse[b.id] || 0, "vehicle")}`,
+                      used: usage.brandUse[b.id] || 0,
+                      selected: b.id === selectedBrandID,
+                      onSelect: () => { setSelectedBrandID(b.id); setEditing(null); clearMsgs(); },
+                    }))}
+            </div>
           </div>
 
-          {tab === "brand" ? (
-            <>
-              <div className="flex gap-2">
-                <input value={newBrand} onChange={e => { setNewBrand(e.target.value); setError(null); }} onKeyDown={onEnter(addBrand)}
-                  placeholder="New brand name (e.g. Toyota)" disabled={saving} className={FIELD_CLS} />
-                <button onClick={addBrand} disabled={saving}
-                  className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50">Add</button>
-              </div>
-              <div className="space-y-1 max-h-64 overflow-y-auto">
-                {sortedBrands.length === 0
-                  ? <p className="text-sm text-gray-400 text-center py-4">No brands yet</p>
-                  : sortedBrands.map(b => (
-                    <div key={b.id} className="flex items-center justify-between px-4 py-2.5 bg-gray-50 rounded-xl">
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">{b.brandName}</span>
-                        <span className="text-xs text-gray-400 ml-2">{models.filter(m => m.brandID === b.id).length} models</span>
-                      </div>
-                      <button onClick={() => setConfirmDel({ type: "brand", item: b })} className="text-red-400 hover:text-red-600 p-1">
-                        <Icons.Trash className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <label className={LABEL_CLS}>Brand</label>
-                <select value={modelBrandID} onChange={e => { setModelBrandID(e.target.value); setError(null); }}
-                  className={SELECT_CLS} style={SELECT_STYLE}>
-                  <option value="">Select Brand</option>
-                  {sortedBrands.map(b => <option key={b.id} value={b.id}>{b.brandName}</option>)}
-                </select>
-              </div>
-
-              <div className="flex gap-2">
-                <input value={newModel} onChange={e => { setNewModel(e.target.value); setError(null); }} onKeyDown={onEnter(addModel)}
-                  placeholder={modelBrandID ? `New ${selectedBrand?.brandName} model (e.g. Vios)` : "Select a brand first"}
-                  disabled={saving || !modelBrandID} className={FIELD_CLS} />
-                <button onClick={addModel} disabled={saving || !modelBrandID}
-                  className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50">Add</button>
-              </div>
-
-              <div className="space-y-1 max-h-64 overflow-y-auto">
-                {!modelBrandID ? (
-                  <p className="text-sm text-gray-400 text-center py-4">Choose a brand to see and add its models</p>
-                ) : brandModels.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-4">No models for {selectedBrand?.brandName} yet</p>
-                ) : brandModels.map(m => (
-                  <div key={m.id} className="flex items-center justify-between px-4 py-2.5 bg-gray-50 rounded-xl">
-                    <span className="text-sm text-gray-700">{m.modelName}</span>
-                    <button onClick={() => setConfirmDel({ type: "model", item: m })} className="text-red-400 hover:text-red-600 p-1">
-                      <Icons.Trash className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3">{error}</p>}
+          {/* MODELS */}
+          <div className="p-5 space-y-3 flex flex-col min-h-0 border-t md:border-t-0">
+            <h3 className="text-sm font-semibold text-gray-700">
+              {selectedBrand ? <>Models of <span className="text-teal-700">{selectedBrand.brandName}</span></> : "Models"}
+              {selectedBrand && <span className="text-gray-400 font-normal"> ({brandModels.length})</span>}
+            </h3>
+            <div className="flex gap-2">
+              <input value={newModel} onChange={e => { setNewModel(e.target.value); clearMsgs(); }} onKeyDown={onEnter(addModel)}
+                placeholder={selectedBrand ? `New ${selectedBrand.brandName} model (e.g. Vios)` : "Select a brand first"}
+                disabled={saving || !selectedBrandID} className={FIELD_CLS} />
+              <button onClick={addModel} disabled={saving || !selectedBrandID}
+                className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50">Add</button>
+            </div>
+            <div className="space-y-1 overflow-y-auto max-h-72 md:max-h-80 pr-1">
+              {!selectedBrand ? (
+                <p className="text-sm text-gray-400 text-center py-8">Choose a brand to see and add its models.</p>
+              ) : brandModels.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-8">No models for {selectedBrand.brandName} yet.</p>
+              ) : brandModels.map(m => renderRow({
+                  type: "model", item: m, name: m.modelName,
+                  meta: plural(usage.byModel[m.id] || 0, "vehicle"),
+                  used: usage.byModel[m.id] || 0,
+                }))}
+            </div>
+          </div>
         </div>
+
+        {error && <p className="text-sm text-red-600 bg-red-50 border-t border-red-100 px-5 py-3">{error}</p>}
       </div>
 
       {confirmDel && (
