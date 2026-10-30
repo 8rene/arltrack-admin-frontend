@@ -6,7 +6,6 @@ import { useCurrency } from "../context/CurrencyContext";
 import { MapContainer, TileLayer, CircleMarker, Circle, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 import { TermsVersionModal } from "../components/TripTermsModal";
 
 const PAGE_SIZE = 10;
@@ -666,6 +665,151 @@ function ListRows({ tab, rows }) {
   );
 }
 
+// ── Money movements (read-only, plain table) ─────────────────
+// Reads GET /api/payment-entries, which looks in paymentEntryArchives for an archived booking's rows, so these are the
+// archived records themselves. No receipts, no statement, no show/hide: just the fields in a table.
+const MM_METHOD = { gcash: "GCash", maya: "Maya", qrph: "QR Ph", cash: "Cash", bank_transfer: "Bank transfer" };
+const MM_IN  = { deposit: "Deposit paid", balance: "Balance paid", penalty: "Penalty payment" };
+const MM_OUT = { deposit: "Refund of deposit", balance: "Refund of balance", penalty: "Refund of penalty", discount: "Discount refund", deposit_return: "Security deposit returned", discount_return: "Discount credit returned" };
+const MM_STATUS = { success: "Done", pending: "Pending", failed: "Failed", cancelled: "Cancelled", unrefundable: "Can't be refunded" };
+const MM_DOT = { success: "bg-green-500", pending: "bg-yellow-400", failed: "bg-red-500", cancelled: "bg-gray-400", unrefundable: "bg-red-500" };
+const MM_INTERNAL = {
+  discount_applied_balance: "Discount given (taken off the balance)",
+  discount_credit: "Discount given (held for the customer)",
+  discount_applied_penalty: "Discount credit used for a penalty",
+  discount_in_refund: "Discount credit returned with the refund",
+  deposit_forfeited: "Security deposit kept (forfeited)",
+};
+const mmTitle = (e) => {
+  if (e.status === "unrefundable") return "Could not be refunded online";
+  if (e.direction === "out") {
+    const base = MM_OUT[e.phase] || "Refund";
+    return e.phase === "deposit_return" || e.phase === "discount_return" ? base : `${base} (${e.source === "in_person" ? "handed back in person" : "online"})`;
+  }
+  return MM_IN[e.phase] || "Payment";
+};
+
+function MoneyMovements({ query, title = "Money movements" }) {
+  const { fmt } = useCurrency();
+  const [state, setState] = useState({ loading: true, error: null, data: null });
+  const [qKey, qVal] = Object.entries(query || {}).find(([, v]) => v) || [];
+
+  useEffect(() => {
+    if (!qKey) { setState({ loading: false, error: null, data: { entries: [], summary: null } }); return undefined; }
+    let alive = true;
+    setState({ loading: true, error: null, data: null });
+    fetch(`${process.env.REACT_APP_API_URL}/api/payment-entries?${qKey}=${encodeURIComponent(qVal)}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    })
+      .then(async (res) => { const json = await res.json(); if (!res.ok) throw new Error(json.message || "Failed to load money movements."); return json.data; })
+      .then((data) => alive && setState({ loading: false, error: null, data }))
+      .catch((e) => alive && setState({ loading: false, error: e.message, data: null }));
+    return () => { alive = false; };
+  }, [qKey, qVal]);
+
+  const { loading, error, data } = state;
+  const all = data?.entries || [];                       // oldest first from the server
+  const real = all.filter((e) => e.direction !== "internal");
+  const stamp = (e) => e.settledAt || e.processedAt || e.createdAt || "";
+  const noCash = [
+    ...(data?.adjustments || []).map((a) => ({ id: a.id, label: a.label, amount: a.amount, date: a.date || "", by: a.byName || null })),
+    ...all.filter((e) => e.direction === "internal").map((e) => ({ id: e.id, label: MM_INTERNAL[e.phase] || "Discount", amount: e.amount, date: stamp(e), by: e.processedByName || null })),
+  ];
+  const items = [
+    ...real.map((e, i) => ({ kind: "entry", e, n: i + 1, t: stamp(e), i })),
+    ...noCash.map((a, i) => ({ kind: "adj", a, t: a.date, i: real.length + i })),
+  ].sort((x, y) => String(x.t).localeCompare(String(y.t)) || x.i - y.i).reverse();   // newest on top
+  const sm = data?.summary;
+  const when = (iso) => (iso ? stampText(iso) : "—");
+  const stat = (label, value, cls = "text-gray-800") => <span key={label} className="text-xs text-gray-500">{label} <span className={`font-semibold ${cls}`}>{value}</span></span>;
+
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+      </div>
+      {loading && <p className="text-sm text-gray-400 px-4 py-4">Loading money movements…</p>}
+      {error && <p className="text-sm text-red-600 px-4 py-4">{error}</p>}
+      {!loading && !error && items.length === 0 && <p className="text-sm text-gray-400 px-4 py-4">No money movements were archived for this.</p>}
+
+      {!loading && !error && sm && real.length > 0 && (
+        <div className="flex flex-wrap gap-x-5 gap-y-1 px-4 py-3 border-b border-gray-100">
+          {sm.paidIn > 0 && stat("Paid in", fmt(sm.paidIn), "text-green-700")}
+          {sm.penaltyPaid > 0 && stat("Penalties paid", fmt(sm.penaltyPaid), "text-green-700")}
+          {sm.refundedOut > 0 && stat("Refunded", fmt(sm.refundedOut), "text-purple-700")}
+          {sm.depositReturned > 0 && stat("Deposit returned", fmt(sm.depositReturned), "text-purple-700")}
+          {sm.unrefundable > 0 && stat("Could not refund", fmt(sm.unrefundable), "text-red-600")}
+          {sm.failed > 0 && stat("Failed attempts", fmt(sm.failed), "text-red-600")}
+          {sm.refundPending > 0 && stat("Refund pending", fmt(sm.refundPending), "text-amber-700")}
+          {sm.paidIn > 0 && stat("Held after refunds", fmt(sm.netHeld))}
+        </div>
+      )}
+
+      {!loading && !error && items.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
+            <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="text-left font-medium px-4 py-2 w-10">#</th>
+                <th className="text-left font-medium px-2 py-2">Movement</th>
+                <th className="text-left font-medium px-2 py-2">Status</th>
+                <th className="text-left font-medium px-2 py-2">Date</th>
+                <th className="text-left font-medium px-2 py-2">Method</th>
+                <th className="text-left font-medium px-2 py-2">Reference</th>
+                <th className="text-left font-medium px-2 py-2">Handled by</th>
+                <th className="text-right font-medium px-4 py-2">Amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {items.map((it) => {
+                if (it.kind === "adj") {
+                  const a = it.a;
+                  return (
+                    <tr key={`adj-${a.id}`} className="align-top">
+                      <td className="px-4 py-2.5 text-xs text-gray-300">•</td>
+                      <td className="px-2 py-2.5 font-medium text-gray-600">{a.label}<p className="text-xs font-normal text-gray-400 mt-0.5">No money moved</p></td>
+                      <td className="px-2 py-2.5 text-xs text-gray-400 whitespace-nowrap">No cash moved</td>
+                      <td className="px-2 py-2.5 text-xs text-gray-500 whitespace-nowrap">{when(a.date)}</td>
+                      <td className="px-2 py-2.5 text-gray-300">—</td>
+                      <td className="px-2 py-2.5 text-gray-300">—</td>
+                      <td className="px-2 py-2.5 text-gray-600">{a.by || "—"}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-gray-500 whitespace-nowrap">{fmt(a.amount)}</td>
+                    </tr>
+                  );
+                }
+                const { e, n } = it;
+                const out = e.direction === "out";
+                return (
+                  <tr key={e.id} className="align-top">
+                    <td className="px-4 py-2.5 text-xs text-gray-400 tabular-nums">{n}</td>
+                    <td className="px-2 py-2.5 font-medium text-gray-800">
+                      {mmTitle(e)}
+                      {e.errorNote && <p className="text-xs font-normal text-red-600 mt-0.5">{e.errorNote}</p>}
+                    </td>
+                    <td className="px-2 py-2.5 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${MM_DOT[e.status] || MM_DOT.cancelled}`} />
+                        {MM_STATUS[e.status] || e.status}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2.5 text-xs text-gray-500 whitespace-nowrap">{when(stamp(e))}</td>
+                    <td className="px-2 py-2.5 text-gray-700 whitespace-nowrap">{MM_METHOD[e.method] || e.method || "—"}</td>
+                    <td className="px-2 py-2.5 text-gray-700">
+                      {e.referenceNumber ? <span className="font-mono text-xs break-all">{e.referenceNumber}</span> : e.source === "in_person" ? "In person" : "—"}
+                    </td>
+                    <td className="px-2 py-2.5 text-gray-700">{e.processedByName || "—"}</td>
+                    <td className={`px-4 py-2.5 text-right font-bold whitespace-nowrap ${out ? "text-purple-700" : "text-gray-800"}`}>{out ? "−" : ""}{fmt(e.amount)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function LinkedBody({ tab, state, record }) {
   const [photo, setPhoto] = useState(null);
   if (!state || state.loading) return <Skeleton />;
@@ -677,9 +821,7 @@ function LinkedBody({ tab, state, record }) {
         <div className="space-y-5">
           <Empty text={state.message || tab.empty} />
           {tab.key === "payment" && record?.bookingID && (
-            <section className="bg-white border rounded-2xl p-4 shadow-sm">
-              <PaymentEntriesPanel query={{ bookingID: record.bookingID }} title="Money movements for this booking" />
-            </section>
+            <MoneyMovements query={{ bookingID: record.bookingID }} title="Money movements for this booking" />
           )}
         </div>
       );
@@ -689,9 +831,7 @@ function LinkedBody({ tab, state, record }) {
         {tab.key === "session" && <LocationMap record={state.data} />}
         <Facts items={tab.facts ? tab.facts(state.data) : []} />
         {tab.key === "payment" && (
-          <section className="bg-white border rounded-2xl p-4 shadow-sm">
-            <PaymentEntriesPanel query={{ paymentID: state.data.paymentID || state.data.originalId }} title="All money movements on this payment" />
-          </section>
+          <MoneyMovements query={{ paymentID: state.data.paymentID || state.data.originalId }} title="All money movements on this payment" />
         )}
         <AllFields record={state.data} labels={tab.labels} />
       </div>
