@@ -115,6 +115,8 @@ function LoginForm({ onForgotPassword }) {
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
+    const [archivedEmail, setArchivedEmail] = useState(""); // set when the login failed because the account is archived
+    const [appeal, setAppeal] = useState("idle");           // "idle" | "sending" | "sent" | "failed"
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -125,6 +127,8 @@ function LoginForm({ onForgotPassword }) {
         }
 
         setError("");
+        setArchivedEmail("");
+        setAppeal("idle");
         setLoading(true);
 
         const result = await login(email, password);
@@ -133,7 +137,25 @@ function LoginForm({ onForgotPassword }) {
             navigate("/dashboard");
         } else {
             setError(result.message);
+            if (result.archived) setArchivedEmail(email.trim());
             setLoading(false);
+        }
+    };
+
+    // "Ask the administrator to check my account": tells the Owners/Admins an archived person is asking. It only sends
+    // the e-mail they just tried (nothing typed), and the answer is the same whether or not that e-mail is known.
+    const handleAppeal = async () => {
+        if (!archivedEmail || appeal === "sending" || appeal === "sent") return;
+        setAppeal("sending");
+        try {
+            const res = await fetch(`${process.env.REACT_APP_API_URL}/api/auth/archived-review`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: archivedEmail }),
+            });
+            setAppeal(res.ok ? "sent" : "failed");
+        } catch {
+            setAppeal("failed");
         }
     };
 
@@ -179,6 +201,28 @@ function LoginForm({ onForgotPassword }) {
             {error && (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
                     {error}
+                </div>
+            )}
+
+            {archivedEmail && appeal !== "sent" && (
+                <div className="-mt-2">
+                    <button
+                        type="button"
+                        onClick={handleAppeal}
+                        disabled={appeal === "sending"}
+                        className="w-full h-11 rounded-2xl border border-arl-primary text-arl-primary text-sm font-semibold hover:bg-arl-primary/5 disabled:opacity-60"
+                    >
+                        {appeal === "sending" ? "Sending..." : "Ask the administrator to check my account"}
+                    </button>
+                    {appeal === "failed" && (
+                        <p className="mt-2 text-xs text-red-600">Couldn't send the request. Please try again.</p>
+                    )}
+                </div>
+            )}
+
+            {archivedEmail && appeal === "sent" && (
+                <div className="-mt-2 rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                    Request sent. Staff will review your account and contact you.
                 </div>
             )}
 

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
 
@@ -358,7 +359,7 @@ function ViewModal({ record, canDelete, busy, onRestore, onDelete, onClose }) {
 
       <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs">
         While archived, the customer's login is disabled (their password is kept). Restoring brings back the profile,
-        address, and documents and switches the login back on, so they can sign in as before. 
+        address, and documents and switches the login back on, so they can sign in as before.
       </div>
     </LogWindow>
   );
@@ -367,6 +368,7 @@ function ViewModal({ record, canDelete, busy, onRestore, onDelete, onClose }) {
 // ─── PAGE ────────────────────────────────────────────────────────────────────
 export default function UserArchivePage() {
   const { effectiveRole } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [records, setRecords]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
@@ -408,6 +410,17 @@ export default function UserArchivePage() {
   }, [token]);
 
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
+
+  // Deep-link from the bell ("Archived Account Review"): open that person's details window once the list has loaded.
+  // Runs once, strips the param afterward so refreshing doesn't re-open it.
+  const openID = searchParams.get("open");
+  useEffect(() => {
+    if (!openID || loading) return;
+    const found = records.find((r) => r.userArchivesId === openID || r.originalId === openID);
+    if (found) setViewRecord(found);
+    else showToast("That archived account couldn't be found. It may already have been restored or deleted.", "error");
+    setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
+  }, [openID, loading, records, setSearchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRestore = async (userArchivesId) => {
     setRestoreConfirmId(null);

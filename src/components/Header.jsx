@@ -80,6 +80,8 @@ const ROUTE_BY_COLLECTION = {
   account: "/account",
   // "Terms & Conditions Updated" — sent to every user when a new version is published.
   terms: "/terms",
+  // "Archived account review" — opens the Deleted Users page with that person's details window (UserArchivePage reads ?open=).
+  userArchives: "/archives/users",
 };
 
 const META_BY_TYPE = {
@@ -116,6 +118,8 @@ const META_BY_TYPE = {
   id_resubmit_rejected:  { bg: "bg-red-100",   emoji: "❌", title: "Document/License Update" },
   // Sent to every user when an Owner/Admin publishes a new Terms & Conditions version.
   terms_updated:         { bg: "bg-blue-100",  emoji: "📄", title: "Terms & Conditions Updated" },
+  // An archived customer pressed "Ask the administrator to check my account" on the login screen (written by the CUSTOMER backend).
+  archive_appeal:        { bg: "bg-amber-100", emoji: "🔓", title: "Archived Account Review" },
 };
 
 /* ── Notification Row ── */
