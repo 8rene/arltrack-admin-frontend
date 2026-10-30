@@ -327,8 +327,8 @@ const ARCHIVE_SEARCH_BY = [
 ];
 
 // ─── DETAILS WINDOW ──────────────────────────────────────────────────────────
-// Restore / Merge / Delete live in the footer (they used to sit on every table row).
-function ViewModal({ record, canDelete, canMerge, busy, onRestore, onMerge, onDelete, onClose }) {
+// Restore / Delete live in the footer (they used to sit on every table row).
+function ViewModal({ record, canDelete, busy, onRestore, onDelete, onClose }) {
   return (
     <LogWindow
       title="Deleted User Details"
@@ -337,13 +337,6 @@ function ViewModal({ record, canDelete, canMerge, busy, onRestore, onMerge, onDe
       footer={
         <ArchiveFooter
           onRestore={onRestore} onDelete={onDelete} canDelete={canDelete} busy={busy} onClose={onClose}
-          extra={canMerge && (
-            <button onClick={onMerge} disabled={busy}
-              title="Move this account's old records onto a live account with the same email"
-              className="px-4 py-2 rounded-xl text-sm font-medium bg-white text-teal-700 border border-teal-200 hover:bg-teal-50 disabled:opacity-40 transition-colors">
-              Merge
-            </button>
-          )}
         />
       }
     >
@@ -365,9 +358,7 @@ function ViewModal({ record, canDelete, canMerge, busy, onRestore, onMerge, onDe
 
       <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs">
         While archived, the customer's login is disabled (their password is kept). Restoring brings back the profile,
-        address, and documents and switches the login back on, so they can sign in as before. Older archives had their
-        login deleted: restoring recreates it and emails them to reset their password; if they already signed up again
-        with this email, use Merge instead.
+        address, and documents and switches the login back on, so they can sign in as before. 
       </div>
     </LogWindow>
   );
@@ -387,7 +378,6 @@ export default function UserArchivePage() {
   const [confirmId, setConfirmId] = useState(null);
   const [restoreConfirmId, setRestoreConfirmId] = useState(null);
   const [actionId, setActionId]   = useState(null);
-  const [mergeInfo, setMergeInfo] = useState(null); // { record, candidate }
   const [viewRecord, setViewRecord] = useState(null);
 
   const [sortKey, setSortKey] = useState("archived");
@@ -432,40 +422,6 @@ export default function UserArchivePage() {
       setRecords((prev) => prev.filter((r) => r.userArchivesId !== userArchivesId));
       setViewRecord(null);
       showToast(data.message || "User restored to active table.", "success");
-    } catch (err) { showToast(err.message, "error"); }
-    finally { setActionId(null); }
-  };
-
-  // Look up a live account with the same email, then ask for confirmation.
-  const openMerge = async (record) => {
-    setActionId(record.userArchivesId);
-    try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/users/${record.userArchivesId}/merge-candidate`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Lookup failed.");
-      if (!data.data) throw new Error("No live account with this email — use Restore instead.");
-      setMergeInfo({ record, candidate: data.data });
-    } catch (err) { showToast(err.message, "error"); }
-    finally { setActionId(null); }
-  };
-
-  const handleMerge = async () => {
-    const { record, candidate } = mergeInfo;
-    setMergeInfo(null);
-    setActionId(record.userArchivesId);
-    try {
-      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/users/${record.userArchivesId}/merge`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ targetUserID: candidate.userID }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Merge failed.");
-      setRecords((prev) => prev.filter((r) => r.userArchivesId !== record.userArchivesId));
-      setViewRecord(null);
-      showToast(data.message || "Merged.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
   };
@@ -516,7 +472,6 @@ export default function UserArchivePage() {
   const filtersActive = !!search.trim() || !!dateValue || statusF !== "All";
   const restoreConfirmRecord = records.find((r) => r.userArchivesId === restoreConfirmId);
   const canDelete = effectiveRole === ROLES.OWNER;
-  const canMerge  = effectiveRole === ROLES.OWNER;   // merge can't be undone either, so Owner only
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -561,35 +516,12 @@ export default function UserArchivePage() {
         </div>
       )}
 
-      {mergeInfo && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-[26rem] max-w-[92vw]">
-            <h3 className="font-semibold text-gray-800 mb-2">Merge into current account?</h3>
-            <p className="text-sm text-gray-500 mb-3">
-              This customer signed up again with the same email. Their old bookings, payments, penalties, refunds, reviews and logs will be moved onto the current account. The current account keeps its own profile details.
-            </p>
-            <div className="text-xs bg-gray-50 border border-gray-200 rounded-xl p-3 mb-3 space-y-1">
-              <div><span className="text-gray-400">Old (archived):</span> <span className="font-mono">{mergeInfo.record.originalId}</span></div>
-              <div><span className="text-gray-400">Current (kept):</span> <span className="font-mono">{mergeInfo.candidate.userID}</span></div>
-              <div><span className="text-gray-400">Email:</span> {mergeInfo.candidate.email}</div>
-            </div>
-            <p className="text-xs text-amber-600 mb-5">This cannot be undone. The archived record is removed after merging.</p>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setMergeInfo(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
-              <button onClick={handleMerge} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Merge</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {viewRecord && (
         <ViewModal
           record={viewRecord}
           canDelete={canDelete}
-          canMerge={canMerge}
           busy={!!actionId}
           onRestore={() => setRestoreConfirmId(viewRecord.userArchivesId)}
-          onMerge={() => openMerge(viewRecord)}
           onDelete={() => setConfirmId(viewRecord.userArchivesId)}
           onClose={() => setViewRecord(null)}
         />
