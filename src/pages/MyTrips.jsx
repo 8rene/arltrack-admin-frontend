@@ -231,20 +231,57 @@ function StatCard({ icon, value, label, sub, color, onClick, active }) {
     blue:   "bg-blue-50 text-blue-600",
     red:    "bg-red-50 text-red-600",
   };
+  // Flat style (same as the Users page cards) — sits inside TripsGroupBox.
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={!!active}
-      className={`bg-white rounded-2xl shadow-soft p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-left w-full transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-arl-light ${active ? "ring-2 ring-arl-light" : ""}`}
+      className={`rounded-2xl border p-4 flex items-center gap-3 text-left w-full transition-all focus:outline-none ${
+        active ? "bg-white border-teal-500 ring-2 ring-teal-100" : "bg-gray-50 border-transparent hover:bg-gray-100"
+      }`}
     >
-      <div className={`w-10 h-10 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>{icon}</div>
+      <div className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-xl ${bgColors[color] || "bg-gray-100 text-gray-600"}`}>{icon}</div>
       <div className="min-w-0">
-        <div className="text-xl font-bold text-arl-dark">{value}</div>
+        <div className="text-2xl font-bold text-gray-800 leading-tight">{value}</div>
         <div className="text-xs text-gray-500">{label}</div>
         {sub && <div className="text-[11px] text-orange-600 font-semibold">{sub}</div>}
       </div>
     </button>
+  );
+}
+
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// One white box like the Users page: summary cards on top, then
+// Trips | History tabs on the left and Refresh on the right.
+function TripsGroupBox({ cards, tab, setTab, onRefresh, refreshing }) {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-3 p-4">{cards}</div>
+      <div className="flex justify-between items-center border-t px-4 py-3">
+        <div className="flex gap-2">
+          {[["active", "Trips"], ["history", "History"]].map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)}
+              className={`px-5 py-2 rounded-xl text-sm font-medium transition-all ${
+                tab === key ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <button onClick={onRefresh} disabled={refreshing}
+          className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5 disabled:opacity-50">
+          <IconRefresh className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -767,7 +804,7 @@ function DriverPenaltyModal({ open, onClose, title, loadLateFee, onSubmit, needs
 }
 
 // ─── ACTIVE TRIPS TAB (upcoming + ongoing, with pickup/dropoff actions) ──
-function ActiveTripsTab() {
+function ActiveTripsTab({ tab, setTab }) {
   const token = localStorage.getItem("token");
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -1062,14 +1099,32 @@ function ActiveTripsTab() {
         }`}>{toast.msg}</div>
       )}
 
-      <div className="flex justify-end">
-        <button
-          onClick={async () => { setRefreshing(true); await fetchTrips({ keepList: true }); setRefreshing(false); }}
-          disabled={refreshing}
-          className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
-          {refreshing ? "Refreshing…" : "↺ Refresh"}
-        </button>
-      </div>
+      {(() => {
+        const curTrip = trips.find((t) => t.id === currentID) || trips[Math.min(lastIdx.current, trips.length - 1)] || null;
+        const upcomingTrips = trips.filter((t) => t.status !== "ongoing");
+        const ongoingTrips  = trips.filter((t) => t.status === "ongoing");
+        const readyTrips    = upcomingTrips.filter((t) => t.beforeDocsComplete && isPaymentReady(t));
+        const notReady      = upcomingTrips.length - readyTrips.length;
+        const toDropOff     = ongoingTrips.filter((t) => !t.droppedOffTime).length;
+        const jump    = (list) => { if (list[0]) setCurrentID(list[0].id); };
+        const inGroup = (list) => !!curTrip && list.some((t) => t.id === curTrip.id);
+        return (
+          <TripsGroupBox
+            tab={tab} setTab={setTab} refreshing={refreshing}
+            onRefresh={async () => { setRefreshing(true); await fetchTrips({ keepList: true }); setRefreshing(false); }}
+            cards={<>
+              <StatCard icon={<IconClock className="w-5 h-5" />} value={upcomingTrips.length} label="Upcoming" color="yellow"
+                sub={notReady > 0 ? `${notReady} not ready` : null}
+                active={inGroup(upcomingTrips)} onClick={() => jump(upcomingTrips)} />
+              <StatCard icon={<IconSteering className="w-5 h-5" />} value={ongoingTrips.length} label="Ongoing" color="green"
+                sub={toDropOff > 0 ? `${toDropOff} to drop off` : null}
+                active={inGroup(ongoingTrips)} onClick={() => jump(ongoingTrips)} />
+              <StatCard icon={<IconShield />} value={readyTrips.length} label="Ready for pickup" color="teal"
+                active={inGroup(readyTrips)} onClick={() => jump(readyTrips)} />
+            </>}
+          />
+        );
+      })()}
 
       {loading && trips.length === 0 ? (
         <p className="text-sm text-gray-400 py-16 text-center">Loading…</p>
@@ -1113,28 +1168,8 @@ function ActiveTripsTab() {
           { key: "inspection", label: "Inspection", alert: !isOngoing && !trip.beforeDocsComplete },
         ];
 
-        // Summary cards — click one to jump to the first trip of that kind.
-        const upcomingTrips = trips.filter((t) => t.status !== "ongoing");
-        const ongoingTrips  = trips.filter((t) => t.status === "ongoing");
-        const readyTrips    = upcomingTrips.filter((t) => t.beforeDocsComplete && isPaymentReady(t));
-        const notReady      = upcomingTrips.length - readyTrips.length;
-        const toDropOff     = ongoingTrips.filter((t) => !t.droppedOffTime).length;
-        const jump = (list) => { if (list[0]) setCurrentID(list[0].id); };
-        const inGroup = (list) => list.some((t) => t.id === trip.id);
-
         return (
           <div key={trip.id} id={`trip-${trip.id}`} className="space-y-4">
-            <div className="grid grid-cols-3 gap-3 sm:gap-4">
-              <StatCard icon={<IconClock className="w-5 h-5" />} value={upcomingTrips.length} label="Upcoming" color="yellow"
-                sub={notReady > 0 ? `${notReady} not ready` : null}
-                active={inGroup(upcomingTrips)} onClick={() => jump(upcomingTrips)} />
-              <StatCard icon={<IconSteering className="w-5 h-5" />} value={ongoingTrips.length} label="Ongoing" color="green"
-                sub={toDropOff > 0 ? `${toDropOff} to drop off` : null}
-                active={inGroup(ongoingTrips)} onClick={() => jump(ongoingTrips)} />
-              <StatCard icon={<IconShield />} value={readyTrips.length} label="Ready for pickup" color="teal"
-                active={inGroup(readyTrips)} onClick={() => jump(readyTrips)} />
-            </div>
-
             {/* ONE card for the whole trip: pager → header → tabs → content.
                 Previously the pager, Booking, Locations and Inspection were four
                 separate cards, so "Trip 1 of 3" looked like it only belonged to
@@ -1318,10 +1353,9 @@ function ActiveTripsTab() {
                   </>
                 )}
               </div>
-            </div>
 
-            {/* Actions */}
-            <div className="sticky bottom-0 z-10 -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-t border-gray-100 flex gap-2">
+              {/* Actions — inside the trip card (no longer sticky to the screen) */}
+              <div className="border-t border-gray-100 p-3 flex gap-2">
               {!isOngoing ? (
                 <>
                   <button onClick={() => handlePickup(trip)}
@@ -1344,6 +1378,7 @@ function ActiveTripsTab() {
                   )}
                 </>
               )}
+              </div>
             </div>
           </div>
         );
@@ -1439,10 +1474,10 @@ function HistorySortableTh({ label, sortKey, activeKey, sortDir, onSort }) {
 }
 
 function HistoryPagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null;
   const nums = [1];
   for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
-  nums.push(totalPages);
+  if (totalPages > 1) nums.push(totalPages);
   const dedup = [...new Set(nums)].sort((a, b) => a - b);
   const rangeEnd = Math.min(start + pageSize, count);
   return (
@@ -1465,7 +1500,7 @@ function HistoryPagination({ page, totalPages, onChange, start, pageSize, count 
   );
 }
 
-function HistoryTab() {
+function HistoryTab({ tab, setTab }) {
   const token = localStorage.getItem("token");
 
   const [trips, setTrips]     = useState([]);
@@ -1536,11 +1571,14 @@ function HistoryTab() {
             active={statusF === st} onClick={() => { setStatusF(statusF === st ? "All" : st); setPage(1); }} />
         );
         return (
-          <div className="grid grid-cols-3 gap-3 sm:gap-4">
-            {card("completed", <IconShield />, "Completed", "blue")}
-            {card("cancelled", <IconClock className="w-5 h-5" />, "Cancelled", "yellow")}
-            {card("stolen", <IconPin className="w-5 h-5" />, "Flagged stolen", "red")}
-          </div>
+          <TripsGroupBox
+            tab={tab} setTab={setTab} refreshing={loading} onRefresh={fetchHistory}
+            cards={<>
+              {card("completed", <IconShield />, "Completed", "blue")}
+              {card("cancelled", <IconClock className="w-5 h-5" />, "Cancelled", "yellow")}
+              {card("stolen", <IconPin className="w-5 h-5" />, "Flagged stolen", "red")}
+            </>}
+          />
         );
       })()}
 
@@ -1607,10 +1645,6 @@ function HistoryTab() {
                 <option value="cancelled">Cancelled</option>
                 <option value="stolen">Flagged stolen</option>
               </select>
-              <button onClick={fetchHistory} disabled={loading}
-                className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50">
-                {loading ? "Refreshing…" : "↺ Refresh"}
-              </button>
             </div>
 
             <div className="overflow-x-auto">
@@ -1676,6 +1710,12 @@ function HistoryTab() {
                       </tr>
                     ))
                   )}
+                  {/* Same as Bookings: pad a short page with empty rows so the table always keeps its 10-row height. */}
+                  {!loading && pageItems.length > 0 && Array.from({ length: Math.max(0, HISTORY_PAGE_SIZE - pageItems.length) }).map((_, i) => (
+                    <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                      <td colSpan={COLS} className="h-[53px]">&nbsp;</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1736,24 +1776,12 @@ export default function MyTrips() {
   const setTab = (t) => setSearchParams(t === "active" ? {} : { tab: t }, { replace: true });
 
   return (
-    <div className="w-full px-4 space-y-5">
-      <div className="pt-2">
-        <h1 className="text-xl font-bold text-arl-dark flex items-center gap-2">My Trips</h1>
-        <p className="text-sm text-gray-500">Your assigned trips and trip history</p>
+    <div className="w-full px-4 space-y-4">
+      <div className="shrink-0">
+        <h1 className="text-2xl font-bold text-arl-dark">My Trips</h1>
       </div>
 
-      <div className="flex gap-1 border-b border-gray-100">
-        {[["active", "Trips"], ["history", "History"]].map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
-              tab === key ? "border-arl-dark text-arl-dark" : "border-transparent text-gray-400 hover:text-gray-600"
-            }`}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "active" ? <ActiveTripsTab /> : <HistoryTab />}
+      {tab === "active" ? <ActiveTripsTab tab={tab} setTab={setTab} /> : <HistoryTab tab={tab} setTab={setTab} />}
     </div>
   );
 }

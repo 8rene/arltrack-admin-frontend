@@ -52,7 +52,7 @@ const parseBlocks = (source) => {
 
 const HEADING = { 1: "text-base font-bold mt-3 mb-1.5", 2: "text-sm font-bold mt-3 mb-1", 3: "text-sm font-semibold mt-2 mb-1" };
 
-function Markdown({ source }) {
+export function Markdown({ source }) {
   return (
     <div className="space-y-2.5 text-sm leading-relaxed text-gray-700">
       {parseBlocks(source).map((b, i) => {
@@ -135,6 +135,70 @@ export default function TripTermsModal({ open, onClose, trip, token }) {
 
         <div className="p-4 pt-3 border-t border-gray-100">
           <button onClick={onClose} className="w-full py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Read-only viewer for ONE Terms & Conditions version, by termsVersions doc ID
+ * (GET /api/settings/terms/versions/:id — readable by every staff role).
+ * Used by the archive pages: "the exact terms this booking's customer agreed to".
+ */
+export function TermsVersionModal({ open, onClose, versionID, acceptedAt, token, subtitle, z = "z-[90]" }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!open || !versionID) return undefined;
+    let cancelled = false;
+    setData(null); setError(null); setLoading(true);
+    fetch(`${API_URL}/api/settings/terms/versions/${encodeURIComponent(versionID)}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (res) => {
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.message || "Couldn't load the terms.");
+        if (!cancelled) setData(json.data);
+      })
+      .catch((e) => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, versionID, token]);
+
+  // Esc closes only this layer, not the details window underneath.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") { e.stopImmediatePropagation(); onClose(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  const accepted = fmtWhen(acceptedAt);
+  return (
+    <div className={`fixed inset-0 ${z} flex items-center justify-center p-4`}>
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="flex justify-between items-start gap-3 px-6 pt-5 pb-3 border-b border-gray-100">
+          <div className="min-w-0">
+            <h3 className="font-bold text-lg text-gray-800">Terms &amp; Conditions</h3>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {data?.version != null ? `Version ${Number(data.version).toFixed(2)}` : "Version not recorded"}
+              {accepted ? ` · agreed ${accepted}` : ""}
+              {subtitle ? ` · ${subtitle}` : ""}
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {loading && <p className="text-xs text-gray-400 text-center py-6">Loading terms…</p>}
+          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
+          {data && !data.content && <p className="text-sm text-gray-500 text-center py-6">This version has no text on file.</p>}
+          {data?.content && <Markdown source={data.content} />}
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
         </div>
       </div>
     </div>

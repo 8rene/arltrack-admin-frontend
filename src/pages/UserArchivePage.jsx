@@ -328,40 +328,263 @@ const ARCHIVE_SEARCH_BY = [
 ];
 
 // ─── DETAILS WINDOW ──────────────────────────────────────────────────────────
+// Same layout as the live Users page's details window (Information / Documents tabs). The archive record itself only holds
+// the basic account fields, so the profile (name, address, ID documents, referral, bookings) is loaded from
+// GET /api/archives/users/:id/profile: those records are kept live while the account sits in the archive.
 // Restore / Delete live in the footer (they used to sit on every table row).
-function ViewModal({ record, canDelete, busy, onRestore, onDelete, onClose }) {
+
+// "Oct 17, 2026" from an ISO string or a plain "YYYY-MM-DD".
+const dayText = (v) => {
+  if (!v) return "—";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+};
+
+// Profile photo with an initials fallback (no photo, or the file is gone from Storage).
+function Avatar({ src, initials, onClick }) {
+  const [failed, setFailed] = useState(false);
+  const base = "w-14 h-14 text-lg rounded-xl shrink-0";
+  if (src && !failed) {
+    return <img src={src} alt="" onError={() => setFailed(true)} onClick={onClick}
+      className={`${base} object-cover bg-gray-100 ${onClick ? "cursor-zoom-in" : ""}`} />;
+  }
+  return <div className={`${base} bg-teal-600 text-white flex items-center justify-center font-bold`}>{initials}</div>;
+}
+
+// A document photo that opens full-screen on click.
+function DocImg({ label, url }) {
+  const [zoom, setZoom] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!zoom) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); setZoom(false); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [zoom]);
+  if (!url || !String(url).trim()) return null;
   return (
-    <LogWindow
-      title="Deleted User Details"
-      badges={<UserStatusBadge status={record.status} />}
-      onClose={onClose}
-      footer={
-        <ArchiveFooter
-          onRestore={onRestore} onDelete={onDelete} canDelete={canDelete} busy={busy} onClose={onClose}
-        />
+    <div>
+      <p className="text-xs text-gray-400 mb-1">{label}</p>
+      {failed ? (
+        <div className="w-full h-36 border rounded-xl flex items-center justify-center text-xs text-gray-400 bg-gray-50">Could not load image</div>
+      ) : (
+        <img src={url} alt={label} title="Click to enlarge" onClick={() => setZoom(true)} onError={() => setFailed(true)}
+          className="w-full h-36 object-cover rounded-xl border cursor-zoom-in hover:opacity-90 transition-opacity" />
+      )}
+      {zoom && (
+        <div className="fixed inset-0 z-[90] bg-black/85 flex flex-col items-center justify-center p-6 cursor-zoom-out"
+          onClick={(e) => { e.stopPropagation(); setZoom(false); }}>
+          <button onClick={(e) => { e.stopPropagation(); setZoom(false); }} aria-label="Close"
+            className="absolute top-4 right-4 text-white/80 hover:text-white p-2"><IconX className="w-6 h-6" /></button>
+          <img src={url} alt={label} onClick={(e) => e.stopPropagation()} className="max-w-full max-h-[85vh] rounded-xl object-contain cursor-default" />
+          <p className="text-white/80 text-sm mt-3">{label}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// "Juan Dela Cruz (@juan)" with a note when that account is archived / gone.
+const personLabel = (p) => {
+  if (!p) return null;
+  const who = p.name && p.username ? `${p.name} (@${p.username})` : p.name || (p.username ? `@${p.username}` : p.code ? `${p.code} (no matching account)` : "Unknown account");
+  return p.state === "archived" ? `${who} — archived` : p.state === "removed" ? `${who} — account removed` : who;
+};
+
+function ViewModal({ record, canDelete, busy, onRestore, onDelete, onClose }) {
+  const [tab, setTab] = useState("information"); // "information" | "documents"
+  const [profile, setProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [profileError, setProfileError] = useState(null);
+  const [showPhoto, setShowPhoto] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingProfile(true); setProfileError(null); setProfile(null);
+    (async () => {
+      try {
+        const res = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/users/${encodeURIComponent(record.userArchivesId)}/profile`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.message || "Could not load this user's profile.");
+        if (!cancelled) setProfile(json.data || {});
+      } catch (err) {
+        if (!cancelled) setProfileError(err.message);
+      } finally {
+        if (!cancelled) setLoadingProfile(false);
       }
-    >
-      <InfoSection title="Account">
-        <InfoField label="Username" value={record.username || record.email} />
-        <InfoField label="Email" value={record.email} />
-        <InfoField label="Last Status" value={<UserStatusBadge status={record.status} />} />
-        {record.role && <InfoField label="Role" value={record.role} />}
-        {record.phone && <InfoField label="Contact No." value={record.phone} />}
-        {record.createdAt && <InfoField label="Joined" value={<Stamp iso={record.createdAt} />} />}
-      </InfoSection>
+    })();
+    return () => { cancelled = true; };
+  }, [record.userArchivesId]);
 
-      <ArchiveSection archivedAt={record.archivedAt} archivedBy={record.archivedBy} showArchivedBy={!!record.archivedBy} />
+  const det  = profile?.details  || {};
+  const addr = profile?.address  || {};
+  const docu = profile?.document || {};
+  const ref  = profile?.referral || {};
+  const fullName = [det.firstName, det.middleName, det.lastName, det.suffix].filter(Boolean).join(" ") || record.username || record.email || "—";
+  const initials = ((det.firstName?.[0] || record.email?.[0] || "?") + (det.lastName?.[0] || "")).toUpperCase();
+  const role = profile?.role || record.role;
+  const pending = (v) => (loadingProfile ? "Loading…" : v);
 
-      <InfoSection title="Reference">
-        <InfoField mono label="Archive ID" value={record.userArchivesId} />
-        <InfoField mono label="Original UID" value={record.originalId} />
-      </InfoSection>
+  const imgs = { license: docu.driverLicenseUrl, id: docu.documentImageUrl, selfie: docu.selfieWithIdUrl };
+  const hasImgs = Object.values(imgs).some((v) => v && String(v).trim());
 
-      <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs">
-        While archived, the customer's login is disabled (their password is kept). Restoring brings back the profile,
-        address, and documents and switches the login back on, so they can sign in as before.
-      </div>
-    </LogWindow>
+  const tabBtn = (key, label) => (
+    <button onClick={() => setTab(key)}
+      className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === key ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+      {label}
+    </button>
+  );
+
+  return (
+    <>
+      <LogWindow
+        title="Deleted User Details"
+        badges={<UserStatusBadge status={record.status} />}
+        onClose={onClose}
+        wide
+        tabs={
+          <div className="px-6 pt-4 pb-1 space-y-3 shrink-0">
+            {/* Who this was: photo, full name, badges (same header as the live Users window) */}
+            <div className="flex items-center gap-4">
+              <Avatar key={record.profileImage || "none"} src={record.profileImage} initials={initials}
+                onClick={record.profileImage ? () => setShowPhoto(true) : undefined} />
+              <div className="min-w-0">
+                <p className="font-bold text-lg text-gray-800 truncate">{fullName}</p>
+                <p className="text-sm text-gray-400 truncate">{role || "—"} · @{record.username || "—"}</p>
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {record.isVerified
+                    ? <span className="px-2 py-0.5 rounded-full border text-[11px] font-medium bg-green-50 border-green-200 text-green-700">ID Verified</span>
+                    : <span className="px-2 py-0.5 rounded-full border text-[11px] font-medium bg-yellow-50 border-yellow-200 text-yellow-700">ID Pending</span>}
+                  {record.isFlagged && <span className="px-2 py-0.5 rounded-full border text-[11px] font-medium bg-red-50 border-red-200 text-red-700">Flagged</span>}
+                </div>
+              </div>
+            </div>
+            <div className="inline-flex p-1 bg-gray-100 rounded-xl gap-1">
+              {tabBtn("information", "Information")}
+              {tabBtn("documents", "Documents")}
+            </div>
+          </div>
+        }
+        footer={<ArchiveFooter onRestore={onRestore} onDelete={onDelete} canDelete={canDelete} busy={busy} onClose={onClose} />}
+      >
+        {profileError && (
+          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs">
+            {profileError} Showing the basic account details only.
+          </div>
+        )}
+
+        {tab === "information" ? (
+          <>
+            <InfoSection title="Account">
+              <InfoField label="Email" value={record.email} />
+              <InfoField label="Contact No." value={record.phone} />
+              <InfoField label="Username" value={record.username} />
+              <InfoField label="Joined" value={record.createdAt ? <Stamp iso={record.createdAt} /> : null} />
+              <InfoField label="Last Status" value={<UserStatusBadge status={record.status} />} />
+              <InfoField label="ID Status" value={record.isVerified ? "✓ Verified" : "Pending"} />
+              <InfoField label="Flagged" value={record.isFlagged ? "Yes" : "No"} />
+              <InfoField label="Role" value={role} />
+              {profile?.termsAcceptedAt && <InfoField label="Terms Accepted" value={<Stamp iso={profile.termsAcceptedAt} />} />}
+              {profile?.isCustomer && (
+                <>
+                  <InfoField label="Upcoming Bookings"  value={String(profile.bookings?.upcoming ?? 0)} />
+                  <InfoField label="Completed Bookings" value={String(profile.bookings?.completed ?? 0)} />
+                  <InfoField label="Cancelled Bookings" value={String(profile.bookings?.cancelled ?? 0)} />
+                  <InfoField label="Total Bookings"     value={String(profile.bookings?.total ?? 0)} />
+                </>
+              )}
+            </InfoSection>
+
+            <InfoSection title="Personal Details">
+              <InfoField label="First Name"  value={pending(det.firstName)} />
+              <InfoField label="Middle Name" value={pending(det.middleName)} />
+              <InfoField label="Last Name"   value={pending(det.lastName)} />
+              <InfoField label="Suffix"      value={pending(det.suffix)} />
+              <InfoField label="Birth Date"  value={pending(det.birthDate ? dayText(det.birthDate) : null)} />
+            </InfoSection>
+
+            <InfoSection title="Address">
+              <InfoField label="Street"       value={pending(addr.street)} />
+              <InfoField label="Barangay"     value={pending(addr.barangay)} />
+              <InfoField label="Municipality" value={pending(addr.municipality)} />
+              <InfoField label="City"         value={pending(addr.city)} />
+              <InfoField label="Province"     value={pending(addr.province)} />
+              <InfoField label="Postal Code"  value={pending(addr.postalCode || addr.zipCode)} />
+            </InfoSection>
+
+            <InfoSection title="Referral">
+              <InfoField label="Referral Code"  value={record.referralCode || ref.code} />
+              <InfoField label="People Invited" value={pending(String(ref.invitedCount || 0))} />
+              <InfoField wide label="Referred By" value={pending(personLabel(ref.referredBy) || "None")} />
+            </InfoSection>
+
+            {ref.invited?.length > 0 && (
+              <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+                <div className="px-4 py-2.5 bg-gray-50 border-b">
+                  <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                    Invited Users <span className="text-gray-400 font-normal normal-case">({ref.invited.length})</span>
+                  </h3>
+                </div>
+                <ul className="divide-y">
+                  {ref.invited.map((p) => (
+                    <li key={p.id} className="flex items-center justify-between px-4 py-2.5 text-sm gap-2">
+                      <span className="text-gray-700 min-w-0 truncate">{personLabel(p)}</span>
+                      <span className="shrink-0"><UserStatusBadge status={p.status} /></span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            <ArchiveSection archivedAt={record.archivedAt} archivedBy={record.archivedBy} showArchivedBy={!!record.archivedBy} />
+
+            <InfoSection title="Reference">
+              <InfoField mono label="Archive ID" value={record.userArchivesId} />
+              <InfoField mono label="Original UID" value={record.originalId} />
+            </InfoSection>
+          </>
+        ) : (
+          <>
+            <InfoSection title="Document Info">
+              <InfoField label="Document Type"   value={pending(docu.documentType)} />
+              <InfoField label="Document Number" value={pending(docu.documentNumber)} />
+              <InfoField label="Driver's License No." value={pending(docu.driversLicenseNumber)} />
+              <InfoField label="License Expiry"  value={pending(docu.driverLicenseExpiry ? dayText(docu.driverLicenseExpiry) : null)} />
+              <InfoField label="ID Status"       value={record.isVerified ? "✓ Verified" : "Pending"} />
+            </InfoSection>
+            {loadingProfile ? (
+              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">Loading documents…</p>
+            ) : hasImgs ? (
+              <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+                <div className="px-4 py-2.5 bg-gray-50 border-b">
+                  <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Uploaded Documents</h3>
+                </div>
+                <div className="p-4 grid grid-cols-2 gap-3">
+                  <DocImg label="Driver License" url={imgs.license} />
+                  <DocImg label="Government ID"  url={imgs.id} />
+                  <DocImg label="Selfie with ID" url={imgs.selfie} />
+                </div>
+              </section>
+            ) : (
+              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No documents uploaded</p>
+            )}
+          </>
+        )}
+
+        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs">
+          While archived, the customer's login is disabled (their password is kept). Restoring brings back the profile,
+          address, and documents and switches the login back on, so they can sign in as before.
+        </div>
+      </LogWindow>
+
+      {showPhoto && record.profileImage && (
+        <div className="fixed inset-0 z-[90] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={() => setShowPhoto(false)}>
+          <img src={record.profileImage} alt={fullName} className="max-w-full max-h-full rounded-2xl object-contain" />
+        </div>
+      )}
+    </>
   );
 }
 

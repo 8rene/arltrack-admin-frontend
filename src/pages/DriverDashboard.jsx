@@ -89,16 +89,16 @@ const fmtDuration = (start, end) => {
   return [d, h].filter(Boolean).join(" ");
 };
 
-// Small stat card, matching Dashboard.jsx's card conventions (rounded-2xl, shadow-soft).
+// Stat card — same design as the admin Dashboard.jsx cards (p-5, border, uppercase label, 2xl value).
 function StatCard({ icon, label, value, tint }) {
   return (
-    <div className="bg-white rounded-2xl shadow-soft p-4 flex items-center gap-3">
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tint}`}>
+    <div className="bg-white p-5 rounded-2xl border shadow-sm flex items-center gap-4">
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${tint}`}>
         {icon}
       </div>
       <div className="min-w-0">
-        <p className="text-xl font-bold text-arl-dark leading-tight">{value}</p>
-        <p className="text-xs text-gray-400">{label}</p>
+        <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">{label}</div>
+        <div className="text-2xl font-bold text-gray-800 mt-0.5">{value}</div>
       </div>
     </div>
   );
@@ -178,10 +178,7 @@ export default function DriverDashboard() {
   return (
     <div className="w-full px-4 space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-arl-dark">Hi, {firstName} 👋</h1>
-        <p className="text-xs text-gray-400 mt-0.5">
-          {new Date().toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" })}
-        </p>
+        <h1 className="text-2xl font-bold text-arl-dark">Hi, {firstName} 👋</h1>
       </div>
 
       {isPreviewingAsDriver && (
@@ -204,19 +201,19 @@ export default function DriverDashboard() {
       {/* STATS */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <StatCard
-          icon={<IconCalendar className="w-5 h-5 text-indigo-600" />}
+          icon={<IconCalendar className="w-6 h-6 text-indigo-600" />}
           tint="bg-indigo-50"
           label="Upcoming Bookings"
           value={loading ? "…" : upcoming.length}
         />
         <StatCard
-          icon={<IconSteering className="w-5 h-5 text-amber-600" />}
+          icon={<IconSteering className="w-6 h-6 text-amber-600" />}
           tint="bg-amber-50"
           label="Ongoing Now"
           value={loading ? "…" : ongoing.length}
         />
         <StatCard
-          icon={<IconCheck className="w-5 h-5 text-green-600" />}
+          icon={<IconCheck className="w-6 h-6 text-green-600" />}
           tint="bg-green-50"
           label="Bookings Accomplished"
           value={loading ? "…" : completedCount}
@@ -225,17 +222,17 @@ export default function DriverDashboard() {
 
       {/* NEXT UP */}
       <div>
-        <h2 className="text-sm font-bold text-arl-dark mb-2">Next Up</h2>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">Next Up</h2>
         {loading ? (
-          <div className="bg-white rounded-2xl shadow-soft p-6 h-28 animate-pulse" />
+          <div className="bg-white rounded-2xl border shadow-sm p-6 h-28 animate-pulse" />
         ) : !nextTrip ? (
-          <div className="bg-white rounded-2xl shadow-soft p-8 text-center">
+          <div className="bg-white rounded-2xl border shadow-sm p-8 text-center">
             <IconSteering className="w-7 h-7 mx-auto text-gray-300 mb-2" />
             <p className="text-sm font-semibold text-arl-dark">Nothing on your plate right now</p>
             <p className="text-xs text-gray-400 mt-1">New bookings assigned to you will show up here.</p>
           </div>
         ) : (
-          <div className="bg-white rounded-2xl shadow-soft p-4 space-y-3">
+          <div className="bg-white rounded-2xl border shadow-sm p-5 space-y-3">
             {/* When is the whole point of this card, so it gets the big type.
                 Customer, pickup address etc. live behind the button. */}
             <span className={`inline-block text-xs font-bold uppercase tracking-wide px-3 py-1 rounded-lg ${
@@ -256,7 +253,7 @@ export default function DriverDashboard() {
               </div>
             </div>
             <button onClick={() => navigate("/my-trips")}
-              className="w-full py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.99] transition-all">
+              className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-700 text-white hover:bg-teal-800 active:scale-[0.99] transition-all">
               {nextTrip.status === "ongoing" ? "Manage This Trip" : "Go to My Trips →"}
             </button>
           </div>
@@ -267,14 +264,14 @@ export default function DriverDashboard() {
       {upcoming.length > 1 && (
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-bold text-arl-dark">Upcoming Bookings</h2>
+            <h2 className="text-lg font-semibold text-gray-800">Upcoming Bookings</h2>
             <button onClick={() => navigate("/my-trips")} className="text-xs text-arl-primary font-medium hover:underline">
               View all →
             </button>
           </div>
           <div className="space-y-2">
             {upcoming.slice(0, 4).map((trip) => (
-              <div key={trip.id} className="bg-white rounded-xl shadow-soft p-3 flex items-center justify-between gap-3">
+              <div key={trip.id} className="bg-white rounded-2xl border shadow-sm p-4 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-arl-dark truncate">{trip.vehicleName}</p>
                   <p className="text-xs text-gray-400 truncate">{fmtDuration(trip.startDateTime, trip.endDateTime)}</p>
@@ -292,7 +289,7 @@ export default function DriverDashboard() {
           completes it; the driver's pickup/return waits on it in My Trips). */}
       <div className="grid grid-cols-1 gap-3">
         <button onClick={() => navigate("/my-trips")}
-          className="bg-white rounded-2xl shadow-soft p-4 flex flex-col items-center gap-2 hover:bg-gray-50 transition-colors">
+          className="bg-white rounded-2xl border shadow-sm p-4 flex flex-col items-center gap-2 hover:bg-gray-50 transition-colors">
           <IconSteering className="w-5 h-5 text-arl-primary" />
           <span className="text-xs font-semibold text-arl-dark">My Trips</span>
         </button>

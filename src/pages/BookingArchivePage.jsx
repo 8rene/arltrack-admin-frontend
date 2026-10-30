@@ -7,6 +7,7 @@ import { MapContainer, TileLayer, CircleMarker, Circle, Tooltip, useMap } from "
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
+import { TermsVersionModal } from "../components/TripTermsModal";
 
 const PAGE_SIZE = 10;
 
@@ -111,14 +112,16 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
 
 // ─── DETAILS WINDOW PIECES ───────────────────────────────────────────────────
 // Card + label-over-value cell: same as the live log pages' details windows.
-function InfoSection({ title, action, children }) {
+function InfoSection({ title, action, children, cols = 2, block = false }) {
   return (
     <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
       <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
         <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
         {action}
       </div>
-      <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>
+      {block
+        ? <div className="p-4 space-y-2">{children}</div>
+        : <div className={`p-4 grid ${cols === 3 ? "grid-cols-3" : "grid-cols-2"} gap-x-6 gap-y-4`}>{children}</div>}
     </section>
   );
 }
@@ -127,6 +130,16 @@ function InfoField({ label, value, wide, mono }) {
     <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
       <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
       <div className={`text-sm font-medium text-gray-800 mt-0.5 break-words ${mono ? "font-mono text-xs" : ""}`}>{value || "—"}</div>
+    </div>
+  );
+}
+
+// One line of the fee receipt: label on the left, amount on the right.
+function FeeRow({ label, value, muted }) {
+  return (
+    <div className={`flex items-baseline justify-between gap-4 text-sm ${muted ? "text-gray-400" : "text-gray-600"}`}>
+      <span>{label}</span>
+      <span className={`shrink-0 tabular-nums ${muted ? "" : "font-medium text-gray-800"}`}>{value}</span>
     </div>
   );
 }
@@ -143,7 +156,7 @@ function LogWindow({ title, badges, onClose, footer, children, tabs, wide }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className={`bg-white rounded-2xl shadow-xl w-full flex flex-col ${wide ? "max-w-4xl h-[88vh]" : "max-w-2xl max-h-[92vh]"}`} onClick={(e) => e.stopPropagation()}>
+      <div className={`bg-white rounded-2xl shadow-xl w-full flex flex-col ${wide ? "max-w-5xl h-[88vh]" : "max-w-2xl max-h-[92vh]"}`} onClick={(e) => e.stopPropagation()}>
         <div className="px-6 pt-5 pb-3 shrink-0 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0 flex-wrap">
@@ -391,32 +404,80 @@ const TABS = [
     key: "payment", label: "Payment", endpoint: "payment", kind: "single",
     empty: "No payment was archived with this booking.",
     labels: { paymentsArchivesId: "Archive ID", bookingID: "Booking ID", userID: "User ID" },
+    facts: (r) => [
+      ["Status", r.status && <Chip text={r.status} />],
+      ["Total", r.amount != null ? money(r.amount) : null],
+      ["Method", [r.paymentMethod, r.methodOfPayment].filter(Boolean).join(" · ") || null],
+      ["Balance", positive(r.balanceAmount) ? `${money(r.balanceAmount)}${r.balanceStatus ? ` · ${r.balanceStatus}` : ""}` : null],
+      ["Security deposit", positive(r.securityDeposit) ? `${money(r.securityDeposit)}${r.depositStatus ? ` · ${r.depositStatus}` : ""}` : (r.depositStatus || null)],
+      ["Discount", positive(r.discountAmount) ? `− ${money(r.discountAmount)}` : null],
+      ["Refund issued", positive(r.refundIssued) ? money(r.refundIssued) : null],
+      ["Created", whenOf(r.createdAt)],
+    ],
   },
   { key: "inspection", label: "Inspection", endpoint: "vehicle-inspection", kind: "inspection", empty: "No vehicle inspection records for this booking." },
   {
     key: "session", label: "Session", endpoint: "booking-session", kind: "single",
     empty: "No booking session was archived with this booking.",
     labels: { bookingSessionArchivesId: "Archive ID", bookingID: "Booking ID", carID: "Car ID" },
+    facts: (r) => [
+      ["Status", r.status && <Chip text={r.status} />],
+      ["Started", whenOf(r.startedAt)],
+      ["Dropped off", whenOf(r.droppedOffTime)],
+      ["Marked stolen", whenOf(r.stolenAt)],
+      ["Last GPS ping", whenOf(r.lastPingReceivedAt)],
+      ["GPS points", positive(r.pointCount) ? Number(r.pointCount).toLocaleString("en-PH") : null],
+      ["Geofence exits", positive(r.geofenceFlipCount) ? r.geofenceFlipCount : null],
+    ],
   },
   {
     key: "penalties", label: "Penalties", endpoint: "penalties", kind: "list", empty: "No penalties were archived with this booking.",
     summary: (r) => ({ main: r.penaltyID || r.id, sub: [r.status, money(r.amount)] }),
     labels: { penaltyArchivesId: "Archive ID", bookingID: "Booking ID", paymentID: "Payment ID", userID: "User ID", carID: "Car ID" },
+    facts: (r) => [
+      ["Status", r.status && <Chip text={r.status} />],
+      ["Amount", r.amount != null ? money(r.amount) : null],
+      ["Paid", positive(r.paidAmount) ? money(r.paidAmount) : null],
+      ["Reason", r.statusReason || r.overrideReason || null],
+      ["Created", whenOf(r.createdAt)],
+    ],
   },
   {
     key: "refunds", label: "Refunds", endpoint: "refund-requests", kind: "list", empty: "No refund requests were archived with this booking.",
     summary: (r) => ({ main: r.refundRequestID || r.id, sub: [r.status, money(r.toRefundAmount)] }),
     labels: { refundArchivesId: "Archive ID", bookingID: "Booking ID", paymentID: "Payment ID" },
+    facts: (r) => [
+      ["Status", r.status && <Chip text={r.status} />],
+      ["Refund amount", r.toRefundAmount != null ? money(r.toRefundAmount) : null],
+      ["Booking paid", positive(r.bookingPaid) ? money(r.bookingPaid) : null],
+      ["Deposit kept", positive(r.depositForfeited) ? money(r.depositForfeited) : null],
+      ["Payment fee kept", positive(r.gatewayFeeKept) ? money(r.gatewayFeeKept) : null],
+      ["Reason", r.reason || null],
+      ["Rejected because", r.rejectReason || null],
+      ["Refunded", whenOf(r.refundedAt)],
+    ],
   },
   {
     key: "reviews", label: "Reviews", endpoint: "reviews", kind: "list", empty: "No reviews were archived with this booking.",
     summary: (r) => ({ main: `${r.rating ?? "—"} / 5`, sub: [r.comment ? String(r.comment).slice(0, 80) : "No comment"] }),
     labels: { reviewsArchivesID: "Archive ID", bookingID: "Booking ID", userID: "User ID", carID: "Car ID" },
+    facts: (r) => [
+      ["Rating", r.rating != null ? `${r.rating} / 5` : null],
+      ["Comment", r.comment || null],
+      ["Posted", whenOf(r.createdAt)],
+    ],
   },
   {
     key: "maintenance", label: "Maintenance", endpoint: "maintenance", kind: "list", empty: "No maintenance records were archived with this booking.",
     summary: (r) => ({ main: r.description || r.maintenanceID || r.id, sub: [r.status, r.basis, money(r.totalCost)] }),
     labels: { maintenanceArchivesId: "Archive ID", bookingID: "Booking ID", carID: "Car ID" },
+    facts: (r) => [
+      ["Status", r.status && <Chip text={r.status} />],
+      ["Type", r.basis || null],
+      ["Date", whenOf(r.maintenanceDate)],
+      ["Total cost", r.totalCost != null ? money(r.totalCost) : null],
+      ["Description", r.description || null],
+    ],
   },
 ];
 
@@ -426,6 +487,30 @@ const INSPECTION_GROUPS = [
   ["vehicleDocumentationBeforeTrip", "Photos — before trip"],
   ["vehicleDocumentationAfterTrip", "Photos — after trip"],
 ];
+
+// Curated "key facts" for a linked record (status, amount, dates first); the raw fields stay one click away in AllFields.
+function Facts({ items, flat = false }) {
+  const rows = items.filter(([, v]) => v !== null && v !== undefined && v !== "" && v !== false);
+  if (rows.length === 0) return null;
+  return (
+    <div className={`grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-4 ${flat ? "p-3 bg-gray-50 rounded-xl" : "p-4 bg-white border rounded-2xl shadow-sm"}`}>
+      {rows.map(([label, value]) => <InfoField key={label} label={label} value={value} />)}
+    </div>
+  );
+}
+function AllFields({ record, labels }) {
+  return (
+    <details className="bg-white border rounded-2xl">
+      <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase tracking-wide">All fields</summary>
+      <div className="p-4 border-t"><Fields record={record} labels={labels} /></div>
+    </details>
+  );
+}
+const Chip = ({ text }) => (
+  <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS[String(text).toLowerCase()] || "bg-gray-100 text-gray-600"}`}>{String(text).replace(/_/g, " ")}</span>
+);
+const whenOf = (v) => (v === null || v === undefined || v === "" ? null : <Stamp iso={toIso(v)} />);
+const positive = (n) => Number(n) > 0;
 
 // Label/value cards in two columns; ids are monospaced, long or object values take the full row.
 function Fields({ record, labels = {}, omit = [] }) {
@@ -568,7 +653,10 @@ function ListRows({ tab, rows }) {
             </div>
             {isOpen && (
               <div className="px-4 pb-4 pt-3 border-t border-gray-100 bg-white">
-                <Fields record={r} labels={tab.labels} />
+                <div className="space-y-3">
+                  <Facts flat items={tab.facts ? tab.facts(r) : []} />
+                  <AllFields record={r} labels={tab.labels} />
+                </div>
               </div>
             )}
           </div>
@@ -578,22 +666,34 @@ function ListRows({ tab, rows }) {
   );
 }
 
-function LinkedBody({ tab, state }) {
+function LinkedBody({ tab, state, record }) {
   const [photo, setPhoto] = useState(null);
   if (!state || state.loading) return <Skeleton />;
   if (state.error) return <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">{state.error}</div>;
 
   if (tab.kind === "single") {
-    if (!state.data) return <Empty text={state.message || tab.empty} />;
+    if (!state.data) {
+      return (
+        <div className="space-y-5">
+          <Empty text={state.message || tab.empty} />
+          {tab.key === "payment" && record?.bookingID && (
+            <section className="bg-white border rounded-2xl p-4 shadow-sm">
+              <PaymentEntriesPanel query={{ bookingID: record.bookingID }} title="Money movements for this booking" />
+            </section>
+          )}
+        </div>
+      );
+    }
     return (
-      <div className="space-y-5">
+      <div className="space-y-4">
         {tab.key === "session" && <LocationMap record={state.data} />}
-        <Fields record={state.data} labels={tab.labels} />
+        <Facts items={tab.facts ? tab.facts(state.data) : []} />
         {tab.key === "payment" && (
-          <div className="pt-4 border-t border-gray-100">
+          <section className="bg-white border rounded-2xl p-4 shadow-sm">
             <PaymentEntriesPanel query={{ paymentID: state.data.paymentID || state.data.originalId }} title="All money movements on this payment" />
-          </div>
+          </section>
         )}
+        <AllFields record={state.data} labels={tab.labels} />
       </div>
     );
   }
@@ -805,63 +905,207 @@ const SHOWN_KEYS = [
   "bookingArchivesId", "bookingID", "userID", "carID", "customerName", "phone", "createdAt", "archivedAt", "archivedBy",
   "status", "amount", "totalFee", "vehicleName", "serviceTypeName", "startDateTime", "endDateTime", "totalDays",
   "modeOfDriving", "driverName", "rentalFee", "serviceFee", "gatewayFee", "extraFee", "driversFee",
+  "location", "serviceType", "serviceTypeID", "pickupAt", "notesUser", "notesAdmin", "termsAcceptedAt", "archiveDate",
 ];
 
-// The "Booking" tab: same cards as the live Bookings window (customer, booking, fee), plus the archive facts.
-function BookingTab({ record, peso, viewerRole, onGo }) {
-  const customer = useAccount(record.userID);
-  const fees = [
-    ["Rental Fee", record.rentalFee], ["Service Fee", record.serviceFee], ["Gateway Fee", record.gatewayFee],
-    ["Extra Fee", record.extraFee], ["Driver's Fee", record.driversFee],
-  ].filter(([, v]) => Number(v) > 0);
-  const total = record.amount ?? record.totalFee;
+// The "Booking" tab: same cards as the live Bookings window (Customer, Booking, Fee, Cancellation, Terms, Notes), then the
+// archive facts. The archive copy of a booking only holds the ids and dates; everything else (vehicle, driver, fee breakdown,
+// cancellation, refund, Terms version, places) comes from GET /api/archives/bookings/:id/details as `details`.
+function BookingTab({ record, details, detailsLoading, detailsError, peso, viewerRole, onGo }) {
+  const liveAccount = useAccount(record.userID);   // only to know which Users tab a live account lives on
+  const [termsOpen, setTermsOpen] = useState(false);
+  const loading = detailsLoading;
+  const wait = (v) => (loading ? "Loading…" : v);
+  const cust = details?.customer || null;
+  const pay = details?.payment || null;
+  const canc = details?.cancellation || null;
+  const refund = details?.refund || null;
+  const terms = details?.terms || null;
+  const driver = details?.driver || null;
+  const isCancelled = String(record.status || "").toLowerCase() === "cancelled";
+  const isChauffeur = String(record.modeOfDriving || "").toLowerCase().includes("chauffeur");
+
+  // Fees come from the archived payment; fall back to what the booking copy itself carries.
+  const fee = (k) => (pay ? pay[k] : record[k]);
+  const driverTotal = Number(fee("driversFee")) || 0;
+  const driverDays = Math.max(1, Number(record.totalDays) || 1);
+  const total = pay?.amount ?? record.amount ?? record.totalFee;
+  const depositText = !pay ? null
+    : pay.depositStatus === "Waived" ? "Waived"
+    : pay.securityDeposit > 0 ? `${peso(pay.securityDeposit)}${pay.depositStatus && pay.depositStatus !== "Refunded" ? ` · ${pay.depositStatus}` : ""}`
+    : "Not collected";
+
+  const pk = details?.places?.pickupLocation;
+  const pickupText = (typeof pk === "string" ? pk : pk?.address || pk?.label || pk?.name) || record.location || "—";
+
+  const customerName = (cust && cust.name) || record.customerName;
+  const customerNote = cust?.state === "archived" ? " (account deleted — in Deleted Users)" : cust?.state === "removed" ? " (account removed)" : "";
+  const customerAction = cust?.state === "archived"
+    ? <button type="button" onClick={() => onGo(`/archives/users?open=${encodeURIComponent(record.userID)}`)}
+        className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap">View deleted user →</button>
+    : <ViewUserButton uid={record.userID} account={liveAccount} viewerRole={viewerRole} onGo={onGo} />;
+
+  const cancelledByText = !canc ? null
+    : canc.cancelledBy === "system" ? "System (auto-cancelled)"
+    : canc.cancelledBy === "customer" ? `${canc.cancelledByName || customerName || "Customer"} · Customer`
+    : canc.cancelledBy === "staff" ? (canc.cancelledByName ? `${canc.cancelledByName} · ${canc.cancelledByRole || "Staff"}` : "Staff · name not recorded")
+    : "Not recorded";
+  const refundType = !refund?.byStaff ? null
+    : refund.depositForfeited > 0 ? `No Deposit Refund · ${peso(refund.depositForfeited)} deposit not returned`
+    : refund.gatewayFeeKept > 0 ? `Normal refund · ${peso(refund.gatewayFeeKept)} payment fee not returned`
+    : refund.bookingPaid > (refund.amount || 0) ? `Partial refund · ${peso(refund.bookingPaid - refund.amount)} not returned`
+    : "Full refund";
+
+  const mapRecord = { ...record, ...(details?.places || {}) };
+
+  const termsVersionID = terms?.versionID || record.termsVersionID || null;
+  const termsAcceptedAt = terms?.acceptedAt || record.termsAcceptedAt;
+  const termsAction = (
+    <button type="button" disabled={!termsVersionID} onClick={() => setTermsOpen(true)}
+      title={termsVersionID ? "" : "No terms version was recorded on this booking"}
+      className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed">
+      View terms →
+    </button>
+  );
+  const driverText = loading ? "Loading…" : driver
+    ? `${driver.name || "—"}${driver.phone ? ` · ${driver.phone}` : ""}${driver.state === "archived" ? " (account deleted)" : driver.state === "removed" ? " (account removed)" : ""}`
+    : null;
+  const vehicleText = details?.vehicle?.name ? `${details.vehicle.name}${details.vehicle.plateNumber ? ` · ${details.vehicle.plateNumber}` : ""}` : null;
+  const payStatus = pay?.status || null;
 
   return (
     <div className="space-y-3">
-      <InfoSection title="Customer" action={<ViewUserButton uid={record.userID} account={customer} viewerRole={viewerRole} onGo={onGo} />}>
-        <InfoField label="Name" value={accountName(record.userID, customer, record.customerName) || record.customerName} />
-        <InfoField label="Email" value={customer && customer.email} />
-        {present(record.phone) && <InfoField label="Phone" value={record.phone} />}
-      </InfoSection>
-
-      <InfoSection title="Booking">
-        <InfoField mono label="Booking ID" value={record.bookingID || record.originalId} />
-        <InfoField label="Created At" value={present(record.createdAt) ? <Stamp iso={toIso(record.createdAt)} /> : null} />
-        {present(record.vehicleName) && <InfoField label="Vehicle" value={record.vehicleName} />}
-        {present(record.serviceTypeName) && <InfoField label="Service Type" value={record.serviceTypeName} />}
-        {present(record.startDateTime) && <InfoField label="Trip Start" value={<Stamp iso={toIso(record.startDateTime)} />} />}
-        {present(record.endDateTime) && <InfoField label="Trip End" value={<Stamp iso={toIso(record.endDateTime)} />} />}
-        {present(record.totalDays) && <InfoField label="Duration" value={`${record.totalDays} day${Number(record.totalDays) > 1 ? "s" : ""}`} />}
-        {present(record.modeOfDriving) && <InfoField label="Driving" value={record.modeOfDriving} />}
-        {present(record.driverName) && <InfoField label="Driver" value={record.driverName} />}
-      </InfoSection>
-
-      <InfoSection title="Booking Fee">
-        {fees.map(([label, v]) => <InfoField key={label} label={label} value={peso(v)} />)}
-        <div className="col-span-2 flex items-baseline justify-end gap-4 pt-3 border-t border-gray-100">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Total Fee</span>
-          <span className="text-base font-bold text-gray-800">{peso(total)}</span>
+      {detailsError && (
+        <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs">
+          {detailsError} Showing what the archived booking itself holds.
         </div>
-      </InfoSection>
+      )}
 
-      <ArchiveSection archivedAt={toIso(record.archivedAt)} archivedBy={record.archivedBy} showArchivedBy={!!record.archivedBy} />
-
-      <LocationMap record={record} />
-
-      <InfoSection title="Reference">
-        <InfoField mono label="Archive ID" value={record.bookingArchivesId} />
-        <InfoField mono label="Car ID" value={record.carID} />
-        <InfoField mono label="User ID" value={record.userID} />
-      </InfoSection>
-
-      <section className="bg-white border rounded-2xl p-4 shadow-sm">
-        <PaymentEntriesPanel query={{ bookingID: record.bookingID }} title="Money movements for this booking" />
+      {/* SUMMARY: who, what, when and how much, before any detail */}
+      <section className="bg-gray-50 border rounded-2xl p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-lg font-bold text-gray-800 break-words">
+              {customerName || "—"}
+              {customerNote && <span className="text-xs font-normal text-gray-400">{customerNote}</span>}
+            </p>
+            <p className="text-xs font-mono text-gray-400 break-all mt-0.5">{record.bookingID || record.originalId}</p>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Total Fee</p>
+            <p className="text-2xl font-bold text-gray-800 leading-tight">{peso(total)}</p>
+            {payStatus && <div className="mt-1"><Chip text={payStatus} /></div>}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 mt-4 pt-4 border-t border-gray-200">
+          <InfoField label="Vehicle" value={wait(vehicleText)} />
+          <InfoField label="Start" value={present(record.startDateTime) ? <Stamp iso={toIso(record.startDateTime)} /> : null} />
+          <InfoField label="End" value={present(record.endDateTime) ? <Stamp iso={toIso(record.endDateTime)} /> : null} />
+          <InfoField label="Duration" value={present(record.totalDays) ? `${record.totalDays} day${Number(record.totalDays) > 1 ? "s" : ""}` : null} />
+        </div>
       </section>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
+        {/* LEFT: the people and the trip */}
+        <div className="space-y-3">
+          <InfoSection title="Customer" action={customerAction}>
+            <InfoField label="Phone" value={wait(cust?.phone || (present(record.phone) ? record.phone : null))} />
+            <InfoField label="Email" value={wait(cust?.email)} />
+          </InfoSection>
+
+          <InfoSection title="Trip Details">
+            <InfoField label="Service Type" value={wait(details?.serviceTypeName || record.serviceType)} />
+            <InfoField label="Driving" value={record.modeOfDriving} />
+            <InfoField label="Driver" value={driverText || <span className="text-gray-400 italic font-normal">{isChauffeur ? "No driver assigned" : "Not needed"}</span>} />
+            <InfoField label="Created" value={present(record.createdAt) ? <Stamp iso={toIso(record.createdAt)} /> : null} />
+            {present(record.pickupAt) && <InfoField label="Pickup Time" value={<Stamp iso={toIso(record.pickupAt)} />} />}
+            <InfoField wide label="Pickup Location" value={wait(pickupText)} />
+          </InfoSection>
+
+          <InfoSection title="Terms & Conditions" action={termsAction}>
+            <InfoField wide label="Agreed Version" value={
+              termsAcceptedAt ? (
+                <span className="flex flex-wrap items-center justify-between gap-x-3">
+                  <span>
+                    {terms?.versionNumber != null && Number.isFinite(Number(terms.versionNumber))
+                      ? `Version ${Number(terms.versionNumber).toFixed(2)}`
+                      : loading ? "Loading…" : "Version not recorded"}
+                  </span>
+                  <span className="text-xs text-gray-400 font-normal shrink-0">Agreed {stampText(toIso(termsAcceptedAt))}</span>
+                </span>
+              ) : <span className="text-gray-400 font-normal">No agreement recorded</span>
+            } />
+          </InfoSection>
+
+          <InfoSection title="Notes">
+            <InfoField wide label="From the customer" value={record.notesUser} />
+            <InfoField wide label="From staff" value={record.notesAdmin} />
+          </InfoSection>
+        </div>
+
+        {/* RIGHT: the money */}
+        <div className="space-y-3">
+          <InfoSection title="Fee Breakdown" block>
+            <FeeRow label="Rental fee" value={peso(fee("rentalFee"))} />
+            <FeeRow label="Service fee" value={peso(fee("serviceFee"))} />
+            {Number(fee("gatewayFee")) > 0 && <FeeRow label="Gateway fee" value={peso(fee("gatewayFee"))} />}
+            <FeeRow label={`Extra fee (${Number(fee("extraFee")) > 0 ? "outside base area" : "base area"})`} value={peso(fee("extraFee"))} />
+            {driverTotal > 0 && <FeeRow label={`Driver's fee (${peso(driverTotal / driverDays)} × ${driverDays} day${driverDays > 1 ? "s" : ""})`} value={peso(driverTotal)} />}
+            {pay?.discountAmount > 0 && <FeeRow label="Discount" value={`− ${peso(pay.discountAmount)}`} />}
+            <div className="flex items-baseline justify-between gap-4 pt-3 mt-1 border-t border-gray-100">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Total</span>
+              <span className="text-lg font-bold text-gray-800 tabular-nums">{peso(total)}</span>
+            </div>
+            <FeeRow muted label="Security deposit" value={wait(depositText)} />
+          </InfoSection>
+
+          {pay && (
+            <InfoSection title="Payment">
+              <InfoField label="Method" value={pay.paymentMethod} />
+              <InfoField label="Type" value={pay.methodOfPayment} />
+              <InfoField label="Status" value={pay.status} />
+              <InfoField label="Deposit Status" value={pay.depositStatus} />
+            </InfoSection>
+          )}
+
+          {isCancelled && (
+            <InfoSection title="Cancellation">
+              <InfoField label="Cancelled By" value={wait(cancelledByText || "Not recorded")} />
+              <InfoField label="Cancelled At" value={canc?.cancelledAt ? <Stamp iso={canc.cancelledAt} /> : wait(null)} />
+              {canc?.approvedByName && <InfoField label="Approved By" value={`${canc.approvedByName} · ${canc.approvedByRole || "Staff"}`} />}
+              <InfoField wide label="Reason" value={wait(canc?.reason)} />
+              {refundType && <InfoField wide label="Refund Type" value={refundType} />}
+              <InfoField wide label="Refund" value={wait(refund ? `${refund.status}${refund.amount > 0 ? ` · ${peso(refund.amount)}` : ""}` : null)} />
+            </InfoSection>
+          )}
+
+          <ArchiveSection archivedAt={toIso(record.archivedAt)} archivedBy={record.archivedBy} showArchivedBy={!!record.archivedBy} />
+        </div>
+      </div>
+
+      <LocationMap record={mapRecord} />
+
+      {/* Rarely needed: ids and every remaining raw field. Money movements live on the Payment tab. */}
       <details className="bg-white border rounded-2xl shadow-sm">
-        <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase tracking-wide">All other details</summary>
-        <div className="p-4 border-t"><Fields record={record} omit={SHOWN_KEYS} /></div>
+        <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase tracking-wide">Technical details</summary>
+        <div className="p-4 border-t space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-4">
+            <InfoField mono label="Archive ID" value={record.bookingArchivesId} />
+            <InfoField mono label="Car ID" value={record.carID} />
+            <InfoField mono label="User ID" value={record.userID} />
+          </div>
+          <Fields record={record} omit={SHOWN_KEYS} />
+        </div>
       </details>
+
+      <TermsVersionModal
+        open={termsOpen}
+        onClose={() => setTermsOpen(false)}
+        versionID={termsVersionID}
+        acceptedAt={termsAcceptedAt ? toIso(termsAcceptedAt) : null}
+        subtitle={customerName || null}
+        token={localStorage.getItem("token")}
+      />
     </div>
   );
 }
@@ -874,6 +1118,32 @@ function BookingArchiveViewModal({ record, token, viewerRole, canDelete, busy, o
   const { fmt } = useCurrency();
   const [active, setActive] = useState("booking");
   const [cache, setCache]   = useState({}); // tab key -> { loading, data, error, message }
+  const [details, setDetails] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(true);
+  const [detailsError, setDetailsError] = useState(null);
+
+  // The Booking tab's vehicle / driver / fee breakdown / cancellation / terms / places (see BookingTab).
+  useEffect(() => {
+    let cancelled = false;
+    setDetailsLoading(true); setDetailsError(null); setDetails(null);
+    (async () => {
+      try {
+        const res = await fetch(`${process.env.REACT_APP_API_URL}/api/archives/bookings/${encodeURIComponent(record.bookingArchivesId)}/details`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const text = await res.text();
+        let json = {};
+        try { json = JSON.parse(text); } catch { /* HTML error page from the server */ }
+        if (!res.ok) throw new Error(json.message || `Could not load the booking details (${res.status}).`);
+        if (!cancelled) setDetails(json.data || null);
+      } catch (err) {
+        if (!cancelled) setDetailsError(err.message);
+      } finally {
+        if (!cancelled) setDetailsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [record.bookingArchivesId, token]);
 
   const load = async (tab) => {
     setCache((c) => ({ ...c, [tab.key]: { loading: true } }));
@@ -943,8 +1213,8 @@ function BookingArchiveViewModal({ record, token, viewerRole, canDelete, busy, o
       footer={<ArchiveFooter onRestore={onRestore} onDelete={onDelete} canDelete={canDelete} busy={busy} onClose={onClose} />}
     >
       {active === "booking"
-        ? <BookingTab record={record} peso={peso} viewerRole={viewerRole} onGo={go} />
-        : <LinkedBody tab={activeTab} state={cache[active]} />}
+        ? <BookingTab record={record} details={details} detailsLoading={detailsLoading} detailsError={detailsError} peso={peso} viewerRole={viewerRole} onGo={go} />
+        : <LinkedBody tab={activeTab} state={cache[active]} record={record} />}
     </LogWindow>
   );
 }
@@ -1169,11 +1439,8 @@ export default function BookingArchivePage() {
         />
       )}
 
-      <div>
-        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">BOOKING ARCHIVE</h1>
-        <p className="text-sm text-gray-400 mt-1">
-          {loading ? "Loading…" : `${filtered.length} archived record${filtered.length !== 1 ? "s" : ""}`}
-        </p>
+      <div className="shrink-0">
+        <h1 className="text-2xl font-bold text-arl-dark">Booking Archive</h1>
       </div>
 
       {error && <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">{error}</div>}
