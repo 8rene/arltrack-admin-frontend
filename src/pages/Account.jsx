@@ -273,19 +273,100 @@ function EmptyDocBox({ title, pending, direct }) {
 }
 
 /* ── Editable field (used inside the Edit modal) ── */
-function EditField({ label, value, onChange, type = "text" }) {
+function EditField({ label, value, onChange, type = "text", options, disabled = false, placeholder, error, inputMode, maxLength, max }) {
+  const cls = `w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 disabled:bg-gray-50 disabled:text-gray-400 ${error ? "border-red-400 focus:ring-red-300" : "focus:ring-teal-400"}`;
   return (
     <div>
       <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
-      <input
-        type={type}
-        value={value || ""}
-        onChange={onChange}
-        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400"
-      />
+      {options ? (
+        <select value={value || ""} onChange={onChange} disabled={disabled} className={`${cls} bg-white`}>
+          <option value="">{placeholder || `Select ${label}`}</option>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input
+          type={type}
+          value={value || ""}
+          onChange={onChange}
+          inputMode={inputMode}
+          maxLength={maxLength}
+          max={max}
+          className={cls}
+        />
+      )}
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
     </div>
   );
 }
+
+// ── Location lists ──────────────────────────────────────────────────────────
+// Province / Municipality / City / Barangay are picked from the same Firestore
+// location data the customer signup form uses (GET /api/location/*), so only real
+// places can be saved. Street and Postal Code stay free text. Cached for
+// the session: this data essentially never changes.
+const locCache = { base: null, municipalities: {}, barangays: {} };
+const locGet = async (path) => {
+  const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+  });
+  if (!res.ok) throw new Error("Could not load the location list.");
+  return res.json();
+};
+// Cached as promises, so two callers asking at the same time share one request. A failed load is not kept.
+const cached = (store, key, make) => {
+  if (!store[key]) store[key] = make().catch((e) => { delete store[key]; throw e; });
+  return store[key];
+};
+// Regions + every province (each knows its region): 2 requests in parallel, filtered by region in the browser.
+const loadLocationBase = () => cached(locCache, "base", () =>
+  Promise.all([locGet("/api/location/regions"), locGet("/api/location/provinces")])
+    .then(([regions, provinces]) => ({ regions, provinces })));
+const loadMunicipalities = (provinceID) => cached(locCache.municipalities, provinceID, () =>
+  locGet(`/api/location/municipalities?provinceID=${encodeURIComponent(provinceID)}`));
+const loadBarangays = (municipalityID) => cached(locCache.barangays, municipalityID, () =>
+  locGet(`/api/location/barangays?municipalityID=${encodeURIComponent(municipalityID)}`));
+const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+// Same suffix choices as the customer sign-up form.
+const SUFFIX_OPTIONS = ["Jr.", "Sr.", "II", "III", "IV", "V"];
+// Profile rules — the API enforces the same ones. Every field is required except Middle Name and Suffix
+// (not everyone has one). Postal code: 4 digits (Philippine ZIP). Phone: digits with an optional leading +,
+// 10-13 digits. Birth date: the person must be at least 18 years old.
+const MIN_AGE = 18;
+const birthDateError = (v) => {
+  if (!v) return "Birth date is required.";
+  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "Enter a valid birth date.";
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return "Enter a valid birth date.";
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  if (now.getMonth() < mo - 1 || (now.getMonth() === mo - 1 && now.getDate() < d)) age -= 1;
+  if (age < MIN_AGE) return `You must be at least ${MIN_AGE} years old.`;
+  if (age > 120) return "Enter a valid birth date.";
+  return null;
+};
+// latest birth date that is still 18 or older (used as the date picker's max)
+const latestBirthDate = () => {
+  const n = new Date();
+  const pad = (x) => String(x).padStart(2, "0");
+  return `${n.getFullYear() - MIN_AGE}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`;
+};
+const required = (label) => (v) => (v ? null : `${label} is required.`);
+const FIELD_RULES = {
+  username:     required("Username"),
+  phone:        (v) => (!v ? "Phone number is required." : /^\+?\d{10,13}$/.test(v) ? null : "Numbers only (may start with +), 10 to 13 digits."),
+  firstName:    required("First name"),
+  lastName:     required("Last name"),
+  birthDate:    birthDateError,
+  region:       required("Region"),
+  province:     required("Province"),
+  municipality: required("City / Municipality"),
+  barangay:     required("Barangay"),
+  street:       required("Street"),
+  postalCode:   (v) => (!v ? "Postal code is required." : /^\d{4}$/.test(v) ? null : "Postal code must be 4 digits (numbers only)."),
+};
+const LOCATION_SELECTS = new Set(["region", "province", "municipality", "barangay"]);
 
 // Fields that can be edited from this page. Each entry says which
 // Firestore collection it lives in so the save/request logic below knows
@@ -293,26 +374,32 @@ function EditField({ label, value, onChange, type = "text" }) {
 // uid); "userDetails"/"userAddress" live in their own doc, found by
 // querying where userID == uid (same lookup Users.jsx already uses).
 const EDITABLE_FIELDS = [
-  { key: "phone",        label: "Phone",        source: "user" },
-  { key: "username",     label: "Username",     source: "user" },
-  { key: "firstName",    label: "First Name",   source: "userDetails" },
-  { key: "middleName",   label: "Middle Name",  source: "userDetails" },
-  { key: "lastName",     label: "Last Name",    source: "userDetails" },
-  { key: "suffix",       label: "Suffix",       source: "userDetails" },
-  { key: "birthDate",    label: "Birth Date",   source: "userDetails", type: "date" },
-  { key: "street",       label: "Street",       source: "userAddress" },
-  { key: "barangay",     label: "Barangay",     source: "userAddress" },
-  { key: "municipality", label: "Municipality", source: "userAddress" },
-  { key: "city",         label: "City",         source: "userAddress" },
-  { key: "province",     label: "Province",     source: "userAddress" },
-  { key: "postalCode",   label: "Postal Code",  source: "userAddress" },
-  { key: "village",      label: "Village",      source: "userAddress" },
+  // Personal details
+  { key: "phone",        label: "Phone",        source: "user",        group: "personal" },
+  { key: "username",     label: "Username",     source: "user",        group: "personal" },
+  { key: "firstName",    label: "First Name",   source: "userDetails", group: "personal" },
+  { key: "middleName",   label: "Middle Name",  source: "userDetails", group: "personal" },
+  { key: "lastName",     label: "Last Name",    source: "userDetails", group: "personal" },
+  { key: "suffix",       label: "Suffix",       source: "userDetails", group: "personal" },
+  { key: "birthDate",    label: "Birth Date",   source: "userDetails", group: "personal", type: "date" },
+  // Address — top-down order: region > province > city / municipality > barangay, then the typed parts
+  { key: "region",       label: "Region",       source: "userAddress", group: "address" },
+  { key: "province",     label: "Province",     source: "userAddress", group: "address" },
+  // One field: the location list only has municipalities (cities included), so "city" is just a copy of it. The server
+  // writes the chosen value to both userAddress.municipality and userAddress.city.
+  { key: "municipality", label: "City / Municipality", source: "userAddress", group: "address" },
+  { key: "barangay",     label: "Barangay",     source: "userAddress", group: "address" },
+  { key: "street",       label: "Street",       source: "userAddress", group: "address" },
+  { key: "postalCode",   label: "Postal Code",  source: "userAddress", group: "address" },
 ];
+
+// Older accounts may have only "city" saved: it shows as the City / Municipality value.
+const currentValue = (current, key) => (key === "municipality" ? (current.municipality || current.city || "") : (current[key] || ""));
 
 /* ── Edit Profile Modal ── */
 function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, onSaved, onCancelledRequest, onUserFieldsUpdated }) {
   const [form, setForm] = useState(() =>
-    Object.fromEntries(EDITABLE_FIELDS.map(f => [f.key, current[f.key] || ""]))
+    Object.fromEntries(EDITABLE_FIELDS.map(f => [f.key, currentValue(current, f.key)]))
   );
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
@@ -321,7 +408,95 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
   // without needing to close/reopen it.
   const [activePending, setActivePending] = useState(pendingRequest);
 
-  const handleChange = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }));
+  const [showErrors, setShowErrors] = useState(false); // field errors appear after the first save attempt
+  const handleChange = (key) => (e) => {
+    let v = e.target.value;
+    // Only numbers can be typed into these two (phone may keep one leading +).
+    if (key === "postalCode") v = v.replace(/\D/g, "").slice(0, 4);
+    if (key === "phone") v = v.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "").slice(0, 14);
+    setForm(f => ({ ...f, [key]: v }));
+    setError(null);
+  };
+
+  // Cascading location lists, top-down: region > province > municipality / city > barangay.
+  // Each level stays blocked until the one above it has a value.
+  const [base, setBase]               = useState(null); // { regions, provinces } — null while loading
+  const [municipalities, setMunicipalities] = useState([]);
+  const [barangays, setBarangays]           = useState([]);
+  const [locError, setLocError]             = useState(false); // lists failed to load -> fall back to plain text boxes
+  const regions   = base?.regions   || [];
+  const provinces = base?.provinces || [];
+  const provinceObj = provinces.find(p => sameName(p.provinceName, form.province));
+  // Older accounts may have no saved region: show the region the saved province belongs to (display only, not saved).
+  const regionObj = regions.find(r => sameName(r.regionName, form.region))
+    || (provinceObj && regions.find(r => r.regionID === provinceObj.regionID));
+  const effectiveRegion = regionObj?.regionName || form.region;
+  // What is actually checked and saved: the form, with the region the dropdown shows (older accounts may have none saved).
+  const values = { ...form, region: effectiveRegion || form.region || "" };
+  const fieldErrors = Object.fromEntries(
+    Object.entries(FIELD_RULES).map(([k, rule]) => [k, rule(String(values[k] || "").trim(), values)]).filter(([, msg]) => msg)
+  );
+  const municipalityObj = municipalities.find(m => sameName(m.municipalityName, form.municipality));
+
+  useEffect(() => {
+    let off = false;
+    loadLocationBase().then(b => { if (!off) setBase(b); }).catch(() => { if (!off) setLocError(true); });
+    return () => { off = true; };
+  }, []);
+  useEffect(() => {
+    if (!provinceObj) { setMunicipalities([]); return; }
+    let off = false;
+    loadMunicipalities(provinceObj.provinceID).then(l => { if (!off) setMunicipalities(l); }).catch(() => { if (!off) setLocError(true); });
+    return () => { off = true; };
+  }, [provinceObj?.provinceID]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!municipalityObj) { setBarangays([]); return; }
+    let off = false;
+    loadBarangays(municipalityObj.municipalityID).then(l => { if (!off) setBarangays(l); }).catch(() => { if (!off) setLocError(true); });
+    return () => { off = true; };
+  }, [municipalityObj?.municipalityID]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Changing a higher level clears the ones below it (they would no longer match).
+  const handleLocationChange = (key) => (e) => {
+    const v = e.target.value;
+    setForm(f => {
+      const next = { ...f, [key]: v };
+      if (key === "region") { next.province = ""; next.municipality = ""; next.barangay = ""; }
+      if (key === "province") {
+        next.municipality = ""; next.barangay = "";
+        const p = provinces.find(x => sameName(x.provinceName, v));
+        const r = p && regions.find(x => x.regionID === p.regionID);
+        if (r) next.region = r.regionName; // keeps the saved region in step with the province
+      }
+      if (key === "municipality") next.barangay = "";
+      return next;
+    });
+  };
+  // The current saved value is always kept in the list, so opening the form never wipes an existing address.
+  const optionsFor = (key) => {
+    if (locError) return undefined;
+    let names;
+    if (key === "region") names = regions.map(r => r.regionName);
+    else if (key === "province") names = regionObj ? provinces.filter(p => p.regionID === regionObj.regionID).map(p => p.provinceName) : [];
+    else if (key === "barangay") names = barangays.map(b => b.barangayName);
+    else names = municipalities.map(m => m.municipalityName);
+    const cur = key === "region" ? effectiveRegion : form[key];
+    return cur && !names.some(n => sameName(n, cur)) ? [cur, ...names] : names;
+  };
+  const selectDisabled = (key) => {
+    if (!base) return true; // lists still loading
+    if (key === "province") return !effectiveRegion;
+    if (key === "municipality") return !form.province;
+    if (key === "barangay") return !form.municipality;
+    return false;
+  };
+  const placeholderFor = (f) => {
+    if (!base) return "Loading…";
+    if (f.key === "province" && !effectiveRegion) return "Select Region first";
+    if (f.key === "municipality" && !form.province) return "Select Province first";
+    if (f.key === "barangay" && !form.municipality) return "Select City / Municipality first";
+    return `Select ${f.label}`;
+  };
 
   // Routed through the backend now instead of a direct Firestore
   // updateDoc/addDoc — same reasoning as ResubmitIdModal's authedFetch:
@@ -356,6 +531,11 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
   };
 
   const handleSave = async () => {
+    if (Object.keys(fieldErrors).length) {
+      setShowErrors(true);
+      setError("Please fix the highlighted fields before continuing.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -364,8 +544,8 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
         // no approval needed. Only send fields that actually changed —
         // mirrors the old direct-Firestore branch's behavior.
         const changedFields = EDITABLE_FIELDS
-          .filter(f => form[f.key] !== (current[f.key] || ""))
-          .map(f => ({ field: f.key, collection: f.source, newValue: form[f.key] || "" }));
+          .filter(f => values[f.key] !== currentValue(current, f.key))
+          .map(f => ({ field: f.key, collection: f.source, newValue: values[f.key] || "" }));
 
         if (!changedFields.length) {
           onClose();
@@ -386,7 +566,7 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
 
         onSaved({ submitted: false });
       } else {
-        const hasAnyChange = EDITABLE_FIELDS.some(f => form[f.key] !== (current[f.key] || ""));
+        const hasAnyChange = EDITABLE_FIELDS.some(f => values[f.key] !== currentValue(current, f.key));
         if (!hasAnyChange) {
           onClose();
           return;
@@ -399,8 +579,8 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
           field: f.key,
           label: f.label,
           collection: f.source,
-          oldValue: current[f.key] || "",
-          newValue: form[f.key] || "",
+          oldValue: currentValue(current, f.key),
+          newValue: values[f.key] || "",
         }));
 
         await authedFetch("POST", "/api/profile/edit-requests", { role: current.role, changes });
@@ -478,17 +658,44 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                {EDITABLE_FIELDS.map(f => (
-                  <EditField
-                    key={f.key}
-                    label={f.label}
-                    type={f.type}
-                    value={form[f.key]}
-                    onChange={handleChange(f.key)}
-                  />
-                ))}
-              </div>
+              {[
+                { id: "personal", title: "Personal Details", hint: null },
+                { id: "address",  title: "Address", hint: "Choose from the top down: region first, then province, city / municipality and barangay." },
+              ].map(sec => (
+                <div key={sec.id} className={sec.id === "address" ? "pt-4 border-t space-y-3" : "space-y-3"}>
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">{sec.title}</h3>
+                    {sec.hint && <p className="text-xs text-gray-400 mt-0.5">{sec.hint}</p>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    {EDITABLE_FIELDS.filter(f => f.group === sec.id).map(f => {
+                      const isLoc = LOCATION_SELECTS.has(f.key) && !locError;
+                      const isSuffix = f.key === "suffix";
+                      // a suffix saved before this list existed stays selectable, so opening the form never wipes it
+                      const suffixOptions = form.suffix && !SUFFIX_OPTIONS.includes(form.suffix) ? [form.suffix, ...SUFFIX_OPTIONS] : SUFFIX_OPTIONS;
+                      return (
+                        <EditField
+                          key={f.key}
+                          label={FIELD_RULES[f.key] ? `${f.label} *` : f.label}
+                          type={f.type}
+                          value={f.key === "region" && isLoc ? effectiveRegion : form[f.key]}
+                          onChange={LOCATION_SELECTS.has(f.key) ? handleLocationChange(f.key) : handleChange(f.key)}
+                          options={isLoc ? optionsFor(f.key) : isSuffix ? suffixOptions : undefined}
+                          disabled={isLoc ? selectDisabled(f.key) : false}
+                          placeholder={isLoc ? placeholderFor(f) : isSuffix ? "— None —" : undefined}
+                          error={showErrors ? fieldErrors[f.key] : undefined}
+                          inputMode={f.key === "postalCode" || f.key === "phone" ? "numeric" : undefined}
+                          maxLength={f.key === "postalCode" ? 4 : undefined}
+                          max={f.key === "birthDate" ? latestBirthDate() : undefined}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              {locError && (
+                <p className="text-xs text-amber-600">Couldn’t load the location lists, so address fields are plain text for now.</p>
+              )}
             </div>
 
             <div className="flex justify-end gap-3 p-5 border-t sticky bottom-0 bg-white">
@@ -994,6 +1201,7 @@ export default function Account() {
   const { user, logout, updateUser } = useAuth();
 
   const [profile, setProfile] = useState(null); // merged user + userDetails + userAddress
+  useEffect(() => { loadLocationBase().catch(() => {}); }, []); // warm the address lists so Edit Profile opens instantly
   const [loading, setLoading] = useState(true);
   const [showEdit, setShowEdit] = useState(false);
   const [showResubmit, setShowResubmit] = useState(null); // null | "license" | "document"
@@ -1347,7 +1555,7 @@ export default function Account() {
             <DetailRow icon={<IconUser />}        label="Full Name" value={fullName} />
             <DetailRow icon={<IconCalendar />}    label="Birth Date" value={formatBirthDate(profile?.birthDate)} />
             <DetailRow icon={<IconHome />}        label="Address"
-              value={[...new Set([profile?.street, profile?.village, profile?.barangay, profile?.municipality, profile?.city, profile?.province]
+              value={[...new Set([profile?.street, profile?.barangay, profile?.municipality, profile?.city, profile?.province]
                 .map((v) => (typeof v === "string" ? v.trim() : v)).filter(Boolean))].join(", ")} />
             <DetailRow icon={<IconHome />}        label="Postal Code" value={profile?.postalCode} />
             <DetailRow icon={<IconShield />}      label="Role"     value={user.role} />

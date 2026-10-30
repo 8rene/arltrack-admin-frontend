@@ -837,8 +837,9 @@ export default function RefundRequests() {
   const [handbackMethod, setHandbackMethod] = useState({});
   // Optional reference number staff type when recording an in-person hand-back, per request id.
   const [handbackRef, setHandbackRef] = useState({});
-  const [sortKey, setSortKey] = useState(null); // null = default/unsorted (API order: newest request first)
-  const [sortDir, setSortDir] = useState("asc");
+  // Same as Bookings: opens sorted by the date column (Requested), newest on top (down arrow shown).
+  const [sortKey, setSortKey] = useState("requested");
+  const [sortDir, setSortDir] = useState("desc");
   const items = useMemo(
     () => [...requests, ...discounts.map(toDiscountItem), ...depositReturns.map(toDepositItem)],
     [requests, discounts, depositReturns]

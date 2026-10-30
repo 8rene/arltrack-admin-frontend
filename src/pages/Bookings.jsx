@@ -287,7 +287,7 @@ function usePagination(items, pageSize = PAGE_SIZE) {
 }
 
 function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null;
 
   const nums = [];
   const add = (n) => nums.push(n);
@@ -2050,7 +2050,7 @@ export default function Bookings() {
     return String(hay || "").toLowerCase().includes(q);
   });
 
-  // Sort (dates/fee only — everything else stays in API/insertion order).
+  // Sort (dates/fee/duration only — everything else stays in API/insertion order).
   // Applied after search+tab filtering, before pagination, so page counts
   // reflect the sorted set and Page 1 always shows the "top" of the sort.
   const sorted = [...filtered].sort((a, b) => {
@@ -2060,13 +2060,16 @@ export default function Bookings() {
     else if (sortKey === "end") { av = toMillis(a.endDateTime); bv = toMillis(b.endDateTime); }
     else if (sortKey === "fee") { av = a.totalFee ?? -Infinity; bv = b.totalFee ?? -Infinity; }
     else if (sortKey === "created") { av = toMillis(a.createdAt); bv = toMillis(b.createdAt); }
+    else if (sortKey === "duration") { av = a.totalDays != null ? Number(a.totalDays) : -Infinity; bv = b.totalDays != null ? Number(b.totalDays) : -Infinity; }
     else return 0;
+    if (av === bv) return 0;   // also avoids -Infinity - -Infinity = NaN when both are missing
     return sortDir === "asc" ? av - bv : bv - av;
   });
 
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   // Jump back to page 1 whenever the visible set changes shape (new search/filter/tab).
-  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, activeTab, allBookings]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (not on allBookings: the 45s background refresh would otherwise throw you back to page 1 while you browse)
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, activeTab, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmtDuration = (days) => { if (days == null) return "—"; return days <= 1 ? `${days} day` : `${days} days`; };
 
@@ -2169,7 +2172,7 @@ export default function Bookings() {
                 <th className="px-4 py-3 text-left">Vehicle</th>
                 <SortableTh label="Trip Start" sortKey="start" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Trip End" sortKey="end" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-3 text-left">Duration</th>
+                <SortableTh label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left">Booking ID</th>
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="pl-4 pr-8 py-3 text-right">Action</th>
@@ -2235,6 +2238,12 @@ export default function Bookings() {
                   );
                 })
               )}
+              {/* Same as Refunds: pad a short page with empty rows so the table always keeps its 10-row height. */}
+              {!loading && pageItems.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
+                <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                  <td colSpan={11} className="h-[53px]">&nbsp;</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

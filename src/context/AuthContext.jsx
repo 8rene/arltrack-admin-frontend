@@ -285,7 +285,7 @@ export function AuthProvider({ children }) {
       if (code === "auth/user-disabled") {
         return {
           success: false,
-          message: "This account has been disabled. Please contact your system administrator for assistance.",
+          message: "This account has been archived or disabled. Please contact your system administrator for assistance.",
         };
       }
 

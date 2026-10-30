@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
 import { useCurrency } from "../context/CurrencyContext";
@@ -7,33 +8,319 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import PaymentEntriesPanel from "../components/shared/PaymentEntriesPanel";
 
-function formatDate(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d)) return iso;
-  return d.toLocaleString("en-PH", {
-    month: "short", day: "numeric", year: "numeric",
-    hour: "numeric", minute: "2-digit", hour12: true,
-  });
-}
+const PAGE_SIZE = 10;
 
-function inRange(iso, from, to) {
-  if (!from && !to) return true;
-  const d = new Date(iso);
-  if (isNaN(d)) return true;
-  if (from && d < new Date(from)) return false;
-  if (to   && d > new Date(to + "T23:59:59")) return false;
-  return true;
-}
+// ─── SHARED PIECES (local to this page) ─────────────────
+// ─── ICONS ───────────────────────────────────────────────────────────────────
+const IconX = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-const statusColor = {
-  pending:   "bg-yellow-100 text-yellow-700",
-  approved:  "bg-blue-100 text-blue-700",
-  completed: "bg-green-100 text-green-700",
-  cancelled: "bg-red-100 text-red-600",
+// ─── DATES ───────────────────────────────────────────────────────────────────
+// "Oct 17, 2026 | 3:45 PM": date and time in one cell, split by a pipe (same as the live log pages).
+const stampParts = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return {
+    date: d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }),
+    time: d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }),
+  };
+};
+const stampText = (iso) => { const p = stampParts(iso); return p ? `${p.date} | ${p.time}` : "—"; };
+const Stamp = ({ iso }) => {
+  const p = stampParts(iso);
+  if (!p) return <span className="text-gray-300">—</span>;
+  return (
+    <span className="whitespace-nowrap">
+      <span className="text-gray-700">{p.date}</span>
+      <span className="mx-1.5 text-gray-300">|</span>
+      <span className="text-gray-500">{p.time}</span>
+    </span>
+  );
 };
 
-const PAGE_SIZE = 15;
+// Local "YYYY-MM-DD" of a date value: what a date picker is compared against.
+const dayKeyOf = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  if (!d || isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+// ─── PAGINATION ──────────────────────────────────────────────────────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  // Clamp if the list shrinks (filter / search / refresh / restore) and we were on a now-empty page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (count === 0) return null;
+
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+
+  const rangeEnd = Math.min(start + pageSize, count);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── DETAILS WINDOW PIECES ───────────────────────────────────────────────────
+// Card + label-over-value cell: same as the live log pages' details windows.
+function InfoSection({ title, action, children }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {action}
+      </div>
+      <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>
+    </section>
+  );
+}
+function InfoField({ label, value, wide, mono }) {
+  return (
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className={`text-sm font-medium text-gray-800 mt-0.5 break-words ${mono ? "font-mono text-xs" : ""}`}>{value || "—"}</div>
+    </div>
+  );
+}
+
+// The window itself: title + badges on top, scrolling body, footer slot. Esc closes it.
+// `tabs` (optional) is a strip that sits between the title and the body; `wide` makes the window larger and a fixed height
+// so switching tabs doesn't make it jump.
+function LogWindow({ title, badges, onClose, footer, children, tabs, wide }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className={`bg-white rounded-2xl shadow-xl w-full flex flex-col ${wide ? "max-w-4xl h-[88vh]" : "max-w-2xl max-h-[92vh]"}`} onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-3 shrink-0 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0 flex-wrap">
+              <h2 className="font-bold text-lg text-gray-800">{title}</h2>
+              {badges}
+            </div>
+            <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 shrink-0"><IconX className="w-5 h-5" /></button>
+          </div>
+        </div>
+        {tabs}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-3">{children}</div>
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex items-center gap-2">{footer}</div>
+      </div>
+    </div>
+  );
+}
+
+// Footer for an archived record: Restore, Delete forever (Owner only) and Close.
+function ArchiveFooter({ onRestore, onDelete, canDelete, busy, onClose, extra }) {
+  return (
+    <>
+      <button onClick={onRestore} disabled={busy}
+        className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 transition-colors">
+        {busy ? "…" : "Restore"}
+      </button>
+      {extra}
+      {canDelete && (
+        <button onClick={onDelete} disabled={busy}
+          className="px-4 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 disabled:opacity-40 transition-colors">
+          Delete
+        </button>
+      )}
+      <button onClick={onClose} className="ml-auto px-4 py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
+    </>
+  );
+}
+
+// ─── ACCOUNTS ────────────────────────────────────────────────────────────────
+// Which Users tab an account lives on, and who may open it. Keep in sync with ROLE_TABS in Users.jsx.
+const USER_TAB_BY_ROLE = {
+  Customer:           { key: "customer",   visibleTo: [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR] },
+  [ROLES.DRIVER]:     { key: "driver",     visibleTo: [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR] },
+  [ROLES.SUPERVISOR]: { key: "supervisor", visibleTo: [ROLES.OWNER, ROLES.ADMIN] },
+  [ROLES.ADMIN]:      { key: "admin",      visibleTo: [ROLES.OWNER] },
+};
+
+// Looks one account up by ID: undefined = loading, null = no ID / not found (e.g. deleted since), else { name, email, role }.
+function useAccount(uid) {
+  const [account, setAccount] = useState(undefined);
+  useEffect(() => {
+    if (!uid) { setAccount(null); return; }
+    let cancelled = false;
+    setAccount(undefined);
+    const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
+    const base = process.env.REACT_APP_API_URL;
+    (async () => {
+      try {
+        const res = await fetch(`${base}/api/users/by-uid/${encodeURIComponent(uid)}`, { headers });
+        if (!res.ok) throw new Error("user not found");
+        const u = (await res.json())?.data || {};
+        let fullName = "";
+        try {
+          const d = await fetch(`${base}/api/users/details/${encodeURIComponent(u.uid || uid)}`, { headers });
+          if (d.ok) {
+            const { firstName, lastName } = (await d.json())?.data || {};
+            fullName = [firstName, lastName].filter(Boolean).join(" ");
+          }
+        } catch { /* the name is cosmetic */ }
+        if (!cancelled) setAccount({ name: fullName || u.username || uid, email: u.email || "", role: u.role || "" });
+      } catch {
+        if (!cancelled) setAccount(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [uid]);
+  return account;
+}
+
+// What to show for an account's name while / after it is looked up. `fallback` is a name the record already carries.
+const accountName = (uid, account, fallback) =>
+  !uid ? null : account === undefined ? (fallback || "Loading…") : account ? account.name : (fallback || "Account no longer exists");
+
+// "View user →": opens the person in Users (right role tab + their details window). Greyed out, with the reason on hover,
+// when it can't: no ID, account deleted, or not listed on the Users page for the viewer's role.
+function ViewUserButton({ uid, account, viewerRole, onGo }) {
+  const tab = account ? USER_TAB_BY_ROLE[account.role] : null;
+  const canOpen = !!(uid && tab && tab.visibleTo.includes(viewerRole));
+  const title = canOpen ? "" : !uid ? "No user recorded"
+    : account === undefined ? "Loading…"
+    : account === null ? "This account no longer exists"
+    : "This account isn't listed on the Users page for your role";
+  return (
+    <button type="button" disabled={!canOpen} title={title}
+      onClick={() => onGo(`/users?role=${tab.key}&tab=directory&open=${encodeURIComponent(uid)}`)}
+      className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed">
+      View user →
+    </button>
+  );
+}
+
+// "Archive" card: when it was archived and (when the record carries it) by whom.
+function ArchiveSection({ archivedAt, archivedBy, showArchivedBy = true }) {
+  const by = useAccount(showArchivedBy ? archivedBy : null);
+  return (
+    <InfoSection title="Archive">
+      <InfoField label="Archived At" value={stampText(archivedAt)} />
+      {showArchivedBy && <InfoField label="Archived By" value={accountName(archivedBy, by)} />}
+    </InfoSection>
+  );
+}
+
+// ─── SORT HEADER (same look as Bookings / Refunds) ───────────────────────────
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-4 py-3 text-left select-none ${className}`}>
+      <button onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}>
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
+// ─── STAT CARDS (same look as the Bookings status cards) ─────────────────────
+const CARD_PATHS = {
+  grid:     "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
+  clock:    "M12 22a10 10 0 100-20 10 10 0 000 20zM12 6v6l4 2",
+  check:    "M20 6L9 17l-5-5",
+  activity: "M22 12h-4l-3 9L9 3l-3 9H2",
+  close:    "M18 6L6 18M6 6l12 12",
+  lock:     "M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2zM7 11V7a5 5 0 0110 0v4",
+  moon:     "M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z",
+  user:     "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z",
+  alert:    "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
+};
+const CardIcon = ({ name, className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d={CARD_PATHS[name]} stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+// One card = count + round icon + label. Click a card to filter the table to it; the "All" card clears the filter.
+function StatCards({ cards, value, onSelect, loading, className }) {
+  return (
+    <div className={`grid gap-3 ${className}`}>
+      {cards.map((c) => {
+        const on = value === c.key;
+        return (
+          <button key={c.key} type="button" onClick={() => onSelect(c.key)}
+            className={`p-4 rounded-2xl border text-left transition-all ${on ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}>
+            <div className="flex items-start justify-between">
+              <div className={`text-2xl font-bold ${on ? "text-teal-600" : "text-gray-800"}`}>{loading ? "…" : c.count}</div>
+              <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${c.color}`}>
+                <CardIcon name={c.icon} />
+              </span>
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5">{c.label}</div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+const ALL_CARD = { icon: "grid", color: "bg-teal-50 text-teal-600" };
 
 // The View dialog for one archived booking. Tabs run along the top:
 //   Booking | Payment | Inspection | Session | Penalties | Refunds | Reviews | Maintenance
@@ -462,27 +749,131 @@ function LocationMap({ record, height = 240 }) {
   );
 }
 
-function Stat({ label, children }) {
+// ─── LIST + WINDOW HELPERS ───────────────────────────────────────────────────
+// Archive dates can arrive as ISO strings or Firestore { _seconds } objects; the shared Stamp / dayKeyOf want an ISO string.
+const toIso = (v) => { const t = asTimestamp(v); return t ? t.toISOString() : v; };
+const msOf  = (v) => { const iso = toIso(v); const t = iso ? new Date(iso).getTime() : NaN; return isNaN(t) ? -Infinity : t; };
+const present = (v) => !(v === null || v === undefined || v === "");
+
+// Same colours as the status badge / cards on the live Bookings page.
+const STATUS_DOT = {
+  "to pay":  "bg-orange-400",
+  upcoming:  "bg-yellow-400",
+  ongoing:   "bg-blue-500",
+  completed: "bg-green-500",
+  cancelled: "bg-red-500",
+  stolen:    "bg-red-700",
+};
+const STATUS_BG = {
+  "to pay":  "bg-orange-50 border border-orange-200",
+  upcoming:  "bg-yellow-50 border border-yellow-200",
+  ongoing:   "bg-blue-50 border border-blue-200",
+  completed: "bg-green-50 border border-green-200",
+  cancelled: "bg-red-50 border border-red-200",
+  stolen:    "bg-red-100 border border-red-300",
+};
+const statusKeyOf = (r) => String(r.status || "").toLowerCase().replace(/_/g, " ");
+function BookingStatusBadge({ status }) {
+  const s = String(status || "").toLowerCase().replace(/_/g, " ");
   return (
-    <div className="rounded-xl border border-gray-100 bg-white px-3 py-2.5 min-w-0">
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{label}</p>
-      <div className="text-sm font-medium text-gray-800 mt-0.5 truncate">{children}</div>
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${STATUS_BG[s] || "bg-gray-50 border border-gray-200"}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[s] || "bg-gray-400"}`} />
+      {status ? String(status).replace(/_/g, " ") : "—"}
+    </span>
+  );
+}
+
+const STATUS_CARDS = [
+  { key: "to pay",    label: "To Pay",    icon: "clock",    color: "bg-orange-50 text-orange-600" },
+  { key: "upcoming",  label: "Upcoming",  icon: "clock",    color: "bg-yellow-50 text-yellow-600" },
+  { key: "ongoing",   label: "Ongoing",   icon: "activity", color: "bg-blue-50 text-blue-600" },
+  { key: "cancelled", label: "Cancelled", icon: "close",    color: "bg-red-50 text-red-600" },
+  { key: "completed", label: "Completed", icon: "check",    color: "bg-green-50 text-green-600" },
+];
+
+// "Search by" options: the two date options open a date picker, the others are text. Status has its own cards.
+const ARCHIVE_SEARCH_BY = [
+  { key: "customer",     label: "Customer",      type: "text" },
+  { key: "booking",      label: "Booking ID",    type: "text" },
+  { key: "archiveId",    label: "Archive ID",    type: "text" },
+  { key: "createdDate",  label: "Created Date",  type: "date" },
+  { key: "archivedDate", label: "Archived Date", type: "date" },
+];
+
+// Fields the "Booking" tab already shows in its own cards, so "All other details" doesn't repeat them.
+const SHOWN_KEYS = [
+  "bookingArchivesId", "bookingID", "userID", "carID", "customerName", "phone", "createdAt", "archivedAt", "archivedBy",
+  "status", "amount", "totalFee", "vehicleName", "serviceTypeName", "startDateTime", "endDateTime", "totalDays",
+  "modeOfDriving", "driverName", "rentalFee", "serviceFee", "gatewayFee", "extraFee", "driversFee",
+];
+
+// The "Booking" tab: same cards as the live Bookings window (customer, booking, fee), plus the archive facts.
+function BookingTab({ record, peso, viewerRole, onGo }) {
+  const customer = useAccount(record.userID);
+  const fees = [
+    ["Rental Fee", record.rentalFee], ["Service Fee", record.serviceFee], ["Gateway Fee", record.gatewayFee],
+    ["Extra Fee", record.extraFee], ["Driver's Fee", record.driversFee],
+  ].filter(([, v]) => Number(v) > 0);
+  const total = record.amount ?? record.totalFee;
+
+  return (
+    <div className="space-y-3">
+      <InfoSection title="Customer" action={<ViewUserButton uid={record.userID} account={customer} viewerRole={viewerRole} onGo={onGo} />}>
+        <InfoField label="Name" value={accountName(record.userID, customer, record.customerName) || record.customerName} />
+        <InfoField label="Email" value={customer && customer.email} />
+        {present(record.phone) && <InfoField label="Phone" value={record.phone} />}
+      </InfoSection>
+
+      <InfoSection title="Booking">
+        <InfoField mono label="Booking ID" value={record.bookingID || record.originalId} />
+        <InfoField label="Created At" value={present(record.createdAt) ? <Stamp iso={toIso(record.createdAt)} /> : null} />
+        {present(record.vehicleName) && <InfoField label="Vehicle" value={record.vehicleName} />}
+        {present(record.serviceTypeName) && <InfoField label="Service Type" value={record.serviceTypeName} />}
+        {present(record.startDateTime) && <InfoField label="Trip Start" value={<Stamp iso={toIso(record.startDateTime)} />} />}
+        {present(record.endDateTime) && <InfoField label="Trip End" value={<Stamp iso={toIso(record.endDateTime)} />} />}
+        {present(record.totalDays) && <InfoField label="Duration" value={`${record.totalDays} day${Number(record.totalDays) > 1 ? "s" : ""}`} />}
+        {present(record.modeOfDriving) && <InfoField label="Driving" value={record.modeOfDriving} />}
+        {present(record.driverName) && <InfoField label="Driver" value={record.driverName} />}
+      </InfoSection>
+
+      <InfoSection title="Booking Fee">
+        {fees.map(([label, v]) => <InfoField key={label} label={label} value={peso(v)} />)}
+        <div className="col-span-2 flex items-baseline justify-end gap-4 pt-3 border-t border-gray-100">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Total Fee</span>
+          <span className="text-base font-bold text-gray-800">{peso(total)}</span>
+        </div>
+      </InfoSection>
+
+      <ArchiveSection archivedAt={toIso(record.archivedAt)} archivedBy={record.archivedBy} showArchivedBy={!!record.archivedBy} />
+
+      <LocationMap record={record} />
+
+      <InfoSection title="Reference">
+        <InfoField mono label="Archive ID" value={record.bookingArchivesId} />
+        <InfoField mono label="Car ID" value={record.carID} />
+        <InfoField mono label="User ID" value={record.userID} />
+      </InfoSection>
+
+      <section className="bg-white border rounded-2xl p-4 shadow-sm">
+        <PaymentEntriesPanel query={{ bookingID: record.bookingID }} title="Money movements for this booking" />
+      </section>
+
+      <details className="bg-white border rounded-2xl shadow-sm">
+        <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase tracking-wide">All other details</summary>
+        <div className="p-4 border-t"><Fields record={record} omit={SHOWN_KEYS} /></div>
+      </details>
     </div>
   );
 }
 
-function BookingArchiveViewModal({ record, token, onClose }) {
+// ─── DETAILS WINDOW ──────────────────────────────────────────────────────────
+// Tabs run along the top (Booking | Payment | Inspection | …); Restore / Delete live in the footer.
+function BookingArchiveViewModal({ record, token, viewerRole, canDelete, busy, onRestore, onDelete, onClose }) {
+  const navigate = useNavigate();
+  const go = (path) => { onClose(); navigate(path); };
   const { fmt } = useCurrency();
   const [active, setActive] = useState("booking");
   const [cache, setCache]   = useState({}); // tab key -> { loading, data, error, message }
-
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  if (!record) return null;
 
   const load = async (tab) => {
     setCache((c) => ({ ...c, [tab.key]: { loading: true } }));
@@ -514,99 +905,73 @@ function BookingArchiveViewModal({ record, token, onClose }) {
   };
 
   const peso = (n) => (n == null ? "—" : fmt ? fmt(n) : `\u20b1${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`);
-  const status = (record.status || "").toLowerCase();
   const activeTab = TABS.find((t) => t.key === active);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
-
-        {/* HEADER */}
-        <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-3 shrink-0">
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold text-teal-600 uppercase tracking-wider">Booking archive</p>
-            <h3 className="text-lg font-semibold text-gray-800 font-mono break-all">{record.bookingID || record.bookingArchivesId}</h3>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {record.customerName || "Unknown customer"}
-              {record.archivedAt ? ` · archived ${fmtDate(record.archivedAt)}` : ""}
-            </p>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            {record.status && (
-              <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS[status] || "bg-gray-100 text-gray-500"}`}>{record.status}</span>
-            )}
-            <button onClick={onClose} aria-label="Close" className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600">✕</button>
-          </div>
-        </div>
-
-        {/* TABS */}
-        <div className="px-6 border-b border-gray-100 shrink-0 overflow-x-auto">
-          <div role="tablist" className="flex gap-1 min-w-max">
-            {TABS.map((tab) => {
-              const on = active === tab.key;
-              const n = countOf(tab);
-              return (
-                <button
-                  key={tab.key}
-                  role="tab"
-                  aria-selected={on}
-                  onClick={() => select(tab)}
-                  className={`relative px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${
-                    on ? "text-teal-700 font-semibold" : "text-gray-500 hover:text-gray-800"
-                  }`}
-                >
-                  {tab.label}
-                  {n !== null && <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[10px] font-medium">{n}</span>}
-                  {on && <span className="absolute left-3 right-3 -bottom-px h-0.5 rounded-full bg-teal-600" />}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* BODY */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 bg-gray-50/40">
-          {active === "booking" ? (
-            <div className="space-y-5">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <Stat label="Customer">{record.customerName || "—"}</Stat>
-                <Stat label="Amount">{peso(record.amount ?? record.totalFee)}</Stat>
-                <Stat label="Booking date">{record.createdAt ? fmtDate(record.createdAt) : "—"}</Stat>
-                <Stat label="Archived at">{record.archivedAt ? fmtDate(record.archivedAt) : "—"}</Stat>
-              </div>
-              <LocationMap record={record} />
-              <section>
-                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">All booking details</h4>
-                <Fields record={record} labels={{ bookingArchivesId: "Archive ID", bookingID: "Booking ID", carID: "Car ID", userID: "User ID" }} />
-              </section>
-              <section className="pt-4 border-t border-gray-100">
-                <PaymentEntriesPanel query={{ bookingID: record.bookingID }} title="Money movements for this booking" />
-              </section>
-            </div>
-          ) : (
-            <LinkedBody tab={activeTab} state={cache[active]} />
-          )}
-        </div>
+  const tabs = (
+    <div className="px-6 border-b border-gray-100 shrink-0 overflow-x-auto">
+      <div role="tablist" className="flex gap-1 min-w-max">
+        {TABS.map((tab) => {
+          const on = active === tab.key;
+          const n = countOf(tab);
+          return (
+            <button
+              key={tab.key}
+              role="tab"
+              aria-selected={on}
+              onClick={() => select(tab)}
+              className={`relative px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${
+                on ? "text-teal-700 font-semibold" : "text-gray-500 hover:text-gray-800"
+              }`}
+            >
+              {tab.label}
+              {n !== null && <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[10px] font-medium">{n}</span>}
+              {on && <span className="absolute left-3 right-3 -bottom-px h-0.5 rounded-full bg-teal-600" />}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
+
+  return (
+    <LogWindow
+      wide
+      title="Booking Archive Details"
+      badges={<BookingStatusBadge status={record.status} />}
+      onClose={onClose}
+      tabs={tabs}
+      footer={<ArchiveFooter onRestore={onRestore} onDelete={onDelete} canDelete={canDelete} busy={busy} onClose={onClose} />}
+    >
+      {active === "booking"
+        ? <BookingTab record={record} peso={peso} viewerRole={viewerRole} onGo={go} />
+        : <LinkedBody tab={activeTab} state={cache[active]} />}
+    </LogWindow>
+  );
 }
 
+// ─── PAGE ────────────────────────────────────────────────────────────────────
 export default function BookingArchivePage() {
-  const { effectiveRole } = useAuth();
+  const { user: viewer, effectiveRole } = useAuth();
   const { fmt } = useCurrency();
   const [records, setRecords]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
   const [search, setSearch]       = useState("");
-  const [dateFrom, setDateFrom]   = useState("");
-  const [dateTo, setDateTo]       = useState("");
-  const [page, setPage]           = useState(1);
+  const [searchBy, setSearchBy]   = useState("customer");
+  const [dateValue, setDateValue] = useState("");   // "YYYY-MM-DD" from the date picker
+  const [statusF, setStatusF]     = useState("All");
   const [toast, setToast]         = useState(null);
-  const [confirmId, setConfirmId] = useState(null); // bookingArchivesId pending delete confirm
+  const [confirmId, setConfirmId] = useState(null);               // bookingArchivesId pending delete confirm
   const [restoreConfirmId, setRestoreConfirmId] = useState(null); // bookingArchivesId pending restore confirm
-  const [actionId, setActionId]   = useState(null); // currently processing id
-  const [viewRecord, setViewRecord] = useState(null); // record currently shown in the detail modal
+  const [actionId, setActionId]   = useState(null);               // currently processing id
+  const [viewRecord, setViewRecord] = useState(null);
+
+  const [sortKey, setSortKey] = useState("created");   // "created" | "archived"
+  const [sortDir, setSortDir] = useState("desc");      // newest on top by default
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("desc"); }
+  };
 
   const token = localStorage.getItem("token");
 
@@ -644,8 +1009,8 @@ export default function BookingArchivePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Restore failed.");
-      // Remove the record from the list since the archive doc was deleted on restore
       setRecords((prev) => prev.filter((r) => r.bookingArchivesId !== bookingArchivesId));
+      setViewRecord(null);
       showToast(data.message || "Booking restored successfully.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
@@ -665,25 +1030,11 @@ export default function BookingArchivePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Delete failed.");
       setRecords((prev) => prev.filter((r) => r.bookingArchivesId !== bookingArchivesId));
+      setViewRecord(null);
       showToast(data.message || "Permanently deleted.", "success");
     } catch (err) { showToast(err.message, "error"); }
     finally { setActionId(null); }
   };
-
-  const filtered = records.filter((r) => {
-    const q = search.toLowerCase();
-    const matchSearch =
-      (r.bookingArchivesId || "").toLowerCase().includes(q) ||
-      (r.bookingID         || "").toLowerCase().includes(q) ||
-      (r.customerName      || "").toLowerCase().includes(q) ||
-      (r.status            || "").toLowerCase().includes(q);
-    return matchSearch && inRange(r.archivedAt, dateFrom, dateTo);
-  });
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  useEffect(() => setPage(1), [search, dateFrom, dateTo]);
 
   const peso = (n) => {
     if (n == null) return "—";
@@ -691,25 +1042,53 @@ export default function BookingArchivePage() {
     return `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
   };
 
-  // The record currently pending delete (for confirm modal details)
+  const filtered = records.filter((r) => {
+    if (statusF !== "All" && statusKeyOf(r) !== statusF) return false;
+    if (searchBy === "archivedDate") return !dateValue || dayKeyOf(toIso(r.archivedAt)) === dateValue;
+    if (searchBy === "createdDate")  return !dateValue || dayKeyOf(toIso(r.createdAt)) === dateValue;
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const hay =
+      searchBy === "booking"   ? `${r.bookingID || ""} ${r.originalId || ""}` :
+      searchBy === "archiveId" ? (r.bookingArchivesId || "") :
+                                 (r.customerName || "");
+    return hay.toLowerCase().includes(q);
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    const av = msOf(sortKey === "archived" ? a.archivedAt : a.createdAt);
+    const bv = msOf(sortKey === "archived" ? b.archivedAt : b.createdAt);
+    if (av === bv) return 0;
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, statusF, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const searchOpt = ARCHIVE_SEARCH_BY.find((o) => o.key === searchBy) || ARCHIVE_SEARCH_BY[0];
+  const filtersActive = !!search.trim() || !!dateValue || statusF !== "All";
   const confirmRecord = records.find((r) => r.bookingArchivesId === confirmId);
   const restoreConfirmRecord = records.find((r) => r.bookingArchivesId === restoreConfirmId);
+  const canDelete = effectiveRole === ROLES.OWNER;
 
   return (
-    <div className="w-full px-6 py-6">
+    <div className="w-full px-4 space-y-5">
 
       {/* TOAST */}
       {toast && (
-        <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${
-          toast.type === "error" ? "bg-red-500" : "bg-teal-600"
+        <div className={`fixed top-5 right-5 z-[80] px-5 py-3 rounded-xl shadow-lg text-sm font-medium transition-all ${
+          toast.type === "error"
+            ? "bg-red-50 text-red-700 border border-red-200"
+            : "bg-green-50 text-green-700 border border-green-200"
         }`}>
           {toast.msg}
         </div>
       )}
 
-      {/* CASCADE RESTORE CONFIRM MODAL */}
+      {/* z-[70]: the two confirmations open on top of the details window they were started from. */}
+      {/* CASCADE RESTORE CONFIRM */}
       {restoreConfirmId && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-2xl shadow-xl p-6 w-96">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-full bg-teal-100 flex items-center justify-center text-teal-600 text-lg">↺</div>
@@ -734,31 +1113,16 @@ export default function BookingArchivePage() {
               <p className="text-xs text-teal-600 mt-1">All matching archive records will be removed once restored.</p>
             </div>
             <div className="flex flex-wrap gap-2 justify-end">
-              <button
-                onClick={() => setRestoreConfirmId(null)}
-                className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleRestore(restoreConfirmId)}
-                className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700"
-              >
-                Yes, Restore
-              </button>
+              <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* VIEW MODAL — booking + tabs for everything archived with it (payment, inspection, session, penalties, refunds, reviews, maintenance) */}
-      {viewRecord && (
-        <BookingArchiveViewModal record={viewRecord} token={token} onClose={() => setViewRecord(null)} />
-      )}
-
-      {/* CASCADE DELETE CONFIRM MODAL */}
+      {/* CASCADE DELETE CONFIRM */}
       {confirmId && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-2xl shadow-xl p-6 w-96">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-red-600 text-lg">🗑</div>
@@ -784,146 +1148,126 @@ export default function BookingArchivePage() {
               <p className="text-xs text-amber-600 mt-1">This action cannot be undone.</p>
             </div>
             <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setConfirmId(null)}
-                className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDelete(confirmId)}
-                className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm hover:bg-red-600"
-              >
-                Yes, Delete All
-              </button>
+              <button onClick={() => setConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleDelete(confirmId)} className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm hover:bg-red-600">Yes, Delete All</button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="mb-6">
+      {/* DETAILS WINDOW — booking + tabs for everything archived with it (payment, inspection, session, penalties, refunds, reviews, maintenance) */}
+      {viewRecord && (
+        <BookingArchiveViewModal
+          record={viewRecord}
+          token={token}
+          viewerRole={viewer?.role}
+          canDelete={canDelete}
+          busy={!!actionId}
+          onRestore={() => setRestoreConfirmId(viewRecord.bookingArchivesId)}
+          onDelete={() => setConfirmId(viewRecord.bookingArchivesId)}
+          onClose={() => setViewRecord(null)}
+        />
+      )}
+
+      <div>
         <h1 className="text-2xl font-bold text-gray-800 tracking-tight">BOOKING ARCHIVE</h1>
         <p className="text-sm text-gray-400 mt-1">
           {loading ? "Loading…" : `${filtered.length} archived record${filtered.length !== 1 ? "s" : ""}`}
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-3 mb-5">
-        <input
-          type="text"
-          placeholder="Search by archive ID, booking ID, status…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 w-72"
-        />
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-400 whitespace-nowrap">Archived from</label>
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400" />
-          <label className="text-xs text-gray-400">to</label>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400" />
-        </div>
-        <button onClick={fetchRecords} disabled={loading} className="px-4 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 ml-auto">
-          {loading ? "…" : "Refresh"}
-        </button>
-      </div>
+      {error && <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">{error}</div>}
 
-      {error && <div className="mb-4 p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">{error}</div>}
+      {/* STATUS CARDS: same look as the Bookings status cards. Click one to filter; "All" clears it. */}
+      <StatCards loading={loading} value={statusF} onSelect={setStatusF} className="grid-cols-3 sm:grid-cols-6"
+        cards={[
+          { key: "All", label: "All Bookings", count: records.length, ...ALL_CARD },
+          ...STATUS_CARDS.map((c) => ({ ...c, count: records.filter((r) => statusKeyOf(r) === c.key).length })),
+        ]} />
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Archive ID</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Deleted Booking ID</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Customer</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Booking Date</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Archived At</th>
-              <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              Array.from({ length: 6 }).map((_, i) => (
-                <tr key={i} className="border-b border-gray-50">
-                  {Array.from({ length: 8 }).map((_, j) => (
-                    <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
-                  ))}
-                </tr>
-              ))
-            ) : paginated.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-16 text-gray-400 text-sm">{search || dateFrom || dateTo ? "No records match your filters." : "No archived bookings found."}</td></tr>
-            ) : (
-              paginated.map((r, i) => (
-                <tr key={r.bookingArchivesId} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors ${i % 2 !== 0 ? "bg-gray-50/20" : ""}`}>
-                  {/* Archive ID */}
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[130px]" title={r.bookingArchivesId}>
-                    {r.bookingArchivesId}
-                  </td>
-                  {/* Deleted Booking ID — the main identifier of what was deleted */}
-                  <td className="px-4 py-3 max-w-[180px]">
-                    <span className="font-mono text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-lg break-all">
-                      {r.bookingID || r.originalId || "—"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-700">{r.customerName || "—"}</td>
-                  <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatDate(r.createdAt)}</td>
-                  <td className="px-4 py-3 text-xs text-gray-700 font-medium">{peso(r.amount ?? r.totalFee)}</td>
-                  <td className="px-4 py-3 text-xs">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor[(r.status || "").toLowerCase()] || "bg-gray-100 text-gray-500"}`}>
-                      {r.status || "—"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
-                    <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-xs font-medium">{formatDate(r.archivedAt)}</span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex gap-2 justify-end">
-                      <button
-                        onClick={() => setViewRecord(r)}
-                        disabled={!!actionId}
-                        title="View full archived record"
-                        className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 whitespace-nowrap"
-                      >
-                        View
-                      </button>
-                      <button
-                        onClick={() => setRestoreConfirmId(r.bookingArchivesId)}
-                        disabled={!!actionId}
-                        title="Restores the booking and everything archived with it (payment, entries, reviews, session, penalties, refunds, driver, cancellation, maintenance) and removes the archive records"
-                        className="px-3 py-1.5 text-xs rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 whitespace-nowrap"
-                      >
-                        {actionId === r.bookingArchivesId ? "…" : "Restore"}
-                      </button>
-                      {(effectiveRole === ROLES.OWNER || effectiveRole === ROLES.ADMIN) && (
-                      <button
-                        onClick={() => setConfirmId(r.bookingArchivesId)}
-                        disabled={!!actionId}
-                        title="Permanently deletes this archive and everything archived with it, plus its inspection records"
-                        className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-40 whitespace-nowrap"
-                      >
-                        Delete
-                      </button>
-                    )}
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {!loading && filtered.length > PAGE_SIZE && (
-        <div className="flex items-center justify-between mt-4 text-sm text-gray-500">
-          <span>Page {page} of {totalPages}</span>
-          <div className="flex gap-2">
-            <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">← Prev</button>
-            <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">Next →</button>
+      {/* TABLE: the search sits on top of the table inside one box, same as the other archive pages */}
+      <div className="bg-white rounded-2xl border overflow-hidden">
+        {/* SEARCH + FILTERS */}
+        <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+              {ARCHIVE_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
           </div>
+          {searchOpt.type === "date" ? (
+            <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          ) : (
+            <input type="text" placeholder={`Enter ${searchOpt.label.toLowerCase()}...`}
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          )}
+          <button onClick={fetchRecords} disabled={loading}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            <IconRefresh className="w-3.5 h-3.5" />
+            Refresh
+          </button>
         </div>
-      )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[1000px]">
+            <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+              <tr>
+                <SortableTh label="Created At" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Archived At" sortKey="archived" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left">Booking ID</th>
+                <th className="px-4 py-3 text-left">Customer</th>
+                <th className="px-4 py-3 text-left">Amount</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="pl-4 pr-8 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-t">
+                    {Array.from({ length: 7 }).map((__, j) => (
+                      <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
+                    ))}
+                  </tr>
+                ))
+              ) : paginated.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-center text-gray-400 py-12">
+                    {filtersActive ? "No records match your filters." : "No archived bookings found."}
+                  </td>
+                </tr>
+              ) : (
+                paginated.map((r) => (
+                  <tr key={r.bookingArchivesId} className="border-t hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3"><Stamp iso={toIso(r.createdAt)} /></td>
+                    <td className="px-4 py-3"><Stamp iso={toIso(r.archivedAt)} /></td>
+                    <td className="px-4 py-3 max-w-[200px]" title={r.bookingArchivesId}>
+                      <span className="font-mono text-xs font-semibold text-gray-700 break-all">{r.bookingID || r.originalId || "—"}</span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.customerName || "—"}</td>
+                    <td className="px-4 py-3 text-gray-700 font-medium whitespace-nowrap">{peso(r.amount ?? r.totalFee)}</td>
+                    <td className="px-4 py-3"><BookingStatusBadge status={r.status} /></td>
+                    <td className="pl-4 pr-8 py-3 text-right">
+                      <button onClick={() => setViewRecord(r)}
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                    </td>
+                  </tr>
+                ))
+              )}
+              {/* Pad a short page with empty rows so the table always keeps its 10-row height. */}
+              {!loading && paginated.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - paginated.length) }).map((_, i) => (
+                <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                  <td colSpan={7} className="h-[53px]">&nbsp;</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
+      </div>
     </div>
   );
 }

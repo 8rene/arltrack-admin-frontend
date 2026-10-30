@@ -1445,17 +1445,20 @@ export default function Penalties() {
     setSearchParams((prev) => { prev.delete("bookingID"); return prev; }, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const [sortKey, setSortKey] = useState(null); // null = default (newest first; active stat card's rows on top)
-  const [sortDir, setSortDir] = useState("asc");
+  // Same as Bookings: opens sorted by Created At, newest on top (down arrow shown).
+  // null only while a stat card is active (its matching rows float to the top instead).
+  const [sortKey, setSortKey] = useState("date");
+  const [sortDir, setSortDir] = useState("desc");
   const handleSort = (key) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
+    else { setSortKey(key); setSortDir(key === "date" ? "desc" : "asc"); }
   };
 
   const toggleStatFilter = (key) => {
     setActiveStatFilter((v) => {
       const next = v === key ? null : key;
       if (next) { setSortKey(null); setSortDir("asc"); } // card's "matching rows on top" needs the default order
+      else { setSortKey("date"); setSortDir("desc"); }   // card turned off -> back to newest-first like Bookings
       return next;
     });
   };

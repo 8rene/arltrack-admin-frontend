@@ -170,7 +170,7 @@ function usePagination(items, pageSize = PAGE_SIZE) {
 }
 
 function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null;
 
   const nums = [];
   const add = (n) => nums.push(n);
@@ -269,6 +269,7 @@ function dayKey(val) {
 // The "name" label is swapped for the role's singular label (Customer, Driver…).
 const SEARCH_BY = [
   { key: "joined",   label: "Joined",      type: "date" },
+  { key: "lastActive", label: "Last Activity", type: "date" },
   { key: "name",     label: null,          type: "text" },
   { key: "email",    label: "Email",       type: "text" },
   { key: "phone",    label: "Contact No.", type: "text" },
@@ -522,6 +523,10 @@ export default function Users() {
   // same state DirectoryTab's search bar / status pills already use.
   const [directoryFilter, setDirectoryFilter] = useState("All");
   useEffect(() => { setDirectoryFilter("All"); }, [roleTab]);
+  // Same idea for the Document Request / Edit Request tables: the pending cards set these before switching tab.
+  const [docStatus, setDocStatus]         = useState("all"); // Document Request: "all" | "pending" | "approved" | "rejected" | "cancelled"
+  const [docRequestType, setDocRequestType] = useState("all"); // "all" | "new" | "resubmit"
+  const [editStatus, setEditStatus]       = useState("all"); // Edit Request: same status values
 
   // Only Admin and Owner accounts get 200s from DELETE /api/users/:uid
   // today (see user.routes.js). Hiding the action for everyone else avoids
@@ -591,21 +596,21 @@ export default function Users() {
   // The people in the role tab that is open right now. Requests are only shown / counted for these,
   // so a customer's request never appears under Drivers (and vice versa).
   const roleUserIDs = useMemo(() => new Set(users.map(u => u.id)), [users]);
-  const pendingEditReqCount = pendingEditReqUIDs.filter(id => roleUserIDs.has(id)).length;
   const pendingIdReqCount   = pendingIdReqUIDs.filter(id => roleUserIDs.has(id)).length;
+  const pendingEditReqCount = pendingEditReqUIDs.filter(id => roleUserIDs.has(id)).length;
+  // Each count is fetched on its own, so one failing query can't leave the other stuck at 0.
   const fetchEditReqCounts = useCallback(async () => {
-    try {
-      const [editSnap, idSnap] = await Promise.all([
-        getDocs(query(collection(db, "editRequests"), where("status", "==", "pending"))),
-        getDocs(query(collection(db, "idResubmitRequests"), where("status", "==", "pending"))),
-      ]);
-      setPendingEditReqUIDs(editSnap.docs.map(d => d.data().userID));
-      setPendingIdReqUIDs(idSnap.docs.map(d => d.data().userID));
-    } catch (e) {
-      console.error("Edit request count fetch error:", e);
-    }
+    await Promise.all([
+      getDocs(query(collection(db, "editRequests"), where("status", "==", "pending")))
+        .then(snap => setPendingEditReqUIDs(snap.docs.map(d => d.data().userID)))
+        .catch(e => console.error("Edit request count fetch error:", e)),
+      getDocs(query(collection(db, "idResubmitRequests"), where("status", "==", "pending")))
+        .then(snap => setPendingIdReqUIDs(snap.docs.map(d => d.data().userID)))
+        .catch(e => console.error("ID resubmit count fetch error:", e)),
+    ]);
   }, []);
-  useEffect(() => { fetchEditReqCounts(); }, [fetchEditReqCounts]);
+  // On load AND whenever the role tab changes, so the badge never stays at its first value.
+  useEffect(() => { fetchEditReqCounts(); }, [fetchEditReqCounts, roleTab]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
   // Reset to the directory sub-tab whenever the role-tab changes (e.g. the
@@ -644,12 +649,10 @@ export default function Users() {
       const bT = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
       return bT - aT;
     });
-  const verifiedCount = users.filter(u => u.isVerified === true).length;
-  const flaggedCount  = users.filter(u => u.isFlagged === true).length;
   const showVerification = activeRole.hasDocsSubTab; // ID verification stat cards apply to any role with a Document Request tab
 
   const RefreshBtn = () => (
-    <button onClick={fetchUsers}
+    <button onClick={() => { fetchUsers(); fetchEditReqCounts(); }}
       className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 transition-colors">
       <Icons.Refresh className="w-4 h-4" />
       Refresh
@@ -674,49 +677,54 @@ export default function Users() {
         })}
       </div>
 
-      {/* STAT CARDS — also act as quick filters for the List tab below */}
-      <div className={`grid gap-4 ${showVerification ? "grid-cols-3 xl:grid-cols-6" : "grid-cols-2 md:grid-cols-4"}`}>
-        <StatCard title="Total"    value={users.length} Icon={Icons.Users}       color="teal"
-          selected={directoryFilter === "All"}      onClick={() => { setDirectoryFilter("All");      setSubTab("directory"); }} />
-        <StatCard title="Active"   value={users.filter(u => u.status?.toLowerCase() === "active").length}   Icon={Icons.CheckCircle} color="green"
-          selected={directoryFilter === "active"}   onClick={() => { setDirectoryFilter("active");   setSubTab("directory"); }} />
-        <StatCard title="Inactive" value={users.filter(u => u.status?.toLowerCase() === "inactive").length} Icon={Icons.Moon}        color="gray"
-          selected={directoryFilter === "inactive"} onClick={() => { setDirectoryFilter("inactive"); setSubTab("directory"); }} />
-        <StatCard title="Locked"   value={users.filter(u => u.status?.toLowerCase() === "locked").length}   Icon={Icons.Lock}        color="amber"
-          selected={directoryFilter === "locked"}   onClick={() => { setDirectoryFilter("locked");   setSubTab("directory"); }} />
-        {showVerification && <StatCard title="ID Verified" value={verifiedCount} Icon={Icons.IdCard} color="blue"
-          selected={directoryFilter === "verified"} onClick={() => { setDirectoryFilter("verified"); setSubTab("directory"); }} />}
-        {showVerification && <StatCard title="Flagged"     value={flaggedCount}  Icon={Icons.Flag}   color="red"
-          selected={directoryFilter === "flagged"}  onClick={() => { setDirectoryFilter("flagged");  setSubTab("directory"); }} />}
+      {/* STAT CARDS — Total opens the List; the pending cards open their request table already filtered to Pending */}
+      <div className="bg-white rounded-2xl shadow-sm border">
+      <div className="grid gap-3 grid-cols-2 md:grid-cols-4 p-4">
+        <StatCard flat title="Total Users" value={users.length} Icon={Icons.Users} color="teal"
+          selected={subTab === "directory" && directoryFilter === "All"}
+          onClick={() => { setDirectoryFilter("All"); setSubTab("directory"); }} />
+        {activeRole.hasDocsSubTab && (
+          <StatCard flat title="Pending Verification" value={pendingDocs.length} Icon={Icons.IdCard} color="amber"
+            selected={subTab === "documents" && docStatus === "pending" && docRequestType === "new"}
+            onClick={() => { setDocRequestType("new"); setDocStatus("pending"); setSubTab("documents"); }} />
+        )}
+        {activeRole.hasDocsSubTab && (
+          <StatCard flat title="Pending Document Request" value={pendingIdReqCount} Icon={Icons.Document} color="blue"
+            selected={subTab === "documents" && docStatus === "pending" && docRequestType === "resubmit"}
+            onClick={() => { setDocRequestType("resubmit"); setDocStatus("pending"); setSubTab("documents"); }} />
+        )}
+        {activeRole.hasEditRequestSubTab && (
+          <StatCard flat title="Pending Edit Request" value={pendingEditReqCount} Icon={Icons.Edit} color="green"
+            selected={subTab === "editRequests" && editStatus === "pending"}
+            onClick={() => { setEditStatus("pending"); setSubTab("editRequests"); }} />
+        )}
       </div>
 
       {/* SUB-TABS + REFRESH */}
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center border-t px-4 py-3">
         <div className="flex gap-2">
           <button onClick={() => setSubTab("directory")}
-            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "directory" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
+            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "directory" ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
             <Icons.Users className="w-4 h-4" />
             List
-            <span className="ml-1 opacity-70">{users.length}</span>
           </button>
           {activeRole.hasDocsSubTab && (
             <button onClick={() => setSubTab("documents")}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "documents" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "documents" ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
               <Icons.IdCard className="w-4 h-4" />
               Document Request
-              <span className="ml-1 opacity-70 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{pendingDocs.length + pendingIdReqCount}</span>
             </button>
           )}
           {activeRole.hasEditRequestSubTab && (
             <button onClick={() => setSubTab("editRequests")}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "editRequests" ? "bg-teal-600 text-white shadow" : "bg-white border text-gray-600 hover:bg-gray-50"}`}>
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "editRequests" ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
               <Icons.Edit className="w-4 h-4" />
               Edit Request
-              <span className="ml-1 opacity-70 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{pendingEditReqCount}</span>
             </button>
           )}
         </div>
         <RefreshBtn />
+      </div>
       </div>
 
       {/* CONTENT */}
@@ -728,9 +736,10 @@ export default function Users() {
         <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showVerification={showVerification}
           filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole} />
       ) : subTab === "documents" ? (
-        <DocumentsTab users={users} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts} />
+        <DocumentsTab users={users} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts}
+          statusFilter={docStatus} setStatusFilter={setDocStatus} requestType={docRequestType} setRequestType={setDocRequestType} />
       ) : (
-        <EditRequestsTab roleUserIDs={roleUserIDs} onCountChange={fetchEditReqCounts} />
+        <EditRequestsTab roleUserIDs={roleUserIDs} onCountChange={fetchEditReqCounts} statusFilter={editStatus} setStatusFilter={setEditStatus} />
       )}
     </div>
   );
@@ -759,7 +768,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
       setSortDir(d => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
-      setSortDir(key === "joined" ? "desc" : "asc");
+      setSortDir(key === "joined" || key === "lastActive" ? "desc" : "asc");
     }
   };
 
@@ -808,13 +817,11 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
 
   const searchType = SEARCH_BY.find(o => o.key === searchBy)?.type || "text";
   const searchLabel = searchBy === "name" ? roleLabelSingular : (SEARCH_BY.find(o => o.key === searchBy)?.label || "");
-  const hasFilters = !!search.trim() || !!dateValue || filterStatus !== "All";
-  const clearFilters = () => { setSearch(""); setDateValue(""); setFilterStatus("All"); };
 
   const filtered = users.filter(u => {
     let matchSearch = true;
     if (searchType === "date") {
-      if (dateValue) matchSearch = dayKey(u.createdAt) === dateValue;
+      if (dateValue) matchSearch = dayKey(searchBy === "lastActive" ? u.lastActivityAt : u.createdAt) === dateValue;
     } else {
       const q = search.trim().toLowerCase();
       if (q) {
@@ -842,10 +849,12 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
     if (sortKey === "name") return sortDir === "asc"
       ? fullNameOf(a).localeCompare(fullNameOf(b))
       : fullNameOf(b).localeCompare(fullNameOf(a));
-    if (sortKey === "invited") {
-      const av = a.referral?.invitedCount || 0;
-      const bv = b.referral?.invitedCount || 0;
-      return sortDir === "asc" ? av - bv : bv - av;
+    if (sortKey === "lastActive") {
+      // Never-logged-in accounts have no date (-Infinity): last when newest-first, first when oldest-first.
+      const av = toMillis(a.lastActivityAt);
+      const bv = toMillis(b.lastActivityAt);
+      if (av === bv) return 0;
+      return sortDir === "asc" ? (av < bv ? -1 : 1) : (av < bv ? 1 : -1);
     }
     if (sortKey === "account") return sortDir === "asc"
       ? (a.status || "").localeCompare(b.status || "")
@@ -899,11 +908,6 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
           >
             {STATUS_OPTIONS.filter(o => !o.needsVerification || showVerification).map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
-          {hasFilters && (
-            <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
-              Clear
-            </button>
-          )}
         </div>
         {filtered.length === 0 ? (
           <div className="text-center text-gray-400 py-16">No {roleLabel.toLowerCase()} found.</div>
@@ -914,11 +918,11 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                 <tr>
                   <SortableTh label="Joined" sortKey="joined" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label={roleLabelSingular} sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  {showVerification && <th className="px-5 py-3 text-left">Flagged</th>}
                   <th className="px-5 py-3 text-left">Email</th>
                   <th className="px-5 py-3 text-left">Contact No.</th>
-                  <SortableTh label="Referral" sortKey="invited" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-left">ID Status</th>
-                  {showVerification && <th className="px-5 py-3 text-left">Flagged</th>}
+                  <SortableTh label="Last Activity" sortKey="lastActive" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Account" sortKey="account" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-5 py-3 text-right">Action</th>
                 </tr>
@@ -946,26 +950,6 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                           </div>
                         </div>
                       </td>
-                      <td className="px-5 py-3 text-gray-600 break-all">{u.email || "—"}</td>
-                      <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{u.phone || "—"}</td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        {u.referral?.code ? (
-                          <>
-                            <p className="font-medium text-gray-700">{u.referral.code}</p>
-                            <p className="text-xs text-gray-400">{u.referral.invitedCount || 0} invited</p>
-                          </>
-                        ) : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-5 py-3">
-                        {u.isVerified
-                          ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-green-700 font-medium">
-                              <Icons.Check className="w-3 h-3" /> Verified
-                            </span>
-                          : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium">
-                              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending
-                            </span>
-                        }
-                      </td>
                       {showVerification && (
                         <td className="px-5 py-3">
                           {u.isFlagged
@@ -976,6 +960,26 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                             : <span className="text-gray-400 text-xs">—</span>}
                         </td>
                       )}
+                      <td className="px-5 py-3 text-gray-600 break-all">{u.email || "—"}</td>
+                      <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{u.phone || "—"}</td>
+                      <td className="px-5 py-3">
+                        {u.isVerified
+                          ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-green-700 font-medium">
+                              <Icons.Check className="w-3 h-3" /> Verified
+                            </span>
+                          : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending
+                            </span>
+                        }
+                      </td>
+                      <td className="px-5 py-3 whitespace-nowrap">
+                        {u.lastActivityAt ? (
+                          <>
+                            <span className="text-gray-700">{fmtDate(u.lastActivityAt)}</span>
+                            {fmtTime(u.lastActivityAt) && (<><span className="mx-1.5 text-gray-300">|</span><span className="text-gray-500">{fmtTime(u.lastActivityAt)}</span></>)}
+                          </>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="px-5 py-3">
                         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium capitalize text-black ${
                           u.status?.toLowerCase() === "active"   ? "bg-blue-50 border border-blue-200" :
@@ -994,6 +998,12 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                     </tr>
                   );
                 })}
+                {/* Same as Bookings: pad a short page with empty rows so the table always keeps its 10-row height. */}
+                {Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
+                  <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                    <td colSpan={showVerification ? 9 : 8} className="h-[60px]">&nbsp;</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -1167,7 +1177,6 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
                 <Field label="Municipality" value={addr.municipality} />
                 <Field label="City"         value={addr.city} />
                 <Field label="Province"     value={addr.province} />
-                <Field label="Village"      value={addr.village} />
                 <Field label="Postal Code"  value={addr.postalCode || addr.zipCode} />
               </Section>
 
@@ -1300,11 +1309,13 @@ const PROFILE_FIELDS = [
   { key: "municipality", label: "Municipality", source: "userAddress", group: "address" },
   { key: "city",         label: "City",         source: "userAddress", group: "address" },
   { key: "province",     label: "Province",     source: "userAddress", group: "address" },
-  { key: "village",      label: "Village",      source: "userAddress", group: "address" },
   { key: "postalCode",   label: "Postal Code",  source: "userAddress", group: "address" },
 ];
 
 const modalInput = "w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50";
+
+// Same suffix choices as the customer sign-up form.
+const SUFFIX_OPTIONS = ["Jr.", "Sr.", "II", "III", "IV", "V"];
 
 // ─── REPLACE DOCUMENT (Owner/Admin) ────────────────────────────────────────────
 // Upload a new photo of the driver's license (needs its expiry date) or the government ID (needs type + number). It is
@@ -1585,26 +1596,9 @@ async function fetchUserLookup() {
     const u = d.data();
     const det = detailsMap[d.id] || {};
     const name = `${det.firstName || ""} ${det.lastName || ""}`.trim();
-    lookup[d.id] = { name: name || u.username || u.email || d.id, username: u.username || "", email: u.email || "", isFlagged: u.isFlagged === true };
+    lookup[d.id] = { name: name || u.username || u.email || d.id, username: u.username || "", email: u.email || "", isFlagged: u.isFlagged === true, profileImage: u.profileImage || "" };
   });
   return lookup;
-}
-
-// Pending / History segmented switch shared by Document Request + Edit Request.
-function PendingHistorySwitch({ view, setView, pendingCount, historyCount }) {
-  const btn = (key, label, n, pendingStyle) => (
-    <button onClick={() => setView(key)}
-      className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${view === key ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
-      {label}
-      <span className={`text-xs px-1.5 py-0.5 rounded-full ${pendingStyle && n > 0 ? "bg-yellow-100 text-yellow-700" : "bg-gray-100 text-gray-500"}`}>{n}</span>
-    </button>
-  );
-  return (
-    <div className="inline-flex p-1 bg-gray-100 rounded-xl gap-1">
-      {btn("pending", "Pending", pendingCount, true)}
-      {btn("history", "History", historyCount, false)}
-    </div>
-  );
 }
 
 // ─── ID SUBMISSION FILTERS (shared by New ID + Resubmit ID) ──────────────────
@@ -1645,7 +1639,7 @@ function RequestTypePill({ kind }) {
 }
 
 // Search by (Submitted by / Submitted date) + Status — same look as the Directory's bar.
-function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setDateValue, status, setStatus, statusOptions, requestType, setRequestType, hasFilters, onClear }) {
+function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setDateValue, status, setStatus, statusOptions, requestType, setRequestType }) {
   return (
     <div className="flex flex-wrap gap-3 items-end p-4 border-b">
       <div className="flex flex-col gap-1">
@@ -1673,11 +1667,6 @@ function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setD
         className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
         {statusOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
       </select>
-      {hasFilters && (
-        <button onClick={onClear} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
-          Clear
-        </button>
-      )}
     </div>
   );
 }
@@ -1783,22 +1772,20 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
     } catch (e) { console.error("Verify error:", e); }
   };
 
-  const hasFilters = !!search.trim() || !!dateValue || statusFilter !== "pending" || requestType !== "all";
-  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("pending"); setRequestType("all"); };
   const showReviewed = statusFilter !== "pending";
+  const noFilters = !search.trim() && !dateValue && requestType === "all"; // plain "Pending" view -> friendly empty state
 
   return (
     <>
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
         <IdFilterBar searchBy={searchBy} setSearchBy={setSearchBy} search={search} setSearch={setSearch}
           dateValue={dateValue} setDateValue={setDateValue} status={statusFilter} setStatus={setStatusFilter}
-          statusOptions={ID_STATUS_OPTIONS} requestType={requestType} setRequestType={setRequestType}
-          hasFilters={hasFilters} onClear={clearFilters} />
+          statusOptions={ID_STATUS_OPTIONS} requestType={requestType} setRequestType={setRequestType} />
         {loading ? (
           <div className="p-5 space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
         ) : filtered.length === 0 ? (
           <div className="text-center text-gray-400 py-16">
-            {statusFilter === "pending" && !hasFilters ? (
+            {statusFilter === "pending" && noFilters ? (
               <>
                 <div className="flex justify-center mb-3">
                   <div className="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center">
@@ -1867,6 +1854,12 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
                     </tr>
                   );
                 })}
+                {/* Same as Bookings: pad a short page with empty rows so the table always keeps its 10-row height. */}
+                {Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
+                  <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                    <td colSpan={showReviewed ? 9 : 8} className="h-[60px]">&nbsp;</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -2040,9 +2033,7 @@ function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove
 // "Request" column tells them apart (New ID / Resubmission).
 // (Resubmits used to live under "Edit Request"; they're document reviews, so
 // they sit here now.)
-function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", onCountChange }) {
-  const [requestType, setRequestType] = useState("all"); // "all" | "new" | "resubmit"
-  const [statusFilter, setStatusFilter] = useState("pending");
+function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", onCountChange, statusFilter, setStatusFilter, requestType, setRequestType }) {
   const [openNewUserID, setOpenNewUserID] = useState(null);
   const [allIdReqs, setIdReqs]        = useState([]);
   // Only the resubmissions that belong to the role tab that is open.
@@ -2153,81 +2144,182 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
 // ─── EDIT REQUEST TAB (profile field changes only) ───────────────────────────
 // "editRequests" — field changes submitted from Profile.jsx / Account.jsx.
 // ID/license resubmits are reviewed under the Document Request tab instead.
-// Pending = waiting for review; History = approved / rejected / cancelled.
-function changesSummary(req) {
+// One table: Status = pending / approved / rejected / cancelled.
+// Shown in the Changes column: the first two field names, then "+N more" (the full list is in the tooltip).
+const changeLabels = (req) => {
   const all = req.changes || [];
   const changed = all.filter(c => c.newValue !== c.oldValue);
-  const labels = (changed.length ? changed : all).map(c => c.label).filter(Boolean);
+  return (changed.length ? changed : all).map(c => c.label).filter(Boolean);
+};
+function changesSummary(req) {
+  const labels = changeLabels(req);
   if (labels.length === 0) return "—";
-  return labels.length > 3 ? `${labels.slice(0, 3).join(", ")} +${labels.length - 3} more` : labels.join(", ");
+  return labels.length > 2 ? `${labels.slice(0, 2).join(", ")} +${labels.length - 2} more` : labels.join(", ");
 }
 
-function ProfileRequestsTable({ rows, mode, userLookup, onOpen }) {
-  const [sortDir, setSortDir] = useState("desc"); // newest submitted first
-  const history = mode === "history";
+// One table for every edit request; the Status dropdown (default Pending) picks what you see.
+const EDIT_SEARCH_BY = [
+  { key: "name",      label: "User",      type: "text" },
+  { key: "submitted", label: "Submitted", type: "date" },
+  { key: "reviewed",  label: "Reviewed",  type: "date" },
+];
+
+function EditFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setDateValue, status, setStatus }) {
+  const isDate = EDIT_SEARCH_BY.find(o => o.key === searchBy)?.type === "date";
+  return (
+    <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+        <select
+          value={searchBy}
+          onChange={e => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+          className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+        >
+          {EDIT_SEARCH_BY.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+        </select>
+      </div>
+      {isDate ? (
+        <input type="date" value={dateValue} onChange={e => setDateValue(e.target.value)}
+          className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
+      ) : (
+        <input type="text" placeholder="Enter name or username..." value={search} onChange={e => setSearch(e.target.value)}
+          className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
+      )}
+      <select value={status} onChange={e => setStatus(e.target.value)}
+        className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+        {ID_STATUS_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function ProfileRequestsTable({ rows, userLookup, onOpen, statusFilter, setStatusFilter }) {
+  const [searchBy, setSearchBy]   = useState("name");
+  const [search, setSearch]       = useState("");
+  const [dateValue, setDateValue] = useState("");
+  const [sortKey, setSortKey]     = useState("submitted");
+  const [sortDir, setSortDir]     = useState("desc"); // newest submitted first
+  const handleSort = (key) => {
+    if (key === sortKey) { setSortDir(d => (d === "asc" ? "desc" : "asc")); return; }
+    setSortKey(key);
+    setSortDir(key === "name" || key === "status" ? "asc" : "desc");
+  };
+
+  const allRows = useMemo(() => rows.map(req => {
+    const u = userLookup[req.userID] || {};
+    const name = u.name || req.userID;
+    const parts = String(name).split(/\s+/).filter(Boolean);
+    return {
+      req, id: req.id, name, username: u.username || "", profileImage: u.profileImage || "",
+      initials: ((parts[0]?.[0] || "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase(),
+      status: req.status || "pending", createdAt: req.createdAt, reviewedAt: req.reviewedAt,
+    };
+  }), [rows, userLookup]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allRows.filter(r => {
+      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (searchBy === "submitted") return !dateValue || dayKey(r.createdAt) === dateValue;
+      if (searchBy === "reviewed")  return !dateValue || dayKey(r.reviewedAt) === dateValue;
+      if (!q) return true;
+      return `${r.name} ${r.username}`.toLowerCase().includes(q);
+    });
+  }, [allRows, statusFilter, searchBy, search, dateValue]);
+
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...rows].sort((a, b) => {
-      const x = toMillis(a.createdAt), y = toMillis(b.createdAt);
-      return dir * ((x > y) - (x < y));
+    const byTime = (a, b) => toMillis(b.createdAt) - toMillis(a.createdAt); // tie-break: newest first
+    return [...filtered].sort((a, b) => {
+      let c = 0;
+      if (sortKey === "submitted")     { const x = toMillis(a.createdAt), y = toMillis(b.createdAt); c = (x > y) - (x < y); }
+      else if (sortKey === "name")     c = a.name.localeCompare(b.name);
+      else if (sortKey === "status")   c = a.status.localeCompare(b.status);
+      else if (sortKey === "reviewed") { const x = toMillis(a.reviewedAt), y = toMillis(b.reviewedAt); c = (x > y) - (x < y); }
+      return c !== 0 ? dir * c : byTime(a, b);
     });
-  }, [rows, sortDir]);
+  }, [filtered, sortKey, sortDir]);
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
-  useEffect(() => { setPage(1); }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [rows, search, searchBy, dateValue, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const noFilters = !search.trim() && !dateValue; // plain "Pending" view -> friendly empty state
 
   return (
     <>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-gray-400 text-xs uppercase bg-gray-50">
-            <tr>
-              <SortableTh label="Submitted Date" sortKey="submitted" sortKeyState="submitted" sortDir={sortDir}
-                onSort={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))} />
-              <th className="px-5 py-3 text-left">Submitted Time</th>
-              <th className="px-5 py-3 text-left">User</th>
-              <th className="px-5 py-3 text-left">Changes</th>
-              {history && <th className="px-5 py-3 text-left">Status</th>}
-              {history && <th className="px-5 py-3 text-left">Reviewed Date</th>}
-              {history && <th className="px-5 py-3 text-left">Reviewed Time</th>}
-              <th className="px-5 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {pageItems.map(req => {
-              const u = userLookup[req.userID] || {};
-              return (
-                <tr key={req.id} className="border-t hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-3 whitespace-nowrap"><DateOnlyCell value={req.createdAt} /></td>
-                  <td className="px-5 py-3 whitespace-nowrap"><TimeOnlyCell value={req.createdAt} /></td>
+      <EditFilterBar searchBy={searchBy} setSearchBy={setSearchBy} search={search} setSearch={setSearch}
+        dateValue={dateValue} setDateValue={setDateValue} status={statusFilter} setStatus={setStatusFilter} />
+      {filtered.length === 0 ? (
+        <div className="text-center text-gray-400 py-16">
+          {statusFilter === "pending" && noFilters ? (
+            <>
+              <div className="flex justify-center mb-3">
+                <div className="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center">
+                  <Icons.CheckCircle className="w-7 h-7 text-green-500" />
+                </div>
+              </div>
+              <p>No pending profile edit requests</p>
+            </>
+          ) : (
+            <p>No profile edit requests found.</p>
+          )}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-gray-400 text-xs uppercase bg-gray-50">
+              <tr>
+                <SortableTh label="Submitted" sortKey="submitted" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="User" sortKey="name" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-5 py-3 text-left">Changes</th>
+                <SortableTh label="Status" sortKey="status" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Reviewed" sortKey="reviewed" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-5 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageItems.map(r => (
+                <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={r.createdAt} /></td>
                   <td className="px-5 py-3">
-                    <p className="font-semibold text-gray-800">{u.name || req.userID}</p>
-                    <p className="text-xs text-gray-400">@{u.username || "—"}</p>
+                    <div className="flex items-center gap-3">
+                      <UserAvatar key={r.profileImage || "none"} src={r.profileImage} initials={r.initials} />
+                      <div>
+                        <p className="font-semibold text-gray-800">{r.name}</p>
+                        <p className="text-xs text-gray-400">@{r.username || "—"}</p>
+                      </div>
+                    </div>
                   </td>
-                  <td className="px-5 py-3 text-gray-600">{changesSummary(req)}</td>
-                  {history && <td className="px-5 py-3"><RequestStatusPill status={req.status} /></td>}
-                  {history && <td className="px-5 py-3 whitespace-nowrap"><DateOnlyCell value={req.reviewedAt} /></td>}
-                  {history && <td className="px-5 py-3 whitespace-nowrap"><TimeOnlyCell value={req.reviewedAt} /></td>}
+                  <td className="px-5 py-3 text-gray-600 max-w-[16rem]">
+                    <span className="block truncate" title={changeLabels(r.req).join(", ")}>{changesSummary(r.req)}</span>
+                  </td>
+                  <td className="px-5 py-3"><RequestStatusPill status={r.status} /></td>
+                  <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={r.reviewedAt} /></td>
                   <td className="px-5 py-3">
                     <div className="flex justify-end">
-                      <button onClick={() => onOpen(req.id)}
-                        className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
+                      <button onClick={() => onOpen(r.id)}
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
                         View
                       </button>
                     </div>
                   </td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              ))}
+              {/* Same as Bookings: pad a short page with empty rows so the table always keeps its 10-row height. */}
+              {Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
+                <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                  <td colSpan={6} className="h-[60px]">&nbsp;</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
     </>
   );
 }
 
-function EditRequestsTab({ roleUserIDs, onCountChange }) {
-  const [view, setView]               = useState("pending"); // "pending" | "history"
+function EditRequestsTab({ roleUserIDs, onCountChange, statusFilter, setStatusFilter }) {
   const [allProfileReqs, setProfileReqs] = useState([]);
   // Only the edit requests that belong to the role tab that is open.
   const profileReqs = useMemo(() => allProfileReqs.filter(r => roleUserIDs?.has(r.userID)), [allProfileReqs, roleUserIDs]);
@@ -2247,7 +2339,7 @@ function EditRequestsTab({ roleUserIDs, onCountChange }) {
     const mine = profileReqs.filter(r => r.id === openID || r.userID === openID);
     if (mine.length) {
       const target = mine.find(r => r.status === "pending") || mine[0];
-      setView(target.status === "pending" ? "pending" : "history");
+      setStatusFilter(target.status || "pending");
       setViewReqID(target.id);
     }
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
@@ -2295,8 +2387,6 @@ function EditRequestsTab({ roleUserIDs, onCountChange }) {
     finally { setBusyId(null); }
   };
 
-  const pendingReqs = profileReqs.filter(r => r.status === "pending");
-  const historyReqs = profileReqs.filter(r => r.status !== "pending");
   const viewReq     = profileReqs.find(r => r.id === viewReqID);
 
   if (loading) {
@@ -2309,31 +2399,14 @@ function EditRequestsTab({ roleUserIDs, onCountChange }) {
 
   return (
     <div className="space-y-4">
-      <PendingHistorySwitch view={view} setView={setView}
-        pendingCount={pendingReqs.length} historyCount={historyReqs.length} />
-
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-        <div className="px-5 py-4 border-b">
-          <h2 className="font-bold text-lg text-gray-800">
-            {view === "pending" ? "Pending Profile Edit Requests" : "Profile Edit History"}{" "}
-            <span className="text-gray-400 text-sm font-normal">({view === "pending" ? pendingReqs.length : historyReqs.length})</span>
-          </h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {view === "pending" ? "Field changes waiting for your review" : "Approved, rejected and cancelled profile edit requests"}
-          </p>
-        </div>
-        {(view === "pending" ? pendingReqs : historyReqs).length === 0 ? (
-          <div className="text-center text-gray-400 py-10">
-            {view === "pending" ? "No pending profile edit requests." : "No reviewed profile edit requests yet."}
-          </div>
-        ) : (
-          <ProfileRequestsTable
-            rows={view === "pending" ? pendingReqs : historyReqs}
-            mode={view}
-            userLookup={userLookup}
-            onOpen={setViewReqID}
-          />
-        )}
+        <ProfileRequestsTable
+          rows={profileReqs}
+          userLookup={userLookup}
+          onOpen={setViewReqID}
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+        />
       </div>
 
       {rejectTarget && (
@@ -2347,6 +2420,7 @@ function EditRequestsTab({ roleUserIDs, onCountChange }) {
         <ProfileRequestHistoryModal
           userID={viewReq.userID}
           user={userLookup[viewReq.userID]}
+          userLookup={userLookup}
           requests={[viewReq]}
           busyId={busyId}
           onClose={() => setViewReqID(null)}
@@ -2358,7 +2432,27 @@ function EditRequestsTab({ roleUserIDs, onCountChange }) {
   );
 }
 
-function ProfileRequestHistoryModal({ userID, user, requests, busyId, onClose, onApprove, onReject }) {
+// Same look as the user details cards: a bordered card with a titled header strip, label-over-value cells inside.
+const ReqField = ({ label, value, wide }) => (
+  <div className={wide ? "col-span-2" : ""}>
+    <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+    <p className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</p>
+  </div>
+);
+const ReqCard = ({ title, icon: Icon, aside, children }) => (
+  <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+    <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+      <h3 className="flex items-center gap-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
+        {Icon && <Icon className="w-4 h-4 text-teal-600" />}
+        {title}
+      </h3>
+      {aside}
+    </div>
+    <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>
+  </section>
+);
+
+function ProfileRequestHistoryModal({ userID, user, userLookup = {}, requests, busyId, onClose, onApprove, onReject }) {
   const StatusPill = ({ status }) => {
     const map = {
       pending:   "bg-yellow-50 border-yellow-200 text-yellow-700",
@@ -2369,30 +2463,50 @@ function ProfileRequestHistoryModal({ userID, user, requests, busyId, onClose, o
     return <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border capitalize ${map[status] || map.cancelled}`}>{status}</span>;
   };
 
+  const when = (v) => (v ? `${fmtDate(v)}${fmtTime(v) ? " | " + fmtTime(v) : ""}` : "—");
+  const reviewerName = (req) => (req.reviewedBy ? (userLookup[req.reviewedBy]?.name || "Unknown staff") : "—");
+  // Who last updated the request: the staff member who approved / rejected it, or the requester when they cancelled it.
+  const updatedBy = (req) => {
+    if (req.status === "approved" || req.status === "rejected") return reviewerName(req);
+    if (req.status === "cancelled") return user?.name || userID;
+    return "—";
+  };
+  const updatedOn = (req) => ((req.status === "approved" || req.status === "rejected") ? when(req.reviewedAt) : req.status === "cancelled" ? when(req.updatedAt) : "—");
+
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
           <div>
             <h2 className="font-bold text-lg text-gray-800">{user?.name || userID}</h2>
-            <p className="text-xs text-gray-400">@{user?.username || "—"} · {requests.length === 1 ? "Profile edit request" : `${requests.length} requests`}</p>
+            <p className="text-xs text-gray-400">{requests.length === 1 ? "Profile edit request" : `${requests.length} requests`}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><Icons.X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-5 space-y-5">
           {requests.map(req => (
-            <div key={req.id} className="border rounded-xl overflow-hidden">
-              <div className="flex justify-between items-center px-4 py-2.5 bg-gray-50 border-b">
-                <div className="flex items-center gap-4 text-xs text-gray-400">
-                  <span>Submitted Date: <span className="text-gray-600 font-medium">{fmtDate(req.createdAt)}</span></span>
-                  <span>Submitted Time: <span className="text-gray-600 font-medium">{fmtTime(req.createdAt) || "—"}</span></span>
-                </div>
-                <StatusPill status={req.status} />
-              </div>
+            <div key={req.id} className="space-y-4">
+              <ReqCard title="Request Details" icon={Icons.Document} aside={<StatusPill status={req.status} />}>
+                <ReqField label="Requested by" value={user?.name || userID} />
+                <ReqField label="Username" value={user?.username ? `@${user.username}` : "—"} />
+                <ReqField label="Role" value={req.role || user?.role} />
+                <ReqField label="Submitted" value={`${fmtDate(req.createdAt)}${fmtTime(req.createdAt) ? " | " + fmtTime(req.createdAt) : ""}`} />
+                <ReqField label="Updated by" value={updatedBy(req)} />
+                <ReqField label="Updated on" value={updatedOn(req)} />
+                {req.status === "rejected" && req.reviewNote && (
+                  <ReqField wide label="Reason" value={<span className="text-red-500">{req.reviewNote}</span>} />
+                )}
+              </ReqCard>
 
-              <div>
-                <div className="grid grid-cols-[1fr_1fr_1fr] text-xs font-semibold text-gray-400 uppercase bg-gray-50/50 px-4 py-2">
+              <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b">
+                  <h3 className="flex items-center gap-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                    <Icons.Edit className="w-4 h-4 text-teal-600" />
+                    Requested Changes
+                  </h3>
+                </div>
+                <div className="grid grid-cols-[1fr_1fr_1fr] text-[11px] font-medium text-gray-400 uppercase tracking-wide px-4 py-2">
                   <span>Field</span>
                   <span>Before</span>
                   <span>After</span>
@@ -2407,23 +2521,24 @@ function ProfileRequestHistoryModal({ userID, user, requests, busyId, onClose, o
                     </div>
                   );
                 })}
-              </div>
-
-              {req.status === "rejected" && req.reviewNote && (
-                <p className="text-xs text-red-500 bg-red-50 p-2 border-t">Reason: {req.reviewNote}</p>
-              )}
+              </section>
 
               {req.status === "pending" && (
-                <div className="flex justify-end gap-2 p-3 border-t bg-gray-50/50">
-                  <button onClick={() => onReject(req)} disabled={busyId === req.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40">
-                    <Icons.X className="w-3.5 h-3.5" /> Reject
-                  </button>
-                  <button onClick={() => onApprove(req)} disabled={busyId === req.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40">
-                    <Icons.Check className="w-3.5 h-3.5" /> {busyId === req.id ? "..." : "Approve"}
-                  </button>
-                </div>
+                <>
+                  <p className="text-xs text-gray-500 bg-yellow-50/60 border border-yellow-100 rounded-xl px-4 py-2.5">
+                    Waiting for review. Approving applies these changes to the profile; rejecting leaves the profile as it is.
+                  </p>
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => onReject(req)} disabled={busyId === req.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40">
+                      <Icons.X className="w-3.5 h-3.5" /> Reject
+                    </button>
+                    <button onClick={() => onApprove(req)} disabled={busyId === req.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40">
+                      <Icons.Check className="w-3.5 h-3.5" /> {busyId === req.id ? "..." : "Approve"}
+                    </button>
+                  </div>
+                </>
               )}
             </div>
           ))}
@@ -2579,6 +2694,8 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
   const assignableRoleOptions = ASSIGNABLE_ROLES.filter(r => r.value !== currentRoleName);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
+  const [confirmFlag, setConfirmFlag] = useState(false);   // "are you sure you want to flag this person?" window
+  const isCustomerEdit = roleLabelSingular === "Customer";
 
   // ── profile fields ──
   const det = user.details || {};
@@ -2658,7 +2775,8 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
     return json;
   });
 
-  const handleSave = async () => {
+  // flagConfirmed: true when called from the flag-confirmation window, so it doesn't ask a second time.
+  const handleSave = async (flagConfirmed = false) => {
     // ── checks first, so nothing is half-saved because of a typo ──
     const clean = Object.fromEntries(Object.entries(profile).map(([k, v]) => [k, v.trim()]));
     if (canEditProfile) {
@@ -2672,6 +2790,9 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
     }
     // Role changes need a verified code first — everything else can still be saved without one.
     if (canEditRole && role && !otp) return setError("Enter the verification code sent to your email to confirm this role change.");
+
+    // Newly flagging someone has consequences for them, so ask first. (Already-flagged accounts being re-saved skip this.)
+    if (form.isFlagged && !user.isFlagged && !flagConfirmed) { setConfirmFlag(true); return; }
 
     setSaving(true); setError(null);
     try {
@@ -2699,11 +2820,20 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
   const pField = (f) => (
     <div key={f.key}>
       <label className="block text-xs font-medium text-gray-500 mb-1">{f.label}</label>
-      <input
-        type={f.type || "text"} value={profile[f.key]} disabled={saving} className={inputCls2}
-        onChange={setP(f.key, f.key === "referralCode" || f.key === "referredByCode")}
-        placeholder={f.key === "referredByCode" ? "None — enter the referrer's code" : undefined}
-      />
+      {f.key === "suffix" ? (
+        <select value={profile.suffix} disabled={saving} className={`${inputCls2} bg-white`} onChange={setP("suffix")}>
+          <option value="">— None —</option>
+          {/* a suffix saved before this list existed stays selectable, so opening the window never wipes it */}
+          {(profile.suffix && !SUFFIX_OPTIONS.includes(profile.suffix) ? [profile.suffix, ...SUFFIX_OPTIONS] : SUFFIX_OPTIONS)
+            .map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input
+          type={f.type || "text"} value={profile[f.key]} disabled={saving} className={inputCls2}
+          onChange={setP(f.key, f.key === "referralCode" || f.key === "referredByCode")}
+          placeholder={f.key === "referredByCode" ? "None — enter the referrer's code" : undefined}
+        />
+      )}
     </div>
   );
   const group = (g) => PROFILE_FIELDS.filter((f) => f.group === g).map(pField);
@@ -2869,6 +2999,12 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
                   <div>
                     <p className="text-sm font-medium text-gray-700">Flag this {roleLabelSingular.toLowerCase()}</p>
                     <p className="text-xs text-gray-400">Mark as suspicious or problematic</p>
+                    {form.isFlagged && !user.isFlagged && (
+                      <p className="text-xs text-red-500 mt-1">You'll be asked to confirm when you save.</p>
+                    )}
+                    {!form.isFlagged && user.isFlagged && isCustomerEdit && (
+                      <p className="text-xs text-teal-600 mt-1">Saving will lift their restrictions and let them know.</p>
+                    )}
                   </div>
                 </div>
                 <button
@@ -2884,12 +3020,24 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
         </div>
         <div className="flex justify-end gap-3 p-5 border-t">
           <button onClick={onClose} disabled={saving} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
-          <button onClick={handleSave} disabled={saving}
+          <button onClick={() => handleSave()} disabled={saving}
             className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
             {saving ? "Saving..." : "Save Changes"}
           </button>
         </div>
       </div>
+
+      {confirmFlag && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ConfirmFlagModal
+            name={user.details?.firstName || user.username || user.email || "this user"}
+            roleLabelSingular={roleLabelSingular}
+            notifiesCustomer={isCustomerEdit}
+            onCancel={() => setConfirmFlag(false)}
+            onConfirm={() => { setConfirmFlag(false); handleSave(true); }}
+          />
+        </div>
+      )}
 
       {/* stopPropagation: clicks inside the Replace window must not reach this window's backdrop-click-to-close */}
       {docReplace && (
@@ -2898,6 +3046,60 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
             onSaved={() => { setDocReplace(null); onDocumentsChanged?.(); }} />
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── CONFIRM FLAG ─────────────────────────────────────────────────────────────
+// Shown when Save would newly flag an account. For customers it also previews the notice they will receive
+// (the real text lives in the backend: FLAGGED_NOTICE in controllers/user/user.controller.js — keep them in step).
+function ConfirmFlagModal({ name, roleLabelSingular, notifiesCustomer, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+        <div className="text-center">
+          <div className="flex justify-center mb-3">
+            <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
+              <Icons.AlertTriangle className="w-7 h-7 text-red-500" />
+            </div>
+          </div>
+          <h3 className="font-bold text-gray-800 text-lg">Flag this {roleLabelSingular.toLowerCase()}?</h3>
+          <p className="text-sm text-gray-500 mt-1">
+            You're about to flag <strong>{name}</strong>.
+          </p>
+        </div>
+
+        {notifiesCustomer ? (
+          <>
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700 space-y-1">
+              <p className="font-semibold">While flagged, this customer will not be able to:</p>
+              <ul className="list-disc pl-5 text-xs space-y-0.5">
+                <li>Cancel their bookings</li>
+                <li>Leave reviews</li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">They will be notified in the app</p>
+              <div className="bg-gray-50 border rounded-xl p-3 text-xs text-gray-600 space-y-1">
+                <p className="font-semibold text-gray-700">Your account has been flagged</p>
+                <p>
+                  We're sorry to let you know that your account has been flagged. For now, you won't be able to cancel bookings
+                  or leave reviews. If you think this is a mistake, please contact us or visit us in store.
+                </p>
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-gray-500 text-center">This only marks the account for staff — no notification is sent.</p>
+        )}
+
+        <div className="flex gap-3">
+          <button onClick={onCancel}  className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button onClick={onConfirm} className="flex-1 px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-medium hover:bg-red-600">
+            {notifiesCustomer ? "Flag & Notify" : "Flag"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2915,7 +3117,7 @@ function ConfirmDeleteModal({ name, roleLabelSingular, error, onConfirm, onCance
           </div>
           <h3 className="font-bold text-gray-800 text-lg">Delete {roleLabelSingular}?</h3>
           <p className="text-sm text-gray-500 mt-1">
-            Delete <strong>{name}</strong>? Their data will be moved to the archive and cannot be undone.
+            Delete <strong>{name}</strong>? Their account will be archived and their login disabled. You can restore it from the archive.
           </p>
         </div>
         {error && (
@@ -2933,7 +3135,7 @@ function ConfirmDeleteModal({ name, roleLabelSingular, error, onConfirm, onCance
 }
 
 // ─── STAT CARD ────────────────────────────────────────────────────────────────
-function StatCard({ title, value, Icon, color, selected, onClick }) {
+function StatCard({ title, value, Icon, color, selected, onClick, flat = false }) {
   const colors = {
     teal:  "bg-teal-50 text-teal-600",
     green: "bg-green-50 text-green-600",
@@ -2949,9 +3151,11 @@ function StatCard({ title, value, Icon, color, selected, onClick }) {
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
       onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
-      className={`bg-white rounded-2xl shadow-sm border p-4 flex items-center gap-3 transition-all ${
-        clickable ? "cursor-pointer hover:shadow-md hover:border-teal-200" : ""
-      } ${selected ? "border-teal-500 ring-2 ring-teal-100" : ""}`}
+      className={`rounded-2xl border p-4 flex items-center gap-3 transition-all ${
+        flat ? "bg-gray-50 border-transparent" : "bg-white shadow-sm"
+      } ${
+        clickable ? (flat ? "cursor-pointer hover:bg-gray-100" : "cursor-pointer hover:shadow-md hover:border-teal-200") : ""
+      } ${selected ? (flat ? "!bg-white border-teal-500 ring-2 ring-teal-100" : "border-teal-500 ring-2 ring-teal-100") : ""}`}
     >
       <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${colors[color] || colors.gray}`}>
         <Icon className="w-5 h-5" />

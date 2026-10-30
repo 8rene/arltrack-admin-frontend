@@ -62,7 +62,7 @@ const dayKeyOf = (iso) => {
 };
 
 // ─── PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Penalties.jsx) ───
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 
 function usePagination(items, pageSize = PAGE_SIZE) {
   const [page, setPage] = useState(1);
@@ -75,7 +75,7 @@ function usePagination(items, pageSize = PAGE_SIZE) {
 }
 
 function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null;
 
   const nums = [];
   const add = (n) => nums.push(n);
@@ -123,6 +123,32 @@ const IconX = ({ className = "w-4 h-4" }) => (
     <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
   </svg>
 );
+// ─── SORT HEADER (same look as Bookings / Refunds) ───────────────────────────
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-4 py-3 text-left select-none ${className}`}>
+      <button onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}>
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
 const IconRefresh = ({ className = "w-4 h-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -188,7 +214,7 @@ function ViewModal({ log, user, onClose, onArchive }) {
     <button type="button" onClick={() => go(path)} className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap">{label}</button>
   );
   const hasRelated = !!(log.bookingID || log.paymentID || log.refundRequestID);
-  const userName = !log.userID ? null : user === undefined || user === null ? "Loading…" : user.name;
+  const userName = !log.userID ? "SYSTEM" : user === undefined || user === null ? "Loading…" : user.name;
 
   // "View user" opens the person in Users (right role tab + their details window). Not every performer can be opened:
   // Owner accounts have no tab there, and Admins can't open the Admins tab.
@@ -199,7 +225,7 @@ function ViewModal({ log, user, onClose, onArchive }) {
   const viewUserBtn = (
     <button type="button" disabled={!canOpenUser} title={userBtnTitle}
       onClick={() => go(`/users?role=${userTab.key}&tab=directory&open=${encodeURIComponent(log.userID)}`)}
-      className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed">
+      className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">
       View user →
     </button>
   );
@@ -260,6 +286,61 @@ function ViewModal({ log, user, onClose, onArchive }) {
   );
 }
 
+// ─── STAT CARDS (same look as the Bookings status cards) ─────────────────────
+const CARD_PATHS = {
+  grid:     "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
+  plus:     "M12 5v14M5 12h14",
+  edit:     "M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z",
+  trash:    "M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14M10 11v6M14 11v6",
+  upload:   "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12",
+  download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
+  lock:     "M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2zM7 11V7a5 5 0 0110 0v4",
+  server:   "M2 4h20v6H2zM2 14h20v6H2zM6 7h.01M6 17h.01",
+  monitor:  "M2 4h20v13H2zM8 21h8M12 17v4",
+  globe:    "M12 21a9 9 0 100-18 9 9 0 000 18zM3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18",
+  phone:    "M7 2h10a1 1 0 011 1v18a1 1 0 01-1 1H7a1 1 0 01-1-1V3a1 1 0 011-1zM12 18h.01",
+  card:     "M2 5h20v14H2zM2 10h20",
+  undo:     "M1 4v6h6M3.51 15a9 9 0 102.13-9.36L1 10",
+  tag:      "M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82zM7 7h.01",
+  file:     "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8",
+};
+const CardIcon = ({ name, className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d={CARD_PATHS[name]} stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+// One card = count + round icon + label. Click a card to filter the table to it; the "All" card clears the filter.
+function StatCards({ cards, value, onSelect, loading, className }) {
+  return (
+    <div className={`grid gap-3 ${className}`}>
+      {cards.map((c) => {
+        const on = value === c.key;
+        return (
+          <button key={c.key} type="button" onClick={() => onSelect(c.key)}
+            className={`p-4 rounded-2xl border text-left transition-all ${on ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}>
+            <div className="flex items-start justify-between">
+              <div className={`text-2xl font-bold ${on ? "text-teal-600" : "text-gray-800"}`}>{loading ? "…" : c.count}</div>
+              <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${c.color}`}>
+                <CardIcon name={c.icon} />
+              </span>
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5">{c.label}</div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+const ALL_CARD = { icon: "grid", color: "bg-teal-50 text-teal-600" };
+const AUDIT_CARD_META = {
+  create: { icon: "plus",   color: "bg-green-50 text-green-600" },
+  update: { icon: "edit",   color: "bg-blue-50 text-blue-600" },
+  delete: { icon: "trash",  color: "bg-red-50 text-red-600" },
+  export: { icon: "upload", color: "bg-yellow-50 text-yellow-600" },
+  auth:   { icon: "lock",   color: "bg-gray-100 text-gray-600" },
+  system: { icon: "server", color: "bg-purple-50 text-purple-600" },
+};
+
 // ─── PAGE ────────────────────────────────────────────────────────────────────
 export default function AuditLog() {
   const [logs, setLogs]               = useState([]);
@@ -269,6 +350,7 @@ export default function AuditLog() {
   const [searchBy, setSearchBy]       = useState("description");
   const [dateValue, setDateValue]     = useState("");   // "YYYY-MM-DD" from the Created At date picker
   const [actionF, setActionF]         = useState("All");
+  const [sortDir, setSortDir]         = useState("desc");   // by Created At: newest on top by default
   const [deletingId, setDeletingId]   = useState(null);
   const [confirmId, setConfirmId]     = useState(null);
   const [toast, setToast]             = useState(null);
@@ -362,7 +444,7 @@ export default function AuditLog() {
   };
 
   const userLabel = (log) => {
-    if (!log.userID) return "—";
+    if (!log.userID) return "SYSTEM";   // no user recorded = done by the system itself
     const u = userInfo[log.userID];
     return u === undefined || u === null ? "Loading…" : u.name;
   };
@@ -376,8 +458,15 @@ export default function AuditLog() {
     return hay.toLowerCase().includes(q);
   });
 
-  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, actionF]); // eslint-disable-line react-hooks/exhaustive-deps
+  const msOf = (iso) => { const t = iso ? new Date(iso).getTime() : NaN; return isNaN(t) ? -Infinity : t; };
+  const sorted = [...filtered].sort((a, b) => {
+    const av = msOf(a.createdAt), bv = msOf(b.createdAt);
+    if (av === bv) return 0;
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, actionF, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const searchOpt = AUDIT_SEARCH_BY.find((o) => o.key === searchBy) || AUDIT_SEARCH_BY[0];
   const filtersActive = !!search.trim() || !!dateValue || actionF !== "All";
@@ -444,6 +533,13 @@ export default function AuditLog() {
         </div>
       )}
 
+      {/* TYPE CARDS: one per type + All, same look as the Bookings status cards. */}
+      <StatCards loading={loading} value={actionF} onSelect={setActionF} className="grid-cols-3 sm:grid-cols-4 lg:grid-cols-7"
+        cards={[
+          { key: "All", label: "All Logs", count: logs.length, ...ALL_CARD },
+          ...ACTION_OPTIONS.map((a) => ({ key: a, label: a.charAt(0).toUpperCase() + a.slice(1), count: logs.filter((l) => (l.action || "system") === a).length, ...AUDIT_CARD_META[a] })),
+        ]} />
+
       {/* TABLE: the search + filters sit on top of the table inside one box, same as Bookings */}
       <div className="bg-white rounded-2xl border overflow-hidden">
         {/* SEARCH + FILTERS */}
@@ -463,11 +559,6 @@ export default function AuditLog() {
               value={search} onChange={(e) => setSearch(e.target.value)}
               className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
           )}
-          <select value={actionF} onChange={(e) => setActionF(e.target.value)}
-            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
-            <option value="All">All types</option>
-            {ACTION_OPTIONS.map((a) => <option key={a} value={a}>{a.charAt(0).toUpperCase() + a.slice(1)}</option>)}
-          </select>
           <button onClick={fetchLogs} disabled={loading}
             className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
             <IconRefresh className="w-3.5 h-3.5" />
@@ -479,7 +570,7 @@ export default function AuditLog() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
               <tr>
-                <th className="px-4 py-3 text-left">Created At</th>
+                <SortableTh label="Created At" sortKey="created" sortKeyState="created" sortDir={sortDir} onSort={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))} />
                 <th className="px-4 py-3 text-left">User</th>
                 <th className="px-4 py-3 text-left">Type</th>
                 <th className="px-4 py-3 text-left">Description</th>
@@ -521,6 +612,12 @@ export default function AuditLog() {
                   );
                 })
               )}
+              {/* Same as Refunds: pad a short page with empty rows so the table always keeps its 10-row height. */}
+              {!loading && paginated.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - paginated.length) }).map((_, i) => (
+                <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                  <td colSpan={5} className="h-[53px]">&nbsp;</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
