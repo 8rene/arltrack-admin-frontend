@@ -18,7 +18,7 @@ import Penalties from "./pages/Penalties";
 import Inventory from "./pages/Inventory";
 import Payments from "./pages/Payments";
 import RefundRequests from "./pages/RefundRequests";
-import Reports from "./pages/Reports";
+import Reports from "./pages/Summary/Reports";
 import AuditLog from "./pages/AuditLog";
 import SessionLogs from "./pages/SessionLogs";
 import TransactionLogs from "./pages/TransactionLogs";

@@ -555,3 +555,7 @@ v1/r/project/arltrack-carrentalservices/firestore/indexes?create_composite=Cmlwc
 ZWN0cy9hcmx0cmFjay1jYXJyZW50YWxzZXJ2aWNlcy9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25
 Hcm91cHMvYm9va2luZ1Nlc3Npb25BcmNoaXZlcy9pbmRleGVzL18QARoJCgVjYXJJRBABGg0KCXN0YXJ0ZW
 RBdBACGgwKCF9fbmFtZV9fEAI
+
+
+
+rental and customer shouldnt be speicifc how many bookings but instead
