@@ -524,7 +524,9 @@ export default function Users() {
   useEffect(() => { setDirectoryFilter("All"); }, [roleTab]);
   // Same idea for the Document Request / Edit Request tables: the pending cards set these before switching tab.
   const [docStatus, setDocStatus]         = useState("all"); // Document Request: "all" | "pending" | "approved" | "rejected" | "cancelled"
-  const [docRequestType, setDocRequestType] = useState("all"); // "all" | "new" | "resubmit"
+  const [docRequestType, setDocRequestType] = useState("all"); // dropdown filter: "all" | "new" | "resubmit"
+  const [viewMoreUserID, setViewMoreUserID] = useState(null); // "View more" in a review window: jump to List and open that user's details
+  const [docFocus, setDocFocus] = useState(null); // set by the stat cards: "new" | "resubmit" | null — that kind is sorted to the top, the other kind stays visible
   const [editStatus, setEditStatus]       = useState("all"); // Edit Request: same status values
 
   // Only Admin and Owner accounts get 200s from DELETE /api/users/:uid
@@ -684,18 +686,27 @@ export default function Users() {
           onClick={() => { setDirectoryFilter("All"); setSubTab("directory"); }} />
         {activeRole.hasDocsSubTab && (
           <StatCard flat title="Pending Verification" value={pendingDocs.length} Icon={Icons.IdCard} color="amber"
-            selected={subTab === "documents" && docStatus === "pending" && docRequestType === "new"}
-            onClick={() => { setDocRequestType("new"); setDocStatus("pending"); setSubTab("documents"); }} />
+            selected={subTab === "documents" && docStatus === "pending" && docFocus === "new"}
+            onClick={() => {
+              if (subTab === "documents" && docStatus === "pending" && docFocus === "new") { setDocFocus(null); setDocStatus("all"); return; } // click again = un-select
+              setDocRequestType("all"); setDocFocus("new"); setDocStatus("pending"); setSubTab("documents");
+            }} />
         )}
         {activeRole.hasDocsSubTab && (
           <StatCard flat title="Pending Document Request" value={pendingIdReqCount} Icon={Icons.Document} color="blue"
-            selected={subTab === "documents" && docStatus === "pending" && docRequestType === "resubmit"}
-            onClick={() => { setDocRequestType("resubmit"); setDocStatus("pending"); setSubTab("documents"); }} />
+            selected={subTab === "documents" && docStatus === "pending" && docFocus === "resubmit"}
+            onClick={() => {
+              if (subTab === "documents" && docStatus === "pending" && docFocus === "resubmit") { setDocFocus(null); setDocStatus("all"); return; } // click again = un-select
+              setDocRequestType("all"); setDocFocus("resubmit"); setDocStatus("pending"); setSubTab("documents");
+            }} />
         )}
         {activeRole.hasEditRequestSubTab && (
           <StatCard flat title="Pending Edit Request" value={pendingEditReqCount} Icon={Icons.Edit} color="green"
             selected={subTab === "editRequests" && editStatus === "pending"}
-            onClick={() => { setEditStatus("pending"); setSubTab("editRequests"); }} />
+            onClick={() => {
+              if (subTab === "editRequests" && editStatus === "pending") { setEditStatus("all"); return; } // click again = un-select
+              setEditStatus("pending"); setSubTab("editRequests");
+            }} />
         )}
       </div>
 
@@ -708,7 +719,7 @@ export default function Users() {
             List
           </button>
           {activeRole.hasDocsSubTab && (
-            <button onClick={() => setSubTab("documents")}
+            <button onClick={() => { setDocFocus(null); setDocRequestType("all"); setDocStatus("all"); setSubTab("documents"); }}
               className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "documents" ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
               <Icons.IdCard className="w-4 h-4" />
               Document Request
@@ -733,10 +744,13 @@ export default function Users() {
         </div>
       ) : subTab === "directory" ? (
         <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showVerification={showVerification}
-          filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole} />
+          filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole}
+          openUserID={viewMoreUserID} onOpenHandled={() => setViewMoreUserID(null)} />
       ) : subTab === "documents" ? (
         <DocumentsTab users={users} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts}
-          statusFilter={docStatus} setStatusFilter={setDocStatus} requestType={docRequestType} setRequestType={setDocRequestType} />
+          statusFilter={docStatus} setStatusFilter={setDocStatus} requestType={docRequestType} setRequestType={setDocRequestType}
+          focusKind={docFocus} setFocusKind={setDocFocus}
+          onViewMore={(uid) => { setViewMoreUserID(uid); setSubTab("directory"); }} />
       ) : (
         <EditRequestsTab roleUserIDs={roleUserIDs} onCountChange={fetchEditReqCounts} statusFilter={editStatus} setStatusFilter={setEditStatus} />
       )}
@@ -745,7 +759,7 @@ export default function Users() {
 }
 
 // ─── DIRECTORY TAB (used for Customers, Drivers, Supervisors, Admins) ─────────
-function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showVerification, filterStatus, setFilterStatus, viewerRole, currentRoleName }) {
+function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showVerification, filterStatus, setFilterStatus, viewerRole, currentRoleName, openUserID, onOpenHandled }) {
   const [search, setSearch]       = useState("");
   const [searchBy, setSearchBy]   = useState("name");
   const [dateValue, setDateValue] = useState(""); // "YYYY-MM-DD" from the date picker
@@ -793,6 +807,14 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
     if (match) setDetailUser(match);
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
   }, [searchParams, users, setSearchParams]);
+
+  // "View more" from a Document Request review window.
+  useEffect(() => {
+    if (!openUserID || users.length === 0) return;
+    const match = users.find((u) => u.id === openUserID);
+    if (match) setDetailUser(match);
+    onOpenHandled?.();
+  }, [openUserID, users]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (user) => {
     setDeleteError(null);
@@ -1930,10 +1952,6 @@ function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setD
         <input type="text" placeholder="Enter name or username..." value={search} onChange={e => setSearch(e.target.value)}
           className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400" />
       )}
-      <select value={requestType} onChange={e => setRequestType(e.target.value)}
-        className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
-        {ID_REQUEST_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-      </select>
       <select value={status} onChange={e => setStatus(e.target.value)}
         className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
         {statusOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
@@ -1946,7 +1964,7 @@ function IdFilterBar({ searchBy, setSearchBy, search, setSearch, dateValue, setD
 // Every first-time ID and every replacement photo lives here. The "Request" column says which
 // it is; the Request and Status dropdowns narrow the list (Status defaults to Pending).
 function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onOpenResub, statusFilter, setStatusFilter,
-                           requestType, setRequestType, roleLabel = "Customers", openNewUserID, onNewOpened }) {
+                           requestType, setRequestType, focusKind, setFocusKind, onViewMore, roleLabel = "Customers", openNewUserID, onNewOpened }) {
   const [detailUser, setDetailUser] = useState(null);
   const [sortKey, setSortKey]       = useState("submitted"); // newest submitted first
   const [sortDir, setSortDir]       = useState("desc");
@@ -1954,6 +1972,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
   const [searchBy, setSearchBy]     = useState("name");
   const [dateValue, setDateValue]   = useState("");
   const handleSort = (key) => {
+    setFocusKind?.(null); // picking a column sort overrides the card's "show this kind first"
     if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir(key === "submitted" ? "desc" : "asc"); }
   };
@@ -1970,6 +1989,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
         name: `${fn} ${ln}`.trim() || u.username || u.email || "—",
         username: u.username || "",
         initials: ((fn[0] || u.email?.[0] || "?") + (ln[0] || "")).toUpperCase(),
+        profileImage: u.profileImage || "",
         createdAt: u.document?.createdAt,
         status: newIdStatus(u),
         reviewedAt: u.idReviewedAt || null,
@@ -1984,6 +2004,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
       return {
         key: `re-${req.id}`, kind: "resubmit", req, userID: req.userID,
         name: lu.name || req.userID, username: lu.username || "", initials: (lu.name || "?").slice(0, 2).toUpperCase(),
+        profileImage: lu.profileImage || "",
         createdAt: req.createdAt,
         status: req.status,
         reviewedAt: req.reviewedAt || null,
@@ -2010,6 +2031,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
     const dir = sortDir === "asc" ? 1 : -1;
     const byTime = (a, b) => toMillis(b.createdAt) - toMillis(a.createdAt); // tie-break: newest first
     return [...filtered].sort((a, b) => {
+      if (focusKind && a.kind !== b.kind) return a.kind === focusKind ? -1 : 1; // card clicked: that kind first
       let c = 0;
       if (sortKey === "submitted")     { const x = toMillis(a.createdAt), y = toMillis(b.createdAt); c = (x > y) - (x < y); }
       else if (sortKey === "name")     c = a.name.localeCompare(b.name);
@@ -2018,7 +2040,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
       else if (sortKey === "reviewed") { const x = toMillis(a.reviewedAt), y = toMillis(b.reviewedAt); c = (x > y) - (x < y); }
       return c !== 0 ? dir * c : byTime(a, b);
     });
-  }, [filtered, sortKey, sortDir]);
+  }, [filtered, sortKey, sortDir, focusKind]);
   const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
   useEffect(() => { setPage(1); }, [users, resubRows, search, searchBy, dateValue, statusFilter, requestType]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2043,7 +2065,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
     } catch (e) { console.error("Verify error:", e); }
   };
 
-  const showReviewed = statusFilter !== "pending";
+  const showReviewed = true; // same columns in every view, whatever the Status filter is
   const noFilters = !search.trim() && !dateValue && requestType === "all"; // plain "Pending" view -> friendly empty state
 
   return (
@@ -2094,7 +2116,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
                       <td className="px-5 py-3 whitespace-nowrap"><DateTimeCell value={r.createdAt} /></td>
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
-                          {isNew && <UserAvatar key={u.profileImage || "none"} src={u.profileImage} initials={r.initials} />}
+                          <UserAvatar key={r.profileImage || "none"} src={r.profileImage} initials={r.initials} />
                           <div>
                             <p className="font-semibold text-gray-800">{r.name}</p>
                             <p className="text-xs text-gray-400">@{r.username || "—"}</p>
@@ -2144,6 +2166,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
           reviewed={newIdStatus(detailUser) === "approved"}
           reviewerName={reviewerLabel(detailUser.idReviewedBy, userLookup)}
           onClose={() => setDetailUser(null)}
+          onViewMore={onViewMore ? () => { const id = detailUser.id; setDetailUser(null); onViewMore(id); } : undefined}
           onApprove={(expiry) => { handleVerify(detailUser, true, expiry);  setDetailUser(null); }}
           onReject={()  => { handleVerify(detailUser, false); setDetailUser(null); }}
         />
@@ -2202,7 +2225,7 @@ const btnClose   = "px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-g
 
 // Review one resubmitted license/document: current vs new photo, expiry entry
 // (license only), approve / reject. Read-only once the request is reviewed.
-function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove, onReject }) {
+function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onViewMore, onApprove, onReject }) {
   const isLicense = (req.documentKind || "license") === "license";
   const currentUrl = isLicense ? req.currentLicenseUrl : req.currentDocumentUrl;
   const newUrl     = isLicense ? req.newLicenseUrl     : req.newDocumentUrl;
@@ -2228,6 +2251,7 @@ function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove
       onClose={onClose}
       footer={
         <>
+          {onViewMore && <button onClick={onViewMore} className={`${btnClose} mr-auto`}>View more</button>}
           {pending && (
             <>
               <button onClick={() => onReject(req)} disabled={busy} className={btnReject}>
@@ -2304,7 +2328,7 @@ function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onApprove
 // "Request" column tells them apart (New ID / Resubmission).
 // (Resubmits used to live under "Edit Request"; they're document reviews, so
 // they sit here now.)
-function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", onCountChange, statusFilter, setStatusFilter, requestType, setRequestType }) {
+function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", onCountChange, statusFilter, setStatusFilter, requestType, setRequestType, focusKind, setFocusKind, onViewMore }) {
   const [openNewUserID, setOpenNewUserID] = useState(null);
   const [allIdReqs, setIdReqs]        = useState([]);
   // Only the resubmissions that belong to the role tab that is open.
@@ -2384,7 +2408,7 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
 
   return (
     <div className="space-y-4">
-      <IdRequestsTable users={users} resubRows={idReqs} loading={reqLoading} userLookup={userLookup}
+      <IdRequestsTable onViewMore={onViewMore} focusKind={focusKind} setFocusKind={setFocusKind} users={users} resubRows={idReqs} loading={reqLoading} userLookup={userLookup}
         onRefresh={onRefresh} onOpenResub={setReviewID} roleLabel={roleLabel}
         statusFilter={statusFilter} setStatusFilter={setStatusFilter}
         requestType={requestType} setRequestType={setRequestType}
@@ -2398,6 +2422,7 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
           reviewerName={reviewerLabel(reviewReq.reviewedBy, userLookup)}
           busy={busyId === reviewReq.id}
           onClose={() => setReviewID(null)}
+          onViewMore={onViewMore ? () => { const id = reviewReq.userID; setReviewID(null); onViewMore(id); } : undefined}
           onApprove={handleApprove}
           onReject={(req) => { setRejectID(req.id); setReviewID(null); }}
         />
@@ -2839,7 +2864,7 @@ function RejectNoteModal({ onCancel, onConfirm }) {
 }
 
 
-function DocDetailModal({ user, reviewed = false, reviewerName, onClose, onApprove, onReject }) {
+function DocDetailModal({ user, reviewed = false, reviewerName, onClose, onViewMore, onApprove, onReject }) {
   const det  = user.details  || {};
   const docu = user.document || {};
   const fullName = `${det.firstName || ""} ${det.lastName || ""}`.trim() || user.username || "—";
@@ -2859,7 +2884,8 @@ function DocDetailModal({ user, reviewed = false, reviewerName, onClose, onAppro
       onClose={onClose}
       footer={
         <>
-          {hasUploads && !reviewed && (
+          {onViewMore && <button onClick={onViewMore} className={`${btnClose} mr-auto`}>View more</button>}
+          {!reviewed && (
             <>
               <button onClick={onReject} className={btnReject}><Icons.X className="w-4 h-4" /> Reject</button>
               <button onClick={() => onApprove(licenseExpiry)} disabled={needsExpiry}
