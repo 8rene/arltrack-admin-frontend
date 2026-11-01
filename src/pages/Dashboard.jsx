@@ -488,13 +488,36 @@ export default function Dashboard() {
   usePolling(loadScheduledRefunds, 2 * 60 * 1000);
   useEffect(() => {
     const userMapRef = { current: {} };
-    getDocs(collection(db, "user")).then((snap) => {
+    // Same role IDs as backend/utils/roles/role.util.js (see the license check above).
+    const ROLE_ID = { driver: "Na0Jpt86nldSO5SjfcLa", supervisor: "fFA8G2R2ANLbVsH00jlv", admin: "5bhRYMrDkjrs9VlFFY4u", owner: "1BX4V7M43t6barbPd4BP" };
+    // Which Users tab a request belongs to. The request's own role is only a fallback: the account is the source of truth.
+    const roleOf = (u, data) =>
+      u.roleID === ROLE_ID.driver ? "driver"
+      : u.roleID === ROLE_ID.supervisor ? "supervisor"
+      : data?.role ? String(data.role).toLowerCase()
+      : "customer";
+    const usersLoaded = getDocs(collection(db, "user")).then((snap) => {
       userMapRef.current = Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
+      // New accounts whose ID has not been verified yet: the same "Pending Verification" the Users page counts.
+      const rows = snap.docs
+        .filter((d) => { const u = d.data(); return u.isVerified !== true && u.roleID !== ROLE_ID.owner && u.roleID !== ROLE_ID.admin; })
+        .map((d) => {
+          const u = d.data();
+          return {
+            id: `verify-${d.id}`,
+            userID: d.id,
+            name: u.username || u.email || d.id,
+            kind: "verification",
+            role: roleOf(u, null),
+            _due: toJsDate(u.createdAt) || new Date(),
+          };
+        });
+      setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "verification"), ...rows]);
     }).catch(() => {});
 
     const unsubEdit = onSnapshot(
       query(collection(db, "editRequests"), where("status", "==", "pending")),
-      (snap) => {
+      (snap) => usersLoaded.then(() => {
         const rows = snap.docs.map((d) => {
           const data = d.data();
           const u = userMapRef.current[data.userID] || {};
@@ -503,16 +526,16 @@ export default function Dashboard() {
             userID: data.userID,
             name: u.username || u.email || data.userID,
             kind: "editRequest",
-            role: (data.role || "driver").toLowerCase(),
+            role: roleOf(u, data),
             _due: toJsDate(data.createdAt) || new Date(),
           };
         });
         setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "editRequest"), ...rows]);
-      }
+      })
     );
     const unsubId = onSnapshot(
       query(collection(db, "idResubmitRequests"), where("status", "==", "pending")),
-      (snap) => {
+      (snap) => usersLoaded.then(() => {
         const rows = snap.docs.map((d) => {
           const data = d.data();
           const u = userMapRef.current[data.userID] || {};
@@ -521,12 +544,12 @@ export default function Dashboard() {
             userID: data.userID,
             name: u.username || u.email || data.userID,
             kind: "idResubmit",
-            role: (data.role || "driver").toLowerCase(),
+            role: roleOf(u, data),
             _due: toJsDate(data.createdAt) || new Date(),
           };
         });
         setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "idResubmit"), ...rows]);
-      }
+      })
     );
     // Pending refund requests — same "awaiting review" reasoning as the two
     // above. Previously missing entirely from the Dashboard despite being
@@ -579,6 +602,17 @@ export default function Dashboard() {
   const REQUEST_STALE_DAYS = 5;
   const requestAgeDays = (r) => (Date.now() - r._due.getTime()) / (24 * 60 * 60 * 1000);
   const staleRequests = pendingRequestWarnings.filter((r) => requestAgeDays(r) > REQUEST_STALE_DAYS);
+  // Edit / ID-resubmit / new-ID-verification requests that are still within the normal wait: listed under Warning.
+  // (Refund requests have their own card; the ones that wait too long move up to Alerts.)
+  const freshProfileRequests = pendingRequestWarnings
+    .filter((r) => r.kind !== "refundRequest" && requestAgeDays(r) <= REQUEST_STALE_DAYS)
+    .map((r) => ({ ...r, _type: "request", daysWaiting: Math.floor(requestAgeDays(r)) }));
+  // Where a request is reviewed: ID resubmits and new IDs live under Document Request, profile changes under Edit Request.
+  const requestLink = (r) =>
+    `/users?role=${r.role}&tab=${r.kind === "idResubmit" || r.kind === "verification" ? "documents" : "editRequests"}&open=${r.userID}`;
+  const requestTitle = (r) =>
+    r.kind === "refundRequest" ? "Refund Request" : r.kind === "verification" ? "ID Verification" : r.kind === "idResubmit" ? "ID Resubmit Request" : "Profile Edit Request";
+  const roleLabel = (role) => (role ? role.charAt(0).toUpperCase() + role.slice(1) : "");
 
   // Maintenance still not done, past its own due date — mirrors the
   // booking pickup_overdue/return_overdue pattern: no separate "Overdue"
@@ -683,6 +717,7 @@ export default function Dashboard() {
       .map((m) => ({ ...m, _type: "maintenance", _due: toJsDate(m.maintenanceDate) }))
       .filter((m) => withinHours(m._due, MAINTENANCE_WARNING_HOURS)),
     ...licenseWarnings.map((l) => ({ ...l, _type: "license" })),
+    ...freshProfileRequests,
   ].sort((a, b) => a._due - b._due); // soonest first — this list is a countdown, not a feed
 
   const fetchMetrics = useCallback(async () => {
@@ -757,7 +792,10 @@ export default function Dashboard() {
               onClick={() => navigate("/refund-requests")} />
             <StatCard title="Profile / ID Requests" value={profileReqs}
               icon={<IconFileText className="w-6 h-6" />} color="bg-gray-100 text-gray-600" loading={false}
-              onClick={() => navigate("/users?role=driver&tab=editRequests")} />
+              onClick={() => {
+                const first = pendingRequestWarnings.filter((r) => r.kind !== "refundRequest").sort((a, b) => a._due - b._due)[0];
+                navigate(first ? requestLink(first) : "/users?role=customer&tab=documents");
+              }} />
           </div>
         );
       })()}
@@ -782,7 +820,7 @@ export default function Dashboard() {
                 "A cancellation request waiting for review",
                 "A car part that is damaged, stolen or missing (until a maintenance job fixes it)",
                 "A driver's license that has already expired",
-                "A profile edit, ID resubmit or refund request waiting more than " + REQUEST_STALE_DAYS + " days",
+                "A profile edit, ID resubmit, new ID verification or refund request waiting more than " + REQUEST_STALE_DAYS + " days",
                 "Maintenance past its due date and still not completed",
               ]} />
           </h2>
@@ -807,7 +845,7 @@ export default function Dashboard() {
                   else if (isDamaged || isOverdueMaint) navigate(a.carID ? `/maintenance?carID=${a.carID}` : "/maintenance");
                   else if (isLicense) navigate(`/users?role=${a.role}&tab=directory&open=${a.userID}`);
                   else if (isRefund) navigate("/refund-requests");
-                  else if (isRequest) navigate(`/users?role=${a.role}&tab=${a.kind === "idResubmit" ? "documents" : "editRequests"}&open=${a.userID}`);
+                  else if (isRequest) navigate(requestLink(a));
                   else navigate(`/bookings?open=${a.bookingID || a.id}`);
                 };
 
@@ -857,7 +895,6 @@ export default function Dashboard() {
                 }
 
                 if (isRequest) {
-                  const isIdReq = a.kind === "idResubmit";
                   return (
                     <div
                       key={`overdue-request-${a.id}`}
@@ -872,9 +909,9 @@ export default function Dashboard() {
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-800 leading-snug">
-                          {isRefund ? "Refund Request" : isIdReq ? "ID Resubmit Request" : "Profile Edit Request"} · Overdue
+                          {requestTitle(a)} · Overdue
                         </p>
-                        <p className="text-xs text-gray-500 mt-0.5">{a.name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{a.name}{a.role ? ` · ${roleLabel(a.role)}` : ""}</p>
                         <p className="text-xs text-gray-400">
                           Waiting {a.daysWaiting} day{a.daysWaiting === 1 ? "" : "s"} — needs review
                         </p>
@@ -968,7 +1005,8 @@ export default function Dashboard() {
                 "A booking whose pickup is within " + BOOKING_WARNING_HOURS + " hours",
                 "Maintenance due within " + MAINTENANCE_WARNING_HOURS + " hours",
                 "A driver's license expiring within " + LICENSE_WARNING_DAYS + " days",
-                "Requests waiting for review and refunds in progress are counted in the cards above, not listed here (they move to Alerts when late or failed)",
+                "A profile edit, ID resubmit or new ID verification waiting for review (moves to Alerts after " + REQUEST_STALE_DAYS + " days)",
+                "Refund requests and refunds in progress are counted in the cards above, not listed here (they move to Alerts when late or failed)",
               ]} />
           </h2>
 
@@ -986,11 +1024,36 @@ export default function Dashboard() {
               warnings.map((w) => {
                 const isMaint   = w._type === "maintenance";
                 const isLicense = w._type === "license";
+                const isRequestW = w._type === "request";
                 const goTo = () => {
                   if (isMaint) navigate("/maintenance");
                   else if (isLicense) navigate(`/users?role=${w.role}&tab=directory&open=${w.userID}`);
+                  else if (isRequestW) navigate(requestLink(w));
                   else navigate(`/bookings?open=${w.bookingID || w.id}`);
                 };
+                if (isRequestW) {
+                  return (
+                    <div
+                      key={`request-${w.kind}-${w.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-amber-50 border-amber-100 hover:bg-amber-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-amber-600">
+                        <IconFileText className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">{requestTitle(w)} · Pending</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{w.name}{w.role ? ` · ${roleLabel(w.role)}` : ""}</p>
+                        <p className="text-xs text-gray-400">
+                          {w.daysWaiting === 0 ? "Submitted today" : `Waiting ${w.daysWaiting} day${w.daysWaiting === 1 ? "" : "s"}`} — needs review
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
                 if (isLicense) {
                   return (
                     <div
