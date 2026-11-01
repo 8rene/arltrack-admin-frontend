@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   collection, getDocs, query, where, orderBy
 } from "firebase/firestore";
@@ -7,7 +7,6 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage
 import { db, storage } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../config/pagePermissions";
-import UserActivityTab from "../components/UserActivityTab";
 import { govIdTypeOptions } from "../utils/govIdTypes";
 
 // ─── ROLE TABS ───────────────────────────────────────────────────────────────
@@ -1019,10 +1018,285 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
   );
 }
 
+// ─── USER ACTIVITY / TRIPS TAB (inside View Details) ─────────────────────────
+// Read-only.
+//   Driver "Trips" tab -> current trips + history of completed trips (GET /api/driver-dispatch/drivers/:id/activity)
+//   Driver / Supervisor / Admin "Activity" tab -> their own audit-log entries (GET /api/audit-logs/by-user/:id)
+//   Customer "Activity" tab -> recent feed: booked, completed, cancelled, paid, refunded, penalties (GET /api/users/:id/activity)
+// Smaller pages than the directory table: each row here is 2-3 lines tall, so 5 keeps the modal short.
+const ACTIVITY_PAGE_SIZE = 5;
+
+const fmtActivityDT = (val) => {
+  if (!val) return "—";
+  const d = new Date(val);
+  if (isNaN(d)) return "—";
+  return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+};
+
+async function activityApiGet(path) {
+  const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.message || `Request failed (${res.status})`);
+  return json.data;
+}
+
+const ACTION_STYLE = {
+  create: "bg-green-50 border-green-200 text-green-700",
+  update: "bg-blue-50 border-blue-200 text-blue-700",
+  delete: "bg-red-50 border-red-200 text-red-700",
+  export: "bg-yellow-50 border-yellow-200 text-yellow-700",
+  system: "bg-purple-50 border-purple-200 text-purple-700",
+  auth:   "bg-gray-50 border-gray-200 text-gray-600",
+};
+
+const EVENT_STYLE = {
+  booked:         "bg-blue-50 border-blue-200 text-blue-700",
+  completed:      "bg-green-50 border-green-200 text-green-700",
+  cancelled:      "bg-red-50 border-red-200 text-red-700",
+  cancel_request: "bg-yellow-50 border-yellow-200 text-yellow-700",
+  paid:           "bg-teal-50 border-teal-200 text-teal-700",
+  refunded:       "bg-purple-50 border-purple-200 text-purple-700",
+  penalty:        "bg-orange-50 border-orange-200 text-orange-700",
+};
+const EVENT_LABEL = {
+  booked: "Booked", completed: "Completed", cancelled: "Cancelled", cancel_request: "Cancel request",
+  paid: "Payment", refunded: "Refund", penalty: "Penalty",
+};
+
+const TRIP_STYLE = {
+  ongoing:   "bg-green-50 border-green-200 text-green-700",
+  upcoming:  "bg-yellow-50 border-yellow-200 text-yellow-700",
+  completed: "bg-gray-50 border-gray-200 text-gray-600",
+};
+
+const ActivityPill = ({ className, children }) => (
+  <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-medium capitalize ${className}`}>{children}</span>
+);
+
+function ActivityCard({ title, count, aside, children }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+          {title}{count !== undefined && <span className="ml-1.5 text-gray-400 normal-case font-medium">({count})</span>}
+        </h3>
+        {aside}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+const ActivityEmpty = ({ children }) => <p className="px-4 py-6 text-center text-sm text-gray-400">{children}</p>;
+
+function TripRow({ trip, history, onOpen }) {
+  const end = history ? (trip.completedAt || trip.endDateTime) : trip.endDateTime;
+  return (
+    <li className="flex items-start justify-between gap-3 px-4 py-3">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <ActivityPill className={TRIP_STYLE[String(trip.status).toLowerCase()] || TRIP_STYLE.completed}>{trip.status}</ActivityPill>
+          {trip.archived && <ActivityPill className="bg-gray-50 border-gray-200 text-gray-500">Archived</ActivityPill>}
+          <span className="text-sm font-semibold text-gray-800 truncate">{trip.vehicleName} · {trip.customerName}</span>
+        </div>
+        <p className="text-xs text-gray-500">
+          {fmtActivityDT(trip.startDateTime)} → {fmtActivityDT(end)}{history && trip.completedAt ? " (returned)" : ""}
+        </p>
+        {trip.location && trip.location !== "—" && <p className="text-xs text-gray-400 truncate">{trip.location}</p>}
+      </div>
+      {/* An archived trip has no live booking to open. */}
+      {!trip.archived && (
+        <button type="button" onClick={() => onOpen(trip.id)}
+          className="shrink-0 text-[11px] font-semibold text-gray-700 border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-50">
+          View Booking
+        </button>
+      )}
+    </li>
+  );
+}
+
+function DriverTrips({ user }) {
+  const navigate = useNavigate();
+  const [data, setData]       = useState(null);
+  const currentList = data?.current || [];
+  const historyList = data?.history || [];
+  const { page: currentPage, setPage: setCurrentPage, totalPages: currentPages, pageItems: currentItems, start: currentStart, count: currentCount } = usePagination(currentList, ACTIVITY_PAGE_SIZE);
+  const { page: historyPage, setPage: setHistoryPage, totalPages: historyPages, pageItems: historyItems, start: historyStart, count: historyCount } = usePagination(historyList, ACTIVITY_PAGE_SIZE);
+  const [error, setError]     = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      setData(await activityApiGet(`/api/driver-dispatch/drivers/${encodeURIComponent(user.id)}/activity`));
+      setCurrentPage(1);
+      setHistoryPage(1);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [user.id, setCurrentPage, setHistoryPage]);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <p className="text-sm text-gray-400 text-center py-8">Loading…</p>;
+  if (error) return (
+    <div className="text-center py-8 space-y-2">
+      <p className="text-sm text-red-600">{error}</p>
+      <button type="button" onClick={load} className="text-xs font-semibold text-teal-700 hover:underline">Try again</button>
+    </div>
+  );
+
+  const openBooking = (id) => navigate(`/bookings?open=${encodeURIComponent(id)}`);
+
+  return (
+    <>
+      <ActivityCard title="Current Trips" count={currentCount}>
+        {currentCount === 0
+          ? <ActivityEmpty>No upcoming or ongoing trips.</ActivityEmpty>
+          : <ul className="divide-y">{currentItems.map((t) => <TripRow key={t.id} trip={t} onOpen={openBooking} />)}</ul>}
+        <Pagination page={currentPage} totalPages={currentPages} onChange={setCurrentPage} start={currentStart} count={currentCount} pageSize={ACTIVITY_PAGE_SIZE} />
+      </ActivityCard>
+      <ActivityCard title="Trip History" count={historyCount}>
+        {historyCount === 0
+          ? <ActivityEmpty>No completed trips yet.</ActivityEmpty>
+          : <ul className="divide-y">{historyItems.map((t) => <TripRow key={t.id} trip={t} history onOpen={openBooking} />)}</ul>}
+        <Pagination page={historyPage} totalPages={historyPages} onChange={setHistoryPage} start={historyStart} count={historyCount} pageSize={ACTIVITY_PAGE_SIZE} />
+      </ActivityCard>
+    </>
+  );
+}
+
+function StaffActivity({ user, kind, viewerRole }) {
+  const navigate = useNavigate();
+  const [logs, setLogs]       = useState([]);
+  const [error, setError]     = useState("");
+  const [loading, setLoading] = useState(true);
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(logs, ACTIVITY_PAGE_SIZE);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      setLogs(await activityApiGet(`/api/audit-logs/by-user/${encodeURIComponent(user.id)}?limit=100`));
+      setPage(1);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [user.id, setPage]);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <p className="text-sm text-gray-400 text-center py-8">Loading…</p>;
+  if (error) return (
+    <div className="text-center py-8 space-y-2">
+      <p className="text-sm text-red-600">{error}</p>
+      <button type="button" onClick={load} className="text-xs font-semibold text-teal-700 hover:underline">Try again</button>
+    </div>
+  );
+
+  // The full Audit Log page is Admin-only (pagePermissions "/audit-log"), so an Owner gets no link to it.
+  const viewAll = viewerRole === ROLES.ADMIN && (
+    <button type="button" onClick={() => navigate("/audit-log")} className="text-[11px] font-semibold text-teal-700 hover:underline">
+      View all in Audit Log
+    </button>
+  );
+
+  return (
+    <ActivityCard title="Recent Actions" count={logs.length} aside={viewAll}>
+      {logs.length === 0
+        ? <ActivityEmpty>No recorded actions for this {kind.toLowerCase()} yet.</ActivityEmpty>
+        : (
+          <ul className="divide-y">
+            {pageItems.map((log) => (
+              <li key={log.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <ActivityPill className={ACTION_STYLE[String(log.action).toLowerCase()] || ACTION_STYLE.auth}>{log.action}</ActivityPill>
+                    <span className="text-xs text-gray-400">{fmtActivityDT(log.createdAt)}</span>
+                  </div>
+                  <p className="text-sm text-gray-700 break-words">{log.description}</p>
+                </div>
+                {log.bookingID && (
+                  <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(log.bookingID)}`)}
+                    className="shrink-0 text-[11px] font-semibold text-gray-700 border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-50">
+                    View Booking
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} count={count} pageSize={ACTIVITY_PAGE_SIZE} />
+    </ActivityCard>
+  );
+}
+
+function CustomerActivity({ user }) {
+  const navigate = useNavigate();
+  const [events, setEvents]   = useState([]);
+  const [error, setError]     = useState("");
+  const [loading, setLoading] = useState(true);
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(events, ACTIVITY_PAGE_SIZE);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      setEvents(await activityApiGet(`/api/users/${encodeURIComponent(user.id)}/activity`));
+      setPage(1);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [user.id, setPage]);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <p className="text-sm text-gray-400 text-center py-8">Loading…</p>;
+  if (error) return (
+    <div className="text-center py-8 space-y-2">
+      <p className="text-sm text-red-600">{error}</p>
+      <button type="button" onClick={load} className="text-xs font-semibold text-teal-700 hover:underline">Try again</button>
+    </div>
+  );
+
+  return (
+    <ActivityCard title="Recent Activity" count={events.length}>
+      {events.length === 0
+        ? <ActivityEmpty>No activity yet.</ActivityEmpty>
+        : (
+          <ul className="divide-y">
+            {pageItems.map((ev, i) => (
+              <li key={`${ev.type}-${ev.at}-${i}`} className="flex items-start justify-between gap-3 px-4 py-3">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <ActivityPill className={EVENT_STYLE[ev.type] || ACTION_STYLE.auth}>{EVENT_LABEL[ev.type] || ev.type}</ActivityPill>
+                    <span className="text-xs text-gray-400">{fmtActivityDT(ev.at)}</span>
+                  </div>
+                  <p className="text-sm text-gray-700 break-words">{ev.text}</p>
+                </div>
+                {ev.bookingID && (
+                  <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(ev.bookingID)}`)}
+                    className="shrink-0 text-[11px] font-semibold text-gray-700 border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-50">
+                    View Booking
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} count={count} pageSize={ACTIVITY_PAGE_SIZE} />
+    </ActivityCard>
+  );
+}
+
+// view: "trips" (Driver only) | "activity" (default). Drivers' Activity is their audit log, like Supervisors.
+function UserActivityTab({ user, kind, viewerRole, view = "activity" }) {
+  if (kind === "Driver" && view === "trips") return <DriverTrips user={user} />;
+  if (kind === "Driver" || kind === "Supervisor" || kind === "Admin") return <StaffActivity user={user} kind={kind} viewerRole={viewerRole} />;
+  if (kind === "Customer") return <CustomerActivity user={user} />;
+  return null;
+}
+
 // ─── VIEW DETAILS MODAL (Information / Documents sub-tabs) ────────────────────
 function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose, onEdit, onDelete }) {
-  const [tab, setTab] = useState("information"); // "information" | "documents" | "activity"
-  // Activity exists for Customers (recent feed), Drivers (current trips + history), and Supervisors / Admins (their audit-log entries).
+  const [tab, setTab] = useState("information"); // "information" | "documents" | "trips" | "activity"
+  // Activity exists for Customers (recent feed) and Drivers / Supervisors / Admins (their audit-log entries).
+  // Drivers also get a separate Trips tab (current trips + history).
+  const hasTrips = roleLabelSingular === "Driver";
   const hasActivity = ["Customer", "Driver", "Supervisor", "Admin"].includes(roleLabelSingular);
   // Drilling into a referrer's or an invited user's own record, without
   // leaving this modal — resolved locally from the already-loaded `users`
@@ -1132,6 +1406,12 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === "documents" ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
               <Icons.Document className="w-4 h-4" /> Documents
             </button>
+            {hasTrips && (
+              <button onClick={() => setTab("trips")}
+                className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === "trips" ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+                <Icons.Steering className="w-4 h-4" /> Trips
+              </button>
+            )}
             {hasActivity && (
               <button onClick={() => setTab("activity")}
                 className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === "activity" ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
@@ -1239,6 +1519,8 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
                 </section>
               )}
             </>
+          ) : tab === "trips" && hasTrips ? (
+            <UserActivityTab user={user} kind={roleLabelSingular} viewerRole={viewerRole} view="trips" />
           ) : tab === "activity" && hasActivity ? (
             <UserActivityTab user={user} kind={roleLabelSingular} viewerRole={viewerRole} />
           ) : (
@@ -1542,17 +1824,6 @@ function DateTimeCell({ value }) {
       {t && (<><span className="mx-1.5 text-gray-300">|</span><span className="text-gray-500">{t}</span></>)}
     </>
   );
-}
-
-// Date and time in their own cells/columns (Document Request + Edit Request tables).
-function DateOnlyCell({ value }) {
-  if (!value) return <span className="text-gray-300">—</span>;
-  return <span className="text-gray-700">{fmtDate(value)}</span>;
-}
-function TimeOnlyCell({ value }) {
-  const t = fmtTime(value);
-  if (!t) return <span className="text-gray-300">—</span>;
-  return <span className="text-gray-500">{t}</span>;
 }
 
 // Before / After photo slot — shows a placeholder instead of vanishing when
@@ -2080,7 +2351,7 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
       setRequestType("all"); setStatusFilter("all"); setOpenNewUserID(newUser.id);
     }
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
-  }, [searchParams, reqLoading, idReqs, users, setSearchParams]);
+  }, [searchParams, reqLoading, idReqs, users, setSearchParams, setRequestType, setStatusFilter]);
 
   // Approve: the new photo becomes the license/document of record. License
   // needs the reviewer's expiry date (also enforced server-side — see
@@ -2343,7 +2614,7 @@ function EditRequestsTab({ roleUserIDs, onCountChange, statusFilter, setStatusFi
       setViewReqID(target.id);
     }
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
-  }, [searchParams, loading, profileReqs, setSearchParams]);
+  }, [searchParams, loading, profileReqs, setSearchParams, setStatusFilter]);
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);

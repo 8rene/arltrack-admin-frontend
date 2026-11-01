@@ -160,10 +160,10 @@ const IconCheck = ({ className = "w-5 h-5" }) => (
 // Icon + color per card, same as the Bookings page stat cards.
 const STATUS_ICON = { completed: IconCheck, ongoing: IconActivity, upcoming: IconClock, cancelled: IconX };
 const STATUS_ICON_COLOR = {
-  completed: "bg-green-50 text-green-600",
-  ongoing:   "bg-blue-50 text-blue-600",
-  upcoming:  "bg-yellow-50 text-yellow-600",
-  cancelled: "bg-red-50 text-red-600",
+  completed: "bg-green-600 text-white",     // same colors as the bars (STATUSES above)
+  ongoing:   "bg-blue-600 text-white",
+  upcoming:  "bg-yellow-500 text-white",
+  cancelled: "bg-red-500 text-white",
 };
 
 // Same stat card as the Users page (flat style): colored icon square on the left, number and title on the right.
@@ -595,7 +595,7 @@ function RentalsCustomersView({ report }) {
       <Card>
         <div className="grid gap-3 grid-cols-2 md:grid-cols-5 p-4">
           <StatCard title={drive === "chauffeur" ? "With chauffeur" : drive === "self" ? "Self-drive" : "All Bookings"}
-            value={totalRentals} Icon={IconGrid} color="bg-teal-50 text-teal-600" />
+            value={totalRentals} Icon={IconGrid} color="bg-teal-600 text-white" />
           {STATUSES.map((st) => (
             <StatCard key={st.key} title={st.label} value={counts[st.key]} Icon={STATUS_ICON[st.key]} color={STATUS_ICON_COLOR[st.key]}
               off={hidden.has(st.key)} onClick={() => onChip(st.key)} />
