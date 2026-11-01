@@ -1910,11 +1910,6 @@ const ID_STATUS_OPTIONS = [
   { key: "rejected",  label: "Rejected" },
   { key: "cancelled", label: "Cancelled" },
 ];
-const ID_REQUEST_OPTIONS = [
-  { key: "all",      label: "All requests" },
-  { key: "new",      label: "New ID" },
-  { key: "resubmit", label: "Resubmission" },
-];
 const newIdStatus = (u) => (u.isVerified === true ? "approved" : "pending");
 
 // Name of whoever reviewed — looked up from the all-users lookup. Old approvals
@@ -2869,7 +2864,6 @@ function DocDetailModal({ user, reviewed = false, reviewerName, onClose, onViewM
   const docu = user.document || {};
   const fullName = `${det.firstName || ""} ${det.lastName || ""}`.trim() || user.username || "—";
   const imgs = getDocImages(docu);
-  const hasUploads = Object.values(imgs).some(v => v && v.trim() !== "");
 
   // Approve and "enter the expiry you see on the card" happen as ONE action, so an admin
   // can't approve a license without a date.

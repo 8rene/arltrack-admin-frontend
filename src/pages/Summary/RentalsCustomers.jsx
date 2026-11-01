@@ -5,14 +5,15 @@ import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from "rea
 //
 // Question this tab answers:  "Who booked, and how many times?"
 //
-// A graph + a table for customers and the same for vehicles. Each bar / row is split by booking status
+// A graph + a table for customers, vehicles and service types. Each bar / row is split by booking status
 // (Completed, Ongoing, Upcoming, Cancelled). A customer row opens to show the cars they booked; a car row opens
 // to show the customers who booked it. No booking details (fees, dates, locations): those are on the Bookings page.
 //
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // Each row of report.bookings needs:
 //   carID, carName, userID, customerName, displayStatus
-//   modeOfDriving   "With Chauffeur" | "Self Drive"   (for the Driving filter: All / With chauffeur / Self-drive)
+//   serviceTypeID, serviceTypeName   (for the Service types graph; "Unspecified" when a booking has none)
+//   modeOfDriving   "With Chauffeur" | "Self Drive"   (for the Driving dropdown, and the thin bar + columns under "All bookings")
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function RentalsCustomers({ period, year, month, week, day }) {
@@ -197,7 +198,20 @@ const GAP_LEFT = "11.75rem";     // name column (w-44) + gap-3: where the bars s
 
 // ── grouping + sorting ──────────────────────────────────────────────────────
 
-const zeroCounts = () => ({ completed: 0, ongoing: 0, upcoming: 0, cancelled: 0, total: 0 });
+const zeroCounts = () => ({ completed: 0, ongoing: 0, upcoming: 0, cancelled: 0, total: 0, chauffeur: 0, selfDrive: 0, unrecorded: 0 });
+
+// The thin bar under each row (and the two columns before Total): the same bookings split by driving mode.
+const MODES = [
+  { key: "chauffeur",  label: "With chauffeur", color: "#7c3aed" },
+  { key: "selfDrive",  label: "Self-drive",     color: "#06b6d4" },
+  { key: "unrecorded", label: "Not recorded",   color: "#d1d5db" },   // bookings with no mode saved
+];
+
+function bumpMode(row, b) {
+  if (b.modeOfDriving === "With Chauffeur") row.chauffeur += 1;
+  else if (b.modeOfDriving === "Self Drive") row.selfDrive += 1;
+  else row.unrecorded += 1;
+}
 
 /**
  * One row per customer / car with a count for each status, plus `children`: the same counts split by the other
@@ -213,12 +227,14 @@ function groupRows(bookings, idKey, nameKey, subIdKey, subNameKey, hidden) {
     const row = map.get(id);
     row[st] += 1;
     row.total += 1;
+    bumpMode(row, b);
 
     const sid = b[subIdKey] || "unknown";
     if (!row.subs.has(sid)) row.subs.set(sid, { id: sid, name: b[subNameKey] || "Unknown", ...zeroCounts() });
     const sub = row.subs.get(sid);
     sub[st] += 1;
     sub.total += 1;
+    bumpMode(sub, b);
   }
   return [...map.values()].map(({ subs, ...row }) => ({
     ...row,
@@ -316,7 +332,7 @@ function niceStep(max) {
  * Clicking a bar selects it: the table highlights the same row, and thin bars appear under it for its cars
  * (or its customers).
  */
-function StatusBars({ rows, scaleMax = 0, hidden, selectedId, onSelect }) {
+function StatusBars({ rows, scaleMax = 0, hidden, selectedId, onSelect, showMode = false }) {
   const cols = STATUSES.filter((s) => !hidden.has(s.key));
   const maxTotal = Math.max(1, scaleMax, ...rows.map((r) => r.total));   // scale from every page, so bars compare across pages
   const step = niceStep(maxTotal);
@@ -358,6 +374,18 @@ function StatusBars({ rows, scaleMax = 0, hidden, selectedId, onSelect }) {
                     ))}
                   </div>
                 </button>
+
+                {/* Thin bar: the same bookings by driving mode (only under "All bookings"), same scale */}
+                {showMode && (
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className={`${LABEL_W} shrink-0`} />
+                    <div className={`flex-1 flex h-1.5 overflow-hidden rounded-r-sm ${selectedId && !isSel ? "opacity-50" : ""}`}>
+                      {MODES.map((m) => r[m.key] > 0 && (
+                        <div key={m.key} title={`${m.label}: ${r[m.key]}`} style={{ width: `${(r[m.key] / axisMax) * 100}%`, background: m.color }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* The selected row opens: one thin bar per car (or per customer), same scale */}
                 {isSel && r.children.length > 0 && (
@@ -406,8 +434,9 @@ function StatusBars({ rows, scaleMax = 0, hidden, selectedId, onSelect }) {
 
 // ── table: always shown under its graph; a row opens to show who / what is behind it ─────
 
-function StatusTable({ rows, nameLabel, hidden, sort, onSort, selectedId, onSelect }) {
+function StatusTable({ rows, nameLabel, hidden, sort, onSort, selectedId, onSelect, showMode = false }) {
   const [open, setOpen] = useState(() => new Set());     // rows opened with the arrow
+  const modeCols = showMode ? MODES.slice(0, 2) : [];     // With chauffeur, Self-drive (the gray "not recorded" part only shows in the thin bar)
   const cols = STATUSES.filter((s) => !hidden.has(s.key));
 
   // The arrow opens / closes a row. On the selected row it clears the selection (a selected row is always open).
@@ -439,6 +468,7 @@ function StatusTable({ rows, nameLabel, hidden, sort, onSort, selectedId, onSele
           <tr>
             {head("name", nameLabel, "left")}
             {cols.map((s) => head(s.key, s.label))}
+            {modeCols.map((m) => head(m.key, m.label))}
             {head("total", "Total")}
           </tr>
         </thead>
@@ -478,6 +508,11 @@ function StatusTable({ rows, nameLabel, hidden, sort, onSort, selectedId, onSele
                       {r[s.key]}
                     </td>
                   ))}
+                  {modeCols.map((m) => (
+                    <td key={m.key} className={`px-3 py-2.5 text-right ${r[m.key] ? "font-bold" : "text-gray-300"}`} style={r[m.key] ? { color: m.color } : undefined}>
+                      {r[m.key]}
+                    </td>
+                  ))}
                   <td className="px-3 py-2.5 text-right">
                     <span className="inline-block min-w-[1.75rem] px-2 py-0.5 rounded-full bg-teal-700 text-white font-bold text-center">{r.total}</span>
                   </td>
@@ -493,6 +528,11 @@ function StatusTable({ rows, nameLabel, hidden, sort, onSort, selectedId, onSele
                         style={c[s.key] ? { color: s.color } : undefined}
                       >
                         {c[s.key]}
+                      </td>
+                    ))}
+                    {modeCols.map((m) => (
+                      <td key={m.key} className={`px-3 py-2 text-right ${c[m.key] ? "font-semibold" : "text-gray-300"}`} style={c[m.key] ? { color: m.color } : undefined}>
+                        {c[m.key]}
                       </td>
                     ))}
                     <td className="px-3 py-2 text-right font-semibold text-gray-600">{c.total}</td>
@@ -515,6 +555,9 @@ function RentalsCustomersView({ report }) {
   const [fleetSort, setFleetSort] = useState({ key: "total", dir: "desc" });
   const [custSel, setCustSel] = useState(null);
   const [fleetSel, setFleetSel] = useState(null);
+  const [svcSort, setSvcSort] = useState({ key: "total", dir: "desc" });
+  const [svcSel, setSvcSel] = useState(null);
+  const [svcPage, setSvcPage] = useState(1);
   const [drive, setDrive] = useState("all");               // all | chauffeur | self : filters the whole tab
   const [custPage, setCustPage] = useState(1);
   const [fleetPage, setFleetPage] = useState(1);
@@ -539,10 +582,15 @@ function RentalsCustomersView({ report }) {
   const custRows = useMemo(() => sortRows(groupRows(scoped, "userID", "customerName", "carID", "carName", hidden), custSort), [scoped, hidden, custSort]);
   const fleetRows = useMemo(() => sortRows(groupRows(scoped, "carID", "carName", "userID", "customerName", hidden), fleetSort), [scoped, hidden, fleetSort]);
 
+  // Service types: one row per service type, opening to the cars booked under it.
+  const svcRows = useMemo(() => sortRows(groupRows(scoped, "serviceTypeName", "serviceTypeName", "carID", "carName", hidden), svcSort), [scoped, hidden, svcSort]);
+
   // A selection only counts while its row still exists (hiding a status or changing the period can remove it).
   // Otherwise every bar would stay faded with nothing highlighted.
   const custSelId = custRows.some((r) => r.id === custSel) ? custSel : null;
   const fleetSelId = fleetRows.some((r) => r.id === fleetSel) ? fleetSel : null;
+  const svcSelId = svcRows.some((r) => r.id === svcSel) ? svcSel : null;
+  const svcShown = useMemo(() => pinSelected(svcRows, svcSelId), [svcRows, svcSelId]);
   const custShown = useMemo(() => pinSelected(custRows, custSelId), [custRows, custSelId]);
   const fleetShown = useMemo(() => pinSelected(fleetRows, fleetSelId), [fleetRows, fleetSelId]);
 
@@ -551,19 +599,26 @@ function RentalsCustomersView({ report }) {
   const fleetPages = Math.max(1, Math.ceil(fleetShown.length / PAGE_SIZE));
   const custPageNo = Math.min(custPage, custPages);
   const fleetPageNo = Math.min(fleetPage, fleetPages);
+  const svcPages = Math.max(1, Math.ceil(svcShown.length / PAGE_SIZE));
+  const svcPageNo = Math.min(svcPage, svcPages);
+  const svcPageRows = svcShown.slice((svcPageNo - 1) * PAGE_SIZE, svcPageNo * PAGE_SIZE);
+  const svcMax = Math.max(0, ...svcRows.map((r) => r.total));
+  const svcSupported = bookings.length === 0 || bookings.some((b) => b.serviceTypeName !== undefined);   // false = backend not updated yet
   const custPageRows = custShown.slice((custPageNo - 1) * PAGE_SIZE, custPageNo * PAGE_SIZE);
   const fleetPageRows = fleetShown.slice((fleetPageNo - 1) * PAGE_SIZE, fleetPageNo * PAGE_SIZE);
   const custMax = Math.max(0, ...custRows.map((r) => r.total));
   const fleetMax = Math.max(0, ...fleetRows.map((r) => r.total));
 
   // A new period starts every card back on page 1.
-  useEffect(() => { setCustPage(1); setFleetPage(1); }, [report]);
+  useEffect(() => { setCustPage(1); setFleetPage(1); setSvcPage(1); }, [report]);
 
   // Changing the sort, the selection or the status chips starts that card back on page 1 (the selected row moves to the front).
   const sortCust = (s) => { setCustSort(s); setCustPage(1); };
   const sortFleet = (s) => { setFleetSort(s); setFleetPage(1); };
   const selectCust = (id) => { setCustSel(id); setCustPage(1); };
   const selectFleet = (id) => { setFleetSel(id); setFleetPage(1); };
+  const sortSvc = (s) => { setSvcSort(s); setSvcPage(1); };
+  const selectSvc = (id) => { setSvcSel(id); setSvcPage(1); };
 
   // How many bookings come with a chauffeur and how many are self-drive (respects the status chips).
   const driving = useMemo(() => {
@@ -574,13 +629,16 @@ function RentalsCustomersView({ report }) {
     return { all: visible.length, chauffeur, selfDrive, other: visible.length - chauffeur - selfDrive };
   }, [bookings, hidden]);
 
+  // "All bookings" shows both modes side by side (thin bar + columns); picking one mode narrows the whole tab instead.
+  const showMode = drive === "all" && driving !== null;
+
   const toggleStatus = (key) => setHidden((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
-  const onChip = (key) => { toggleStatus(key); setCustPage(1); setFleetPage(1); };
-  const onDrive = (key) => { setDrive(key); setCustPage(1); setFleetPage(1); };
+  const onChip = (key) => { toggleStatus(key); setCustPage(1); setFleetPage(1); setSvcPage(1); };
+  const onDrive = (key) => { setDrive(key); setCustPage(1); setFleetPage(1); setSvcPage(1); };
 
   // Booking rows from an older backend have no displayStatus / names yet.
   if (bookings.length > 0 && bookings.every((b) => b.displayStatus === undefined)) {
@@ -602,35 +660,43 @@ function RentalsCustomersView({ report }) {
           ))}
         </div>
 
-        {/* Driving filter: All / With chauffeur / Self-drive. It filters everything on this tab. */}
+        {/* Driving dropdown. "All bookings" keeps both modes visible (thin bar under each row + two columns);
+            "With chauffeur" / "Self-drive" narrow everything on this tab to that mode. */}
         <div className="border-t px-4 py-3">
           {driving ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="text-gray-400 font-semibold">Driving</span>
-              <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 w-fit">
-                {[["all", "All", driving.all], ["chauffeur", "With chauffeur", driving.chauffeur], ["self", "Self-drive", driving.selfDrive]].map(([key, label, n]) => (
-                  <button
-                    key={key}
-                    onClick={() => onDrive(key)}
-                    aria-pressed={drive === key}
-                    className={`px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-                      drive === key ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                    }`}
-                  >
-                    {label} <span className={drive === key ? "text-teal-700/70" : "text-gray-400"}>{n}</span>
-                  </button>
-                ))}
-              </div>
-              {driving.other > 0 && <span className="text-gray-400">{driving.other} not recorded (counted in All only)</span>}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+              <label htmlFor="driving-filter" className="text-gray-400 font-semibold">Driving</label>
+              <select
+                id="driving-filter"
+                value={drive}
+                onChange={(e) => onDrive(e.target.value)}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-600"
+              >
+                <option value="all">All bookings ({driving.all})</option>
+                <option value="chauffeur">With chauffeur only ({driving.chauffeur})</option>
+                <option value="self">Self-drive only ({driving.selfDrive})</option>
+              </select>
+              {showMode && (
+                <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-gray-500">
+                  <span className="text-gray-400">Thin bar under each row:</span>
+                  {MODES.filter((m) => m.key !== "unrecorded" || driving.other > 0).map((m) => (
+                    <span key={m.key} className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: m.color }} />
+                      {m.label}
+                    </span>
+                  ))}
+                </span>
+              )}
+              {!showMode && driving.other > 0 && <span className="text-gray-400">{driving.other} not recorded (shown under All bookings only)</span>}
             </div>
           ) : (
-            <p className="text-xs text-amber-600">The driving filter needs the updated reports.service.js (booking rows with modeOfDriving).</p>
+            <p className="text-xs text-amber-600">The driving dropdown needs the updated reports.service.js (booking rows with modeOfDriving).</p>
           )}
         </div>
       </Card>
 
       {totalRentals === 0 ? (
-        <Card><Empty>{drive === "all" ? `No bookings started in ${report.label}. Try another period.` : `No ${drive === "chauffeur" ? "chauffeur" : "self-drive"} bookings in ${report.label}. Switch the Driving filter to All to see the rest.`}</Empty></Card>
+        <Card><Empty>{drive === "all" ? `No bookings started in ${report.label}. Try another period.` : `No ${drive === "chauffeur" ? "chauffeur" : "self-drive"} bookings in ${report.label}. Switch Driving to All bookings to see the rest.`}</Empty></Card>
       ) : (
         <>
           {/* Customers first: the question is "who booked" */}
@@ -641,9 +707,9 @@ function RentalsCustomersView({ report }) {
             />
             {custRows.length === 0 ? <Empty>Every status is switched off.</Empty> : (
               <>
-                <StatusBars rows={custPageRows} scaleMax={custMax} hidden={hidden} selectedId={custSelId} onSelect={selectCust} />
+                <StatusBars showMode={showMode} rows={custPageRows} scaleMax={custMax} hidden={hidden} selectedId={custSelId} onSelect={selectCust} />
                 <Pager page={custPageNo} pageCount={custPages} total={custShown.length} onPage={setCustPage} />
-                <StatusTable rows={custPageRows} nameLabel="Customer" hidden={hidden} sort={custSort} onSort={sortCust} selectedId={custSelId} onSelect={selectCust} />
+                <StatusTable showMode={showMode} rows={custPageRows} nameLabel="Customer" hidden={hidden} sort={custSort} onSort={sortCust} selectedId={custSelId} onSelect={selectCust} />
               </>
             )}
           </Card>
@@ -653,9 +719,23 @@ function RentalsCustomersView({ report }) {
             <SectionHead title="Vehicles" hint="How many times each car was booked. Click a bar or a row to bring it to the front; the arrow shows who booked it." />
             {fleetRows.length === 0 ? <Empty>Every status is switched off.</Empty> : (
               <>
-                <StatusBars rows={fleetPageRows} scaleMax={fleetMax} hidden={hidden} selectedId={fleetSelId} onSelect={selectFleet} />
+                <StatusBars showMode={showMode} rows={fleetPageRows} scaleMax={fleetMax} hidden={hidden} selectedId={fleetSelId} onSelect={selectFleet} />
                 <Pager page={fleetPageNo} pageCount={fleetPages} total={fleetShown.length} onPage={setFleetPage} />
-                <StatusTable rows={fleetPageRows} nameLabel="Vehicle" hidden={hidden} sort={fleetSort} onSort={sortFleet} selectedId={fleetSelId} onSelect={selectFleet} />
+                <StatusTable showMode={showMode} rows={fleetPageRows} nameLabel="Vehicle" hidden={hidden} sort={fleetSort} onSort={sortFleet} selectedId={fleetSelId} onSelect={selectFleet} />
+              </>
+            )}
+          </Card>
+
+          {/* Service types: what the bookings were for */}
+          <Card className="p-4">
+            <SectionHead title="Service types" hint="How many bookings each service type got. Click a bar or a row to bring it to the front; the arrow shows the cars booked under it." />
+            {!svcSupported ? (
+              <p className="text-xs text-amber-600">This graph needs the updated reports.service.js (booking rows with serviceTypeName).</p>
+            ) : svcRows.length === 0 ? <Empty>Every status is switched off.</Empty> : (
+              <>
+                <StatusBars showMode={showMode} rows={svcPageRows} scaleMax={svcMax} hidden={hidden} selectedId={svcSelId} onSelect={selectSvc} />
+                <Pager page={svcPageNo} pageCount={svcPages} total={svcShown.length} onPage={setSvcPage} />
+                <StatusTable showMode={showMode} rows={svcPageRows} nameLabel="Service type" hidden={hidden} sort={svcSort} onSort={sortSvc} selectedId={svcSelId} onSelect={selectSvc} />
               </>
             )}
           </Card>

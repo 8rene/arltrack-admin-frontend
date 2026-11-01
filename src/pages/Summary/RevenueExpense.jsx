@@ -8,7 +8,9 @@ import { useCurrency } from "../../context/CurrencyContext";
 //   Penalties   Confirmed penalties that were paid in store or online
 //   Returned    refunds + security deposits handed back + discount returns
 //   Maintenance Completed maintenance only
-//   Net         Rentals + Penalties - Returned - Maintenance
+//   PayMongo fees  what PayMongo kept on the online payments received (only fees already recorded)
+//   Net         Rentals + Penalties - Returned - Maintenance - PayMongo fees
+//               (net of the expenses the system records: other costs such as fuel or driver pay are not tracked)
 //
 // The booking amount includes the refundable security deposit, so a deposit that is still held is not revenue yet:
 // it only shows up here when it is kept (a penalty it covered, or a forfeited deposit) because what went back is
@@ -80,6 +82,7 @@ function useReport(endpoint, { period, year, month, week, day }) {
 
 const C_GREEN = "#16a34a";
 const C_RED = "#ef4444";
+const C_PURPLE = "#8b5cf6";   // PayMongo fees
 const PAGE_SIZE = 7;               // rows per page: the graph and the table under it always show the same rows
 const NONE = new Set();
 const LABEL_W = "w-44";                   // width of the name column; the grid lines are offset by the same amount
@@ -119,6 +122,7 @@ const IconPackage = ({ className = "w-5 h-5" }) => (
   </Svg>
 );
 
+const IconCard = ({ className = "w-5 h-5" }) => (<Svg className={className} w={2}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /></Svg>);
 const IconArrowUp = ({ className = "w-5 h-5" }) => (<Svg className={className} w={2}><path d="M12 19V5M5 12l7-7 7 7" /></Svg>);
 
 const IconTrend = ({ className = "w-5 h-5" }) => (<Svg className={className} w={2}><polyline points="3 17 9 11 13 15 21 7" /><polyline points="15 7 21 7 21 13" /></Svg>);
@@ -471,18 +475,20 @@ function SplitTable({ rows, nameLabel, columns, total, hidden = NONE, sort, onSo
 
 // what a car's bar is made of: maintenance first (red), then what was left of its revenue (green)
 const CAR_SERIES = [
-  { key: "maintenance", label: "Maintenance", color: C_RED },
-  { key: "profit",      label: "Profit",      color: C_GREEN },
+  { key: "maintenance", label: "Maintenance",   color: C_RED },
+  { key: "fees",        label: "PayMongo fees", color: C_PURPLE },
+  { key: "profit",      label: "Profit",        color: C_GREEN },
 ];
 const CAR_CHILD_SERIES = [
-  { key: "revenue",     label: "Revenue",     color: C_GREEN },
-  { key: "maintenance", label: "Maintenance", color: C_RED },
+  { key: "revenue",     label: "Revenue",       color: C_GREEN },
+  { key: "maintenance", label: "Maintenance",   color: C_RED },
+  { key: "fees",        label: "PayMongo fees", color: C_PURPLE },
 ];
 
 // ── graph: revenue against maintenance for every day / month, with net on top ───
 
 /**
- * Two bars per day (or month): green = revenue, red = maintenance. The dark line is net. A bar below the zero line
+ * Two bars per day (or month): green = revenue, red = expenses (maintenance + PayMongo fees). The dark line is net. A bar below the zero line
  * means more went back to customers than came in that day.
  */
 function IncomeExpenseChart({ series }) {
@@ -490,7 +496,7 @@ function IncomeExpenseChart({ series }) {
   const sym = SYMBOLS?.[currency] || "₱";
   const W = 760, H = 250, L = 56, R = 10, T = 12, B = 28;
 
-  const rawMax = Math.max(0, ...series.map((b) => Math.max(b.revenue, b.maintenance, b.net)));
+  const rawMax = Math.max(0, ...series.map((b) => Math.max(b.revenue, b.expenses ?? b.maintenance, b.net)));
   const rawMin = Math.min(0, ...series.map((b) => Math.min(b.revenue, b.net)));
   const step = niceStep(rawMax - rawMin);
   const bottom = Math.floor(rawMin / step) * step;
@@ -512,7 +518,7 @@ function IncomeExpenseChart({ series }) {
   };
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" role="img" aria-label="Revenue against maintenance over the period">
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" role="img" aria-label="Revenue against expenses over the period">
       {ticks.map((t) => (
         <g key={t}>
           <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke={t === 0 ? "#9ca3af" : "#f3f4f6"} strokeWidth={t === 0 ? 1.25 : 1} />
@@ -523,10 +529,10 @@ function IncomeExpenseChart({ series }) {
       {series.map((b, i) => (
         <g key={b.key}>
           {bar(cx(i) - bw - 1, b.revenue, C_GREEN)}
-          {bar(cx(i) + 1, b.maintenance, C_RED)}
+          {bar(cx(i) + 1, b.expenses ?? b.maintenance, C_RED)}
           {i % every === 0 && <text x={cx(i)} y={H - 10} textAnchor="middle" fontSize="10" fill="#9ca3af">{b.short}</text>}
           <rect x={L + gw * i} y={T} width={gw} height={H - T - B} fill="transparent">
-            <title>{`${b.label}\nRevenue: ${fmt(b.revenue)}\nMaintenance: ${fmt(b.maintenance)}\nNet: ${fmt(b.net)}`}</title>
+            <title>{`${b.label}\nRevenue: ${fmt(b.revenue)}\nMaintenance: ${fmt(b.maintenance)}\nPayMongo fees: ${fmt(b.fees || 0)}\nNet: ${fmt(b.net)}`}</title>
           </rect>
         </g>
       ))}
@@ -543,13 +549,13 @@ function PeriodTable({ series }) {
   const { fmt } = useCurrency();
   const [page, setPage] = useState(1);
   const PAGE = 10;
-  const rows = useMemo(() => series.filter((b) => b.rentals || b.penalties || b.returned || b.maintenance), [series]);
+  const rows = useMemo(() => series.filter((b) => b.rentals || b.penalties || b.returned || b.maintenance || b.fees), [series]);
   useEffect(() => { setPage(1); }, [series]);
 
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
   const pageNo = Math.min(page, pages);
   const shown = rows.slice((pageNo - 1) * PAGE, pageNo * PAGE);
-  const sum = (k) => rows.reduce((s, b) => s + b[k], 0);
+  const sum = (k) => rows.reduce((s, b) => s + (b[k] || 0), 0);
   const num = (v, color) => (v ? <span className="font-semibold" style={color ? { color } : undefined}>{fmt(v)}</span> : <span className="text-gray-300">–</span>);
 
   if (rows.length === 0) return null;
@@ -559,7 +565,7 @@ function PeriodTable({ series }) {
         <table className="w-full text-xs">
           <thead className="bg-gray-50 text-gray-400">
             <tr>
-              {["Period", "Rentals", "Penalties", "Returned", "Maintenance", "Net"].map((h, i) => (
+              {["Period", "Rentals", "Penalties", "Returned", "Maintenance", "PayMongo fees", "Net"].map((h, i) => (
                 <th key={h} className={`px-3 py-2.5 font-semibold whitespace-nowrap ${i === 0 ? "text-left" : "text-right"}`}>{h}</th>
               ))}
             </tr>
@@ -572,6 +578,7 @@ function PeriodTable({ series }) {
                 <td className="px-3 py-2.5 text-right whitespace-nowrap">{num(b.penalties, C_GREEN)}</td>
                 <td className="px-3 py-2.5 text-right whitespace-nowrap">{num(b.returned, C_RED)}</td>
                 <td className="px-3 py-2.5 text-right whitespace-nowrap">{num(b.maintenance, C_RED)}</td>
+                <td className="px-3 py-2.5 text-right whitespace-nowrap">{num(b.fees, C_PURPLE)}</td>
                 <td className="px-3 py-2.5 text-right">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-white font-bold whitespace-nowrap ${b.net < 0 ? "bg-red-500" : "bg-teal-700"}`}>{fmt(b.net)}</span>
                 </td>
@@ -585,6 +592,7 @@ function PeriodTable({ series }) {
               <td className="px-3 py-2.5 text-right font-bold text-gray-700 whitespace-nowrap">{fmt(sum("penalties"))}</td>
               <td className="px-3 py-2.5 text-right font-bold text-gray-700 whitespace-nowrap">{fmt(sum("returned"))}</td>
               <td className="px-3 py-2.5 text-right font-bold text-gray-700 whitespace-nowrap">{fmt(sum("maintenance"))}</td>
+              <td className="px-3 py-2.5 text-right font-bold text-gray-700 whitespace-nowrap">{fmt(sum("fees"))}</td>
               <td className={`px-3 py-2.5 text-right font-bold whitespace-nowrap ${sum("net") < 0 ? "text-red-500" : "text-gray-800"}`}>{fmt(sum("net"))}</td>
             </tr>
           </tfoot>
@@ -609,9 +617,10 @@ function RevenueExpenseView({ report }) {
   // bar length = revenue when the car earned more than it cost, otherwise the maintenance cost
   const rows = useMemo(() => sortRows(
     (report.cars || []).map((c) => {
-      const profit = Math.max(0, c.revenue - c.maintenance);
-      return { ...c, profit, total: c.maintenance + profit };
-    }).filter((c) => c.revenue !== 0 || c.maintenance !== 0),
+      const fees = c.fees || 0;
+      const profit = Math.max(0, c.revenue - c.maintenance - fees);
+      return { ...c, fees, profit, total: c.maintenance + fees + profit };
+    }).filter((c) => c.revenue !== 0 || c.maintenance !== 0 || c.fees),
     sort,
   ), [report, sort]);
 
@@ -624,23 +633,25 @@ function RevenueExpenseView({ report }) {
 
   useEffect(() => { setPage(1); }, [report]);
 
-  const nothing = !cards.moneyIn && !cards.returned && !cards.maintenance;
+  const nothing = !cards.moneyIn && !cards.returned && !cards.maintenance && !cards.gatewayFees;
   const net = cards.net ?? 0;
   const columns = [
     { key: "bookings",    label: "Bookings" },
     { key: "revenue",     label: "Revenue",     color: C_GREEN, fmt: fmt },
     { key: "maintenance", label: "Maintenance", color: C_RED,   fmt: fmt },
+    { key: "fees",        label: "PayMongo fees", color: C_PURPLE, fmt: fmt },
   ];
 
   return (
     <div className="space-y-4">
 
       <Card>
-        <div className="grid gap-3 grid-cols-2 md:grid-cols-5 p-4">
+        <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6 p-4">
           <StatCard title="Rentals" value={fmt(cards.rentals ?? 0)} Icon={IconCar} color="bg-green-600 text-white" />
           <StatCard title="Penalties" value={fmt(cards.penalties ?? 0)} Icon={IconWarning} color="bg-green-600 text-white" />
           <StatCard title="Returned" value={fmt(cards.returned ?? 0)} Icon={IconArrowUp} color="bg-red-500 text-white" />
           <StatCard title="Maintenance" value={fmt(cards.maintenance ?? 0)} Icon={IconPackage} color="bg-orange-500 text-white" />
+          <StatCard title="PayMongo fees" value={fmt(cards.gatewayFees ?? 0)} Icon={IconCard} color="bg-purple-500 text-white" />
           <StatCard title={net < 0 ? "Net loss" : "Net"} value={fmt(net)} Icon={IconTrend}
             color={net < 0 ? "bg-red-500 text-white" : "bg-teal-600 text-white"} valueClass={net < 0 ? "text-red-500" : "text-gray-800"} />
         </div>
@@ -653,17 +664,20 @@ function RevenueExpenseView({ report }) {
           <Card className="p-4">
             <SectionHead
               title="Revenue and maintenance"
-              hint="Revenue is what came in minus what went back to customers (refunds and returned deposits). The line is net after maintenance."
+              hint="Revenue is what came in minus what went back to customers (refunds and returned deposits). Expenses are completed maintenance and the PayMongo fees on online payments. The line is net after those expenses; other costs (fuel, driver pay) are not recorded here."
             />
-            <Legend items={[{ key: "r", label: "Revenue", color: C_GREEN }, { key: "m", label: "Maintenance", color: C_RED }, { key: "n", label: "Net", color: "#334155", line: true }]} />
+            <Legend items={[{ key: "r", label: "Revenue", color: C_GREEN }, { key: "m", label: "Expenses (maintenance + PayMongo fees)", color: C_RED }, { key: "n", label: "Net", color: "#334155", line: true }]} />
             <IncomeExpenseChart series={series} />
+            {cards.gatewayFeesUnrecorded > 0 && (
+              <p className="mt-2 text-xs text-amber-600">{cards.gatewayFeesUnrecorded} online payment{cards.gatewayFeesUnrecorded === 1 ? "" : "s"} in this period {cards.gatewayFeesUnrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so the fees and Net are slightly off until {cards.gatewayFeesUnrecorded === 1 ? "it is" : "they are"} filled in.</p>
+            )}
             <PeriodTable series={series} />
           </Card>
 
           <Card className="p-4">
             <SectionHead
               title="Vehicles"
-              hint="Bar length is what the car brought in: red went to maintenance, green is what was left. A car that cost more than it earned shows only red. Open a car to see its bookings and repairs."
+              hint="Bar length is what the car brought in: red went to maintenance, purple to PayMongo fees, green is what was left. A car that cost more than it earned shows no green. Open a car to see its bookings and repairs."
             />
             {rows.length === 0 ? (
               <Empty>No bookings or maintenance by vehicle in {report.label}.</Empty>

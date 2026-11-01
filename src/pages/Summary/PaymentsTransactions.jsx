@@ -4,10 +4,12 @@ import { useCurrency } from "../../context/CurrencyContext";
 // ─────────────────────────────────────────────────────────────────────────────
 // PAYMENTS & TRANSACTIONS: "Where did the cash go?"
 //
-//   Money in         by how it was paid (Cash, GCash ...), split into rentals and penalties
-//   Money out        refunds, security deposits handed back, discount returns
+//   Money in         by how it was paid (Cash, GCash ...), split into rentals and penalties. A striped orange part
+//                    is the unpaid balance still expected under that method (it is not money received yet).
+//                    A second card splits the same money by what it was FOR: rental, service fee, gateway fee,
+//                    the refundable deposit, penalties (a booking's fees are split in proportion when it is part-paid).
+//   Money out        refunds, security deposits handed back, discount returns, and the fees PayMongo kept
 //   Unpaid balances  payments made in the period that still owe money, biggest first
-//   Payment records  every payment made in the period, with the Payments page's own status labels
 //
 // Money in / out are dated by the day the money MOVED (paymentEntries.settledAt), not the day the booking was made.
 // Deposits held is a snapshot of right now. Deposits kept = forfeited deposits + deposits used to cover penalties.
@@ -79,9 +81,16 @@ function useReport(endpoint, { period, year, month, week, day }) {
 
 const C_RED = "#ef4444";
 const C_TEAL = "#0d9488";
-const C_AMBER = "#f59e0b";
+const C_AMBER = "#f59e0b";      // = the Unpaid balances card: orange means "still owed", nothing else
+const C_INDIGO = "#6366f1";     // penalties
+const C_SLATE = "#64748b";      // PayMongo fees
 const C_BLUE = "#2563eb";
 const C_PURPLE = "#7c3aed";
+const C_SKY = "#0ea5e9";       // service fee
+const C_PINK = "#ec4899";      // gateway fee
+const C_LIME = "#84cc16";      // deposit (and a deposit returned)
+const C_ORANGE = "#ea580c";    // refunds
+const C_FUCHSIA = "#c026d3";   // discounts returned
 const PAGE_SIZE = 7;               // rows per page: the graph and the table under it always show the same rows
 const NONE = new Set();
 const LABEL_W = "w-44";                   // width of the name column; the grid lines are offset by the same amount
@@ -268,7 +277,7 @@ function pinSelected(rows, selectedId) {
  *   axis   "money" (default: pesos, converted to the chosen currency) or "count"
  * A row's `total` is the bar length; the scale is taken from `scaleMax` so bars compare across pages.
  */
-function SplitBars({ rows, scaleMax = 0, series, childSeries, hidden = NONE, selectedId, onSelect, money, axis = "money", axisLabel }) {
+function SplitBars({ rows, scaleMax = 0, series, childSeries, sourceSeries, sourceLabel = "Received from", hidden = NONE, selectedId, onSelect, money, axis = "money", axisLabel }) {
   const { convert, currency, SYMBOLS } = useCurrency();
   const isMoney = axis === "money";
   const sym = isMoney ? (SYMBOLS?.[currency] || "₱") : "";
@@ -276,11 +285,12 @@ function SplitBars({ rows, scaleMax = 0, series, childSeries, hidden = NONE, sel
   const kidCols = childSeries || cols;
   const show = (v) => (isMoney ? compact(convert(v)) : String(v));
 
-  const maxTotal = Math.max(1, scaleMax, ...rows.map((r) => r.total));
+  const maxTotal = Math.max(1, scaleMax, ...rows.map((r) => r.barTotal ?? r.total));
   const step = niceStep(maxTotal);
   const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
   const ticks = [];
   for (let t = 0; t <= axisMax; t += step) ticks.push(t);
+  const fill = (s) => (s.hatched ? `repeating-linear-gradient(45deg, ${s.color}, ${s.color} 5px, ${s.color}b3 5px, ${s.color}b3 10px)` : s.color);
 
   const segLabel = (v) => (v / axisMax >= 0.07 ? show(v) : "");   // a number sits inside its segment only when it fits
   const tip = (s, v) => `${s.label}: ${money ? money(v) : v}`;
@@ -304,12 +314,23 @@ function SplitBars({ rows, scaleMax = 0, series, childSeries, hidden = NONE, sel
                   <div className={`flex-1 flex h-7 overflow-hidden rounded-r-lg transition-shadow ${isSel ? "ring-2 ring-teal-600 shadow-md" : selectedId ? "opacity-50" : ""}`}>
                     {cols.map((s) => r[s.key] > 0 && (
                       <div key={s.key} title={tip(s, r[s.key])} className="h-full flex items-center justify-center text-xs font-semibold text-white overflow-hidden"
-                        style={{ width: `${(r[s.key] / axisMax) * 100}%`, background: s.color }}>
+                        style={{ width: `${(r[s.key] / axisMax) * 100}%`, background: fill(s) }}>
                         {segLabel(r[s.key])}
                       </div>
                     ))}
                   </div>
                 </button>
+
+                {sourceSeries && (r.online > 0 || r.inPerson > 0) && (
+                  <div className={`flex items-center gap-3 mt-0.5 ${selectedId && !isSel ? "opacity-50" : ""}`}>
+                    <span className={`${LABEL_W} shrink-0 pl-4 text-[10px] text-gray-400`}>{sourceLabel}</span>
+                    <div className="flex-1 flex h-2.5 overflow-hidden rounded-r-md">
+                      {sourceSeries.map((s) => r[s.key] > 0 && (
+                        <div key={s.key} title={tip(s, r[s.key])} style={{ width: `${(r[s.key] / axisMax) * 100}%`, background: s.color }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {isSel && r.children?.length > 0 && (
                   <div className="relative mt-1.5 mb-1 space-y-1">
@@ -319,7 +340,7 @@ function SplitBars({ rows, scaleMax = 0, series, childSeries, hidden = NONE, sel
                         <div className="flex-1 flex h-4 overflow-hidden rounded-r-md">
                           {kidCols.map((s) => c[s.key] > 0 && (
                             <div key={s.key} title={tip(s, c[s.key])} className="h-full flex items-center justify-center text-[10px] font-semibold text-white overflow-hidden"
-                              style={{ width: `${Math.min(100, (c[s.key] / axisMax) * 100)}%`, background: s.color, opacity: 0.75 }}>
+                              style={{ width: `${Math.min(100, (c[s.key] / axisMax) * 100)}%`, background: fill(s), opacity: 0.75 }}>
                               {segLabel(c[s.key])}
                             </div>
                           ))}
@@ -467,17 +488,35 @@ function SplitTable({ rows, nameLabel, columns, total, hidden = NONE, sort, onSo
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—");
 
 
+// Money in is split by what the money was FOR, so one bar answers both "how was it paid" and "what was it for".
 const IN_SERIES = [
-  { key: "rentals",   label: "Rentals",   color: C_TEAL },
-  { key: "penalties", label: "Penalties", color: C_AMBER },
+  { key: "rental",    label: "Rental & other fees",  color: C_TEAL },
+  { key: "service",   label: "Service fee",          color: C_SKY },
+  { key: "gateway",   label: "Gateway fee",          color: C_PINK },
+  { key: "deposit",   label: "Deposit (refundable)", color: C_LIME },
+  { key: "penalties", label: "Penalties",            color: C_INDIGO },
+  { key: "unpaid",    label: "Unpaid (expected)",    color: C_AMBER, hatched: true },
 ];
-const OUT_SERIES = [
+// the thin bar under each method in Money in: the same money, by where it was received
+const SRC_SERIES = [
   { key: "online",   label: "Online (PayMongo)", color: C_BLUE },
-  { key: "inPerson", label: "In person",         color: C_PURPLE },
+  { key: "inPerson", label: "In person", color: C_PURPLE },
+];
+// Channel dropdown: when Online or In person is picked, the thin bar and the Online / In person columns are redundant, and
+// unpaid / awaiting amounts have no channel yet, so they are left out.
+const FILTER_HIDE = new Set(["online", "inPerson", "unpaid", "expected"]);
+const OUT_KIND_KEY = { "Refund": "refund", "Deposit return": "depositReturn", "Discount return": "discountReturn" };
+
+// Money out is laid out like Money in: a row per method, split by the reason the money left. The thin bar under it is the
+// same money by where it went (SRC_SERIES, shared with Money in).
+const OUT_SERIES = [
+  { key: "refund",         label: "Refunds",                 color: C_ORANGE },
+  { key: "depositReturn",  label: "Deposits returned",       color: C_LIME },
+  { key: "discountReturn", label: "Discounts returned",      color: C_FUCHSIA },
+  { key: "expected",       label: "Awaiting payout",         color: C_RED, hatched: true },
 ];
 
 // same labels as the Payments page
-const STAGES = ["Pending", "Partial", "Completed", "For Refund", "Refunded", "Cancelled", "Failed"];
 const STAGE_STYLE = {
   Pending:      "bg-yellow-50 text-yellow-700 border-yellow-200",
   Partial:      "bg-blue-50 text-blue-700 border-blue-200",
@@ -487,14 +526,6 @@ const STAGE_STYLE = {
   Cancelled:    "bg-red-50 text-red-700 border-red-200",
   Failed:       "bg-red-50 text-red-700 border-red-200",
 };
-const PHASE_LABEL = {
-  deposit: "Deposit", balance: "Balance", penalty: "Penalty", deposit_return: "Deposit return",
-  discount: "Discount", discount_credit: "Discount credit", discount_applied_balance: "Discount (balance)",
-  discount_applied_penalty: "Discount (penalty)", discount_return: "Discount return",
-  discount_in_refund: "Discount in refund", deposit_forfeited: "Deposit kept",
-};
-const DIRECTION = { in: "In", out: "Out", internal: "–" };
-
 const Stage = ({ stage }) => (
   <span className={`inline-block px-2 py-0.5 rounded-full border text-[11px] font-semibold whitespace-nowrap ${STAGE_STYLE[stage] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{stage}</span>
 );
@@ -503,36 +534,64 @@ function PaymentsTransactionsView({ report }) {
   const { fmt } = useCurrency();
   const cards = report.cards || {};
   const methods = useMemo(() => report.methods || [], [report.methods]);
-  const outflows = useMemo(() => report.outflows || [], [report.outflows]);
   const unpaid = report.unpaid || [];
-  const payments = useMemo(() => report.payments || [], [report.payments]);
+  const outflows = useMemo(() => report.outflows || [], [report.outflows]);
 
   // money in
   const [inSort, setInSort] = useState({ key: "total", dir: "desc" });
   const [inSel, setInSel] = useState(null);
   const [inPage, setInPage] = useState(1);
+  // PayMongo fees
+  const fees = report.fees || { rows: [], total: 0, unrecorded: 0, gatewayReceived: 0, bookingFees: 0 };
+  // unpaid
+  const [unpaidPage, setUnpaidPage] = useState(1);
   // money out
   const [outSort, setOutSort] = useState({ key: "total", dir: "desc" });
   const [outSel, setOutSel] = useState(null);
   const [outPage, setOutPage] = useState(1);
-  // unpaid
-  const [unpaidPage, setUnpaidPage] = useState(1);
-  // records
-  const [stage, setStage] = useState("all");
-  const [method, setMethod] = useState("all");
-  const [query, setQuery] = useState("");
-  const [recPage, setRecPage] = useState(1);
-  const [openRec, setOpenRec] = useState(() => new Set());
+  // channel: overall (online + in person side by side) | online only | in person only. Applies to Money in and Money out.
+  const [channel, setChannel] = useState("all");
+  const byChannel = channel !== "all";
+  const hide = byChannel ? FILTER_HIDE : NONE;
+  const chName = channel === "online" ? "Online" : channel === "inPerson" ? "In person" : "";
+  const chWord = channel === "online" ? " online" : channel === "inPerson" ? " in person" : "";
+  useEffect(() => { setInPage(1); setOutPage(1); setUnpaidPage(1); }, [report]);
 
-  useEffect(() => { setInPage(1); setOutPage(1); setUnpaidPage(1); setRecPage(1); }, [report]);
+  // ── channel filter ──
+  // Money in: each method already carries one child per channel with the full split, so a channel is just that child.
+  const inScoped = useMemo(() => {
+    if (channel === "all") return methods;
+    return methods.map((m) => {
+      const kid = (m.children || []).find((c) => c[channel] > 0);
+      return kid ? { ...m, ...kid, id: m.id, name: m.name, unpaid: 0, barTotal: kid.total, children: [] } : null;
+    }).filter(Boolean);
+  }, [methods, channel]);
+  // Money out: keep the transactions that went through the channel and rebuild each method's numbers from them.
+  // "Awaiting payout" has no channel yet, so it drops out.
+  const outScoped = useMemo(() => {
+    if (channel === "all") return outflows;
+    return outflows.filter((o) => o.id !== "awaiting").map((o) => {
+      const kids = o.children.filter((c) => c[channel] > 0);
+      if (!kids.length) return null;
+      const row = { ...o, count: kids.length, refund: 0, depositReturn: 0, discountReturn: 0, online: 0, inPerson: 0, total: 0, children: kids };
+      kids.forEach((c) => {
+        const k = OUT_KIND_KEY[c.kindLabel];
+        if (k) row[k] += c.total;
+        row.online += c.online; row.inPerson += c.inPerson; row.total += c.total;
+      });
+      row.barTotal = row.total;
+      return row;
+    }).filter(Boolean);
+  }, [outflows, channel]);
+  const onChannel = (v) => { setChannel(v); setInPage(1); setOutPage(1); };
 
   // ── graphs + tables: money in / money out ──
-  const inRows = useMemo(() => sortRows(methods, inSort), [methods, inSort]);
+  const inRows = useMemo(() => sortRows(inScoped, inSort), [inScoped, inSort]);
   const SHOW_TX = 10;   // transactions listed under an opened Money out row (the rest are counted as "and N more")
   const outRows = useMemo(() => sortRows(
-    outflows.map((o) => ({ ...o, children: o.children.slice(0, SHOW_TX), childrenMore: Math.max(0, o.children.length - SHOW_TX) })),
+    outScoped.map((o) => ({ ...o, children: o.children.slice(0, SHOW_TX), childrenMore: Math.max(0, o.children.length - SHOW_TX) })),
     outSort,
-  ), [outflows, outSort]);
+  ), [outScoped, outSort]);
   const inSelId = inRows.some((r) => r.id === inSel) ? inSel : null;
   const outSelId = outRows.some((r) => r.id === outSel) ? outSel : null;
   const inShown = useMemo(() => pinSelected(inRows, inSelId), [inRows, inSelId]);
@@ -551,64 +610,77 @@ function PaymentsTransactionsView({ report }) {
   const unpaidNo = Math.min(unpaidPage, unpaidCount);
   const unpaidRows = unpaid.slice((unpaidNo - 1) * UNPAID_PAGE, unpaidNo * UNPAID_PAGE);
 
-  // ── payment records ──
-  const REC_PAGE = 10;
-  const methodOptions = useMemo(() => [...new Set(payments.flatMap((p) => p.method.split(" + ")).filter((m) => m && m !== "—"))].sort(), [payments]);
-  const stageCounts = useMemo(() => {
-    const c = {};
-    payments.forEach((p) => { c[p.stage] = (c[p.stage] || 0) + 1; });
-    return c;
-  }, [payments]);
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return payments.filter((p) =>
-      (stage === "all" || p.stage === stage) &&
-      (method === "all" || p.method.split(" + ").includes(method)) &&
-      (!q || [p.paymentID, p.bookingID, p.customer, p.reference].some((v) => String(v).toLowerCase().includes(q))));
-  }, [payments, stage, method, query]);
-  const recCount = Math.max(1, Math.ceil(filtered.length / REC_PAGE));
-  const recNo = Math.min(recPage, recCount);
-  const recRows = filtered.slice((recNo - 1) * REC_PAGE, recNo * REC_PAGE);
-
-  const toggleRec = (id) => setOpenRec((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const refilter = (fn) => (v) => { fn(v); setRecPage(1); };
-
   const inColumns = [
     { key: "count",     label: "Payments" },
-    { key: "rentals",   label: "Rentals",   color: C_TEAL,  fmt },
-    { key: "penalties", label: "Penalties", color: C_AMBER, fmt },
+    { key: "rental",    label: "Rental",    color: C_TEAL,   fmt },
+    { key: "service",   label: "Service",   color: C_SKY,    fmt },
+    { key: "gateway",   label: "Gateway",   color: C_PINK,   fmt },
+    { key: "deposit",   label: "Deposit",   color: C_LIME,   fmt },
+    { key: "penalties", label: "Penalties", color: C_INDIGO, fmt },
+    { key: "unpaid",    label: "Unpaid",    color: C_AMBER,  fmt },
+    { key: "online",    label: "Online",    color: C_BLUE,   fmt },
+    { key: "inPerson",  label: "In person", color: C_PURPLE, fmt },
   ];
   const outColumns = [
-    { key: "count",    label: "Transactions" },
-    { key: "online",   label: "Online",    color: C_BLUE,   fmt },
-    { key: "inPerson", label: "In person", color: C_PURPLE, fmt },
+    { key: "count",          label: "Transactions" },
+    { key: "refund",         label: "Refunds",   color: C_ORANGE,  fmt },
+    { key: "depositReturn",  label: "Deposits",  color: C_LIME,    fmt },
+    { key: "discountReturn", label: "Discounts", color: C_FUCHSIA, fmt },
+    { key: "online",         label: "Online",    color: C_BLUE,    fmt },
+    { key: "inPerson",       label: "In person", color: C_PURPLE,  fmt },
   ];
+  const outTotalFmt = (v, r) => (r.id === "awaiting" ? fmt(r.expected) : fmt(v));   // the awaiting row has nothing paid out yet: its pill shows what is waiting
+
+  const moneyInValue = byChannel ? inRows.reduce((sum, r) => sum + r.total, 0) : (cards.moneyIn ?? 0);
+  const moneyOutValue = byChannel ? outRows.reduce((sum, r) => sum + r.total, 0) : (cards.returned ?? 0);
 
   return (
     <div className="space-y-4">
 
       <Card>
         <div className="grid gap-3 grid-cols-2 md:grid-cols-5 p-4">
-          <StatCard title="Money in" value={fmt(cards.moneyIn ?? 0)} Icon={IconArrowDown} color="bg-green-600 text-white" />
-          <StatCard title="Money out" value={fmt(cards.returned ?? 0)} Icon={IconArrowUp} color="bg-red-500 text-white" />
+          <StatCard title={byChannel ? `Money in · ${chName}` : "Money in"} value={fmt(moneyInValue)} Icon={IconArrowDown} color="bg-green-600 text-white" />
+          <StatCard title={byChannel ? `Money out · ${chName}` : "Money out"} value={fmt(moneyOutValue)} Icon={IconArrowUp} color="bg-red-500 text-white" />
           <StatCard title="Unpaid balances" value={fmt(cards.unpaid ?? 0)} Icon={IconWarning} color="bg-amber-500 text-white" />
           <StatCard title="Deposits held" value={fmt(cards.depositsHeld ?? 0)} Icon={IconLock} color="bg-blue-600 text-white" />
           <StatCard title="Deposits kept" value={fmt(cards.depositsKept ?? 0)} Icon={IconCheck} color="bg-teal-600 text-white" />
+        </div>
+
+        {/* Channel dropdown. Overall shows online and in person side by side (thin bar + columns); the others narrow Money in and Money out. */}
+        <div className="border-t px-4 py-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+            <label htmlFor="channel-filter" className="text-gray-400 font-semibold">Channel</label>
+            <select
+              id="channel-filter"
+              value={channel}
+              onChange={(e) => onChannel(e.target.value)}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-600"
+            >
+              <option value="all">Overall (online + in person)</option>
+              <option value="online">Online only</option>
+              <option value="inPerson">In person only</option>
+            </select>
+            {byChannel && (
+              <span className="text-gray-400">
+                Applies to Money in and Money out. Unpaid balances, deposits and PayMongo fees are not split by channel, and Awaiting payout is hidden because it has no channel yet.
+              </span>
+            )}
+          </div>
         </div>
       </Card>
 
       {/* Money in */}
       <Card className="p-4">
-        <SectionHead title="Money in" hint="What was received in this period, by how it was paid. Open a method to split it into online and in person." />
+        <SectionHead title="Money in" hint="What was received in this period, by how it was paid and what it was for. The thin bar under each method is the same money by where it was received, online or in person. The deposit is refundable, so it is money you hold for the customer, not income. The gateway fee is what customers paid for paying online (PayMongo's cut is under Money out, fees paid). Bookings only part-paid are split in proportion. The striped orange part is the unpaid balance still expected under that method. Open a method to split it into online and in person." />
         {inRows.length === 0 ? (
-          <Empty>No money was received in {report.label}.</Empty>
+          <Empty>No money was received{chWord} in {report.label}.</Empty>
         ) : (
           <>
-            <Legend items={IN_SERIES} />
-            <SplitBars rows={inP.rows} scaleMax={Math.max(0, ...inRows.map((r) => r.total))} series={IN_SERIES}
+            <Legend items={[...IN_SERIES, ...SRC_SERIES].filter((x) => !hide.has(x.key))} />
+            <SplitBars sourceLabel="Received from" rows={inP.rows} scaleMax={Math.max(0, ...inRows.map((r) => r.barTotal ?? r.total))} series={IN_SERIES} sourceSeries={byChannel ? undefined : SRC_SERIES} hidden={hide}
               selectedId={inSelId} onSelect={(id) => { setInSel(id); setInPage(1); }} money={fmt} />
             <Pager page={inP.no} pageCount={inP.count} total={inShown.length} onPage={setInPage} />
-            <SplitTable rows={inP.rows} nameLabel="Method" columns={inColumns} total={{ key: "total", label: "Total", fmt }}
+            <SplitTable rows={inP.rows} nameLabel="Method" columns={inColumns} hidden={hide} total={{ key: "total", label: "Total", fmt }}
               sort={inSort} onSort={(s) => { setInSort(s); setInPage(1); }} selectedId={inSelId}
               onSelect={(id) => { setInSel(id); setInPage(1); }} />
           </>
@@ -617,24 +689,43 @@ function PaymentsTransactionsView({ report }) {
 
       {/* Money out */}
       <Card className="p-4">
-        <SectionHead title="Money out" hint="What went back to customers in this period, by the day it was handed back. Open a row to see each transaction. A returned security deposit is money held for them, not a loss." />
+        <SectionHead title="Money out" hint="What went back to customers in this period, by the day it went out and the method it went through: refunds, deposits returned and discounts returned. The thin bar under each method is the same money by where it went, online or in person. Awaiting payout is its own row (striped red): approved refunds not sent yet, and deposit or discount returns PayMongo has not confirmed, as of today. Open a row to see each one. A returned deposit is money held for the customer, not a loss." />
         {outRows.length === 0 ? (
-          <Empty>No refunds or deposit returns in {report.label}.</Empty>
+          <Empty>No money went out{chWord} in {report.label}.</Empty>
         ) : (
           <>
-            <Legend items={OUT_SERIES} />
-            <SplitBars rows={outP.rows} scaleMax={Math.max(0, ...outRows.map((r) => r.total))} series={OUT_SERIES}
+            <Legend items={[...OUT_SERIES, ...SRC_SERIES].filter((x) => !hide.has(x.key))} />
+            <SplitBars sourceLabel="Paid out through" rows={outP.rows} scaleMax={Math.max(0, ...outRows.map((r) => r.barTotal ?? r.total))} series={OUT_SERIES} sourceSeries={byChannel ? undefined : SRC_SERIES} hidden={hide}
               selectedId={outSelId} onSelect={(id) => { setOutSel(id); setOutPage(1); }} money={fmt} />
             <Pager page={outP.no} pageCount={outP.count} total={outShown.length} onPage={setOutPage} />
-            <SplitTable rows={outP.rows} nameLabel="Type" columns={outColumns} total={{ key: "total", label: "Total", fmt }}
+            <SplitTable rows={outP.rows} nameLabel="Method" columns={outColumns} hidden={hide} total={{ key: "total", label: "Total", fmt: outTotalFmt }}
               sort={outSort} onSort={(s) => { setOutSort(s); setOutPage(1); }} selectedId={outSelId}
               onSelect={(id) => { setOutSel(id); setOutPage(1); }}
-              childNote={(c) => (
+              childNote={(c) => c.note ? (
                 <>
-                  {[fmtDate(c.date), c.method !== "—" ? c.method : null, c.online > 0 ? "Online" : "In person"].filter(Boolean).join(" · ")}
+                  {c.note}{" · "}<span className="font-semibold text-gray-700">{fmt(c.expected)}</span>
+                </>
+              ) : (
+                <>
+                  {[c.date ? fmtDate(c.date) : null, c.method !== "—" ? c.method : null, c.kindLabel || null, c.online > 0 ? "Online" : "In person"].filter(Boolean).join(" · ")}
                   {" · "}<span className="font-semibold text-gray-700">{fmt(c.total)}</span>
                 </>
               )} />
+            {fees.total > 0 && (
+              <p className="mt-3 text-xs text-gray-500">
+                Not counted above: PayMongo kept <span className="font-semibold text-gray-700">{fmt(fees.total)}</span> in fees on the online payments received in this period. That is a cost to you, not money handed back.
+              </p>
+            )}
+            {fees.gatewayReceived > 0 && (
+              <p className="mt-3 text-xs text-gray-500">
+                On bookings: customers paid <span className="font-semibold text-gray-700">{fmt(fees.gatewayReceived)}</span> in gateway fees, PayMongo kept{" "}
+                <span className="font-semibold text-gray-700">{fmt(fees.bookingFees)}</span>, leaving{" "}
+                <span className={`font-semibold ${fees.gatewayReceived - fees.bookingFees < 0 ? "text-red-500" : "text-green-600"}`}>{fmt(fees.gatewayReceived - fees.bookingFees)}</span>.
+              </p>
+            )}
+            {fees.unrecorded > 0 && (
+              <p className="mt-2 text-xs text-amber-600">{fees.unrecorded} online payment{fees.unrecorded === 1 ? "" : "s"} in this period {fees.unrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so {fees.unrecorded === 1 ? "it is" : "they are"} not counted here.</p>
+            )}
           </>
         )}
       </Card>
@@ -678,114 +769,6 @@ function PaymentsTransactionsView({ report }) {
         )}
       </Card>
 
-      {/* Payment records */}
-      <Card className="p-4">
-        <SectionHead title="Payment records" hint="Every payment made in this period. Open a row to see each step: deposit, balance, penalty, refund." />
-        {payments.length === 0 ? (
-          <Empty>No payments were made in {report.label}.</Empty>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2 mb-3">
-              <button onClick={() => refilter(setStage)("all")}
-                className={`px-2.5 py-1 rounded-full border text-xs font-semibold ${stage === "all" ? "bg-teal-700 border-teal-700 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
-                All {payments.length}
-              </button>
-              {STAGES.filter((s) => stageCounts[s]).map((s) => (
-                <button key={s} onClick={() => refilter(setStage)(stage === s ? "all" : s)} aria-pressed={stage === s}
-                  className={`px-2.5 py-1 rounded-full border text-xs font-semibold ${STAGE_STYLE[s]} ${stage === s ? "ring-2 ring-teal-600" : stage !== "all" ? "opacity-50" : ""}`}>
-                  {s} {stageCounts[s]}
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 mb-3">
-              <input value={query} onChange={(e) => refilter(setQuery)(e.target.value)} placeholder="Search payment, booking, customer or reference"
-                className="flex-1 min-w-[14rem] px-3 py-2 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-600" />
-              <select value={method} onChange={(e) => refilter(setMethod)(e.target.value)}
-                className="px-3 py-2 text-xs rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-teal-600">
-                <option value="all">All methods</option>
-                {methodOptions.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-
-            {filtered.length === 0 ? (
-              <Empty>No payments match. Try clearing the filters.</Empty>
-            ) : (
-              <>
-                <div className="overflow-x-auto rounded-xl border border-gray-100">
-                  <table className="w-full text-xs">
-                    <thead className="bg-gray-50 text-gray-400">
-                      <tr>
-                        {["Payment", "Booking", "Customer", "Total", "Paid", "Balance", "Returned", "Status", "Method", "Date"].map((h, i) => (
-                          <th key={h} className={`px-3 py-2.5 font-semibold whitespace-nowrap ${i < 3 || i > 6 ? "text-left" : "text-right"}`}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {recRows.map((p) => {
-                        const isOpen = openRec.has(p.id);
-                        return (
-                          <Fragment key={p.id}>
-                            <tr onClick={() => toggleRec(p.id)} className="border-t border-gray-50 cursor-pointer hover:bg-gray-50/60">
-                              <td className="px-3 py-2.5 font-semibold text-gray-800 whitespace-nowrap">
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className="w-4 text-gray-400">{isOpen ? "▾" : "▸"}</span>
-                                  <span className="max-w-[8rem] truncate" title={p.paymentID}>{p.paymentID}</span>
-                                </span>
-                              </td>
-                              <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap"><span className="inline-block max-w-[8rem] truncate align-bottom" title={p.bookingID}>{p.bookingID}</span></td>
-                              <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{p.customer}</td>
-                              <td className="px-3 py-2.5 text-right text-gray-700 whitespace-nowrap">{fmt(p.total)}</td>
-                              <td className="px-3 py-2.5 text-right whitespace-nowrap">{p.paid ? <span className="font-semibold text-green-600">{fmt(p.paid)}</span> : <span className="text-gray-300">–</span>}</td>
-                              <td className="px-3 py-2.5 text-right whitespace-nowrap">{p.balance ? <span className="font-semibold text-red-500">{fmt(p.balance)}</span> : <span className="text-gray-300">–</span>}</td>
-                              <td className="px-3 py-2.5 text-right whitespace-nowrap">{p.refunded ? <span className="font-semibold text-purple-600">{fmt(p.refunded)}</span> : <span className="text-gray-300">–</span>}</td>
-                              <td className="px-3 py-2.5"><Stage stage={p.stage} /></td>
-                              <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{p.method}</td>
-                              <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
-                            </tr>
-                            {isOpen && (
-                              <tr className="border-t border-gray-50 bg-gray-50/60">
-                                <td colSpan={10} className="px-3 py-3">
-                                  {p.steps.length === 0 ? (
-                                    <p className="pl-5 text-gray-400 italic">No money has moved on this payment yet.</p>
-                                  ) : (
-                                    <table className="w-full text-[11px]">
-                                      <thead className="text-gray-400">
-                                        <tr>
-                                          {["Date", "Step", "Direction", "Method", "Amount", "Status", "Reference"].map((h, i) => (
-                                            <th key={h} className={`px-2 py-1 font-semibold ${i === 4 ? "text-right" : "text-left"}`}>{h}</th>
-                                          ))}
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {p.steps.map((s, i) => (
-                                          <tr key={i} className="border-t border-gray-100">
-                                            <td className="px-2 py-1 text-gray-600 whitespace-nowrap">{fmtDate(s.date)}</td>
-                                            <td className="px-2 py-1 text-gray-800 font-semibold whitespace-nowrap">{PHASE_LABEL[s.phase] || s.phase}</td>
-                                            <td className={`px-2 py-1 whitespace-nowrap ${s.direction === "out" ? "text-red-500" : s.direction === "in" ? "text-green-600" : "text-gray-400"}`}>{DIRECTION[s.direction] || "–"}</td>
-                                            <td className="px-2 py-1 text-gray-600 whitespace-nowrap">{s.method}</td>
-                                            <td className="px-2 py-1 text-right text-gray-800 font-semibold whitespace-nowrap">{fmt(s.amount)}</td>
-                                            <td className="px-2 py-1 text-gray-600 capitalize whitespace-nowrap">{s.status}</td>
-                                            <td className="px-2 py-1 text-gray-500 whitespace-nowrap"><span className="inline-block max-w-[10rem] truncate align-bottom" title={s.reference}>{s.reference}</span></td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  )}
-                                </td>
-                              </tr>
-                            )}
-                          </Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                <Pager page={recNo} pageCount={recCount} total={filtered.length} onPage={setRecPage} pageSize={REC_PAGE} />
-              </>
-            )}
-          </>
-        )}
-      </Card>
     </div>
   );
 }
