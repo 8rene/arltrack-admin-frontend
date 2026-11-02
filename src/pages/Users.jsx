@@ -622,6 +622,9 @@ export default function Users() {
   // Reset to the directory sub-tab whenever the role-tab changes (e.g. the
   // "Documents" sub-tab only exists under Customers).
   useEffect(() => {
+    // roleTab starts as null and is set a moment later. On a fresh page load from a Dashboard link, running here
+    // with null would use up the deep-link tab, and the real roleTab change right after would reset to the List.
+    if (!roleTab) return;
     if (deepLinkTabRef.current) {
       setSubTab(deepLinkTabRef.current);
       deepLinkTabRef.current = null;
