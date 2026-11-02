@@ -23,7 +23,7 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // Needs from /api/reports/maintenance-penalties:
 //   cards        { totalMaintenance, pendingCustomers }
-//   cars         [{ carID, name, jobs, total, recovered, absorbed }]
+//   cars         [{ carID, name, jobs, total, recovered, absorbed, scheduled }]   scheduled = still-Scheduled jobs in the period, striped, never part of the cost
 //   penaltyRows  [{ userID, carID, customer, car, amount, paid, pending }]   one per Confirmed penalty
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -153,6 +153,22 @@ const CAR_SERIES = [
   { key: "recovered", label: "Recovered",     color: C_GREEN },
   { key: "absorbed",  label: "Not recovered", color: C_RED },
 ];
+// maintenance that is still Scheduled in the period: striped, on the end of the bar, never part of the cost
+const C_ORANGE = "#f97316";
+const CAR_SCHEDULED = { key: "scheduled", label: "Scheduled (not done yet)", color: "#fed7aa", textColor: C_ORANGE, hatch: C_ORANGE };
+const carSeriesFor = (rows) => (rows.some((r) => r.scheduled > 0) ? [...CAR_SERIES, CAR_SCHEDULED] : CAR_SERIES);
+// white-and-colour stripes for a Chart.js bar (needs the canvas the chart is drawn on)
+const makeHatch = (canvas, color) => {
+  const c = document.createElement("canvas");
+  c.width = 8; c.height = 8;
+  const x = c.getContext("2d");
+  x.fillStyle = "#ffffff"; x.fillRect(0, 0, 8, 8);
+  x.strokeStyle = color; x.lineWidth = 2;
+  x.beginPath(); x.moveTo(-2, 10); x.lineTo(10, -2); x.moveTo(-2, 2); x.lineTo(2, -2); x.moveTo(6, 10); x.lineTo(10, 6); x.stroke();
+  return canvas.getContext("2d").createPattern(c, "repeat");
+};
+// the length of a bar: what was spent plus what is scheduled
+const barLen = (r) => r.total + (r.scheduled || 0);
 
 const PAGE_SIZE = 7;             // rows per page: the graph and the table under it always show the same rows
 const MODAL_PAGE_SIZE = 10;      // same page size as the Bookings table
@@ -206,11 +222,12 @@ function buildCarRows(cars, penaltyRows) {
       id: c.carID || c.name,
       name: c.name,
       recovered: c.recovered, absorbed: c.absorbed,
+      scheduled: c.scheduled || 0,
       total: c.recovered + c.absorbed,
       count: c.jobs ?? 0,
       children: [...(byCar.get(c.carID)?.values() || [])].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)),
     }))
-    .filter((r) => r.total > 0);
+    .filter((r) => r.total > 0 || r.scheduled > 0);
 }
 
 function sortRows(rows, { key, dir }) {
@@ -306,14 +323,15 @@ function SplitBars({ rows, scaleMax = 0, series, onOpen, money }) {
 
   useEffect(() => {
     if (!canvasRef.current) return undefined;
-    const maxTotal = Math.max(1, convert(scaleMax), ...rows.map((r) => convert(r.total)));
+    const maxTotal = Math.max(1, convert(scaleMax), ...rows.map((r) => convert(barLen(r))));
     const step = niceStep(maxTotal);
     const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
 
     const datasets = series.map((s) => ({
       label: s.label, key: s.key,
       data: rows.map((r) => (r[s.key] > 0 ? convert(r[s.key]) : null)),
-      backgroundColor: s.color,
+      backgroundColor: s.hatch ? makeHatch(canvasRef.current, s.hatch) : s.color,
+      ...(s.hatch ? { borderColor: s.hatch, borderWidth: 1, labelColor: s.textColor } : {}),
       borderSkipped: false,
       barPercentage: 0.9,
     }));
@@ -325,10 +343,10 @@ function SplitBars({ rows, scaleMax = 0, series, onOpen, money }) {
         const { ctx } = chart;
         ctx.save();
         ctx.font = "600 10px sans-serif";
-        ctx.fillStyle = "#fff";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         chart.data.datasets.forEach((ds, di) => {
+          ctx.fillStyle = ds.labelColor || "#fff";
           chart.getDatasetMeta(di).data.forEach((el, i) => {
             const v = ds.data[i];
             if (v == null) return;
@@ -540,7 +558,7 @@ function GroupCard({ title, nameLabel, countLabel, childLabel, totalLabel, serie
 
   const sorted = useMemo(() => sortRows(rows, sort), [rows, sort]);
   const pg = useMemo(() => paged(sorted, page), [sorted, page]);
-  const max = useMemo(() => Math.max(0, ...rows.map((r) => r.total)), [rows]);
+  const max = useMemo(() => Math.max(0, ...rows.map(barLen)), [rows]);
   useEffect(() => { setPage(1); }, [rows]);
 
   const th = (label, key) => <SortableTh key={key} label={label} sortKey={key} sort={sort} onSort={(s) => { setSort(s); setPage(1); }} />;
@@ -572,7 +590,7 @@ function GroupCard({ title, nameLabel, countLabel, childLabel, totalLabel, serie
                     <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{r.name}</td>
                       <td className="px-4 py-3 text-gray-600">{r.count || <span className="text-gray-300">—</span>}</td>
-                      {series.map((s) => <MoneyCell key={s.key} value={r[s.key]} color={s.color} fmt={fmt} />)}
+                      {series.map((s) => <MoneyCell key={s.key} value={r[s.key]} color={s.textColor || s.color} fmt={fmt} />)}
                       <td className="px-4 py-3">
                         <span className="inline-block px-2 py-0.5 rounded-full bg-teal-700 text-white text-xs font-bold whitespace-nowrap">{fmt(r.total)}</span>
                       </td>
@@ -613,6 +631,8 @@ function MaintenancePenaltiesView({ report, exportRef }) {
   const carRows = useMemo(() => buildCarRows(cars, penaltyRows), [cars, penaltyRows]);
 
   const nothing = cars.length === 0 && penaltyRows.length === 0;
+  const carSeries = carSeriesFor(carRows);
+  const scheduledTotal = report.cards?.scheduledMaintenance ?? 0;
 
   // ── the PDF: what is on screen, but every row (no paging) ──
   const buildPdf = () => {
@@ -636,12 +656,13 @@ function MaintenancePenaltiesView({ report, exportRef }) {
       sections: [
         { type: "stats", items: [
           { label: "Total maintenance", value: fmt(report.cards?.totalMaintenance ?? 0) },
+          ...(scheduledTotal > 0 ? [{ label: "Scheduled maintenance", value: fmt(scheduledTotal) }] : []),
           { label: "Total penalties", value: fmt(totals.paid + totals.unpaid) },
           { label: "Penalties unpaid", value: fmt(totals.unpaid) },
         ] },
         ...(nothing ? [{ type: "empty", text: `No completed maintenance or penalties in ${report.label}.` }] : [
-          ...group("Customers", "Customer", "Penalties", CUSTOMER_SERIES, custRows, `No penalties in ${report.label}.`),
-          ...group("Vehicles", "Vehicle", "Records", CAR_SERIES, carRows, cars.length === 0 ? `No completed maintenance in ${report.label}.` : "Nothing to show."),
+          ...group("Customers' Penalties", "Customer", "Penalties", CUSTOMER_SERIES, custRows, `No penalties in ${report.label}.`),
+          ...group("Vehicles Maintenance", "Vehicle", "Records", carSeries, carRows, cars.length === 0 ? `No completed maintenance in ${report.label}.` : "Nothing to show."),
         ]),
       ],
     };
@@ -659,8 +680,9 @@ function MaintenancePenaltiesView({ report, exportRef }) {
     <div className="space-y-4">
 
       <Card>
-        <div className="grid gap-3 grid-cols-1 sm:grid-cols-3 p-4">
+        <div className={`grid gap-3 grid-cols-1 p-4 ${scheduledTotal > 0 ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"}`}>
           <StatCard title="Total maintenance" value={fmt(report.cards?.totalMaintenance ?? 0)} Icon={IconPackage} color="bg-orange-500 text-white" />
+          {scheduledTotal > 0 && <StatCard title="Scheduled maintenance" value={fmt(scheduledTotal)} Icon={IconPackage} color="bg-orange-300 text-white" />}
           <StatCard title="Total penalties" value={fmt(totals.paid + totals.unpaid)} Icon={IconCreditCard} color="bg-teal-600 text-white" />
           <StatCard title="Penalties unpaid" value={fmt(totals.unpaid)} Icon={IconWarning} color="bg-red-500 text-white" />
         </div>
@@ -670,10 +692,10 @@ function MaintenancePenaltiesView({ report, exportRef }) {
         <Card><Empty>No completed maintenance or penalties in {report.label}. Try another period.</Empty></Card>
       ) : (
         <>
-          <GroupCard title="Customers" nameLabel="Customer" countLabel="Penalties" childLabel="Vehicle" totalLabel="Total penalties"
+          <GroupCard title="Customers' Penalties" nameLabel="Customer" countLabel="Penalties" childLabel="Vehicle" totalLabel="Total penalties"
             series={CUSTOMER_SERIES} rows={custRows} emptyText={`No penalties in ${report.label}.`} emptyChild="No penalties for this customer." />
-          <GroupCard title="Vehicles" nameLabel="Vehicle" countLabel="Records" childLabel="Customer" totalLabel="Maintenance cost"
-            series={CAR_SERIES} rows={carRows} emptyText={cars.length === 0 ? `No completed maintenance in ${report.label}.` : "Nothing to show."} emptyChild="No penalties on this car in this period." />
+          <GroupCard title="Vehicles Maintenance" nameLabel="Vehicle" countLabel="Records" childLabel="Customer" totalLabel="Maintenance cost"
+            series={carSeries} rows={carRows} emptyText={cars.length === 0 ? `No completed maintenance in ${report.label}.` : "Nothing to show."} emptyChild="No penalties on this car in this period." />
         </>
       )}
     </div>

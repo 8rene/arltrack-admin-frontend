@@ -1327,6 +1327,15 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     navigate(`/maintenance?${params.toString()}`);
   };
 
+  // A record is already filed for this booking: open it in its read-only view (Maintenance.jsx reads ?open=<id>)
+  // instead of the add form. With several records, the newest one still in progress opens first (the list is newest first).
+  const viewMaintenance = () => {
+    const list = linkedMaintenance || [];
+    const target = list.find((m) => m.status !== "Completed") || list[0];
+    if (!target?.id) { goToMaintenance(); return; }
+    navigate(`/maintenance?open=${encodeURIComponent(target.id)}`);
+  };
+
   // Maintenance records already linked to THIS booking (filed manually
   // via the button below) — so staff can see at a glance whether post-rental cleaning/repair
   // has already been scheduled instead of guessing or re-filing it.
@@ -1535,7 +1544,13 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     driver:      isChauffeur ? [{ label: "Driver Dispatch", onClick: goToDispatch }] : [],
     before:      [{ label: "Vehicle Inspections", onClick: goToInventory }],
     after:       [{ label: "Vehicle Inspections", onClick: goToInventory }],
-    maintenance: [{ label: "Maintenance", onClick: goToMaintenance }],
+    // Already filed: open it. Nothing filed (or still loading): the add form, as before.
+    maintenance: maint.length > 0
+      ? [
+          { label: maint.length > 1 ? `View maintenance (${maint.length})` : "View maintenance", onClick: viewMaintenance },
+          { label: "Add another", onClick: goToMaintenance },
+        ]
+      : [{ label: "Maintenance", onClick: goToMaintenance }],
     penalties:   [{ label: "Penalties", onClick: goToNotePenalty }],
     // The deposit is handed back from the Payments page ("Return deposit"), so name the button for it while one is waiting.
     deposit:     [{ label: status === "ongoing" && depStatus === "Held" ? "Return deposit (Payments)" : "Payments", onClick: goToPayments }],

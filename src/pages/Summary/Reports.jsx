@@ -17,9 +17,9 @@ const TABS = [
   { key: "maintenance", label: "Maintenance & Penalties", Component: MaintenancePenalties },
 ];
 
+// Only Monthly and Yearly are offered: a month already shows its days in the graph and table. The daily / weekly code below
+// (the Week and Day pickers) is kept but can no longer be reached from this list.
 const PERIODS = [
-  { key: "daily",   label: "Daily" },
-  { key: "weekly",  label: "Weekly" },
   { key: "monthly", label: "Monthly" },
   { key: "yearly",  label: "Yearly" },
 ];
