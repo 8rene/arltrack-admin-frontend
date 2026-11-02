@@ -34,10 +34,6 @@ const fmtVer = (v) => Number(v).toFixed(2);
 // Same, but safe for a missing/odd value (old customer-app records can carry a non-numeric version).
 const verLabel = (v) => (v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v)) ? fmtVer(v) : "—");
 const toCents = (v) => Math.round(Number(v) * 100);
-// Quick picks for the editor: small fix = +0.01 (1.00 -> 1.01), major = next whole number (1.05 -> 2.00).
-const minorOf = (v) => (v ? fmtVer((toCents(v) + 1) / 100) : "1.00");
-const majorOf = (v) => (v ? fmtVer(Math.floor(toCents(v) / 100) + 1) : "1.00");
-
 // Line-by-line comparison (what was added / removed) so the editor can review before publishing.
 // Returns null when the texts are too big to compare quickly.
 const diffLines = (oldText, newText) => {
@@ -107,8 +103,9 @@ const parseBlocks = (source) => {
   const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
   const blocks = [];
   let para = [];
+  let paraLvl = 0; // indent steps of the paragraph's first line (2 spaces = 1 step)
   let list = null;
-  const flushPara = () => { if (para.length) { blocks.push({ type: "p", text: para.join(" ") }); para = []; } };
+  const flushPara = () => { if (para.length) { blocks.push({ type: "p", text: para.join(" "), level: paraLvl }); para = []; paraLvl = 0; } };
   const flushList = () => { if (list) { blocks.push(list); list = null; } };
 
   for (const raw of lines) {
@@ -117,35 +114,105 @@ const parseBlocks = (source) => {
     if (!line.trim()) { flushPara(); flushList(); continue; }
     if (/^\s*(---|\*\*\*)\s*$/.test(line)) { flushPara(); flushList(); blocks.push({ type: "hr" }); continue; }
     if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { flushPara(); flushList(); blocks.push({ type: "h", level: m[1].length, text: m[2] }); continue; }
+    // Items indented with spaces/tabs (2 spaces = 1 step, up to 3 steps) become nested lists.
+    const lvl = Math.min(3, Math.floor(raw.match(/^[ \t]*/)[0].replace(/\t/g, "  ").length / 2));
     if ((m = line.match(/^\s*[-*]\s+(.*)$/))) {
       flushPara();
-      if (!list || list.type !== "ul") { flushList(); list = { type: "ul", items: [] }; }
-      list.items.push(m[1]); continue;
+      if (list && lvl === 0 && list.type !== "ul") flushList();
+      if (!list) list = { type: "ul", items: [] };
+      list.items.push({ text: m[1], level: lvl, type: "ul" }); continue;
     }
     if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
       flushPara();
-      if (!list || list.type !== "ol") { flushList(); list = { type: "ol", items: [] }; }
-      list.items.push(m[1]); continue;
+      if (list && lvl === 0 && list.type !== "ol") flushList();
+      if (!list) list = { type: "ol", items: [] };
+      list.items.push({ text: m[1], level: lvl, type: "ol" }); continue;
     }
     flushList();
+    if (!para.length) paraLvl = Math.min(3, Math.floor(raw.match(/^[ \t]*/)[0].replace(/\t/g, "  ").length / 2));
     para.push(line.trim());
   }
   flushPara(); flushList();
   return blocks;
 };
 
+// Turns the flat list items (each with an indent level) into a tree.
+const nestItems = (items) => {
+  const root = [];
+  const stack = [{ level: -1, children: root }];
+  items.forEach((it) => {
+    const node = { text: it.text, type: it.type, level: it.level, children: [] };
+    while (stack.length > 1 && stack[stack.length - 1].level >= it.level) stack.pop();
+    stack[stack.length - 1].children.push(node);
+    stack.push({ level: it.level, children: node.children });
+  });
+  return root;
+};
+
+const renderList = (nodes, type, key, q, depth, parentLevel = -1) => {
+  const Tag = type;
+  // A list that starts further in than one step (e.g. indented bullets with nothing above them) is shifted in by the extra steps.
+  const extra = Math.max(0, nodes[0].level - parentLevel - 1);
+  const style = type === "ol" ? (depth % 2 ? "list-[lower-alpha]" : "list-decimal") : depth % 2 ? "list-[circle]" : "list-disc";
+  return (
+    <Tag key={key} style={extra ? { marginLeft: `${extra * 1.5}rem` } : undefined} className={`${style} pl-5 space-y-1 ${depth ? "mt-1" : ""}`}>
+      {nodes.map((n, j) => (
+        <li key={j}>
+          {renderInline(n.text, `${key}-${j}`, q)}
+          {n.children.length > 0 && renderList(n.children, n.children[0].type, `${key}-${j}c`, q, depth + 1, n.level)}
+        </li>
+      ))}
+    </Tag>
+  );
+};
+
 const HEADING_CLS = { 1: "text-lg font-bold mt-4 mb-2", 2: "text-base font-bold mt-4 mb-1.5", 3: "text-sm font-bold mt-3 mb-1" };
 
-const Markdown = ({ source, query = "" }) => (
-  <div className="space-y-3 leading-relaxed">
-    {parseBlocks(source).map((b, i) => {
-      const k = `b${i}`;
-      if (b.type === "h") { const Tag = `h${b.level + 1}`; return <Tag key={k} className={HEADING_CLS[b.level]}>{renderInline(b.text, k, query)}</Tag>; }
-      if (b.type === "hr") return <hr key={k} className="my-3 opacity-30" />;
-      if (b.type === "ul") return <ul key={k} className="list-disc pl-5 space-y-1">{b.items.map((t, j) => <li key={j}>{renderInline(t, `${k}-${j}`, query)}</li>)}</ul>;
-      if (b.type === "ol") return <ol key={k} className="list-decimal pl-5 space-y-1">{b.items.map((t, j) => <li key={j}>{renderInline(t, `${k}-${j}`, query)}</li>)}</ol>;
-      return <p key={k}>{renderInline(b.text, k, query)}</p>;
-    })}
+// Section headings (##) are numbered 1, 2, 3 … in order, so "Section 10" in the text matches what is shown.
+// A heading that already starts with a typed number is left as it is.
+const Markdown = ({ source, query = "" }) => {
+  let n = 0;
+  return (
+    <div className="space-y-3 leading-relaxed">
+      {parseBlocks(source).map((b, i) => {
+        const k = `b${i}`;
+        if (b.type === "h") {
+          const Tag = `h${b.level + 1}`;
+          const num = b.level === 2 && !/^\d+[.)]\s/.test(b.text) ? `${++n}. ` : "";
+          return <Tag key={k} className={HEADING_CLS[b.level]}>{num}{renderInline(b.text, k, query)}</Tag>;
+        }
+        if (b.type === "hr") return <hr key={k} className="my-3 opacity-30" />;
+        if (b.type === "ul" || b.type === "ol") return renderList(nestItems(b.items), b.type, k, query, 0);
+        return <p key={k} style={b.level ? { textIndent: `${b.level * 2}rem` } : undefined}>{renderInline(b.text, k, query)}</p>; // indented only when the text starts with spaces
+      })}
+    </div>
+  );
+};
+
+// ── Bordered boxes and Label / Value fields (same look as the booking details window) ──
+const Box = ({ title, isDark, children }) => (
+  <section className={`border rounded-2xl overflow-hidden ${isDark ? "border-[#4FC3F7]/20 bg-[#212121]/40" : "border-gray-200 bg-white shadow-sm"}`}>
+    <div className={`px-4 py-2.5 border-b ${isDark ? "border-[#4FC3F7]/20 bg-[#1A5F7A]/50" : "bg-gray-50"}`}>
+      <h3 className={`text-xs font-semibold uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/80" : "text-gray-600"}`}>{title}</h3>
+    </div>
+    <div className="p-4">{children}</div>
+  </section>
+);
+
+const Field = ({ label, value, isDark }) => (
+  <div className="min-w-0">
+    <p className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/50" : "text-gray-400"}`}>{label}</p>
+    <div className={`text-sm font-medium mt-0.5 break-words ${isDark ? "text-[#F5F5F5]" : "text-gray-800"}`}>{value || "—"}</div>
+  </div>
+);
+
+// Version, when it was published, by whom, and what changed.
+const VersionFields = ({ v, isCurrent, isDark }) => (
+  <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-4">
+    <Field isDark={isDark} label="Version" value={`v${verLabel(v.version)}${isCurrent ? " (current)" : ""}`} />
+    <Field isDark={isDark} label="Published" value={v.createdAt ? fmtDate(v.createdAt) : null} />
+    <Field isDark={isDark} label="Published by" value={v.createdBy?.name} />
+    <Field isDark={isDark} label="Changes" value={v.changeNote} />
   </div>
 );
 
@@ -171,8 +238,7 @@ export default function TermsPage() {
   const [tab, setTab] = useState("write");        // write | preview
   const [content, setContent] = useState("");
   const [changeNote, setChangeNote] = useState("");
-  const [versionInput, setVersionInput] = useState("1.00"); // version the editor will publish as
-  const [bumpKind, setBumpKind] = useState("minor");        // minor | major | custom
+  const [versionInput, setVersionInput] = useState("");   // next version, typed by the editor
   const [showDiff, setShowDiff] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -190,6 +256,7 @@ export default function TermsPage() {
     isDark ? "bg-[#212121] border-[#4FC3F7]/20 text-[#F5F5F5] focus:ring-[#4FC3F7]/40" : "bg-white border-gray-200 text-arl-dark focus:ring-arl-dark/20"
   }`;
   const muted = isDark ? "text-[#F5F5F5]/50" : "text-gray-400";
+  const fieldLabel = `text-[11px] font-medium uppercase tracking-wide ${muted}`;
   const text = isDark ? "text-[#F5F5F5]" : "text-gray-700";
   const primaryBtn = `px-5 py-2.5 rounded-xl shadow text-sm font-medium transition-all disabled:opacity-50 ${
     isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
@@ -221,35 +288,31 @@ export default function TermsPage() {
     if (marks.length) marks[0].scrollIntoView({ block: "center", behavior: "smooth" });
   }, [q, current, editMode]);
 
-  const baseContent = current?.content || "";
+  const baseContent = (current?.content || "").replace(/\r\n/g, "\n");
   const isDirty = content !== baseContent;
   const bytes = byteLength(content);
   const currentCents = current ? toCents(current.version) : 0;
-  const versionOk = /^\d+\.\d{2}$/.test(versionInput.trim()) &&
-    toCents(versionInput) >= 100 && toCents(versionInput) > currentCents;
-  const versionError = versionOk ? "" : current
-    ? `Must be 2 decimals and higher than the current version (${fmtVer(current.version)}).`
-    : "Must be 2 decimals, at least 1.00.";
-  // A major update (whole number goes up) must explain itself, because customers and staff read this in the history.
-  const isMajor = !!current && versionOk && Math.floor(toCents(versionInput) / 100) > Math.floor(currentCents / 100);
-  const noteOk = !isMajor || changeNote.trim().length > 0;
+  const nextVer = versionInput.trim();
+  // Next version: 2 decimals, at least 1.00, and always higher than the current one.
+  const versionOk = /^\d+\.\d{2}$/.test(nextVer) && toCents(nextVer) >= 100 && toCents(nextVer) > currentCents;
+  const versionError = !nextVer ? "Enter the next version."
+    : current ? `Must have 2 decimals and be higher than v${fmtVer(current.version)}.`
+    : "Must have 2 decimals, at least 1.00.";
+  // Quick version buttons. Minor fix = +0.10 (1.00 → 1.10). Major fix = next whole number (1.10 → 2.00).
+  // Works in whole cents so there are no decimal rounding errors. With nothing published yet, both give 1.00.
+  const centsToVer = (c) => (c / 100).toFixed(2);
+  const bumpMinor = () => setVersionInput(current ? centsToVer(currentCents + 10) : "1.00");
+  const bumpMajor = () => setVersionInput(current ? centsToVer((Math.floor(currentCents / 100) + 1) * 100) : "1.00");
   const tooBig = bytes > MAX_BYTES;
   // Why the Publish button is disabled (shown next to it so nobody has to guess).
   const publishBlock = !isDirty ? "Change the text first."
     : !versionOk ? versionError
-    : !noteOk ? "Describe what changed — required for a major update."
     : tooBig ? "The text is too long."
     : "";
   const diff = useMemo(
     () => (editMode && showDiff && current ? diffLines(baseContent, content) : undefined),
     [editMode, showDiff, current, baseContent, content]
   );
-
-  const pickBump = (kind) => {
-    setBumpKind(kind);
-    if (kind === "minor") setVersionInput(minorOf(current?.version));
-    else if (kind === "major") setVersionInput(majorOf(current?.version));
-  };
 
   // Browser warning if the tab is closed or refreshed with unpublished changes.
   useEffect(() => {
@@ -263,8 +326,7 @@ export default function TermsPage() {
     setQuery("");
     setContent(baseContent);
     setChangeNote("");
-    setVersionInput(minorOf(current?.version));
-    setBumpKind("minor");
+    setVersionInput("");
     setShowDiff(false);
     setTab("write");
     setNotice(null);
@@ -283,7 +345,6 @@ export default function TermsPage() {
     if (!isDirty) return setNotice({ type: "error", msg: "No changes to save." });
     if (bytes > MAX_BYTES) return setNotice({ type: "error", msg: "Terms are too long." });
     if (!versionOk) return setNotice({ type: "error", msg: versionError });
-    if (!noteOk) return setNotice({ type: "error", msg: "Describe what changed — required for a major update." });
     if (!window.confirm(`Publish this as version ${versionInput.trim()}?\n\nIt goes live immediately. Previous versions are kept in the history.`)) return;
 
     setSaving(true);
@@ -333,10 +394,9 @@ export default function TermsPage() {
   // Loads an old version into the editor. Nothing is saved until "Publish" —
   // and that creates a brand-new version; the old one is untouched.
   const restoreVersion = (v) => {
-    setContent(v.content);
+    setContent(String(v.content || "").replace(/\r\n/g, "\n"));
     setChangeNote(`Restored from version ${fmtVer(v.version)}`);
-    setVersionInput(minorOf(current?.version));
-    setBumpKind("minor");
+    setVersionInput("");
     setShowDiff(false);
     setTab("write");
     closeViewing();
@@ -356,7 +416,7 @@ export default function TermsPage() {
     if (!ta || saving) return;
     const r = fn({ value: ta.value, s: ta.selectionStart, e: ta.selectionEnd });
     setContent(r.value);
-    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(r.s, r.e); });
+    requestAnimationFrame(() => { ta.focus({ preventScroll: true }); ta.setSelectionRange(r.s, r.e); });
   };
 
   // **bold** / *italic* around the selection (or a placeholder word); again = remove.
@@ -380,22 +440,32 @@ export default function TermsPage() {
   });
 
   const LINE_RX = /^(#{1,3}\s+|[-*]\s+|\d+[.)]\s+)/;
+  // Indent / Outdent: moves the selected line(s) one step (2 spaces) in or out. On a bullet or numbered line this makes a sub-item.
+  const shiftIndent = (dir) => applyEdit(({ value, s, e }) => {
+    const start = value.lastIndexOf("\n", s - 1) + 1;
+    let end = value.indexOf("\n", e);
+    if (end === -1) end = value.length;
+    const block = value.slice(start, end).split("\n")
+      .map((l) => (!l.trim() ? l : dir > 0 ? `  ${l}` : l.replace(/^( {1,2}|\t)/, ""))).join("\n");
+    return { value: value.slice(0, start) + block + value.slice(end), s: start, e: start + block.length };
+  });
   // "Section heading", "• bullet list", "1. numbered list" on the line(s) the cursor is in.
   const prefixLines = (kind) => applyEdit(({ value, s, e }) => {
     const start = value.lastIndexOf("\n", s - 1) + 1;
     let end = value.indexOf("\n", e);
     if (end === -1) end = value.length;
     const lines = value.slice(start, end).split("\n");
-    const has = { h: /^##\s+/, ul: /^[-*]\s+/, ol: /^\d+[.)]\s+/ }[kind];
+    const has = { h: /^##\s+/, ul: /^\s*[-*]\s+/, ol: /^\s*\d+[.)]\s+/ }[kind];
     const nonEmpty = lines.filter((l) => l.trim());
     const remove = nonEmpty.length > 0 && nonEmpty.every((l) => has.test(l));
     let n = 0;
     const out = lines.map((l) => {
       if (!l.trim()) return l;
-      const bare = l.replace(LINE_RX, "");
-      if (remove) return bare;
+      const ind = kind === "h" ? "" : l.match(/^[ \t]*/)[0];
+      const bare = l.slice(ind.length).replace(LINE_RX, "");
+      if (remove) return ind + bare;
       n += 1;
-      return (kind === "h" ? "## " : kind === "ul" ? "- " : `${n}. `) + bare;
+      return ind + (kind === "h" ? "## " : kind === "ul" ? "- " : `${n}. `) + bare;
     });
     if (!nonEmpty.length) out[0] = kind === "h" ? "## " : kind === "ul" ? "- " : "1. ";
     const block = out.join("\n");
@@ -403,58 +473,9 @@ export default function TermsPage() {
     return { value: value.slice(0, start) + block + value.slice(end), s: nonEmpty.length ? start : pos, e: pos };
   });
 
-  // Whole line in bold = the highlighted pill customers see (e.g. "₱100.00 per hour …").
-  const highlightLine = () => applyEdit(({ value, s, e }) => {
-    const start = value.lastIndexOf("\n", s - 1) + 1;
-    let end = value.indexOf("\n", e);
-    if (end === -1) end = value.length;
-    const lines = value.slice(start, end).split("\n");
-    const isPill = (l) => /^\*\*[^*]+\*\*$/.test(l.trim());
-    const nonEmpty = lines.filter((l) => l.trim());
-    const remove = nonEmpty.length > 0 && nonEmpty.every(isPill);
-    const out = lines.map((l) => {
-      if (!l.trim()) return l;
-      const bare = l.trim().replace(/^\*\*|\*\*$/g, "").replace(/\*/g, "");
-      return remove ? bare : `**${bare}**`;
-    });
-    const block = out.join("\n");
-    return { value: value.slice(0, start) + block + value.slice(end), s: start, e: start + block.length };
-  });
-
-  // New "Label — value" line (shown to customers as a label/value row, like the refund table).
-  const insertRow = () => applyEdit(({ value, s, e }) => {
-    const lineStart = value.lastIndexOf("\n", s - 1) + 1;
-    const lineEnd0 = value.indexOf("\n", e);
-    const lineEnd = lineEnd0 === -1 ? value.length : lineEnd0;
-    const onBlank = !value.slice(lineStart, lineEnd).trim();
-    const at = onBlank ? lineStart : lineEnd;
-    const row = "- **Label** — Value";
-    const ins = (onBlank ? "" : "\n") + row;
-    const from = at + (onBlank ? 0 : 1) + 4; // inside **Label**
-    return { value: value.slice(0, at) + ins + value.slice(onBlank ? lineEnd : at), s: from, e: from + 5 };
-  });
-
-  const insertLink = () => {
-    const url = window.prompt("Link address (must start with https:// or mailto:)", "https://");
-    if (!url) return;
-    if (!/^(https?:\/\/|mailto:)/i.test(url.trim())) { setNotice({ type: "error", msg: "A link must start with https:// or mailto:" }); return; }
-    applyEdit(({ value, s, e }) => {
-      const label = value.slice(s, e) || "link text";
-      const md = `[${label}](${url.trim()})`;
-      return { value: value.slice(0, s) + md + value.slice(e), s: s + 1, e: s + 1 + label.length };
-    });
-  };
-
-  // {{…}} = a number from Settings that customers always see up to date.
-  const insertLive = (token) => applyEdit(({ value, s, e }) => ({
-    value: value.slice(0, s) + token + value.slice(e), s: s + token.length, e: s + token.length,
-  }));
-
   const onEditorKey = (ev) => {
     if (!(ev.ctrlKey || ev.metaKey)) return;
-    const k = ev.key.toLowerCase();
-    if (k === "b") { ev.preventDefault(); wrap("**", "bold text"); }
-    if (k === "i") { ev.preventDefault(); wrap("*", "italic text"); }
+    if (ev.key.toLowerCase() === "b") { ev.preventDefault(); wrap("**", "bold text"); }
   };
 
   const tbBtn = `px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors disabled:opacity-50 ${
@@ -465,9 +486,7 @@ export default function TermsPage() {
     <div className={`w-full px-4 space-y-5 ${isDark ? "dark" : ""}`}>
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className={`text-2xl font-bold ${isDark ? "text-[#F5F5F5]" : "text-arl-dark"}`}>Terms &amp; Conditions</h1>
-        </div>
+        <h1 className={`text-2xl font-bold ${isDark ? "text-[#F5F5F5]" : "text-arl-dark"}`}>Terms &amp; Conditions</h1>
         {current && (
           <span className={`text-xs px-2.5 py-1 rounded-full border ${isDark ? "border-[#4FC3F7]/30 text-[#4FC3F7]" : "border-gray-200 text-gray-600"}`}>
             Current: v{fmtVer(current.version)}
@@ -483,15 +502,13 @@ export default function TermsPage() {
         }`}>{notice.msg}</div>
       )}
 
-      {/* Current terms: view or edit */}
       <div className={`${card} space-y-4`}>
         {loading ? (
           <p className={`text-sm text-center ${muted}`}>Loading Terms…</p>
         ) : editMode ? (
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className={`block text-xs font-medium ${text}`}>1. Edit the text</label>
+          <div className="space-y-4">
+            <Box isDark={isDark} title="Edit the text">
+              <div className="space-y-2">
                 <div className="flex gap-1 lg:hidden">
                   {["write", "preview"].map((t) => (
                     <button key={t} type="button" onClick={() => setTab(t)}
@@ -502,89 +519,55 @@ export default function TermsPage() {
                       }`}>{t}</button>
                   ))}
                 </div>
-              </div>
-              {(
                 <div className={`${tab === "write" ? "flex" : "hidden lg:flex"} flex-wrap items-center gap-1.5`}>
-                  <button type="button" className={tbBtn} disabled={saving} onClick={() => prefixLines("h")} title="Turn the line into a section heading (numbered automatically for customers)">Section heading</button>
+                  <button type="button" className={tbBtn} disabled={saving} onClick={() => prefixLines("h")} title="Turn the line into a section heading (numbered automatically)">Section heading</button>
                   <button type="button" className={`${tbBtn} font-bold`} disabled={saving} onClick={() => wrap("**", "bold text")} title="Bold (Ctrl+B)">B</button>
-                  <button type="button" className={`${tbBtn} italic`} disabled={saving} onClick={() => wrap("*", "italic text")} title="Italic (Ctrl+I)">I</button>
                   <button type="button" className={tbBtn} disabled={saving} onClick={() => prefixLines("ul")} title="Bullet list">• List</button>
                   <button type="button" className={tbBtn} disabled={saving} onClick={() => prefixLines("ol")} title="Numbered list">1. List</button>
-                  <button type="button" className={tbBtn} disabled={saving} onClick={insertLink} title="Add a link">Link</button>
-                  <button type="button" className={tbBtn} disabled={saving} onClick={highlightLine} title="Show this whole line as a highlighted badge (e.g. a fee or penalty amount)">Highlight line</button>
-                  <button type="button" className={tbBtn} disabled={saving} onClick={insertRow} title="Add a Label / Value row (like the refund table)">Label — Value</button>
-                  <select className={tbBtn} disabled={saving} value="" onChange={(ev) => { if (ev.target.value) insertLive(ev.target.value); }}
-                    title="Insert a number from Settings that stays up to date">
-                    <option value="">Insert live value…</option>
-                    <option value="{{depositText}}">Deposit amount</option>
-                    <option value="{{serviceFeePercent}}">Service fee %</option>
-                    <option value="{{gatewayFeePercent}}">Gateway fee %</option>
-                    <option value="{{fullRefundHours}}">Full-refund window (hours)</option>
-                  </select>
+                  <button type="button" className={tbBtn} disabled={saving} onClick={() => shiftIndent(1)} title="Indent: make the line a sub-item (move it in)">Indent →</button>
+                  <button type="button" className={tbBtn} disabled={saving} onClick={() => shiftIndent(-1)} title="Outdent: move the line back out">← Outdent</button>
                 </div>
-              )}
-              <div className="grid gap-3 lg:grid-cols-2">
-                <div className={tab === "write" ? "" : "hidden lg:block"}>
-                  <p className={`hidden lg:block text-[11px] mb-1 ${muted}`}>What you type</p>
-                  <textarea ref={taRef} className={`${inputCls} font-mono min-h-[400px] leading-relaxed`} value={content}
-                    onChange={(e) => setContent(e.target.value)} onKeyDown={onEditorKey} disabled={saving} spellCheck />
-                </div>
-                <div className={tab === "preview" ? "" : "hidden lg:block"}>
-                  <p className={`hidden lg:block text-[11px] mb-1 ${muted}`}>Live preview</p>
-                  <div className={`${inputCls} min-h-[400px] max-h-[600px] overflow-y-auto ${text}`}>
-                    {content.trim() ? <Markdown source={content} /> : <p className={muted}>Nothing to preview yet.</p>}
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className={tab === "write" ? "" : "hidden lg:block"}>
+                    <p className={`hidden lg:block mb-1 ${fieldLabel}`}>Text</p>
+                    <textarea ref={taRef} className={`${inputCls} font-mono min-h-[400px] leading-relaxed`} value={content}
+                      onChange={(e) => setContent(e.target.value)} onKeyDown={onEditorKey} disabled={saving} spellCheck />
+                  </div>
+                  <div className={tab === "preview" ? "" : "hidden lg:block"}>
+                    <p className={`hidden lg:block mb-1 ${fieldLabel}`}>Preview</p>
+                    <div className={`${inputCls} min-h-[400px] max-h-[600px] overflow-y-auto ${text}`}>
+                      {content.trim() ? <Markdown source={content} /> : <p className={muted}>Nothing to preview yet.</p>}
+                    </div>
                   </div>
                 </div>
+                <p className={`text-[11px] ${bytes > MAX_BYTES ? "text-[#D32F2F]" : muted}`}>
+                  {bytes.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes · Headings are numbered in order, so do not type the numbers. Indent a bullet to make a sub-bullet.
+                </p>
               </div>
-              <p className={`text-[11px] ${bytes > MAX_BYTES ? "text-[#D32F2F]" : muted}`}>
-                {bytes.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes · Select text and use the buttons above. Section numbers and live values are filled in for customers, so the preview shows the plain text.
-              </p>
-            </div>
+            </Box>
 
-            <div className="space-y-2">
-              <label className={`block text-xs font-medium ${text}`}>
-                2. What kind of change is this?{current ? ` (current version is v${fmtVer(current.version)})` : ""}
-              </label>
-              {current ? (
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {[
-                    { k: "minor", title: "Small fix", desc: "Typos, wording, formatting", ver: minorOf(current.version) },
-                    { k: "major", title: "Major update", desc: "Policy, fee or rule changes", ver: majorOf(current.version) },
-                    { k: "custom", title: "Custom number", desc: "Pick the number yourself", ver: null },
-                  ].map((o) => (
-                    <button key={o.k} type="button" disabled={saving} onClick={() => pickBump(o.k)}
-                      className={`text-left rounded-xl border px-3 py-2 transition-colors ${text} ${
-                        bumpKind === o.k
-                          ? isDark ? "border-[#4FC3F7] bg-[#212121]" : "border-arl-dark bg-gray-50"
-                          : isDark ? "border-[#4FC3F7]/20" : "border-gray-200"
-                      }`}>
-                      <div className="text-sm font-semibold">
-                        {o.title}{o.ver && <span className="font-normal opacity-60"> · v{o.ver}</span>}
-                      </div>
-                      <div className={`text-[11px] ${muted}`}>{o.desc}</div>
-                    </button>
-                  ))}
+            <Box isDark={isDark} title="Version change">
+              <div className="grid gap-4 grid-cols-2 max-w-md">
+                <Field isDark={isDark} label="Current version" value={current ? `v${fmtVer(current.version)}` : "None yet"} />
+                <div>
+                  <p className={fieldLabel}>Next version</p>
+                  <input className={`${inputCls} mt-0.5`} value={versionInput} inputMode="decimal" disabled={saving}
+                    onChange={(e) => setVersionInput(e.target.value)} />
                 </div>
-              ) : (
-                <p className={`text-xs ${muted}`}>This will be the first published version: v1.00.</p>
-              )}
-              {current && bumpKind === "custom" && (
-                <div className="space-y-1">
-                  <input className={`${inputCls} !w-28`} value={versionInput} inputMode="decimal" disabled={saving}
-                    placeholder="e.g. 1.05" onChange={(e) => setVersionInput(e.target.value)} />
-                  <p className={`text-[11px] ${muted}`}>Two decimals, higher than v{fmtVer(current.version)}. Example: 1.05 or 2.00.</p>
-                </div>
-              )}
-              {!versionOk && bumpKind === "custom" && <p className="text-[11px] text-[#D32F2F]">{versionError}</p>}
-            </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                <button type="button" className={tbBtn} disabled={saving} onClick={bumpMinor}
+                  title="Small fix: adds 0.10 to the current version">Minor fix{current ? ` → v${centsToVer(currentCents + 10)}` : ""}</button>
+                <button type="button" className={tbBtn} disabled={saving} onClick={bumpMajor}
+                  title="Big change: moves to the next whole version">Major fix{current ? ` → v${centsToVer((Math.floor(currentCents / 100) + 1) * 100)}` : ""}</button>
+              </div>
+              {nextVer && !versionOk && <p className="mt-2 text-[11px] text-[#D32F2F]">{versionError}</p>}
+            </Box>
 
-            <div className="space-y-1">
-              <label className={`block text-xs font-medium ${text}`}>
-                3. Describe the change{isMajor ? " (required for a major update)" : " (optional)"}
-              </label>
+            <Box isDark={isDark} title="Describe changes (optional)">
               <input className={inputCls} value={changeNote} maxLength={500} disabled={saving}
-                placeholder="e.g. Updated cancellation policy" onChange={(e) => setChangeNote(e.target.value)} />
-            </div>
+                onChange={(e) => setChangeNote(e.target.value)} />
+            </Box>
 
             {current && (
               <div className="space-y-2">
@@ -592,7 +575,7 @@ export default function TermsPage() {
                   {showDiff ? "Hide changes" : "Review changes compared to the current version"}
                 </button>
                 {showDiff && (diff === null ? (
-                  <p className={`text-xs ${muted}`}>Too long to compare line by line. Use the live preview instead.</p>
+                  <p className={`text-xs ${muted}`}>Too long to compare line by line. Use the preview instead.</p>
                 ) : (() => {
                   const shown = (diff || []).filter((d) => d.l.trim() !== "");
                   const added = shown.filter((d) => d.t === "+").length;
@@ -618,37 +601,38 @@ export default function TermsPage() {
 
             <div className="flex gap-3 flex-wrap items-center">
               <button className={primaryBtn} onClick={save} disabled={saving || !!publishBlock}>
-                {saving ? "Publishing…" : `Publish as v${versionInput.trim() || "?"}`}
+                {saving ? "Publishing…" : `Publish as v${nextVer || "?"}`}
               </button>
               <button className={ghostBtn} onClick={cancelEdit} disabled={saving}>Cancel</button>
               {publishBlock && !saving && <span className={`text-xs ${muted}`}>{publishBlock}</span>}
             </div>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {current ? (
               <>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="search"
-                    className={inputCls}
-                    placeholder="Search these terms…"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                  />
-                  {q && (
-                    <span className={`text-xs whitespace-nowrap ${muted}`}>
-                      {matchCount === 0 ? "No matches" : `${matchCount} match${matchCount === 1 ? "" : "es"}`}
-                    </span>
-                  )}
-                </div>
-                <div ref={viewRef} className={`rounded-xl border p-5 text-sm ${text} ${isDark ? "border-[#4FC3F7]/20 bg-[#212121]/40" : "border-gray-100 bg-gray-50"}`}>
-                  <Markdown source={current.content} query={q} />
-                </div>
-                <p className={`text-[11px] ${muted}`}>
-                  Published {fmtDate(current.createdAt)}{current.createdBy?.name ? ` by ${current.createdBy.name}` : ""}
-                  {current.changeNote ? ` — ${current.changeNote}` : ""}
-                </p>
+                <Box isDark={isDark} title="Version information">
+                  <VersionFields v={current} isCurrent isDark={isDark} />
+                </Box>
+                <Box isDark={isDark} title="Terms">
+                  <div className="flex items-center gap-2 mb-3">
+                    <input
+                      type="search"
+                      className={inputCls}
+                      placeholder="Search these terms…"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                    {q && (
+                      <span className={`text-xs whitespace-nowrap ${muted}`}>
+                        {matchCount === 0 ? "No matches" : `${matchCount} match${matchCount === 1 ? "" : "es"}`}
+                      </span>
+                    )}
+                  </div>
+                  <div ref={viewRef} className={`text-sm ${text}`}>
+                    <Markdown source={current.content} query={q} />
+                  </div>
+                </Box>
               </>
             ) : (
               <p className={`text-sm ${muted}`}>
@@ -658,55 +642,52 @@ export default function TermsPage() {
             {canEdit && <button className={primaryBtn} onClick={startEdit}>{current ? "Edit Terms" : "Create Terms"}</button>}
           </div>
         )}
-      </div>
 
-      {/* Version history */}
-      {!loading && versions.length > 0 && (
-        <div className={`${card} space-y-3`}>
-          <h2 className={`font-semibold text-sm ${text}`}>Version history</h2>
-          <div className={`rounded-xl border divide-y ${isDark ? "border-[#4FC3F7]/20 divide-[#4FC3F7]/10" : "border-gray-100 divide-gray-100"}`}>
-            {versions.map((v) => (
-              <div key={v.termsVersionID} className="flex items-center justify-between gap-3 px-4 py-2.5 flex-wrap">
-                <div className="min-w-0">
-                  <p className={`text-sm font-medium ${text}`}>
-                    v{fmtVer(v.version)}
-                    {v.version === current?.version && <span className={`ml-2 text-[10px] ${isDark ? "text-[#4FC3F7]" : "text-green-600"}`}>CURRENT</span>}
-                  </p>
-                  <p className={`text-[11px] ${muted}`}>
-                    {fmtDate(v.createdAt)}{v.createdBy?.name ? ` · ${v.createdBy.name}` : ""}{v.changeNote ? ` · ${v.changeNote}` : ""}
-                  </p>
+        {/* Version history */}
+        {!loading && versions.length > 0 && (
+          <Box isDark={isDark} title="Version history">
+            <div className={`divide-y ${isDark ? "divide-[#4FC3F7]/10" : "divide-gray-100"}`}>
+              {versions.map((v) => (
+                <div key={v.termsVersionID} className="flex items-center gap-4 py-3 first:pt-0 last:pb-0 flex-wrap">
+                  <div className="flex-1 min-w-[260px]">
+                    <VersionFields v={v} isCurrent={v.version === current?.version} isDark={isDark} />
+                  </div>
+                  <button className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-50"
+                    onClick={() => openVersion(v.termsVersionID)} disabled={viewLoading}>View</button>
                 </div>
-                <button className={`text-xs underline ${isDark ? "text-[#4FC3F7]" : "text-arl-dark"}`}
-                  onClick={() => openVersion(v.termsVersionID)} disabled={viewLoading}>View</button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+              ))}
+            </div>
+          </Box>
+        )}
+      </div>
 
       {/* Older-version viewer */}
       {viewing && (
-        <div className="fixed inset-0 z-[3000] bg-black/60 flex items-center justify-center p-4" onClick={closeViewing}>
-          <div className={`w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl p-6 ${isDark ? "bg-[#212121] text-[#F5F5F5]" : "bg-white text-gray-700"}`}
+        <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4" onClick={closeViewing}>
+          <div className={`w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl shadow-xl ${isDark ? "bg-[#212121] text-[#F5F5F5]" : "bg-white text-gray-700"}`}
             onClick={(e) => e.stopPropagation()}>
-            <div className="mb-3">
-              <h3 className="font-bold">Terms &amp; Conditions <span className="text-xs font-normal opacity-60">· v{verLabel(viewing.version)}</span></h3>
-              <p className="text-[11px] opacity-60">
-                {fmtDate(viewing.createdAt)}{viewing.createdBy?.name ? ` · ${viewing.createdBy.name}` : ""}
-              </p>
+            <div className="px-6 pt-5 pb-3">
+              <h3 className="font-bold">Terms &amp; Conditions</h3>
             </div>
-            {fromBookingID && (
-              <div className={`mb-3 flex items-center justify-between gap-3 flex-wrap rounded-xl border px-3 py-2 text-xs ${
-                isDark ? "border-[#4FC3F7]/30 bg-[#1A5F7A] text-[#F5F5F5]" : "border-teal-200 bg-teal-50 text-teal-800"
-              }`}>
-                <span>This is the version the customer agreed to for booking <strong>{fromBookingID}</strong>.</span>
-                {effectiveRole !== "Driver" && (
-                  <button type="button" className="underline font-medium" onClick={backToBooking}>Back to booking</button>
-                )}
-              </div>
-            )}
-            <div className="flex-1 overflow-y-auto text-sm mb-4 pr-1"><Markdown source={viewing.content} /></div>
-            <div className="flex gap-3 justify-end">
+            <div className="flex-1 overflow-y-auto px-6 pb-4 space-y-4">
+              {fromBookingID && (
+                <div className={`flex items-center justify-between gap-3 flex-wrap rounded-xl border px-3 py-2 text-xs ${
+                  isDark ? "border-[#4FC3F7]/30 bg-[#1A5F7A] text-[#F5F5F5]" : "border-teal-200 bg-teal-50 text-teal-800"
+                }`}>
+                  <span>This is the version the customer agreed to for booking <strong>{fromBookingID}</strong>.</span>
+                  {effectiveRole !== "Driver" && (
+                    <button type="button" className="underline font-medium" onClick={backToBooking}>Back to booking</button>
+                  )}
+                </div>
+              )}
+              <Box isDark={isDark} title="Version information">
+                <VersionFields v={viewing} isCurrent={viewing.version === current?.version} isDark={isDark} />
+              </Box>
+              <Box isDark={isDark} title="Terms">
+                <div className="text-sm"><Markdown source={viewing.content} /></div>
+              </Box>
+            </div>
+            <div className={`flex gap-3 justify-end px-6 py-4 border-t ${isDark ? "border-[#4FC3F7]/20" : "border-gray-100"}`}>
               <button className={ghostBtn} onClick={closeViewing}>Close</button>
               {canEdit && viewing.version !== current?.version && (
                 <button className={primaryBtn} onClick={() => restoreVersion(viewing)}>Restore as new version</button>

@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useCurrency } from "../../context/CurrencyContext";
+import { barRows } from "../../utils/reportTabPdf";
 import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
 
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
@@ -24,11 +25,11 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function RevenueExpense({ period, year, month, week, day }) {
+export default function RevenueExpense({ period, year, month, week, day, exportRef }) {
   const { report, loading, error } = useReport("/api/reports/money", { period, year, month, week, day });
   return (
     <ReportGate report={report} loading={loading} error={error}>
-      <RevenueExpenseView report={report} />
+      <RevenueExpenseView report={report} exportRef={exportRef} />
     </ReportGate>
   );
 }
@@ -661,8 +662,8 @@ function PeriodTable({ series }) {
 
 // ── the tab ─────────────────────────────────────────────────────────────────
 
-function RevenueExpenseView({ report }) {
-  const { fmt } = useCurrency();
+function RevenueExpenseView({ report, exportRef }) {
+  const { fmt, currency } = useCurrency();
   const [sort, setSort] = useState({ key: "revenue", dir: "desc" });
   const [page, setPage] = useState(1);
   const [viewing, setViewing] = useState(null);   // the car whose bookings window is open
@@ -689,6 +690,56 @@ function RevenueExpenseView({ report }) {
 
   const nothing = !cards.moneyIn && !cards.returned && !cards.maintenance && !cards.gatewayFees;
   const net = cards.net ?? 0;
+
+  // ── the PDF: what is on screen, but every row (no paging) ──
+  const buildPdf = () => {
+    const periodRows = series.filter((b) => b.rentals || b.penalties || b.returned || b.deposits || b.maintenance || b.fees);
+    const sumOf = (k) => periodRows.reduce((s2, b) => s2 + (b[k] || 0), 0);
+    const exp = (b) => b.expenses ?? b.maintenance;
+    const carRows = rows.slice().sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name));
+    return {
+      subtitle: report.label,
+      currency,
+      sections: [
+        { type: "stats", items: [
+          { label: "Rentals", value: fmt(cards.rentals ?? 0) },
+          { label: "Penalties", value: fmt(cards.penalties ?? 0) },
+          { label: "Returned", value: fmt(cards.returned ?? 0) },
+          { label: "Maintenance", value: fmt(cards.maintenance ?? 0) },
+          { label: "PayMongo fees", value: fmt(cards.gatewayFees ?? 0) },
+          { label: net < 0 ? "Net loss" : "Net", value: fmt(net), color: net < 0 ? C_RED : undefined },
+        ] },
+        ...(nothing ? [{ type: "empty", text: `No money moved and no maintenance was completed in ${report.label}.` }] : [
+          { type: "title", text: "Revenue and Expense" },
+          { type: "legend", items: [{ label: "Revenue", color: C_GREEN }, { label: "Expenses (maintenance + PayMongo fees)", color: C_RED }] },
+          { type: "grouped", rows: series.map((b) => ({ name: b.label, bars: [
+            { value: b.revenue, color: C_GREEN, text: fmt(b.revenue) },
+            { value: exp(b), color: C_RED, text: fmt(exp(b)) },
+          ] })) },
+          ...(cards.gatewayFeesUnrecorded > 0 ? [{ type: "note", text: `${cards.gatewayFeesUnrecorded} online payment${cards.gatewayFeesUnrecorded === 1 ? "" : "s"} in this period ${cards.gatewayFeesUnrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so the fees and Net are slightly off until ${cards.gatewayFeesUnrecorded === 1 ? "it is" : "they are"} filled in.` }] : []),
+          ...(periodRows.length === 0 ? [] : [{ type: "table",
+            head: ["Period", "Rentals", "Penalties", "Returned", "Held deposits", "Maintenance", "PayMongo fees", "Net"],
+            align: ["left", "right", "right", "right", "right", "right", "right", "right"],
+            body: periodRows.map((b) => [b.label, fmt(b.rentals), fmt(b.penalties), fmt(b.returned), fmt(b.deposits), fmt(b.maintenance), fmt(b.fees), fmt(b.net)]),
+            foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees"].map((k) => fmt(sumOf(k))), fmt(sumOf("net"))] }]),
+
+          { type: "title", text: "Vehicles" },
+          ...(carRows.length === 0 ? [{ type: "empty", text: `No bookings or maintenance by vehicle in ${report.label}.` }] : [
+            { type: "legend", items: CAR_SERIES },
+            { type: "bars", rows: barRows(carRows, CAR_SERIES, { text: (r) => fmt(r.net) }) },
+            { type: "table",
+              head: ["Vehicle", "Bookings", "Revenue", "Maintenance", "PayMongo fees", "Net"],
+              align: ["left", "right", "right", "right", "right", "right"],
+              body: carRows.map((r) => [r.name, r.bookings ?? "-", fmt(r.revenue), fmt(r.maintenance), fmt(r.fees), fmt(r.net)]) },
+          ]),
+        ]),
+      ],
+    };
+  };
+  // The Download PDF button in Reports.jsx asks for this: the current page, as the sections the PDF builder draws.
+  useEffect(() => { if (exportRef) exportRef.current = buildPdf; });                  // every render, so it is always the newest
+  useEffect(() => () => { if (exportRef) exportRef.current = null; }, [exportRef]);   // a tab that closes has nothing to export
+
 
   return (
     <div className="space-y-4">

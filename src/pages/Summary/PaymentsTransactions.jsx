@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../../context/CurrencyContext";
+import { barRows } from "../../utils/reportTabPdf";
 import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
 
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
@@ -22,11 +23,11 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function PaymentsTransactions({ period, year, month, week, day }) {
+export default function PaymentsTransactions({ period, year, month, week, day, exportRef }) {
   const { report, loading, error } = useReport("/api/reports/money", { period, year, month, week, day });
   return (
     <ReportGate report={report} loading={loading} error={error}>
-      <PaymentsTransactionsView report={report} />
+      <PaymentsTransactionsView report={report} exportRef={exportRef} />
     </ReportGate>
   );
 }
@@ -261,7 +262,7 @@ function paint(s, alpha, cache) {
  * View button of its table row. The scale is taken from `scaleMax` so bars compare across pages.
  * Chart.js draws the axes, the hover tooltip and the resizing; the numbers inside the segments come from a tiny plugin.
  */
-function SplitBars({ rows, scaleMax = 0, series, sourceSeries, sourceLabel = "Received from", hidden = NONE, onOpen, money }) {
+function SplitBars({ rows, scaleMax = 0, series, sourceSeries, sourceLabel = "Received from", hidden = NONE, simple = false, onOpen, money }) {
   const { convert, currency, SYMBOLS } = useCurrency();
   const sym = SYMBOLS?.[currency] || "₱";
   const canvasRef = useRef(null);
@@ -274,7 +275,7 @@ function SplitBars({ rows, scaleMax = 0, series, sourceSeries, sourceLabel = "Re
     const cache = new Map();
     const cols = series.filter((s) => !hidden.has(s.key));
 
-    const maxTotal = Math.max(1, convert(scaleMax), ...rows.map((r) => convert(r.barTotal ?? r.total)));
+    const maxTotal = Math.max(1, convert(scaleMax), ...rows.map((r) => convert(simple ? r.total : (r.barTotal ?? r.total))));
     const step = niceStep(maxTotal);
     const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
 
@@ -356,6 +357,7 @@ function SplitBars({ rows, scaleMax = 0, series, sourceSeries, sourceLabel = "Re
                 return item.dataset.stack === "src" ? `${sourceLabel} · ${item.dataset.label}: ${txt}` : `${item.dataset.label}: ${txt}`;
               },
               footer: (items) => {
+                if (simple) return "";
                 const r = rows[items[0].dataIndex];
                 return `Total: ${live.current.money ? live.current.money(r.total) : r.total}`;
               },
@@ -366,7 +368,7 @@ function SplitBars({ rows, scaleMax = 0, series, sourceSeries, sourceLabel = "Re
       plugins: [segLabels],
     });
     return () => chart.destroy();
-  }, [rows, scaleMax, series, sourceSeries, sourceLabel, hidden, convert, currency, sym, hasSrc]);
+  }, [rows, scaleMax, series, sourceSeries, sourceLabel, hidden, simple, convert, currency, sym, hasSrc]);
 
   return (
     <div className="relative w-full" style={{ height: Math.max(130, rows.length * (hasSrc ? 44 : 32) + 64) }}>
@@ -576,6 +578,10 @@ const OUT_SERIES = [
   { key: "pendDiscount",   label: "Discount held",           color: C_FUCHSIA,     hatched: true },
 ];
 
+// Simplified view: one bar per method, just the total (no split by what it was for, no thin bar).
+const IN_TOTAL  = [{ key: "total", label: "Total money in",  color: C_TEAL }];
+const OUT_TOTAL = [{ key: "total", label: "Total money out", color: C_RED }];
+
 // same labels as the Payments page
 const STAGE_STYLE = {
   Pending:      "bg-yellow-50 text-yellow-700 border-yellow-200",
@@ -597,6 +603,23 @@ const splitName = (name) => {
   return i < 0 ? [String(name), ""] : [name.slice(0, i), name.slice(i + 3)];
 };
 
+/** Simplified | Detailed: same look as the tab switcher at the top of the page. */
+function DetailToggle({ detailed, onChange }) {
+  const opts = [{ on: false, label: "Simplified" }, { on: true, label: "Detailed" }];
+  return (
+    <div role="group" aria-label="Level of detail" className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 w-fit">
+      {opts.map((o) => (
+        <button key={o.label} type="button" onClick={() => onChange(o.on)} aria-pressed={detailed === o.on}
+          className={`px-4 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+            detailed === o.on ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
+          }`}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** A smaller title for a group inside a card (Unpaid balances under Money in, Possible return under Money out). */
 function SubGroup({ title, children }) {
   return (
@@ -607,8 +630,8 @@ function SubGroup({ title, children }) {
   );
 }
 
-function PaymentsTransactionsView({ report }) {
-  const { fmt } = useCurrency();
+function PaymentsTransactionsView({ report, exportRef }) {
+  const { fmt, currency } = useCurrency();
   const navigate = useNavigate();
   const cards = report.cards || {};
   const methods = useMemo(() => report.methods || [], [report.methods]);
@@ -630,6 +653,7 @@ function PaymentsTransactionsView({ report }) {
   const [possPage, setPossPage] = useState(1);
   // channel: overall (online + in person side by side) | online only | in person only. Applies to Money in and Money out.
   const [channel, setChannel] = useState("all");
+  const [detailed, setDetailed] = useState(true);   // Simplified: one total bar per method + slim table. Detailed: the full split, thin bar and every column
   const byChannel = channel !== "all";
   const hide = byChannel ? FILTER_HIDE : NONE;
   const chName = channel === "online" ? "Online" : channel === "inPerson" ? "In person" : "";
@@ -708,6 +732,65 @@ function PaymentsTransactionsView({ report }) {
   const inCols = inColumns.filter((c) => c.key !== "online" && c.key !== "inPerson" && !hide.has(c.key));
   const goBooking = (id) => navigate(`/bookings?open=${encodeURIComponent(id)}`);
 
+  // ── the PDF: what is on screen, but every row (no paging) ──
+  const buildPdf = (kind) => {
+    const wide = kind === "xlsx" || detailed;   // a spreadsheet always gets every column
+    const srcOk = detailed && !byChannel;
+    const cellOf = (r, c) => (c.key === "count" ? String(r.count || "-") : r[c.key] ? fmt(r[c.key]) : "-");
+    const methodTable = (rows, cols) => ({
+      type: "table",
+      head: ["Method", ...cols.map((c) => c.label), "Total"],
+      align: ["left", ...cols.map(() => "right"), "right"],
+      body: rows.map((r) => [r.name, ...cols.map((c) => cellOf(r, c)), fmt(r.total || 0)]),
+    });
+    const group = (title, rows, empty, detail, total, cols) => [
+      { type: "title", text: title },
+      ...(rows.length === 0 ? [{ type: "empty", text: empty }] : [
+        { type: "legend", items: detailed ? [...detail, ...SRC_SERIES].filter((x) => !hide.has(x.key)) : total },
+        { type: "bars", rows: barRows(rows, detailed ? detail.filter((x) => !hide.has(x.key)) : total, { text: (r) => fmt(r.total || 0), sub: srcOk ? SRC_SERIES : undefined }) },
+        methodTable(rows, wide ? cols.filter((c) => !hide.has(c.key)) : []),
+      ]),
+    ];
+    return {
+      subtitle: `${report.label}${kind === "xlsx" ? "" : ` · ${detailed ? "Detailed" : "Simplified"}`}${byChannel ? ` · ${chName} only` : ""}`,
+      currency,
+      sections: [
+        { type: "stats", items: [
+          { label: byChannel ? `Money in · ${chName}` : "Money in", value: fmt(moneyInValue) },
+          { label: byChannel ? `Money out · ${chName}` : "Money out", value: fmt(moneyOutValue) },
+          { label: "Unpaid balances", value: fmt(cards.unpaid ?? 0) },
+          { label: "Deposits held", value: fmt(cards.depositsHeld ?? 0) },
+          { label: "Possible return", value: fmt(cards.possibleReturn ?? 0) },
+        ] },
+
+        ...group("Money in", inRows, `No money was received${chWord} in ${report.label}.`, IN_SERIES, IN_TOTAL, inColumns),
+        { type: "title", text: "Unpaid balances", level: 2 },
+        unpaid.length === 0
+          ? { type: "empty", text: `Nothing is owed on payments made in ${report.label}.` }
+          : { type: "table",
+              head: ["Booking", "Customer", "Vehicle", "Status", "Trip date", "Total", "Paid", "Balance"],
+              align: ["left", "left", "left", "left", "left", "right", "right", "right"],
+              body: unpaid.map((r) => [r.bookingID, r.customer, r.car, r.stage, fmtDate(r.tripStart), fmt(r.total), r.paid ? fmt(r.paid) : "-", fmt(r.balance)]) },
+
+        ...group("Money out", outRows, `No money went out${chWord} in ${report.label}.`, OUT_SERIES, OUT_TOTAL, outColumns),
+        ...(byChannel ? [] : [
+          { type: "title", text: "Possible return", level: 2 },
+          ...(possible.items.length === 0 ? [{ type: "empty", text: "Nothing is waiting to be returned." }] : [
+            { type: "note", text: POSS_KINDS.map((k) => `${k.label}: ${fmt(possible.byKind?.[k.key] || 0)}`).join("     ") },
+            { type: "table",
+              head: ["Booking", "Customer", "Type", "Method", "Amount"],
+              align: ["left", "left", "left", "left", "right"],
+              body: possible.items.map((r) => { const [id, who] = splitName(r.name); return [id, who || "-", r.kindLabel, r.method, fmt(r.amount)]; }) },
+          ]),
+        ]),
+      ],
+    };
+  };
+  // The Download PDF button in Reports.jsx asks for this: the current page, as the sections the PDF builder draws.
+  useEffect(() => { if (exportRef) exportRef.current = buildPdf; });                  // every render, so it is always the newest
+  useEffect(() => () => { if (exportRef) exportRef.current = null; }, [exportRef]);   // a tab that closes has nothing to export
+
+
   return (
     <div className="space-y-4">
 
@@ -720,25 +803,29 @@ function PaymentsTransactionsView({ report }) {
           <StatCard title="Possible return" value={fmt(cards.possibleReturn ?? 0)} Icon={IconClock} color="bg-amber-500 text-white" />
         </div>
 
-        {/* Channel dropdown. Overall shows online and in person side by side (thin bar + columns); the others narrow Money in and Money out. */}
+        {/* Left: Simplified | Detailed. Then Filter By: the channel dropdown. Overall shows online and in person side by side in
+            Detailed (thin bar + columns); the others narrow Money in and Money out. */}
         <div className="border-t px-4 py-3">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
-            <label htmlFor="channel-filter" className="text-gray-400 font-semibold">Channel</label>
-            <select
-              id="channel-filter"
-              value={channel}
-              onChange={(e) => onChannel(e.target.value)}
-              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-600"
-            >
-              <option value="all">Overall (online + in person)</option>
-              <option value="online">Online only</option>
-              <option value="inPerson">In person only</option>
-            </select>
-            {byChannel && (
-              <span className="text-gray-400">
-                Applies to Money in and Money out. Unpaid balances, deposits and PayMongo fees are not split by channel, and the striped "possible return" amounts are hidden because nothing has been paid yet, so they have no channel.
-              </span>
-            )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <DetailToggle detailed={detailed} onChange={setDetailed} />
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <label htmlFor="channel-filter" className="text-gray-400 font-semibold">Filter By:</label>
+              <select
+                id="channel-filter"
+                value={channel}
+                onChange={(e) => onChannel(e.target.value)}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-600"
+              >
+                <option value="all">Overall (online + in person)</option>
+                <option value="online">Online only</option>
+                <option value="inPerson">In person only</option>
+              </select>
+              {byChannel && (
+                <span className="text-gray-400">
+                  Applies to Money in and Money out. Unpaid balances, deposits and PayMongo fees are not split by channel, and the striped "possible return" amounts are hidden because nothing has been paid yet, so they have no channel.
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </Card>
@@ -750,10 +837,10 @@ function PaymentsTransactionsView({ report }) {
           <Empty>No money was received{chWord} in {report.label}.</Empty>
         ) : (
           <>
-            <Legend items={[...IN_SERIES, ...SRC_SERIES].filter((x) => !hide.has(x.key))} />
-            <SplitBars sourceLabel="Received from" rows={inP.rows} scaleMax={Math.max(0, ...inRows.map((r) => r.barTotal ?? r.total))} series={IN_SERIES} sourceSeries={byChannel ? undefined : SRC_SERIES} hidden={hide}
+            <Legend items={detailed ? [...IN_SERIES, ...SRC_SERIES].filter((x) => !hide.has(x.key)) : IN_TOTAL} />
+            <SplitBars sourceLabel="Received from" rows={inP.rows} scaleMax={Math.max(0, ...inRows.map((r) => (detailed ? (r.barTotal ?? r.total) : r.total)))} series={detailed ? IN_SERIES : IN_TOTAL} sourceSeries={byChannel || !detailed ? undefined : SRC_SERIES} hidden={hide} simple={!detailed}
               onOpen={setViewIn} money={fmt} />
-            <MethodTable rows={inP.rows} nameLabel="Method" columns={inColumns} hidden={hide} sort={inSort} onSort={(s) => { setInSort(s); setInPage(1); }}
+            <MethodTable rows={inP.rows} nameLabel="Method" columns={detailed ? inColumns : []} hidden={hide} sort={inSort} onSort={(s) => { setInSort(s); setInPage(1); }}
               onView={setViewIn} page={inP.no} pageCount={inP.count} count={inRows.length} onPage={setInPage} fmt={fmt} />
           </>
         )}
@@ -805,10 +892,10 @@ function PaymentsTransactionsView({ report }) {
           <Empty>No money went out{chWord} in {report.label}.</Empty>
         ) : (
           <>
-            <Legend items={[...OUT_SERIES, ...SRC_SERIES].filter((x) => !hide.has(x.key))} />
-            <SplitBars sourceLabel="Paid out through" rows={outP.rows} scaleMax={Math.max(0, ...outRows.map((r) => r.barTotal ?? r.total))} series={OUT_SERIES} sourceSeries={byChannel ? undefined : SRC_SERIES} hidden={hide}
+            <Legend items={detailed ? [...OUT_SERIES, ...SRC_SERIES].filter((x) => !hide.has(x.key)) : OUT_TOTAL} />
+            <SplitBars sourceLabel="Paid out through" rows={outP.rows} scaleMax={Math.max(0, ...outRows.map((r) => (detailed ? (r.barTotal ?? r.total) : r.total)))} series={detailed ? OUT_SERIES : OUT_TOTAL} sourceSeries={byChannel || !detailed ? undefined : SRC_SERIES} hidden={hide} simple={!detailed}
               onOpen={setViewOut} money={fmt} />
-            <MethodTable rows={outP.rows} nameLabel="Method" columns={outColumns} hidden={hide} sort={outSort} onSort={(s) => { setOutSort(s); setOutPage(1); }}
+            <MethodTable rows={outP.rows} nameLabel="Method" columns={detailed ? outColumns : []} hidden={hide} sort={outSort} onSort={(s) => { setOutSort(s); setOutPage(1); }}
               onView={setViewOut} page={outP.no} pageCount={outP.count} count={outRows.length} onPage={setOutPage} fmt={fmt} />
           </>
         )}

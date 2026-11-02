@@ -1,5 +1,9 @@
-import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useCurrency } from "../../context/CurrencyContext";
+import { barRows } from "../../utils/reportTabPdf";
+import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
+
+ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAINTENANCE & PENALTIES
@@ -10,7 +14,8 @@ import { useCurrency } from "../../context/CurrencyContext";
 // and for vehicles. Each bar / row is split in two:
 //     Customers   Paid | Unpaid                      (penalties charged to that customer)
 //     Vehicles    Recovered | Not recovered          (maintenance cost of that car)
-// A customer row opens to show the cars they were penalized on; a car row opens to show who was penalized on it.
+// "View" on a customer row (or a click on its bar) opens the cars they were penalized on; on a car row it opens who was
+// penalized on it.
 //
 // Only Confirmed penalties count. "Recovered" = penalties actually collected on that car in the period, capped at its
 // maintenance cost; it does not link a specific penalty to a specific repair.
@@ -22,11 +27,11 @@ import { useCurrency } from "../../context/CurrencyContext";
 //   penaltyRows  [{ userID, carID, customer, car, amount, paid, pending }]   one per Confirmed penalty
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function MaintenancePenalties({ period, year, month, week, day }) {
+export default function MaintenancePenalties({ period, year, month, week, day, exportRef }) {
   const { report, loading, error } = useMaintenanceReport({ period, year, month, week, day });
   return (
     <ReportGate report={report} loading={loading} error={error}>
-      <MaintenancePenaltiesView report={report} />
+      <MaintenancePenaltiesView report={report} exportRef={exportRef} />
     </ReportGate>
   );
 }
@@ -138,7 +143,7 @@ function ReportGate({ report, loading, error, children }) {
 
 // ── what each bar is split into ─────────────────────────────────────────────
 
-const C_GREEN = "#16a34a", C_RED = "#ef4444", C_TEAL = "#0f766e";
+const C_GREEN = "#16a34a", C_RED = "#ef4444";
 
 const CUSTOMER_SERIES = [
   { key: "paid",   label: "Paid",   color: C_GREEN },
@@ -148,30 +153,23 @@ const CAR_SERIES = [
   { key: "recovered", label: "Recovered",     color: C_GREEN },
   { key: "absorbed",  label: "Not recovered", color: C_RED },
 ];
-// A car's thin bars show each customer's penalties charged on that car (one colour, the split is in the table).
-const CAR_CHILD_SERIES = [{ key: "total", label: "Penalties charged", color: C_TEAL }];
 
 const PAGE_SIZE = 7;             // rows per page: the graph and the table under it always show the same rows
-const LABEL_W = "w-44";          // width of the name column; the grid lines are offset by the same amount
-const GAP_LEFT = "11.75rem";     // name column (w-44) + gap-3: where the bars start
+const MODAL_PAGE_SIZE = 10;      // same page size as the Bookings table
 
 // ── grouping + sorting ──────────────────────────────────────────────────────
 
-/**
- * One row per customer with paid / unpaid amounts, plus `children`: the same split per car they were penalized on.
- * A hidden series is left out of every amount and total; a penalty that is left with nothing to show is skipped.
- */
-function buildCustomerRows(penaltyRows, hidden) {
+/** One row per customer with paid / unpaid amounts, plus `children`: the same split per car they were penalized on. */
+function buildCustomerRows(penaltyRows) {
   const map = new Map();
   const add = (target, p) => {
-    if (!hidden.has("paid")) target.paid += p.paid;
-    if (!hidden.has("unpaid")) target.unpaid += p.pending;
+    target.paid += p.paid;
+    target.unpaid += p.pending;
     target.total = target.paid + target.unpaid;
     target.count += 1;
   };
   for (const p of penaltyRows) {
-    const shown = (hidden.has("paid") ? 0 : p.paid) + (hidden.has("unpaid") ? 0 : p.pending);
-    if (shown <= 0) continue;
+    if (p.paid + p.pending <= 0) continue;
 
     const id = p.userID || "unknown";
     if (!map.has(id)) map.set(id, { id, name: p.customer || "Unknown", paid: 0, unpaid: 0, total: 0, count: 0, subs: new Map() });
@@ -192,7 +190,7 @@ function buildCustomerRows(penaltyRows, hidden) {
  * One row per car that had completed maintenance: recovered / not recovered, plus `children`: the customers who
  * were penalized on that car (all Confirmed penalties, whatever their paid status).
  */
-function buildCarRows(cars, penaltyRows, hidden) {
+function buildCarRows(cars, penaltyRows) {
   const byCar = new Map();
   for (const p of penaltyRows) {
     if (!p.carID) continue;
@@ -204,18 +202,14 @@ function buildCarRows(cars, penaltyRows, hidden) {
     c.count += 1; c.paid += p.paid; c.unpaid += p.pending; c.total += p.amount;
   }
   return cars
-    .map((c) => {
-      const recovered = hidden.has("recovered") ? 0 : c.recovered;
-      const absorbed = hidden.has("absorbed") ? 0 : c.absorbed;
-      return {
-        id: c.carID || c.name,
-        name: c.name,
-        recovered, absorbed,
-        total: recovered + absorbed,
-        count: c.jobs ?? 0,
-        children: [...(byCar.get(c.carID)?.values() || [])].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)),
-      };
-    })
+    .map((c) => ({
+      id: c.carID || c.name,
+      name: c.name,
+      recovered: c.recovered, absorbed: c.absorbed,
+      total: c.recovered + c.absorbed,
+      count: c.jobs ?? 0,
+      children: [...(byCar.get(c.carID)?.values() || [])].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)),
+    }))
     .filter((r) => r.total > 0);
 }
 
@@ -227,10 +221,10 @@ function sortRows(rows, { key, dir }) {
   });
 }
 
-/** The selected row goes to the front of the list (graph and table); the rest keep their sort order. */
-function pinSelected(rows, selectedId) {
-  const sel = rows.find((r) => r.id === selectedId);
-  return sel ? [sel, ...rows.filter((r) => r.id !== selectedId)] : rows;
+function paged(list, p, size = PAGE_SIZE) {
+  const count = Math.max(1, Math.ceil(list.length / size));
+  const no = Math.min(p, count);
+  return { count, no, rows: list.slice((no - 1) * size, no * size) };
 }
 
 // ── small pieces ────────────────────────────────────────────────────────────
@@ -240,19 +234,9 @@ const Card = ({ children, className = "" }) => (
 );
 
 // Same stat card as the Rentals tab: colored icon square on the left, number and title on the right.
-function StatCard({ title, value, Icon, color, onClick, off = false }) {
-  const clickable = typeof onClick === "function";
+function StatCard({ title, value, Icon, color }) {
   return (
-    <div
-      onClick={onClick}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      aria-pressed={clickable ? !off : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
-      className={`rounded-2xl border border-transparent bg-gray-50 p-4 flex items-center gap-3 transition-all ${
-        clickable ? "cursor-pointer hover:bg-gray-100" : ""
-      } ${off ? "opacity-50" : ""}`}
-    >
+    <div className="rounded-2xl border border-transparent bg-gray-50 p-4 flex items-center gap-3">
       <div className={`w-11 h-11 flex items-center justify-center rounded-xl shrink-0 ${color}`}>
         <Icon className="w-5 h-5" />
       </div>
@@ -264,50 +248,10 @@ function StatCard({ title, value, Icon, color, onClick, off = false }) {
   );
 }
 
-/** Page numbers to show: all of them when there are few, otherwise first, last and the ones around the current page. */
-function pageList(page, count) {
-  if (count <= 7) return Array.from({ length: count }, (_, i) => i + 1);
-  const nums = [...new Set([1, count, page - 1, page, page + 1])].filter((n) => n >= 1 && n <= count).sort((x, y) => x - y);
-  const out = [];
-  nums.forEach((n, i) => {
-    if (i > 0 && n - nums[i - 1] > 1) out.push("…");
-    out.push(n);
-  });
-  return out;
-}
-
-/** "Showing 1–7 of 23" with Previous / page numbers / Next. The buttons only appear when there is more than one page. */
-function Pager({ page, pageCount, total, onPage }) {
-  const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const to = Math.min(page * PAGE_SIZE, total);
-  const btn = "min-w-[1.75rem] h-7 px-2 rounded-lg border text-xs font-semibold transition-colors";
-  return (
-    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-      <p className="text-xs text-gray-500">
-        Showing <span className="font-semibold text-gray-700">{from}–{to}</span> of <span className="font-semibold text-gray-700">{total}</span>
-      </p>
-      {pageCount > 1 && (
-        <div className="flex items-center gap-1">
-          <button onClick={() => onPage(page - 1)} disabled={page <= 1}
-            className={`${btn} border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent`}>Prev</button>
-          {pageList(page, pageCount).map((n, i) => n === "…" ? (
-            <span key={`gap${i}`} className="px-1 text-xs text-gray-400">…</span>
-          ) : (
-            <button key={n} onClick={() => onPage(n)} aria-current={n === page ? "page" : undefined}
-              className={`${btn} ${n === page ? "bg-teal-700 border-teal-700 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{n}</button>
-          ))}
-          <button onClick={() => onPage(page + 1)} disabled={page >= pageCount}
-            className={`${btn} border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent`}>Next</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** Small colour key above a graph. */
 function Legend({ items }) {
   return (
-    <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 mb-3">
+    <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500 mb-3">
       {items.map((s) => (
         <span key={s.key} className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-sm" style={{ background: s.color }} /> {s.label}
@@ -321,12 +265,10 @@ function Empty({ children }) {
   return <div className="py-10 text-center text-sm text-gray-400">{children}</div>;
 }
 
-/** Section heading: what the card is, then one plain line saying what it answers. */
-function SectionHead({ title, hint }) {
+function SectionHead({ title }) {
   return (
-    <div className="mb-3">
-      <h2 className="text-base font-bold text-arl-dark">{title}</h2>
-      <p className="text-xs text-gray-400">{hint}</p>
+    <div className="mb-3 text-center">
+      <h2 className="font-sans text-xl font-bold text-arl-dark">{title}</h2>
     </div>
   );
 }
@@ -347,314 +289,380 @@ function compact(n) {
   return String(+n.toFixed(v < 10 ? 1 : 0));
 }
 
-// ── graph: one stacked bar per customer / car, split in two ─────────────────
+// ── graph: one stacked bar per customer / car, split in two (Chart.js) ──────
 
 /**
- * Y = the customers (or cars), X = the amount along the bottom. Each bar is split by `series`.
- * Clicking a bar selects it: the table highlights the same row, and thin bars appear under it for its cars
- * (or its customers).
+ * Y = the customers (or cars), X = the amount along the bottom (converted to the chosen currency). Each bar is split by
+ * `series`. Clicking a bar opens the same window as the View button of its table row. The scale is taken from `scaleMax`,
+ * so bars compare across pages.
+ * Chart.js draws the axes, the hover tooltip and the resizing; the amounts inside the segments come from a tiny plugin.
  */
-function SplitBars({ rows, scaleMax = 0, series, childSeries, hidden, selectedId, onSelect, money }) {
+function SplitBars({ rows, scaleMax = 0, series, onOpen, money }) {
   const { convert, currency, SYMBOLS } = useCurrency();
   const sym = SYMBOLS?.[currency] || "₱";
-  const cols = series.filter((s) => !hidden.has(s.key));
-  const kidCols = childSeries || cols;
+  const canvasRef = useRef(null);
+  const live = useRef({});
+  live.current = { onOpen, money };   // the newest callbacks, so the chart is not rebuilt on every render
 
-  const maxTotal = Math.max(1, scaleMax, ...rows.map((r) => r.total));   // scale from every page, so bars compare across pages
-  const step = niceStep(maxTotal);
-  const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
-  const ticks = [];
-  for (let t = 0; t <= axisMax; t += step) ticks.push(t);
+  useEffect(() => {
+    if (!canvasRef.current) return undefined;
+    const maxTotal = Math.max(1, convert(scaleMax), ...rows.map((r) => convert(r.total)));
+    const step = niceStep(maxTotal);
+    const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
 
-  // a number sits inside its segment only when the segment is wide enough to hold it
-  const segLabel = (v) => (v / axisMax >= 0.07 ? compact(convert(v)) : "");
+    const datasets = series.map((s) => ({
+      label: s.label, key: s.key,
+      data: rows.map((r) => (r[s.key] > 0 ? convert(r[s.key]) : null)),
+      backgroundColor: s.color,
+      borderSkipped: false,
+      barPercentage: 0.9,
+    }));
+
+    // the amount written inside a segment, only when the segment is wide enough to hold it
+    const segLabels = {
+      id: "segLabels",
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        ctx.save();
+        ctx.font = "600 10px sans-serif";
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        chart.data.datasets.forEach((ds, di) => {
+          chart.getDatasetMeta(di).data.forEach((el, i) => {
+            const v = ds.data[i];
+            if (v == null) return;
+            const txt = compact(v);
+            if (Math.abs(el.x - el.base) < txt.length * 6 + 10) return;
+            ctx.fillText(txt, (el.x + el.base) / 2, el.y);
+          });
+        });
+        ctx.restore();
+      },
+    };
+
+    const chart = new ChartJS(canvasRef.current, {
+      type: "bar",
+      data: { labels: rows.map((r) => r.name), datasets },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        categoryPercentage: 0.9,
+        layout: { padding: { right: 8 } },
+        interaction: { mode: "nearest", axis: "y", intersect: true },
+        onHover: (_e, els, c) => { c.canvas.style.cursor = els.length ? "pointer" : "default"; },
+        onClick: (_e, els) => { if (els.length) live.current.onOpen(rows[els[0].index]); },
+        scales: {
+          x: {
+            stacked: true, min: 0, max: axisMax,
+            grid: { color: "#f3f4f6" }, border: { display: false },
+            ticks: { stepSize: step, color: "#9ca3af", font: { size: 10 }, callback: (v) => `${sym}${compact(v)}` },
+            title: { display: true, text: `Amount (${currency})`, color: "#9ca3af", font: { size: 11, weight: "normal" } },
+          },
+          y: {
+            stacked: true,
+            grid: { display: false }, border: { color: "#d1d5db" },
+            ticks: {
+              autoSkip: false, color: "#374151", font: { size: 11, weight: "600" },
+              callback(value) { const l = this.getLabelForValue(value); return l.length > 24 ? `${l.slice(0, 23)}…` : l; },
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },   // the Legend above the graph already says which colour is which
+          tooltip: {
+            callbacks: {
+              title: (items) => rows[items[0].dataIndex].name,
+              label: (item) => `${item.dataset.label}: ${live.current.money(rows[item.dataIndex][item.dataset.key])}`,
+              footer: (items) => `Total: ${live.current.money(rows[items[0].dataIndex].total)}`,
+            },
+          },
+        },
+      },
+      plugins: [segLabels],
+    });
+    return () => chart.destroy();
+  }, [rows, scaleMax, series, convert, currency, sym]);
 
   return (
-    <div>
-      <div className="relative">
-        {/* Y axis line + vertical guide lines for the X scale */}
-        <div className="absolute top-0 bottom-0 right-0 pointer-events-none border-l border-gray-300" style={{ left: GAP_LEFT }}>
-          {ticks.slice(1).map((t) => (
-            <div key={t} className="absolute top-0 bottom-0 border-l border-gray-100" style={{ left: `${(t / axisMax) * 100}%` }} />
-          ))}
-        </div>
+    <div className="relative w-full" style={{ height: Math.max(130, rows.length * 32 + 64) }}>
+      <canvas ref={canvasRef} role="img" aria-label="Amounts by customer or vehicle" />
+    </div>
+  );
+}
 
-        <div className="space-y-2 py-1">
-          {rows.map((r) => {
-            const isSel = r.id === selectedId;
-            return (
-              <div key={r.id}>
-                <button
-                  onClick={() => onSelect(isSel ? null : r.id)}
-                  aria-pressed={isSel}
-                  className="relative w-full flex items-center gap-3 text-left"
-                >
-                  <span title={r.name} className={`${LABEL_W} shrink-0 text-xs truncate ${isSel ? "font-bold text-teal-700" : "font-semibold text-gray-800"}`}>{r.name}</span>
-                  <div className={`flex-1 flex h-7 overflow-hidden rounded-r-lg transition-shadow ${isSel ? "ring-2 ring-teal-600 shadow-md" : selectedId ? "opacity-50" : ""}`}>
-                    {cols.map((s) => r[s.key] > 0 && (
-                      <div
-                        key={s.key}
-                        title={`${s.label}: ${money(r[s.key])}`}
-                        className="h-full flex items-center justify-center text-xs font-semibold text-white overflow-hidden"
-                        style={{ width: `${(r[s.key] / axisMax) * 100}%`, background: s.color }}
-                      >
-                        {segLabel(r[s.key])}
-                      </div>
-                    ))}
-                  </div>
-                </button>
+// ── tables: same format as the Bookings page and Revenue & Expense ───────────
 
-                {/* The selected row opens: one thin bar per car (or per customer), same scale */}
-                {isSel && r.children.length > 0 && (
-                  <div className="relative mt-1.5 mb-1 space-y-1">
-                    {r.children.map((c) => (
-                      <div key={c.id} className="flex items-center gap-3">
-                        <span title={c.name} className={`${LABEL_W} shrink-0 pl-4 text-[11px] truncate text-gray-500`}>↳ {c.name}</span>
-                        <div className="flex-1 flex h-4 overflow-hidden rounded-r-md">
-                          {kidCols.map((s) => c[s.key] > 0 && (
-                            <div
-                              key={s.key}
-                              title={`${s.label}: ${money(c[s.key])}`}
-                              className="h-full flex items-center justify-center text-[10px] font-semibold text-white overflow-hidden"
-                              style={{ width: `${(c[s.key] / axisMax) * 100}%`, background: s.color, opacity: 0.75 }}
-                            >
-                              {segLabel(c[s.key])}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-      {/* X axis along the bottom */}
-      <div className="flex gap-3 border-t border-gray-300">
-        <div className={`${LABEL_W} shrink-0`} />
-        <div className="relative flex-1 h-5">
-          {ticks.map((t) => (
-            <span key={t} className="absolute top-1 -translate-x-1/2 text-[10px] font-medium text-gray-400" style={{ left: `${(t / axisMax) * 100}%` }}>{sym}{compact(convert(t))}</span>
-          ))}
-        </div>
-      </div>
-      <div className="flex gap-3">
-        <div className={`${LABEL_W} shrink-0`} />
-        <p className="flex-1 text-center text-[11px] text-gray-400">Amount ({currency})</p>
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClose = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+/** Clickable header cell, same look as the Bookings table. `sort` is { key, dir }; onSort receives the next one. */
+function SortableTh({ label, sortKey, sort, onSort }) {
+  const active = sort.key === sortKey;
+  const click = () => onSort({ key: sortKey, dir: active ? (sort.dir === "asc" ? "desc" : "asc") : sortKey === "name" ? "asc" : "desc" });
+  return (
+    <th className="px-4 py-3 text-left select-none">
+      <button onClick={click}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors whitespace-nowrap ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}>
+        {label}
+        {active ? <IconSortArrow dir={sort.dir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
+/** A money cell: "—" when zero, coloured otherwise. */
+function MoneyCell({ value, color, fmt }) {
+  return (
+    <td className={`px-4 py-3 whitespace-nowrap ${value ? "font-semibold" : "text-gray-300"}`} style={value ? { color } : undefined}>
+      {value ? fmt(value) : "—"}
+    </td>
+  );
+}
+
+/** "Showing 1–10 of 23" with Prev / page numbers / Next: the footer of the Bookings table. */
+function TablePagination({ page, totalPages, onChange, pageSize, count }) {
+  if (count === 0) return null;
+  const start = (page - 1) * pageSize;
+  const rangeEnd = Math.min(start + pageSize, count);
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  if (totalPages > 1) nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((x, y) => x - y);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">Showing {start + 1}–{rangeEnd} of {count}</p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>{n}</button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
       </div>
     </div>
   );
 }
 
-// ── table: always shown under its graph; a row opens to show who / what is behind it ─────
+const viewBtn = "px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors";
+const TH = "px-4 py-3 text-left font-semibold whitespace-nowrap";
+const THEAD = "bg-gray-50 text-gray-400 text-xs uppercase tracking-wide";
 
-/**
- * `countLabel` adds a plain count column after the name (Penalties / Records).
- * `childNote(c)` replaces the number columns of an opened row with one line of text, for rows whose split is not the
- * same as the parent's (a car's customers are described by penalties paid / unpaid, not recovered / not recovered).
- */
-function SplitTable({ rows, nameLabel, countLabel, series, hidden, sort, onSort, selectedId, onSelect, money, childNote, emptyChild }) {
-  const [open, setOpen] = useState(() => new Set());     // rows opened with the arrow
-  const cols = series.filter((s) => !hidden.has(s.key));
+/** A window with a title, a one-line summary and a paged table of what is behind one bar / table row (penalties paid / unpaid). */
+function BreakdownModal({ row, subtitle, childLabel, emptyText, fmt, onClose }) {
+  const [page, setPage] = useState(1);
+  const items = row.children || [];
+  const p = paged(items, page, MODAL_PAGE_SIZE);
+  const heads = [childLabel, "Penalties", "Paid", "Unpaid", "Total"];
 
-  // The arrow opens / closes a row. On the selected row it clears the selection (a selected row is always open).
-  const toggleOpen = (r) => {
-    if (r.id === selectedId) { onSelect(null); return; }
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
-      return next;
-    });
-  };
-
-  const head = (key, label, align = "right") => (
-    <th key={key} className={`px-3 py-2.5 font-semibold text-${align} whitespace-nowrap`}>
-      <button
-        onClick={() => onSort({ key, dir: sort.key === key && sort.dir === "desc" ? "asc" : key === "name" ? "asc" : "desc" })}
-        className="inline-flex items-center gap-1 hover:text-gray-700"
-      >
-        {label}
-        <span className={sort.key === key ? "text-teal-700" : "text-gray-300"}>{sort.key === key ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
-      </button>
-    </th>
-  );
-
-  const noteSpan = cols.length + 1 + (countLabel ? 1 : 0);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   return (
-    <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100">
-      <table className="w-full text-xs">
-        <thead className="bg-gray-50 text-gray-400">
-          <tr>
-            {head("name", nameLabel, "left")}
-            {countLabel && head("count", countLabel)}
-            {cols.map((s) => head(s.key, s.label))}
-            {head("total", "Total")}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const isSel = r.id === selectedId;
-            const isOpen = isSel || open.has(r.id);
-            return (
-              <Fragment key={r.id}>
-                <tr
-                  onClick={() => onSelect(isSel ? null : r.id)}
-                  className={`border-t border-gray-50 cursor-pointer ${isSel ? "bg-teal-50" : "hover:bg-gray-50/60"}`}
-                >
-                  <td
-                    className={`px-3 py-2.5 font-semibold whitespace-nowrap ${isSel ? "text-teal-700" : "text-gray-800"}`}
-                    style={isSel ? { boxShadow: "inset 3px 0 0 #0f766e" } : undefined}
-                  >
-                    <span className="inline-flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        aria-label={isOpen ? `Close ${r.name}` : `Open ${r.name}`}
-                        aria-expanded={isOpen}
-                        onClick={(e) => { e.stopPropagation(); toggleOpen(r); }}
-                        className="w-4 text-gray-400 hover:text-gray-700"
-                      >
-                        {isOpen ? "▾" : "▸"}
-                      </button>
-                      {r.name}
-                    </span>
-                  </td>
-                  {countLabel && <td className="px-3 py-2.5 text-right text-gray-600">{r.count}</td>}
-                  {cols.map((s) => (
-                    <td
-                      key={s.key}
-                      className={`px-3 py-2.5 text-right whitespace-nowrap ${r[s.key] ? "font-bold" : "text-gray-300"}`}
-                      style={r[s.key] ? { color: s.color } : undefined}
-                    >
-                      {r[s.key] ? money(r[s.key]) : "–"}
-                    </td>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-bold text-lg text-gray-800 truncate">{row.name}</h2>
+            <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 shrink-0"><IconClose /></button>
+          </div>
+          <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
+        </div>
+        <div className="overflow-auto flex-1 px-6 py-5">
+          <div className="rounded-xl border border-gray-100 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className={THEAD}>
+                  <tr>{heads.map((h) => <th key={h} className={TH}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {p.rows.length === 0 ? (
+                    <tr><td colSpan={heads.length} className="text-center text-gray-400 py-12">{emptyText}</td></tr>
+                  ) : p.rows.map((c) => (
+                    <tr key={c.id} className="border-t hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{c.name}</td>
+                      <td className="px-4 py-3 text-gray-600">{c.count || <span className="text-gray-300">—</span>}</td>
+                      <MoneyCell value={c.paid} color={C_GREEN} fmt={fmt} />
+                      <MoneyCell value={c.unpaid} color={C_RED} fmt={fmt} />
+                      <MoneyCell value={c.total} color="#374151" fmt={fmt} />
+                    </tr>
                   ))}
-                  <td className="px-3 py-2.5 text-right">
-                    <span className="inline-block px-2 py-0.5 rounded-full bg-teal-700 text-white font-bold text-center whitespace-nowrap">{money(r.total)}</span>
-                  </td>
-                </tr>
-
-                {isOpen && r.children.length === 0 && emptyChild && (
-                  <tr className="border-t border-gray-50 bg-gray-50/60">
-                    <td colSpan={noteSpan + 1} className="py-2 pl-9 pr-3 text-gray-400 italic">{emptyChild}</td>
-                  </tr>
-                )}
-
-                {isOpen && r.children.map((c) => (
-                  <tr key={`${r.id}:${c.id}`} className="border-t border-gray-50 bg-gray-50/60">
-                    <td className="py-2 pl-9 pr-3 text-gray-600 whitespace-nowrap">{c.name}</td>
-                    {childNote ? (
-                      <td colSpan={noteSpan} className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{childNote(c)}</td>
-                    ) : (
-                      <>
-                        {countLabel && <td className="px-3 py-2 text-right text-gray-500">{c.count}</td>}
-                        {cols.map((s) => (
-                          <td
-                            key={s.key}
-                            className={`px-3 py-2 text-right whitespace-nowrap ${c[s.key] ? "font-semibold" : "text-gray-300"}`}
-                            style={c[s.key] ? { color: s.color } : undefined}
-                          >
-                            {c[s.key] ? money(c[s.key]) : "–"}
-                          </td>
-                        ))}
-                        <td className="px-3 py-2 text-right font-semibold text-gray-600 whitespace-nowrap">{money(c.total)}</td>
-                      </>
-                    )}
-                  </tr>
-                ))}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
+                </tbody>
+              </table>
+            </div>
+            <TablePagination page={p.no} totalPages={p.count} onChange={setPage} pageSize={MODAL_PAGE_SIZE} count={items.length} />
+          </div>
+        </div>
+      </div>
     </div>
+  );
+}
+
+/**
+ * One card: title, legend, graph and the table under it (same rows, paged together). Sorting, paging and the View window
+ * belong to the card, so Customers and Vehicles share this one piece.
+ *   countLabel   the plain count column after the name (Penalties / Records)
+ *   totalLabel   what the row's Total means in the window's summary line
+ */
+function GroupCard({ title, nameLabel, countLabel, childLabel, totalLabel, series, rows, emptyText, emptyChild }) {
+  const { fmt } = useCurrency();
+  const [sort, setSort] = useState({ key: "total", dir: "desc" });
+  const [page, setPage] = useState(1);
+  const [view, setView] = useState(null);
+  const closeView = useCallback(() => setView(null), []);
+
+  const sorted = useMemo(() => sortRows(rows, sort), [rows, sort]);
+  const pg = useMemo(() => paged(sorted, page), [sorted, page]);
+  const max = useMemo(() => Math.max(0, ...rows.map((r) => r.total)), [rows]);
+  useEffect(() => { setPage(1); }, [rows]);
+
+  const th = (label, key) => <SortableTh key={key} label={label} sortKey={key} sort={sort} onSort={(s) => { setSort(s); setPage(1); }} />;
+
+  return (
+    <Card className="p-4">
+      <SectionHead title={title} />
+      {rows.length === 0 ? (
+        <Empty>{emptyText}</Empty>
+      ) : (
+        <>
+          <Legend items={series} />
+          <SplitBars rows={pg.rows} scaleMax={max} series={series} onOpen={setView} money={fmt} />
+
+          <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className={THEAD}>
+                  <tr>
+                    {th(nameLabel, "name")}
+                    {th(countLabel, "count")}
+                    {series.map((s) => th(s.label, s.key))}
+                    {th("Total", "total")}
+                    <th className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pg.rows.map((r) => (
+                    <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{r.name}</td>
+                      <td className="px-4 py-3 text-gray-600">{r.count || <span className="text-gray-300">—</span>}</td>
+                      {series.map((s) => <MoneyCell key={s.key} value={r[s.key]} color={s.color} fmt={fmt} />)}
+                      <td className="px-4 py-3">
+                        <span className="inline-block px-2 py-0.5 rounded-full bg-teal-700 text-white text-xs font-bold whitespace-nowrap">{fmt(r.total)}</span>
+                      </td>
+                      <td className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">
+                        <button onClick={() => setView(r)} className={viewBtn}>View</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <TablePagination page={pg.no} totalPages={pg.count} onChange={setPage} pageSize={PAGE_SIZE} count={rows.length} />
+          </div>
+        </>
+      )}
+
+      {view && (
+        <BreakdownModal row={view} childLabel={childLabel} fmt={fmt} onClose={closeView} emptyText={emptyChild}
+          subtitle={<>{view.count} {countLabel.toLowerCase()} · <span className="text-teal-700 font-semibold">{totalLabel} {fmt(view.total)}</span></>} />
+      )}
+    </Card>
   );
 }
 
 // ── the tab ─────────────────────────────────────────────────────────────────
 
-function MaintenancePenaltiesView({ report }) {
-  const { fmt } = useCurrency();
-  const [custHidden, setCustHidden] = useState(() => new Set());   // Paid / Unpaid switched off in the cards
-  const carHidden = useMemo(() => new Set(), []);                  // nothing hides Recovered / Not recovered any more
-  const [custSort, setCustSort] = useState({ key: "total", dir: "desc" });
-  const [carSort, setCarSort] = useState({ key: "total", dir: "desc" });
-  const [custSel, setCustSel] = useState(null);
-  const [carSel, setCarSel] = useState(null);
-  const [custPage, setCustPage] = useState(1);
-  const [carPage, setCarPage] = useState(1);
-
+function MaintenancePenaltiesView({ report, exportRef }) {
+  const { fmt, currency } = useCurrency();
   const cars = useMemo(() => report.cars || [], [report]);
   const penaltyRows = useMemo(() => report.penaltyRows || [], [report]);
 
-  // Card numbers always count everything, so switching one off doesn't change the others.
   const totals = useMemo(() => ({
-    recovered: cars.reduce((s, c) => s + c.recovered, 0),
-    absorbed: cars.reduce((s, c) => s + c.absorbed, 0),
     paid: penaltyRows.reduce((s, p) => s + p.paid, 0),
     unpaid: penaltyRows.reduce((s, p) => s + p.pending, 0),
-  }), [cars, penaltyRows]);
+  }), [penaltyRows]);
 
-  const custRows = useMemo(() => sortRows(buildCustomerRows(penaltyRows, custHidden), custSort), [penaltyRows, custHidden, custSort]);
-  const carRows = useMemo(() => sortRows(buildCarRows(cars, penaltyRows, carHidden), carSort), [cars, penaltyRows, carHidden, carSort]);
+  const custRows = useMemo(() => buildCustomerRows(penaltyRows), [penaltyRows]);
+  const carRows = useMemo(() => buildCarRows(cars, penaltyRows), [cars, penaltyRows]);
 
-  // A selection only counts while its row still exists (hiding a series or changing the period can remove it).
-  const custSelId = custRows.some((r) => r.id === custSel) ? custSel : null;
-  const carSelId = carRows.some((r) => r.id === carSel) ? carSel : null;
-  const custShown = useMemo(() => pinSelected(custRows, custSelId), [custRows, custSelId]);
-  const carShown = useMemo(() => pinSelected(carRows, carSelId), [carRows, carSelId]);
+  const nothing = cars.length === 0 && penaltyRows.length === 0;
 
-  // One page of rows per card; the graph and the table show the same page.
-  const custPages = Math.max(1, Math.ceil(custShown.length / PAGE_SIZE));
-  const carPages = Math.max(1, Math.ceil(carShown.length / PAGE_SIZE));
-  const custPageNo = Math.min(custPage, custPages);
-  const carPageNo = Math.min(carPage, carPages);
-  const custPageRows = custShown.slice((custPageNo - 1) * PAGE_SIZE, custPageNo * PAGE_SIZE);
-  const carPageRows = carShown.slice((carPageNo - 1) * PAGE_SIZE, carPageNo * PAGE_SIZE);
-  const custMax = Math.max(0, ...custRows.map((r) => r.total));
-  const carMax = Math.max(0, ...carRows.map((r) => r.total));
-
-  // A new period starts every card back on page 1.
-  useEffect(() => { setCustPage(1); setCarPage(1); }, [report]);
-
-  // Changing the sort, the selection or the cards starts that section back on page 1 (the selected row moves to the front).
-  const sortCust = (s) => { setCustSort(s); setCustPage(1); };
-  const sortCar = (s) => { setCarSort(s); setCarPage(1); };
-  const selectCust = (id) => { setCustSel(id); setCustPage(1); };
-  const selectCar = (id) => { setCarSel(id); setCarPage(1); };
-
-  const flip = (setter, resetPage) => (key) => {
-    setter((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-    resetPage(1);
+  // ── the PDF: what is on screen, but every row (no paging) ──
+  const buildPdf = () => {
+    const group = (title, nameLabel, countLabel, series, rows, empty) => {
+      const sorted = rows.slice().sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+      return [
+        { type: "title", text: title },
+        ...(sorted.length === 0 ? [{ type: "empty", text: empty }] : [
+          { type: "legend", items: series },
+          { type: "bars", rows: barRows(sorted, series, { text: (r) => fmt(r.total) }) },
+          { type: "table",
+            head: [nameLabel, countLabel, ...series.map((s) => s.label), "Total"],
+            align: ["left", "right", ...series.map(() => "right"), "right"],
+            body: sorted.map((r) => [r.name, r.count || "-", ...series.map((s) => (r[s.key] ? fmt(r[s.key]) : "-")), fmt(r.total)]) },
+        ]),
+      ];
+    };
+    return {
+      subtitle: report.label,
+      currency,
+      sections: [
+        { type: "stats", items: [
+          { label: "Total maintenance", value: fmt(report.cards?.totalMaintenance ?? 0) },
+          { label: "Total penalties", value: fmt(totals.paid + totals.unpaid) },
+          { label: "Penalties unpaid", value: fmt(totals.unpaid) },
+        ] },
+        ...(nothing ? [{ type: "empty", text: `No completed maintenance or penalties in ${report.label}.` }] : [
+          ...group("Customers", "Customer", "Penalties", CUSTOMER_SERIES, custRows, `No penalties in ${report.label}.`),
+          ...group("Vehicles", "Vehicle", "Records", CAR_SERIES, carRows, cars.length === 0 ? `No completed maintenance in ${report.label}.` : "Nothing to show."),
+        ]),
+      ],
+    };
   };
-  const onCustCard = flip(setCustHidden, setCustPage);
+  // The Download PDF button in Reports.jsx asks for this: the current page, as the sections the PDF builder draws.
+  useEffect(() => { if (exportRef) exportRef.current = buildPdf; });                  // every render, so it is always the newest
+  useEffect(() => () => { if (exportRef) exportRef.current = null; }, [exportRef]);   // a tab that closes has nothing to export
 
   // An older backend doesn't send the per-penalty rows yet.
   if (report.penaltyRows === undefined) {
     return <Card className="p-6 text-center text-sm text-amber-600">This tab needs the updated reports.service.js on the backend (penaltyRows and cars with a jobs count).</Card>;
   }
 
-  const nothing = cars.length === 0 && penaltyRows.length === 0;
-  const pendingCustomers = report.cards?.pendingCustomers ?? 0;
-
   return (
     <div className="space-y-4">
 
-      {/* One white group: three cards. Penalties unpaid also switches the Unpaid part on or off in the Customers graph
-          (a faded card = hidden). */}
       <Card>
         <div className="grid gap-3 grid-cols-1 sm:grid-cols-3 p-4">
           <StatCard title="Total maintenance" value={fmt(report.cards?.totalMaintenance ?? 0)} Icon={IconPackage} color="bg-orange-500 text-white" />
           <StatCard title="Total penalties" value={fmt(totals.paid + totals.unpaid)} Icon={IconCreditCard} color="bg-teal-600 text-white" />
-          <StatCard title="Penalties unpaid" value={fmt(totals.unpaid)} Icon={IconWarning} color="bg-red-500 text-white"
-            off={custHidden.has("unpaid")} onClick={() => onCustCard("unpaid")} />
+          <StatCard title="Penalties unpaid" value={fmt(totals.unpaid)} Icon={IconWarning} color="bg-red-500 text-white" />
         </div>
       </Card>
 
@@ -662,51 +670,10 @@ function MaintenancePenaltiesView({ report }) {
         <Card><Empty>No completed maintenance or penalties in {report.label}. Try another period.</Empty></Card>
       ) : (
         <>
-          {/* Customers first: the question is "who was penalized" */}
-          <Card className="p-4">
-            <SectionHead
-              title="Customers"
-              hint={`${pendingCustomers} customer${pendingCustomers === 1 ? "" : "s"} still ${pendingCustomers === 1 ? "owes" : "owe"} a penalty. Click a bar or a row to bring it to the front; the arrow shows the cars they were penalized on. Use the Penalties unpaid card to hide the unpaid part.`}
-            />
-            {custRows.length === 0 ? (
-              <Empty>{penaltyRows.length === 0 ? `No penalties in ${report.label}.` : "Unpaid is switched off and nothing has been paid."}</Empty>
-            ) : (
-              <>
-                <Legend items={CUSTOMER_SERIES} />
-                <SplitBars rows={custPageRows} scaleMax={custMax} series={CUSTOMER_SERIES} hidden={custHidden}
-                  selectedId={custSelId} onSelect={selectCust} money={fmt} />
-                <Pager page={custPageNo} pageCount={custPages} total={custShown.length} onPage={setCustPage} />
-                <SplitTable rows={custPageRows} nameLabel="Customer" countLabel="Penalties" series={CUSTOMER_SERIES} hidden={custHidden}
-                  sort={custSort} onSort={sortCust} selectedId={custSelId} onSelect={selectCust} money={fmt} />
-              </>
-            )}
-          </Card>
-
-          {/* Vehicles */}
-          <Card className="p-4">
-            <SectionHead
-              title="Vehicles"
-              hint="What each car cost in maintenance, and how much of it penalties paid back. Not recovered includes routine servicing, which has no penalty behind it. Click a bar or a row to bring it to the front; the arrow shows who was penalized on it."
-            />
-            {carRows.length === 0 ? (
-              <Empty>{cars.length === 0 ? `No completed maintenance in ${report.label}.` : "Nothing to show."}</Empty>
-            ) : (
-              <>
-                <Legend items={CAR_SERIES} />
-                <SplitBars rows={carPageRows} scaleMax={carMax} series={CAR_SERIES} childSeries={CAR_CHILD_SERIES} hidden={carHidden}
-                  selectedId={carSelId} onSelect={selectCar} money={fmt} />
-                <Pager page={carPageNo} pageCount={carPages} total={carShown.length} onPage={setCarPage} />
-                <SplitTable rows={carPageRows} nameLabel="Vehicle" countLabel="Records" series={CAR_SERIES} hidden={carHidden}
-                  sort={carSort} onSort={sortCar} selectedId={carSelId} onSelect={selectCar} money={fmt}
-                  emptyChild="No penalties on this car in this period."
-                  childNote={(c) => (
-                    <>
-                      {c.count} penalt{c.count === 1 ? "y" : "ies"} · <span className="font-semibold" style={{ color: C_GREEN }}>{fmt(c.paid)} paid</span> · <span className="font-semibold" style={{ color: c.unpaid > 0 ? C_RED : undefined }}>{fmt(c.unpaid)} unpaid</span>
-                    </>
-                  )} />
-              </>
-            )}
-          </Card>
+          <GroupCard title="Customers" nameLabel="Customer" countLabel="Penalties" childLabel="Vehicle" totalLabel="Total penalties"
+            series={CUSTOMER_SERIES} rows={custRows} emptyText={`No penalties in ${report.label}.`} emptyChild="No penalties for this customer." />
+          <GroupCard title="Vehicles" nameLabel="Vehicle" countLabel="Records" childLabel="Customer" totalLabel="Maintenance cost"
+            series={CAR_SERIES} rows={carRows} emptyText={cars.length === 0 ? `No completed maintenance in ${report.label}.` : "Nothing to show."} emptyChild="No penalties on this car in this period." />
         </>
       )}
     </div>

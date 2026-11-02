@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { barRows } from "../../utils/reportTabPdf";
 import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
 
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
@@ -20,11 +21,11 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 //   modeOfDriving   "With Chauffeur" | "Self Drive"   (for the Driving dropdown, and the thin bar + columns under "All bookings")
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function RentalsCustomers({ period, year, month, week, day }) {
+export default function RentalsCustomers({ period, year, month, week, day, exportRef }) {
   const { report, loading, error } = useReport({ period, year, month, week, day });
   return (
     <ReportGate report={report} loading={loading} error={error}>
-      <RentalsCustomersView report={report} />
+      <RentalsCustomersView report={report} exportRef={exportRef} />
     </ReportGate>
   );
 }
@@ -133,6 +134,9 @@ const MODES = [
   { key: "selfDrive",  label: "Self-drive",     color: "#06b6d4" },
   { key: "unrecorded", label: "Not recorded",   color: "#d1d5db" },   // bookings with no mode saved
 ];
+
+// Simplified view: one bar per row, no status split.
+const TOTAL_SERIES = { key: "total", label: "Total bookings", color: "#0f766e" };
 
 const IconGrid = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -301,7 +305,7 @@ function niceStep(max) {
  * table row. The scale is taken from `scaleMax`, so bars compare across pages.
  * Chart.js draws the axes, the hover tooltip and the resizing; the numbers inside the segments come from a tiny plugin.
  */
-function StatusBars({ rows, scaleMax = 0, showMode = false, onOpen }) {
+function StatusBars({ rows, scaleMax = 0, showMode = false, simple = false, onOpen }) {
   const canvasRef = useRef(null);
   const live = useRef({});
   live.current = { onOpen };   // the newest callback, so the chart is not rebuilt on every render
@@ -319,10 +323,9 @@ function StatusBars({ rows, scaleMax = 0, showMode = false, onOpen }) {
       borderSkipped: false,
       barPercentage: stack === "src" ? 0.4 : 0.9,
     });
-    const datasets = [
-      ...STATUSES.map((s) => dataset(s, "main")),
-      ...(showMode ? MODES.map((m) => dataset(m, "src")) : []),
-    ];
+    const datasets = simple
+      ? [dataset(TOTAL_SERIES, "main")]
+      : [...STATUSES.map((s) => dataset(s, "main")), ...(showMode ? MODES.map((m) => dataset(m, "src")) : [])];
 
     // the count written inside a segment, only when the segment is wide enough to hold it
     const segLabels = {
@@ -384,7 +387,7 @@ function StatusBars({ rows, scaleMax = 0, showMode = false, onOpen }) {
                 const v = rows[item.dataIndex][item.dataset.key];
                 return item.dataset.stack === "src" ? `Driving · ${item.dataset.label}: ${v}` : `${item.dataset.label}: ${v}`;
               },
-              footer: (items) => `Total: ${rows[items[0].dataIndex].total}`,
+              footer: (items) => (simple ? "" : `Total: ${rows[items[0].dataIndex].total}`),
             },
           },
         },
@@ -392,7 +395,7 @@ function StatusBars({ rows, scaleMax = 0, showMode = false, onOpen }) {
       plugins: [segLabels],
     });
     return () => chart.destroy();
-  }, [rows, scaleMax, showMode]);
+  }, [rows, scaleMax, showMode, simple]);
 
   return (
     <div className="relative w-full" style={{ height: Math.max(130, rows.length * (showMode ? 44 : 32) + 64) }}>
@@ -515,11 +518,28 @@ function BreakdownModal({ row, childLabel, showMode, onClose }) {
   );
 }
 
+/** Simplified | Detailed: same look as the tab switcher at the top of the page. */
+function DetailToggle({ detailed, onChange }) {
+  const opts = [{ on: false, label: "Simplified" }, { on: true, label: "Detailed" }];
+  return (
+    <div role="group" aria-label="Level of detail" className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 w-fit">
+      {opts.map((o) => (
+        <button key={o.label} type="button" onClick={() => onChange(o.on)} aria-pressed={detailed === o.on}
+          className={`px-4 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+            detailed === o.on ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
+          }`}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * One card: title, legend, graph and the table under it (same rows, paged together). Sorting, paging and the View window
  * belong to the card, so the three cards (customers, vehicles, service types) share this one piece.
  */
-function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend }) {
+function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend, detailed }) {
   const [sort, setSort] = useState({ key: "total", dir: "desc" });
   const [page, setPage] = useState(1);
   const [view, setView] = useState(null);
@@ -531,13 +551,14 @@ function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend }) {
   useEffect(() => { setPage(1); }, [rows]);
 
   const modeCols = showMode ? MODES.slice(0, 2) : [];   // With chauffeur, Self-drive (the gray "not recorded" part only shows in the thin bar)
+  const statusCols = detailed ? STATUSES : [];            // Simplified: one Total bookings bar per row; the table keeps just the name, the total and View
   const th = (label, key) => <SortableTh key={key} label={label} sortKey={key} sort={sort} onSort={(s) => { setSort(s); setPage(1); }} />;
 
   return (
     <Card className="p-4">
       <SectionHead title={title} />
       <Legend items={legend} />
-      <StatusBars rows={pg.rows} scaleMax={max} showMode={showMode} onOpen={setView} />
+      <StatusBars rows={pg.rows} scaleMax={max} showMode={showMode} simple={!detailed} onOpen={setView} />
 
       <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
         <div className="overflow-x-auto">
@@ -545,7 +566,7 @@ function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend }) {
             <thead className={THEAD}>
               <tr>
                 {th(nameLabel, "name")}
-                {STATUSES.map((s) => th(s.label, s.key))}
+                {statusCols.map((s) => th(s.label, s.key))}
                 {modeCols.map((m) => th(m.label, m.key))}
                 {th("Total", "total")}
                 <th className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">Action</th>
@@ -555,7 +576,7 @@ function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend }) {
               {pg.rows.map((r) => (
                 <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{r.name}</td>
-                  {STATUSES.map((s) => <CountCell key={s.key} value={r[s.key]} color={s.color} />)}
+                  {statusCols.map((s) => <CountCell key={s.key} value={r[s.key]} color={s.color} />)}
                   {modeCols.map((m) => <CountCell key={m.key} value={r[m.key]} color={m.color} />)}
                   <td className="px-4 py-3">
                     <span className="inline-block px-2 py-0.5 rounded-full bg-teal-700 text-white text-xs font-bold whitespace-nowrap">{r.total}</span>
@@ -578,8 +599,9 @@ function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend }) {
 
 // ── the tab ─────────────────────────────────────────────────────────────────
 
-function RentalsCustomersView({ report }) {
+function RentalsCustomersView({ report, exportRef }) {
   const [drive, setDrive] = useState("all");               // all | chauffeur | self : filters the whole tab
+  const [detailed, setDetailed] = useState(true);          // Simplified: one Total bookings bar + slim table. Detailed: status split, every status / driving column and the thin bar
   const bookings = useMemo(() => report.bookings || [], [report]);
 
   // The driving filter: every number, bar and table below only counts the bookings that match it.
@@ -613,8 +635,46 @@ function RentalsCustomersView({ report }) {
   }, [bookings]);
 
   // "All bookings" shows both modes side by side (thin bar + columns); picking one mode narrows the whole tab instead.
-  const showMode = drive === "all" && driving !== null;
-  const legend = [...STATUSES, ...(showMode ? MODES.filter((m) => m.key !== "unrecorded" || driving.other > 0) : [])];
+  const showMode = detailed && drive === "all" && driving !== null;
+  const legend = detailed ? [...STATUSES, ...(showMode ? MODES.filter((m) => m.key !== "unrecorded" || driving.other > 0) : [])] : [TOTAL_SERIES];
+
+  // ── the PDF: what is on screen, but every row (no paging) ──
+  const buildPdf = (kind) => {
+    const wide = kind === "xlsx" || detailed;   // a spreadsheet always gets every column
+    const statusCols = wide ? STATUSES : [];
+    const modeCols = wide && drive === "all" && driving !== null ? MODES.slice(0, 2) : [];
+    const group = (title, nameLabel, rows) => {
+      const sorted = rows.slice().sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+      return [
+        { type: "title", text: title },
+        { type: "legend", items: legend },
+        { type: "bars", rows: barRows(sorted, detailed ? STATUSES : [TOTAL_SERIES], { text: (r) => String(r.total), sub: showMode ? MODES : undefined }) },
+        { type: "table",
+          head: [nameLabel, ...statusCols.map((s) => s.label), ...modeCols.map((m) => m.label), "Total"],
+          align: ["left", ...statusCols.map(() => "right"), ...modeCols.map(() => "right"), "right"],
+          body: sorted.map((r) => [r.name, ...statusCols.map((s) => r[s.key] || "-"), ...modeCols.map((m) => r[m.key] || "-"), r.total]) },
+      ];
+    };
+    return {
+      subtitle: `${report.label}${kind === "xlsx" ? "" : ` · ${detailed ? "Detailed" : "Simplified"}`}${drive !== "all" ? ` · ${drive === "chauffeur" ? "With chauffeur" : "Self-drive"} only` : ""}`,
+      sections: [
+        { type: "stats", items: [
+          { label: "Active Customers", value: String(activeCustomers) },
+          { label: "Total Bookings", value: String(totalBookings) },
+          { label: "Upcoming Bookings", value: String(counts.upcoming) },
+          { label: "Ongoing Bookings", value: String(counts.ongoing) },
+        ] },
+        ...(totalBookings === 0 ? [{ type: "empty", text: `No bookings started in ${report.label}.` }] : [
+          ...group("Customers", "Customer", custRows),
+          ...group("Vehicles", "Vehicle", fleetRows),
+          ...(svcSupported ? group("Service types", "Service type", svcRows) : []),
+        ]),
+      ],
+    };
+  };
+  // The Download PDF button in Reports.jsx asks for this: the current page, as the sections the PDF builder draws.
+  useEffect(() => { if (exportRef) exportRef.current = buildPdf; });                  // every render, so it is always the newest
+  useEffect(() => () => { if (exportRef) exportRef.current = null; }, [exportRef]);   // a tab that closes has nothing to export
 
   // Booking rows from an older backend have no displayStatus / names yet.
   if (bookings.length > 0 && bookings.every((b) => b.displayStatus === undefined)) {
@@ -633,27 +693,30 @@ function RentalsCustomersView({ report }) {
           <StatCard title="Ongoing Bookings" value={counts.ongoing} Icon={IconActivity} color="bg-blue-600 text-white" />
         </div>
 
-        {/* Driving dropdown. "All bookings" keeps both modes visible (thin bar under each row + two columns);
-            "With chauffeur" / "Self-drive" narrow everything on this tab to that mode. */}
+        {/* Left: Simplified | Detailed. Then Filter By: the driving dropdown. "All bookings" keeps both modes visible in Detailed
+            (thin bar under each row + two columns); "With chauffeur" / "Self-drive" narrow everything on this tab to that mode. */}
         <div className="border-t px-4 py-3">
-          {driving ? (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
-              <label htmlFor="driving-filter" className="text-gray-400 font-semibold">Driving</label>
-              <select
-                id="driving-filter"
-                value={drive}
-                onChange={(e) => setDrive(e.target.value)}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-600"
-              >
-                <option value="all">All bookings ({driving.all})</option>
-                <option value="chauffeur">With chauffeur only ({driving.chauffeur})</option>
-                <option value="self">Self-drive only ({driving.selfDrive})</option>
-              </select>
-              {!showMode && driving.other > 0 && <span className="text-gray-400">{driving.other} not recorded (shown under All bookings only)</span>}
-            </div>
-          ) : (
-            <p className="text-xs text-amber-600">The driving dropdown needs the updated reports.service.js (booking rows with modeOfDriving).</p>
-          )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <DetailToggle detailed={detailed} onChange={setDetailed} />
+            {driving ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <label htmlFor="driving-filter" className="text-gray-400 font-semibold">Filter By:</label>
+                <select
+                  id="driving-filter"
+                  value={drive}
+                  onChange={(e) => setDrive(e.target.value)}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-600"
+                >
+                  <option value="all">All bookings ({driving.all})</option>
+                  <option value="chauffeur">With chauffeur only ({driving.chauffeur})</option>
+                  <option value="self">Self-drive only ({driving.selfDrive})</option>
+                </select>
+                {drive !== "all" && driving.other > 0 && <span className="text-gray-400">{driving.other} not recorded (shown under All bookings only)</span>}
+              </div>
+            ) : (
+              <p className="text-amber-600">The filter needs the updated reports.service.js (booking rows with modeOfDriving).</p>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -661,10 +724,10 @@ function RentalsCustomersView({ report }) {
         <Card><Empty>{drive === "all" ? `No bookings started in ${report.label}. Try another period.` : `No ${drive === "chauffeur" ? "chauffeur" : "self-drive"} bookings in ${report.label}. Switch Driving to All bookings to see the rest.`}</Empty></Card>
       ) : (
         <>
-          <GroupCard title="Customers" nameLabel="Customer" childLabel="Vehicle" rows={custRows} showMode={showMode} legend={legend} />
-          <GroupCard title="Vehicles" nameLabel="Vehicle" childLabel="Customer" rows={fleetRows} showMode={showMode} legend={legend} />
+          <GroupCard title="Customers" nameLabel="Customer" childLabel="Vehicle" rows={custRows} showMode={showMode} legend={legend} detailed={detailed} />
+          <GroupCard title="Vehicles" nameLabel="Vehicle" childLabel="Customer" rows={fleetRows} showMode={showMode} legend={legend} detailed={detailed} />
           {svcSupported ? (
-            <GroupCard title="Service types" nameLabel="Service type" childLabel="Vehicle" rows={svcRows} showMode={showMode} legend={legend} />
+            <GroupCard title="Service types" nameLabel="Service type" childLabel="Vehicle" rows={svcRows} showMode={showMode} legend={legend} detailed={detailed} />
           ) : (
             <Card className="p-4">
               <SectionHead title="Service types" />
