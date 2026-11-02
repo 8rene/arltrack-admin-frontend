@@ -499,7 +499,7 @@ export default function Dashboard() {
       userMapRef.current = Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
       // New accounts whose ID has not been verified yet: the same "Pending Verification" the Users page counts.
       const rows = snap.docs
-        .filter((d) => { const u = d.data(); return u.isVerified !== true && u.roleID !== ROLE_ID.owner && u.roleID !== ROLE_ID.admin; })
+        .filter((d) => { const u = d.data(); return u.isVerified !== true && u.idStatus !== "rejected" && u.roleID !== ROLE_ID.owner && u.roleID !== ROLE_ID.admin; })
         .map((d) => {
           const u = d.data();
           return {

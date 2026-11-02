@@ -297,7 +297,12 @@ const STATUS_OPTIONS = [
 
 // A brand-new signup = locked account whose ID hasn't been verified yet.
 const isNewSignup = (u) =>
-  String(u?.status || "").toLowerCase() === "locked" && u?.isVerified !== true;
+  String(u?.status || "").toLowerCase() === "locked" && u?.isVerified !== true && u?.idStatus !== "rejected";
+
+// ID review state of a user: "approved" | "rejected" | "pending". isVerified is false for both a brand-new and a
+// rejected ID, so a rejection is told apart by idStatus (written by the admin backend on review; missing = pending).
+const idStatusOf = (u) =>
+  u?.isVerified === true ? "approved" : u?.idStatus === "rejected" ? "rejected" : "pending";
 
 // Profile photo with an initials fallback — used when the account has no
 // photo, or the image can't be loaded (e.g. removed from Storage). Pass a
@@ -644,7 +649,7 @@ export default function Users() {
   }
 
   const pendingDocs = users
-    .filter(u => u.isVerified !== true)
+    .filter(u => idStatusOf(u) === "pending")
     .sort((a, b) => {
       const aT = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
       const bT = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
@@ -987,6 +992,10 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                         {u.isVerified
                           ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-green-50 border border-green-200 text-green-700 font-medium">
                               <Icons.Check className="w-3 h-3" /> Verified
+                            </span>
+                          : u.idStatus === "rejected"
+                          ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-red-50 border border-red-200 text-red-600 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0 inline-block" />Rejected
                             </span>
                           : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 font-medium">
                               <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0 inline-block" />Pending
@@ -1394,6 +1403,8 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
               <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium capitalize ${statusChip}`}>{user.status || "—"}</span>
               {user.isVerified
                 ? <span className="px-2 py-0.5 rounded-full border text-[11px] font-medium bg-green-50 border-green-200 text-green-700">ID Verified</span>
+                : user.idStatus === "rejected"
+                ? <span className="px-2 py-0.5 rounded-full border text-[11px] font-medium bg-red-50 border-red-200 text-red-600">ID Rejected</span>
                 : <span className="px-2 py-0.5 rounded-full border text-[11px] font-medium bg-yellow-50 border-yellow-200 text-yellow-700">ID Pending</span>}
               {user.isFlagged && <span className="px-2 py-0.5 rounded-full border text-[11px] font-medium bg-red-50 border-red-200 text-red-700">Flagged</span>}
             </div>
@@ -1453,7 +1464,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
                 <Field label="Username"   value={user.username} />
                 <Field label="Joined"     value={joined} />
                 <Field label="Status"     value={user.status} />
-                <Field label="ID Status"  value={user.isVerified ? "✓ Verified" : "Pending"} />
+                <Field label="ID Status"  value={user.isVerified ? "✓ Verified" : user.idStatus === "rejected" ? "Rejected" : "Pending"} />
                 <Field label="Flagged"    value={user.isFlagged ? "Yes" : "No"} />
                 {roleLabelSingular === "Customer" && (
                   <>
@@ -1551,7 +1562,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
                 <Field label="Document Type"   value={docu.documentType} />
                 <Field label="Document Number" value={docu.documentNumber} />
                 <Field label="Driver's License No." value={docu.driversLicenseNumber} />
-                <Field label="ID Status"       value={user.isVerified ? "✓ Verified" : "Pending"} />
+                <Field label="ID Status"       value={user.isVerified ? "✓ Verified" : user.idStatus === "rejected" ? "Rejected" : "Pending"} />
               </Section>
               {hasImgs ? (
                 <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
@@ -1901,8 +1912,8 @@ const ID_SEARCH_BY = [
   { key: "name",      label: "Submitted by", type: "text" },
   { key: "submitted", label: "Submitted",    type: "date" },
 ];
-// One status list for the merged table. New IDs only ever show Pending / Approved (a rejected new
-// ID is stored like a pending one); resubmissions also keep Rejected / Cancelled.
+// One status list for the merged table. New IDs show Pending / Approved / Rejected (a rejected new ID is
+// marked by user.idStatus === "rejected"); resubmissions also keep Cancelled.
 const ID_STATUS_OPTIONS = [
   { key: "all",       label: "All statuses" },
   { key: "pending",   label: "Pending" },
@@ -1910,7 +1921,7 @@ const ID_STATUS_OPTIONS = [
   { key: "rejected",  label: "Rejected" },
   { key: "cancelled", label: "Cancelled" },
 ];
-const newIdStatus = (u) => (u.isVerified === true ? "approved" : "pending");
+const newIdStatus = idStatusOf;
 
 // Name of whoever reviewed — looked up from the all-users lookup. Old approvals
 // (from before reviewer tracking) have no reviewer saved.
@@ -2362,7 +2373,7 @@ function DocumentsTab({ users, roleUserIDs, onRefresh, roleLabel = "Customers", 
     const pendingResub = mine.find(r => r.status === "pending");
     if (pendingResub) {
       setRequestType("all"); setStatusFilter("pending"); setReviewID(pendingResub.id);
-    } else if (newUser && newUser.isVerified !== true) {
+    } else if (newUser && idStatusOf(newUser) === "pending") {
       setRequestType("all"); setStatusFilter("pending"); setOpenNewUserID(newUser.id);
     } else if (mine.length) {
       setRequestType("all"); setStatusFilter("all"); setReviewID(mine[0].id);
