@@ -1,4 +1,7 @@
-import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
+
+ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RENTALS & CUSTOMERS
@@ -6,8 +9,9 @@ import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from "rea
 // Question this tab answers:  "Who booked, and how many times?"
 //
 // A graph + a table for customers, vehicles and service types. Each bar / row is split by booking status
-// (Completed, Ongoing, Upcoming, Cancelled). A customer row opens to show the cars they booked; a car row opens
-// to show the customers who booked it. No booking details (fees, dates, locations): those are on the Bookings page.
+// (Completed, Ongoing, Upcoming, Cancelled). "View" on a row (or a click on its bar) opens the cars a customer booked,
+// the customers who booked a car, or the cars booked under a service type. No booking details (fees, dates,
+// locations): those are on the Bookings page.
 //
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // Each row of report.bookings needs:
@@ -123,6 +127,13 @@ const STATUSES = [
   { key: "cancelled", label: "Cancelled", color: "#ef4444" },
 ];
 
+// The thin bar under each row (and the two columns before Total): the same bookings split by driving mode.
+const MODES = [
+  { key: "chauffeur",  label: "With chauffeur", color: "#7c3aed" },
+  { key: "selfDrive",  label: "Self-drive",     color: "#06b6d4" },
+  { key: "unrecorded", label: "Not recorded",   color: "#d1d5db" },   // bookings with no mode saved
+];
+
 const IconGrid = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
@@ -145,42 +156,36 @@ const IconActivity = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
-const IconX = ({ className = "w-5 h-5" }) => (
+const IconUsers = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M2.5 20a6.5 6.5 0 0113 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M16 4.6a3.5 3.5 0 010 6.8M18 14.2A6.5 6.5 0 0121.5 20" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
   </svg>
 );
 
-const IconCheck = ({ className = "w-5 h-5" }) => (
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
-// Icon + color per card, same as the Bookings page stat cards.
-const STATUS_ICON = { completed: IconCheck, ongoing: IconActivity, upcoming: IconClock, cancelled: IconX };
-const STATUS_ICON_COLOR = {
-  completed: "bg-green-600 text-white",     // same colors as the bars (STATUSES above)
-  ongoing:   "bg-blue-600 text-white",
-  upcoming:  "bg-yellow-500 text-white",
-  cancelled: "bg-red-500 text-white",
-};
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClose = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
 
 // Same stat card as the Users page (flat style): colored icon square on the left, number and title on the right.
-function StatCard({ title, value, Icon, color, onClick, off = false }) {
-  const clickable = typeof onClick === "function";
+function StatCard({ title, value, Icon, color }) {
   return (
-    <div
-      onClick={onClick}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      aria-pressed={clickable ? !off : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
-      className={`rounded-2xl border border-transparent bg-gray-50 p-4 flex items-center gap-3 transition-all ${
-        clickable ? "cursor-pointer hover:bg-gray-100" : ""
-      } ${off ? "opacity-50" : ""}`}
-    >
+    <div className="rounded-2xl border border-transparent bg-gray-50 p-4 flex items-center gap-3">
       <div className={`w-11 h-11 flex items-center justify-center rounded-xl shrink-0 ${color}`}>
         <Icon className="w-5 h-5" />
       </div>
@@ -193,19 +198,11 @@ function StatCard({ title, value, Icon, color, onClick, off = false }) {
 }
 
 const PAGE_SIZE = 7;             // rows per page: the graph and the table under it always show the same rows
-const LABEL_W = "w-44";          // width of the name column; the grid lines are offset by the same amount
-const GAP_LEFT = "11.75rem";     // name column (w-44) + gap-3: where the bars start
+const MODAL_PAGE_SIZE = 10;      // same page size as the Bookings table
 
 // ── grouping + sorting ──────────────────────────────────────────────────────
 
 const zeroCounts = () => ({ completed: 0, ongoing: 0, upcoming: 0, cancelled: 0, total: 0, chauffeur: 0, selfDrive: 0, unrecorded: 0 });
-
-// The thin bar under each row (and the two columns before Total): the same bookings split by driving mode.
-const MODES = [
-  { key: "chauffeur",  label: "With chauffeur", color: "#7c3aed" },
-  { key: "selfDrive",  label: "Self-drive",     color: "#06b6d4" },
-  { key: "unrecorded", label: "Not recorded",   color: "#d1d5db" },   // bookings with no mode saved
-];
 
 function bumpMode(row, b) {
   if (b.modeOfDriving === "With Chauffeur") row.chauffeur += 1;
@@ -214,14 +211,14 @@ function bumpMode(row, b) {
 }
 
 /**
- * One row per customer / car with a count for each status, plus `children`: the same counts split by the other
- * side (a customer's cars, or a car's customers). Hidden statuses are left out of every count and total.
+ * One row per customer / car / service type with a count for each status, plus `children`: the same counts split by the
+ * other side (a customer's cars, or a car's customers).
  */
-function groupRows(bookings, idKey, nameKey, subIdKey, subNameKey, hidden) {
+function groupRows(bookings, idKey, nameKey, subIdKey, subNameKey) {
   const map = new Map();
   for (const b of bookings) {
     const st = b.displayStatus;
-    if (!st || hidden.has(st)) continue;
+    if (!st) continue;
     const id = b[idKey] || "unknown";
     if (!map.has(id)) map.set(id, { id, name: b[nameKey] || "Unknown", ...zeroCounts(), subs: new Map() });
     const row = map.get(id);
@@ -250,10 +247,10 @@ function sortRows(rows, { key, dir }) {
   });
 }
 
-/** The selected row goes to the front of the list (graph and table); the rest keep their sort order. */
-function pinSelected(rows, selectedId) {
-  const sel = rows.find((r) => r.id === selectedId);
-  return sel ? [sel, ...rows.filter((r) => r.id !== selectedId)] : rows;
+function paged(list, p, size = PAGE_SIZE) {
+  const count = Math.max(1, Math.ceil(list.length / size));
+  const no = Math.min(p, count);
+  return { count, no, rows: list.slice((no - 1) * size, no * size) };
 }
 
 // ── small pieces ────────────────────────────────────────────────────────────
@@ -262,61 +259,30 @@ const Card = ({ children, className = "" }) => (
   <div className={`bg-white rounded-2xl border border-gray-100 shadow-soft ${className}`}>{children}</div>
 );
 
-/** Page numbers to show: all of them when there are few, otherwise first, last and the ones around the current page. */
-function pageList(page, count) {
-  if (count <= 7) return Array.from({ length: count }, (_, i) => i + 1);
-  const nums = [...new Set([1, count, page - 1, page, page + 1])].filter((n) => n >= 1 && n <= count).sort((x, y) => x - y);
-  const out = [];
-  nums.forEach((n, i) => {
-    if (i > 0 && n - nums[i - 1] > 1) out.push("…");
-    out.push(n);
-  });
-  return out;
-}
-
-/** "Showing 1–7 of 23" with Previous / page numbers / Next. The buttons only appear when there is more than one page. */
-function Pager({ page, pageCount, total, onPage }) {
-  const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const to = Math.min(page * PAGE_SIZE, total);
-  const btn = "min-w-[1.75rem] h-7 px-2 rounded-lg border text-xs font-semibold transition-colors";
-  return (
-    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-      <p className="text-xs text-gray-500">
-        Showing <span className="font-semibold text-gray-700">{from}–{to}</span> of <span className="font-semibold text-gray-700">{total}</span>
-      </p>
-      {pageCount > 1 && (
-        <div className="flex items-center gap-1">
-          <button onClick={() => onPage(page - 1)} disabled={page <= 1}
-            className={`${btn} border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent`}>Prev</button>
-          {pageList(page, pageCount).map((n, i) => n === "…" ? (
-            <span key={`gap${i}`} className="px-1 text-xs text-gray-400">…</span>
-          ) : (
-            <button key={n} onClick={() => onPage(n)} aria-current={n === page ? "page" : undefined}
-              className={`${btn} ${n === page ? "bg-teal-700 border-teal-700 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{n}</button>
-          ))}
-          <button onClick={() => onPage(page + 1)} disabled={page >= pageCount}
-            className={`${btn} border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent`}>Next</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function Empty({ children }) {
   return <div className="py-10 text-center text-sm text-gray-400">{children}</div>;
 }
 
-/** Section heading: what the card is, then one plain line saying what it answers. */
-function SectionHead({ title, hint }) {
+function SectionHead({ title }) {
   return (
-    <div className="mb-3">
-      <h2 className="text-base font-bold text-arl-dark">{title}</h2>
-      <p className="text-xs text-gray-400">{hint}</p>
+    <div className="mb-3 text-center">
+      <h2 className="font-sans text-xl font-bold text-arl-dark">{title}</h2>
     </div>
   );
 }
 
-// ── graph: one stacked bar per customer / car, split by status ──────────────
+/** Small colour key above a graph. */
+function Legend({ items }) {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500 mb-3">
+      {items.map((s) => (
+        <span key={s.key} className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-sm" style={{ background: s.color }} /> {s.label}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /** A round step (1, 2, 5, 10, 20 ...) so the bottom scale has about five whole-number marks. */
 function niceStep(max) {
@@ -327,241 +293,293 @@ function niceStep(max) {
   return Math.max(1, Math.round(m * pow));
 }
 
+// ── graph: one stacked bar per customer / car / service type, split by status (Chart.js) ──
+
 /**
- * Y = the customers (or cars), X = number of bookings along the bottom. Each bar is split by status.
- * Clicking a bar selects it: the table highlights the same row, and thin bars appear under it for its cars
- * (or its customers).
+ * Y = the customers (or cars), X = number of bookings along the bottom. Each bar is split by status; with `showMode` a thin
+ * second bar under it splits the same bookings by driving mode. Clicking a bar opens the same window as the View button of its
+ * table row. The scale is taken from `scaleMax`, so bars compare across pages.
+ * Chart.js draws the axes, the hover tooltip and the resizing; the numbers inside the segments come from a tiny plugin.
  */
-function StatusBars({ rows, scaleMax = 0, hidden, selectedId, onSelect, showMode = false }) {
-  const cols = STATUSES.filter((s) => !hidden.has(s.key));
-  const maxTotal = Math.max(1, scaleMax, ...rows.map((r) => r.total));   // scale from every page, so bars compare across pages
-  const step = niceStep(maxTotal);
-  const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
-  const ticks = [];
-  for (let t = 0; t <= axisMax; t += step) ticks.push(t);
+function StatusBars({ rows, scaleMax = 0, showMode = false, onOpen }) {
+  const canvasRef = useRef(null);
+  const live = useRef({});
+  live.current = { onOpen };   // the newest callback, so the chart is not rebuilt on every render
+
+  useEffect(() => {
+    if (!canvasRef.current) return undefined;
+    const maxTotal = Math.max(1, scaleMax, ...rows.map((r) => r.total));
+    const step = niceStep(maxTotal);
+    const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
+
+    const dataset = (s, stack) => ({
+      label: s.label, key: s.key, stack,
+      data: rows.map((r) => (r[s.key] > 0 ? r[s.key] : null)),
+      backgroundColor: s.color,
+      borderSkipped: false,
+      barPercentage: stack === "src" ? 0.4 : 0.9,
+    });
+    const datasets = [
+      ...STATUSES.map((s) => dataset(s, "main")),
+      ...(showMode ? MODES.map((m) => dataset(m, "src")) : []),
+    ];
+
+    // the count written inside a segment, only when the segment is wide enough to hold it
+    const segLabels = {
+      id: "segLabels",
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        ctx.save();
+        ctx.font = "600 10px sans-serif";
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        chart.data.datasets.forEach((ds, di) => {
+          if (ds.stack === "src") return;
+          chart.getDatasetMeta(di).data.forEach((el, i) => {
+            const v = ds.data[i];
+            if (v == null || Math.abs(el.x - el.base) < String(v).length * 6 + 10) return;
+            ctx.fillText(String(v), (el.x + el.base) / 2, el.y);
+          });
+        });
+        ctx.restore();
+      },
+    };
+
+    const chart = new ChartJS(canvasRef.current, {
+      type: "bar",
+      data: { labels: rows.map((r) => r.name), datasets },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        categoryPercentage: 0.9,
+        layout: { padding: { right: 8 } },
+        interaction: { mode: "nearest", axis: "y", intersect: true },
+        onHover: (_e, els, c) => { c.canvas.style.cursor = els.length ? "pointer" : "default"; },
+        onClick: (_e, els) => { if (els.length) live.current.onOpen(rows[els[0].index]); },
+        scales: {
+          x: {
+            stacked: true, min: 0, max: axisMax,
+            grid: { color: "#f3f4f6" }, border: { display: false },
+            ticks: { stepSize: step, color: "#9ca3af", font: { size: 10 }, callback: (v) => (Number.isInteger(v) ? v : "") },
+            title: { display: true, text: "Number of bookings", color: "#9ca3af", font: { size: 11, weight: "normal" } },
+          },
+          y: {
+            stacked: true,
+            grid: { display: false }, border: { color: "#d1d5db" },
+            ticks: {
+              autoSkip: false, color: "#374151", font: { size: 11, weight: "600" },
+              callback(value) { const l = this.getLabelForValue(value); return l.length > 24 ? `${l.slice(0, 23)}…` : l; },
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },   // the Legend above the graph already says which colour is which
+          tooltip: {
+            callbacks: {
+              title: (items) => rows[items[0].dataIndex].name,
+              label: (item) => {
+                const v = rows[item.dataIndex][item.dataset.key];
+                return item.dataset.stack === "src" ? `Driving · ${item.dataset.label}: ${v}` : `${item.dataset.label}: ${v}`;
+              },
+              footer: (items) => `Total: ${rows[items[0].dataIndex].total}`,
+            },
+          },
+        },
+      },
+      plugins: [segLabels],
+    });
+    return () => chart.destroy();
+  }, [rows, scaleMax, showMode]);
 
   return (
-    <div>
-      <div className="relative">
-        {/* Y axis line + vertical guide lines for the X scale */}
-        <div className="absolute top-0 bottom-0 right-0 pointer-events-none border-l border-gray-300" style={{ left: GAP_LEFT }}>
-          {ticks.slice(1).map((t) => (
-            <div key={t} className="absolute top-0 bottom-0 border-l border-gray-100" style={{ left: `${(t / axisMax) * 100}%` }} />
-          ))}
-        </div>
+    <div className="relative w-full" style={{ height: Math.max(130, rows.length * (showMode ? 44 : 32) + 64) }}>
+      <canvas ref={canvasRef} role="img" aria-label="Bookings by status" />
+    </div>
+  );
+}
 
-        <div className="space-y-2 py-1">
-          {rows.map((r) => {
-            const isSel = r.id === selectedId;
-            return (
-              <div key={r.id}>
-                <button
-                  onClick={() => onSelect(isSel ? null : r.id)}
-                  aria-pressed={isSel}
-                  className="relative w-full flex items-center gap-3 text-left"
-                >
-                  <span className={`${LABEL_W} shrink-0 text-xs truncate ${isSel ? "font-bold text-teal-700" : "font-semibold text-gray-800"}`}>{r.name}</span>
-                  <div className={`flex-1 flex h-7 overflow-hidden rounded-r-lg transition-shadow ${isSel ? "ring-2 ring-teal-600 shadow-md" : selectedId ? "opacity-50" : ""}`}>
-                    {cols.map((s) => r[s.key] > 0 && (
-                      <div
-                        key={s.key}
-                        title={`${s.label}: ${r[s.key]}`}
-                        className="h-full flex items-center justify-center text-xs font-semibold text-white"
-                        style={{ width: `${(r[s.key] / axisMax) * 100}%`, background: s.color }}
-                      >
-                        {r[s.key]}
-                      </div>
-                    ))}
-                  </div>
-                </button>
+// ── tables: same format as the Bookings page and Revenue & Expense ───────────
 
-                {/* Thin bar: the same bookings by driving mode (only under "All bookings"), same scale */}
-                {showMode && (
-                  <div className="flex items-center gap-3 mt-0.5">
-                    <span className={`${LABEL_W} shrink-0`} />
-                    <div className={`flex-1 flex h-1.5 overflow-hidden rounded-r-sm ${selectedId && !isSel ? "opacity-50" : ""}`}>
-                      {MODES.map((m) => r[m.key] > 0 && (
-                        <div key={m.key} title={`${m.label}: ${r[m.key]}`} style={{ width: `${(r[m.key] / axisMax) * 100}%`, background: m.color }} />
-                      ))}
-                    </div>
-                  </div>
-                )}
+/** Clickable header cell, same look as the Bookings table. `sort` is { key, dir }; onSort receives the next one. */
+function SortableTh({ label, sortKey, sort, onSort }) {
+  const active = sort.key === sortKey;
+  const click = () => onSort({ key: sortKey, dir: active ? (sort.dir === "asc" ? "desc" : "asc") : sortKey === "name" ? "asc" : "desc" });
+  return (
+    <th className="px-4 py-3 text-left select-none">
+      <button onClick={click}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors whitespace-nowrap ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}>
+        {label}
+        {active ? <IconSortArrow dir={sort.dir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
 
-                {/* The selected row opens: one thin bar per car (or per customer), same scale */}
-                {isSel && r.children.length > 0 && (
-                  <div className="relative mt-1.5 mb-1 space-y-1">
-                    {r.children.map((c) => (
-                      <div key={c.id} className="flex items-center gap-3">
-                        <span title={c.name} className={`${LABEL_W} shrink-0 pl-4 text-[11px] truncate text-gray-500`}>↳ {c.name}</span>
-                        <div className="flex-1 flex h-4 overflow-hidden rounded-r-md">
-                          {cols.map((s) => c[s.key] > 0 && (
-                            <div
-                              key={s.key}
-                              title={`${s.label}: ${c[s.key]}`}
-                              className="h-full flex items-center justify-center text-[10px] font-semibold text-white"
-                              style={{ width: `${(c[s.key] / axisMax) * 100}%`, background: s.color, opacity: 0.75 }}
-                            >
-                              {c[s.key]}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+/** A count cell: "—" when zero, coloured otherwise. */
+function CountCell({ value, color }) {
+  return (
+    <td className={`px-4 py-3 whitespace-nowrap ${value ? "font-semibold" : "text-gray-300"}`} style={value ? { color } : undefined}>
+      {value || "—"}
+    </td>
+  );
+}
 
-      {/* X axis along the bottom */}
-      <div className="flex gap-3 border-t border-gray-300">
-        <div className={`${LABEL_W} shrink-0`} />
-        <div className="relative flex-1 h-5">
-          {ticks.map((t) => (
-            <span key={t} className="absolute top-1 -translate-x-1/2 text-[10px] font-medium text-gray-400" style={{ left: `${(t / axisMax) * 100}%` }}>{t}</span>
-          ))}
-        </div>
-      </div>
-      <div className="flex gap-3">
-        <div className={`${LABEL_W} shrink-0`} />
-        <p className="flex-1 text-center text-[11px] text-gray-400">Number of bookings</p>
+/** "Showing 1–10 of 23" with Prev / page numbers / Next: the footer of the Bookings table. */
+function TablePagination({ page, totalPages, onChange, pageSize, count }) {
+  if (count === 0) return null;
+  const start = (page - 1) * pageSize;
+  const rangeEnd = Math.min(start + pageSize, count);
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  if (totalPages > 1) nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((x, y) => x - y);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">Showing {start + 1}–{rangeEnd} of {count}</p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>{n}</button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
       </div>
     </div>
   );
 }
 
-// ── table: always shown under its graph; a row opens to show who / what is behind it ─────
+const viewBtn = "px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors";
+const TH = "px-4 py-3 text-left font-semibold whitespace-nowrap";
+const THEAD = "bg-gray-50 text-gray-400 text-xs uppercase tracking-wide";
 
-function StatusTable({ rows, nameLabel, hidden, sort, onSort, selectedId, onSelect, showMode = false }) {
-  const [open, setOpen] = useState(() => new Set());     // rows opened with the arrow
-  const modeCols = showMode ? MODES.slice(0, 2) : [];     // With chauffeur, Self-drive (the gray "not recorded" part only shows in the thin bar)
-  const cols = STATUSES.filter((s) => !hidden.has(s.key));
+/** A window with a title, a one-line summary and a paged table of the rows behind one bar / table row. */
+function BreakdownModal({ row, childLabel, showMode, onClose }) {
+  const [page, setPage] = useState(1);
+  const items = row.children || [];
+  const p = paged(items, page, MODAL_PAGE_SIZE);
+  const modeCols = showMode ? MODES.slice(0, 2) : [];
 
-  // The arrow opens / closes a row. On the selected row it clears the selection (a selected row is always open).
-  const toggleOpen = (r) => {
-    if (r.id === selectedId) { onSelect(null); return; }
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
-      return next;
-    });
-  };
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
-  const head = (key, label, align = "right") => (
-    <th className={`px-3 py-2.5 font-semibold text-${align} whitespace-nowrap`}>
-      <button
-        onClick={() => onSort({ key, dir: sort.key === key && sort.dir === "desc" ? "asc" : key === "name" ? "asc" : "desc" })}
-        className="inline-flex items-center gap-1 hover:text-gray-700"
-      >
-        {label}
-        <span className={sort.key === key ? "text-teal-700" : "text-gray-300"}>{sort.key === key ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
-      </button>
-    </th>
+  const heads = [childLabel, ...STATUSES.map((s) => s.label), ...modeCols.map((m) => m.label), "Total"];
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-bold text-lg text-gray-800 truncate">{row.name}</h2>
+            <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 shrink-0"><IconClose /></button>
+          </div>
+          <p className="text-sm text-gray-500 mt-1">{row.total} booking{row.total === 1 ? "" : "s"}</p>
+        </div>
+        <div className="overflow-auto flex-1 px-6 py-5">
+          <div className="rounded-xl border border-gray-100 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className={THEAD}>
+                  <tr>{heads.map((h) => <th key={h} className={TH}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {p.rows.length === 0 ? (
+                    <tr><td colSpan={heads.length} className="text-center text-gray-400 py-12">Nothing to show</td></tr>
+                  ) : p.rows.map((c) => (
+                    <tr key={c.id} className="border-t hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{c.name}</td>
+                      {STATUSES.map((s) => <CountCell key={s.key} value={c[s.key]} color={s.color} />)}
+                      {modeCols.map((m) => <CountCell key={m.key} value={c[m.key]} color={m.color} />)}
+                      <td className="px-4 py-3 font-semibold text-gray-700">{c.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <TablePagination page={p.no} totalPages={p.count} onChange={setPage} pageSize={MODAL_PAGE_SIZE} count={items.length} />
+          </div>
+        </div>
+      </div>
+    </div>
   );
+}
+
+/**
+ * One card: title, legend, graph and the table under it (same rows, paged together). Sorting, paging and the View window
+ * belong to the card, so the three cards (customers, vehicles, service types) share this one piece.
+ */
+function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend }) {
+  const [sort, setSort] = useState({ key: "total", dir: "desc" });
+  const [page, setPage] = useState(1);
+  const [view, setView] = useState(null);
+  const closeView = useCallback(() => setView(null), []);
+
+  const sorted = useMemo(() => sortRows(rows, sort), [rows, sort]);
+  const pg = useMemo(() => paged(sorted, page), [sorted, page]);
+  const max = useMemo(() => Math.max(0, ...rows.map((r) => r.total)), [rows]);
+  useEffect(() => { setPage(1); }, [rows]);
+
+  const modeCols = showMode ? MODES.slice(0, 2) : [];   // With chauffeur, Self-drive (the gray "not recorded" part only shows in the thin bar)
+  const th = (label, key) => <SortableTh key={key} label={label} sortKey={key} sort={sort} onSort={(s) => { setSort(s); setPage(1); }} />;
 
   return (
-    <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100">
-      <table className="w-full text-xs">
-        <thead className="bg-gray-50 text-gray-400">
-          <tr>
-            {head("name", nameLabel, "left")}
-            {cols.map((s) => head(s.key, s.label))}
-            {modeCols.map((m) => head(m.key, m.label))}
-            {head("total", "Total")}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const isSel = r.id === selectedId;
-            const isOpen = isSel || open.has(r.id);
-            return (
-              <Fragment key={r.id}>
-                <tr
-                  onClick={() => onSelect(isSel ? null : r.id)}
-                  className={`border-t border-gray-50 cursor-pointer ${isSel ? "bg-teal-50" : "hover:bg-gray-50/60"}`}
-                >
-                  <td
-                    className={`px-3 py-2.5 font-semibold whitespace-nowrap ${isSel ? "text-teal-700" : "text-gray-800"}`}
-                    style={isSel ? { boxShadow: "inset 3px 0 0 #0f766e" } : undefined}
-                  >
-                    <span className="inline-flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        aria-label={isOpen ? `Close ${r.name}` : `Open ${r.name}`}
-                        aria-expanded={isOpen}
-                        onClick={(e) => { e.stopPropagation(); toggleOpen(r); }}
-                        className="w-4 text-gray-400 hover:text-gray-700"
-                      >
-                        {isOpen ? "▾" : "▸"}
-                      </button>
-                      {r.name}
-                    </span>
+    <Card className="p-4">
+      <SectionHead title={title} />
+      <Legend items={legend} />
+      <StatusBars rows={pg.rows} scaleMax={max} showMode={showMode} onOpen={setView} />
+
+      <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className={THEAD}>
+              <tr>
+                {th(nameLabel, "name")}
+                {STATUSES.map((s) => th(s.label, s.key))}
+                {modeCols.map((m) => th(m.label, m.key))}
+                {th("Total", "total")}
+                <th className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pg.rows.map((r) => (
+                <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{r.name}</td>
+                  {STATUSES.map((s) => <CountCell key={s.key} value={r[s.key]} color={s.color} />)}
+                  {modeCols.map((m) => <CountCell key={m.key} value={r[m.key]} color={m.color} />)}
+                  <td className="px-4 py-3">
+                    <span className="inline-block px-2 py-0.5 rounded-full bg-teal-700 text-white text-xs font-bold whitespace-nowrap">{r.total}</span>
                   </td>
-                  {cols.map((s) => (
-                    <td
-                      key={s.key}
-                      className={`px-3 py-2.5 text-right ${r[s.key] ? "font-bold" : "text-gray-300"}`}
-                      style={r[s.key] ? { color: s.color } : undefined}
-                    >
-                      {r[s.key]}
-                    </td>
-                  ))}
-                  {modeCols.map((m) => (
-                    <td key={m.key} className={`px-3 py-2.5 text-right ${r[m.key] ? "font-bold" : "text-gray-300"}`} style={r[m.key] ? { color: m.color } : undefined}>
-                      {r[m.key]}
-                    </td>
-                  ))}
-                  <td className="px-3 py-2.5 text-right">
-                    <span className="inline-block min-w-[1.75rem] px-2 py-0.5 rounded-full bg-teal-700 text-white font-bold text-center">{r.total}</span>
+                  <td className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">
+                    <button onClick={() => setView(r)} className={viewBtn}>View</button>
                   </td>
                 </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <TablePagination page={pg.no} totalPages={pg.count} onChange={setPage} pageSize={PAGE_SIZE} count={rows.length} />
+      </div>
 
-                {isOpen && r.children.map((c) => (
-                  <tr key={`${r.id}:${c.id}`} className="border-t border-gray-50 bg-gray-50/60">
-                    <td className="py-2 pl-9 pr-3 text-gray-600 whitespace-nowrap">{c.name}</td>
-                    {cols.map((s) => (
-                      <td
-                        key={s.key}
-                        className={`px-3 py-2 text-right ${c[s.key] ? "font-semibold" : "text-gray-300"}`}
-                        style={c[s.key] ? { color: s.color } : undefined}
-                      >
-                        {c[s.key]}
-                      </td>
-                    ))}
-                    {modeCols.map((m) => (
-                      <td key={m.key} className={`px-3 py-2 text-right ${c[m.key] ? "font-semibold" : "text-gray-300"}`} style={c[m.key] ? { color: m.color } : undefined}>
-                        {c[m.key]}
-                      </td>
-                    ))}
-                    <td className="px-3 py-2 text-right font-semibold text-gray-600">{c.total}</td>
-                  </tr>
-                ))}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+      {view && <BreakdownModal row={view} childLabel={childLabel} showMode={showMode} onClose={closeView} />}
+    </Card>
   );
 }
 
 // ── the tab ─────────────────────────────────────────────────────────────────
 
 function RentalsCustomersView({ report }) {
-  const [hidden, setHidden] = useState(() => new Set());       // statuses switched off in the legend
-  const [custSort, setCustSort] = useState({ key: "total", dir: "desc" });
-  const [fleetSort, setFleetSort] = useState({ key: "total", dir: "desc" });
-  const [custSel, setCustSel] = useState(null);
-  const [fleetSel, setFleetSel] = useState(null);
-  const [svcSort, setSvcSort] = useState({ key: "total", dir: "desc" });
-  const [svcSel, setSvcSel] = useState(null);
-  const [svcPage, setSvcPage] = useState(1);
   const [drive, setDrive] = useState("all");               // all | chauffeur | self : filters the whole tab
-  const [custPage, setCustPage] = useState(1);
-  const [fleetPage, setFleetPage] = useState(1);
-
   const bookings = useMemo(() => report.bookings || [], [report]);
 
   // The driving filter: every number, bar and table below only counts the bookings that match it.
@@ -571,74 +589,32 @@ function RentalsCustomersView({ report }) {
     return bookings;
   }, [bookings, drive]);
 
-  // Legend numbers always count every status, so switching one off doesn't change the others.
   const counts = useMemo(() => {
     const c = { completed: 0, ongoing: 0, upcoming: 0, cancelled: 0 };
     scoped.forEach((b) => { if (b.displayStatus) c[b.displayStatus] += 1; });
     return c;
   }, [scoped]);
-  const totalRentals = STATUSES.reduce((sum, x) => sum + counts[x.key], 0);
+  const totalBookings = STATUSES.reduce((sum, x) => sum + counts[x.key], 0);
+  // customers with at least one booking that was not cancelled
+  const activeCustomers = useMemo(() => new Set(scoped.filter((b) => b.displayStatus && b.displayStatus !== "cancelled" && b.userID).map((b) => b.userID)).size, [scoped]);
 
-  const custRows = useMemo(() => sortRows(groupRows(scoped, "userID", "customerName", "carID", "carName", hidden), custSort), [scoped, hidden, custSort]);
-  const fleetRows = useMemo(() => sortRows(groupRows(scoped, "carID", "carName", "userID", "customerName", hidden), fleetSort), [scoped, hidden, fleetSort]);
-
-  // Service types: one row per service type, opening to the cars booked under it.
-  const svcRows = useMemo(() => sortRows(groupRows(scoped, "serviceTypeName", "serviceTypeName", "carID", "carName", hidden), svcSort), [scoped, hidden, svcSort]);
-
-  // A selection only counts while its row still exists (hiding a status or changing the period can remove it).
-  // Otherwise every bar would stay faded with nothing highlighted.
-  const custSelId = custRows.some((r) => r.id === custSel) ? custSel : null;
-  const fleetSelId = fleetRows.some((r) => r.id === fleetSel) ? fleetSel : null;
-  const svcSelId = svcRows.some((r) => r.id === svcSel) ? svcSel : null;
-  const svcShown = useMemo(() => pinSelected(svcRows, svcSelId), [svcRows, svcSelId]);
-  const custShown = useMemo(() => pinSelected(custRows, custSelId), [custRows, custSelId]);
-  const fleetShown = useMemo(() => pinSelected(fleetRows, fleetSelId), [fleetRows, fleetSelId]);
-
-  // One page of rows per card; the graph and the table show the same page.
-  const custPages = Math.max(1, Math.ceil(custShown.length / PAGE_SIZE));
-  const fleetPages = Math.max(1, Math.ceil(fleetShown.length / PAGE_SIZE));
-  const custPageNo = Math.min(custPage, custPages);
-  const fleetPageNo = Math.min(fleetPage, fleetPages);
-  const svcPages = Math.max(1, Math.ceil(svcShown.length / PAGE_SIZE));
-  const svcPageNo = Math.min(svcPage, svcPages);
-  const svcPageRows = svcShown.slice((svcPageNo - 1) * PAGE_SIZE, svcPageNo * PAGE_SIZE);
-  const svcMax = Math.max(0, ...svcRows.map((r) => r.total));
+  const custRows = useMemo(() => groupRows(scoped, "userID", "customerName", "carID", "carName"), [scoped]);
+  const fleetRows = useMemo(() => groupRows(scoped, "carID", "carName", "userID", "customerName"), [scoped]);
+  const svcRows = useMemo(() => groupRows(scoped, "serviceTypeName", "serviceTypeName", "carID", "carName"), [scoped]);
   const svcSupported = bookings.length === 0 || bookings.some((b) => b.serviceTypeName !== undefined);   // false = backend not updated yet
-  const custPageRows = custShown.slice((custPageNo - 1) * PAGE_SIZE, custPageNo * PAGE_SIZE);
-  const fleetPageRows = fleetShown.slice((fleetPageNo - 1) * PAGE_SIZE, fleetPageNo * PAGE_SIZE);
-  const custMax = Math.max(0, ...custRows.map((r) => r.total));
-  const fleetMax = Math.max(0, ...fleetRows.map((r) => r.total));
 
-  // A new period starts every card back on page 1.
-  useEffect(() => { setCustPage(1); setFleetPage(1); setSvcPage(1); }, [report]);
-
-  // Changing the sort, the selection or the status chips starts that card back on page 1 (the selected row moves to the front).
-  const sortCust = (s) => { setCustSort(s); setCustPage(1); };
-  const sortFleet = (s) => { setFleetSort(s); setFleetPage(1); };
-  const selectCust = (id) => { setCustSel(id); setCustPage(1); };
-  const selectFleet = (id) => { setFleetSel(id); setFleetPage(1); };
-  const sortSvc = (s) => { setSvcSort(s); setSvcPage(1); };
-  const selectSvc = (id) => { setSvcSel(id); setSvcPage(1); };
-
-  // How many bookings come with a chauffeur and how many are self-drive (respects the status chips).
+  // How many bookings come with a chauffeur and how many are self-drive.
   const driving = useMemo(() => {
     if (!bookings.some((b) => b.modeOfDriving !== undefined)) return null;     // backend not updated yet
-    const visible = bookings.filter((b) => b.displayStatus && !hidden.has(b.displayStatus));
+    const visible = bookings.filter((b) => b.displayStatus);
     const chauffeur = visible.filter((b) => b.modeOfDriving === "With Chauffeur").length;
     const selfDrive = visible.filter((b) => b.modeOfDriving === "Self Drive").length;
     return { all: visible.length, chauffeur, selfDrive, other: visible.length - chauffeur - selfDrive };
-  }, [bookings, hidden]);
+  }, [bookings]);
 
   // "All bookings" shows both modes side by side (thin bar + columns); picking one mode narrows the whole tab instead.
   const showMode = drive === "all" && driving !== null;
-
-  const toggleStatus = (key) => setHidden((prev) => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
-  const onChip = (key) => { toggleStatus(key); setCustPage(1); setFleetPage(1); setSvcPage(1); };
-  const onDrive = (key) => { setDrive(key); setCustPage(1); setFleetPage(1); setSvcPage(1); };
+  const legend = [...STATUSES, ...(showMode ? MODES.filter((m) => m.key !== "unrecorded" || driving.other > 0) : [])];
 
   // Booking rows from an older backend have no displayStatus / names yet.
   if (bookings.length > 0 && bookings.every((b) => b.displayStatus === undefined)) {
@@ -648,16 +624,13 @@ function RentalsCustomersView({ report }) {
   return (
     <div className="space-y-4">
 
-      {/* One white group, same layout as the Users page: stat cards on top, a divider, then the filter row.
-          A status card also switches that status on or off in the graphs and tables below (a faded card = hidden). */}
+      {/* One white group, same layout as the Users page: stat cards on top, a divider, then the filter row. */}
       <Card>
-        <div className="grid gap-3 grid-cols-2 md:grid-cols-5 p-4">
-          <StatCard title={drive === "chauffeur" ? "With chauffeur" : drive === "self" ? "Self-drive" : "All Bookings"}
-            value={totalRentals} Icon={IconGrid} color="bg-teal-600 text-white" />
-          {STATUSES.map((st) => (
-            <StatCard key={st.key} title={st.label} value={counts[st.key]} Icon={STATUS_ICON[st.key]} color={STATUS_ICON_COLOR[st.key]}
-              off={hidden.has(st.key)} onClick={() => onChip(st.key)} />
-          ))}
+        <div className="grid gap-3 grid-cols-2 md:grid-cols-4 p-4">
+          <StatCard title="Active Customers" value={activeCustomers} Icon={IconUsers} color="bg-teal-600 text-white" />
+          <StatCard title="Total Bookings" value={totalBookings} Icon={IconGrid} color="bg-green-600 text-white" />
+          <StatCard title="Upcoming Bookings" value={counts.upcoming} Icon={IconClock} color="bg-yellow-500 text-white" />
+          <StatCard title="Ongoing Bookings" value={counts.ongoing} Icon={IconActivity} color="bg-blue-600 text-white" />
         </div>
 
         {/* Driving dropdown. "All bookings" keeps both modes visible (thin bar under each row + two columns);
@@ -669,24 +642,13 @@ function RentalsCustomersView({ report }) {
               <select
                 id="driving-filter"
                 value={drive}
-                onChange={(e) => onDrive(e.target.value)}
+                onChange={(e) => setDrive(e.target.value)}
                 className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-600"
               >
                 <option value="all">All bookings ({driving.all})</option>
                 <option value="chauffeur">With chauffeur only ({driving.chauffeur})</option>
                 <option value="self">Self-drive only ({driving.selfDrive})</option>
               </select>
-              {showMode && (
-                <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-gray-500">
-                  <span className="text-gray-400">Thin bar under each row:</span>
-                  {MODES.filter((m) => m.key !== "unrecorded" || driving.other > 0).map((m) => (
-                    <span key={m.key} className="inline-flex items-center gap-1">
-                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: m.color }} />
-                      {m.label}
-                    </span>
-                  ))}
-                </span>
-              )}
               {!showMode && driving.other > 0 && <span className="text-gray-400">{driving.other} not recorded (shown under All bookings only)</span>}
             </div>
           ) : (
@@ -695,50 +657,20 @@ function RentalsCustomersView({ report }) {
         </div>
       </Card>
 
-      {totalRentals === 0 ? (
+      {totalBookings === 0 ? (
         <Card><Empty>{drive === "all" ? `No bookings started in ${report.label}. Try another period.` : `No ${drive === "chauffeur" ? "chauffeur" : "self-drive"} bookings in ${report.label}. Switch Driving to All bookings to see the rest.`}</Empty></Card>
       ) : (
         <>
-          {/* Customers first: the question is "who booked" */}
-          <Card className="p-4">
-            <SectionHead
-              title="Customers"
-              hint={`${report.customerReport?.newCustomers ?? 0} new this period, ${report.customerReport?.totalCustomers ?? 0} customers in total. Click a bar or a row to bring it to the front; the arrow shows the cars they booked.`}
-            />
-            {custRows.length === 0 ? <Empty>Every status is switched off.</Empty> : (
-              <>
-                <StatusBars showMode={showMode} rows={custPageRows} scaleMax={custMax} hidden={hidden} selectedId={custSelId} onSelect={selectCust} />
-                <Pager page={custPageNo} pageCount={custPages} total={custShown.length} onPage={setCustPage} />
-                <StatusTable showMode={showMode} rows={custPageRows} nameLabel="Customer" hidden={hidden} sort={custSort} onSort={sortCust} selectedId={custSelId} onSelect={selectCust} />
-              </>
-            )}
-          </Card>
-
-          {/* Vehicles */}
-          <Card className="p-4">
-            <SectionHead title="Vehicles" hint="How many times each car was booked. Click a bar or a row to bring it to the front; the arrow shows who booked it." />
-            {fleetRows.length === 0 ? <Empty>Every status is switched off.</Empty> : (
-              <>
-                <StatusBars showMode={showMode} rows={fleetPageRows} scaleMax={fleetMax} hidden={hidden} selectedId={fleetSelId} onSelect={selectFleet} />
-                <Pager page={fleetPageNo} pageCount={fleetPages} total={fleetShown.length} onPage={setFleetPage} />
-                <StatusTable showMode={showMode} rows={fleetPageRows} nameLabel="Vehicle" hidden={hidden} sort={fleetSort} onSort={sortFleet} selectedId={fleetSelId} onSelect={selectFleet} />
-              </>
-            )}
-          </Card>
-
-          {/* Service types: what the bookings were for */}
-          <Card className="p-4">
-            <SectionHead title="Service types" hint="How many bookings each service type got. Click a bar or a row to bring it to the front; the arrow shows the cars booked under it." />
-            {!svcSupported ? (
-              <p className="text-xs text-amber-600">This graph needs the updated reports.service.js (booking rows with serviceTypeName).</p>
-            ) : svcRows.length === 0 ? <Empty>Every status is switched off.</Empty> : (
-              <>
-                <StatusBars showMode={showMode} rows={svcPageRows} scaleMax={svcMax} hidden={hidden} selectedId={svcSelId} onSelect={selectSvc} />
-                <Pager page={svcPageNo} pageCount={svcPages} total={svcShown.length} onPage={setSvcPage} />
-                <StatusTable showMode={showMode} rows={svcPageRows} nameLabel="Service type" hidden={hidden} sort={svcSort} onSort={sortSvc} selectedId={svcSelId} onSelect={selectSvc} />
-              </>
-            )}
-          </Card>
+          <GroupCard title="Customers" nameLabel="Customer" childLabel="Vehicle" rows={custRows} showMode={showMode} legend={legend} />
+          <GroupCard title="Vehicles" nameLabel="Vehicle" childLabel="Customer" rows={fleetRows} showMode={showMode} legend={legend} />
+          {svcSupported ? (
+            <GroupCard title="Service types" nameLabel="Service type" childLabel="Vehicle" rows={svcRows} showMode={showMode} legend={legend} />
+          ) : (
+            <Card className="p-4">
+              <SectionHead title="Service types" />
+              <p className="text-xs text-amber-600 text-center">This graph needs the updated reports.service.js (booking rows with serviceTypeName).</p>
+            </Card>
+          )}
         </>
       )}
     </div>

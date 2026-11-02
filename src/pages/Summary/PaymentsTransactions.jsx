@@ -1,5 +1,9 @@
-import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../../context/CurrencyContext";
+import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
+
+ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PAYMENTS & TRANSACTIONS: "Where did the cash go?"
@@ -83,7 +87,6 @@ const C_RED = "#ef4444";
 const C_TEAL = "#0d9488";
 const C_AMBER = "#f59e0b";      // = the Unpaid balances card: orange means "still owed", nothing else
 const C_INDIGO = "#6366f1";     // penalties
-const C_SLATE = "#64748b";      // PayMongo fees
 const C_BLUE = "#2563eb";
 const C_PURPLE = "#7c3aed";
 const C_SKY = "#0ea5e9";       // service fee
@@ -93,8 +96,6 @@ const C_ORANGE = "#ea580c";    // refunds
 const C_FUCHSIA = "#c026d3";   // discounts returned
 const PAGE_SIZE = 7;               // rows per page: the graph and the table under it always show the same rows
 const NONE = new Set();
-const LABEL_W = "w-44";                   // width of the name column; the grid lines are offset by the same amount
-const GAP_LEFT = "11.75rem";              // name column (w-44) + gap-3: where the bars start
 
 
 // ── icons ───────────────────────────────────────────────────────────────────
@@ -122,7 +123,7 @@ const IconArrowUp = ({ className = "w-5 h-5" }) => (<Svg className={className} w
 
 const IconLock = ({ className = "w-5 h-5" }) => (<Svg className={className}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" /></Svg>);
 
-const IconCheck = ({ className = "w-5 h-5" }) => (<Svg className={className} w={2}><path d="M20 6L9 17l-5-5" /></Svg>);
+const IconClock = ({ className = "w-5 h-5" }) => (<Svg className={className} w={2}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></Svg>);
 
 
 // ── shared pieces (same look as Rentals & Customers) ────────────────────────
@@ -174,22 +175,22 @@ function StatCard({ title, value, Icon, color, valueClass = "text-gray-800", onC
   );
 }
 
-function SectionHead({ title, hint }) {
+function SectionHead({ title }) {
   return (
-    <div className="mb-3">
-      <h2 className="text-base font-bold text-arl-dark">{title}</h2>
-      {hint && <p className="text-xs text-gray-400">{hint}</p>}
+    <div className="mb-3 text-center">
+      <h2 className="font-sans text-xl font-bold text-arl-dark">{title}</h2>
     </div>
   );
 }
 
-/** Small colour key above a graph. An item with `line: true` is drawn as a line instead of a square. */
+/** Small colour key above a graph. An item with `line: true` is drawn as a line, `hatched: true` as a striped square. */
 function Legend({ items }) {
+  const stripes = (c) => `repeating-linear-gradient(45deg, ${c}, ${c} 3px, ${c}b3 3px, ${c}b3 6px)`;
   return (
-    <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 mb-3">
+    <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500 mb-3">
       {items.map((s) => (
         <span key={s.key} className="flex items-center gap-1.5">
-          {s.line ? <span className="w-3 h-0.5" style={{ background: s.color }} /> : <span className="w-3 h-3 rounded-sm" style={{ background: s.color }} />} {s.label}
+          {s.line ? <span className="w-3 h-0.5" style={{ background: s.color }} /> : <span className="w-3 h-3 rounded-sm" style={{ background: s.hatched ? stripes(s.color) : s.color }} />} {s.label}
         </span>
       ))}
     </div>
@@ -197,44 +198,6 @@ function Legend({ items }) {
 }
 
 const Empty = ({ children }) => <div className="py-10 text-center text-sm text-gray-400">{children}</div>;
-
-// ── pager ───────────────────────────────────────────────────────────────────
-
-function pageList(page, count) {
-  if (count <= 7) return Array.from({ length: count }, (_, i) => i + 1);
-  const nums = [...new Set([1, count, page - 1, page, page + 1])].filter((n) => n >= 1 && n <= count).sort((x, y) => x - y);
-  const out = [];
-  nums.forEach((n, i) => { if (i > 0 && n - nums[i - 1] > 1) out.push("…"); out.push(n); });
-  return out;
-}
-
-/** "Showing 1–7 of 23" with Prev / page numbers / Next. The buttons only appear when there is more than one page. */
-function Pager({ page, pageCount, total, onPage, pageSize = PAGE_SIZE }) {
-  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const to = Math.min(page * pageSize, total);
-  const btn = "min-w-[1.75rem] h-7 px-2 rounded-lg border text-xs font-semibold transition-colors";
-  return (
-    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-      <p className="text-xs text-gray-500">
-        Showing <span className="font-semibold text-gray-700">{from}–{to}</span> of <span className="font-semibold text-gray-700">{total}</span>
-      </p>
-      {pageCount > 1 && (
-        <div className="flex items-center gap-1">
-          <button onClick={() => onPage(page - 1)} disabled={page <= 1}
-            className={`${btn} border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent`}>Prev</button>
-          {pageList(page, pageCount).map((n, i) => n === "…" ? (
-            <span key={`gap${i}`} className="px-1 text-xs text-gray-400">…</span>
-          ) : (
-            <button key={n} onClick={() => onPage(n)} aria-current={n === page ? "page" : undefined}
-              className={`${btn} ${n === page ? "bg-teal-700 border-teal-700 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{n}</button>
-          ))}
-          <button onClick={() => onPage(page + 1)} disabled={page >= pageCount}
-            className={`${btn} border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent`}>Next</button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -262,225 +225,319 @@ function sortRows(rows, { key, dir }) {
   });
 }
 
-/** The selected row goes to the front of the list (graph and table); the rest keep their sort order. */
-function pinSelected(rows, selectedId) {
-  const sel = rows.find((r) => r.id === selectedId);
-  return sel ? [sel, ...rows.filter((r) => r.id !== selectedId)] : rows;
+function paged(list, p, size = PAGE_SIZE) {
+  const count = Math.max(1, Math.ceil(list.length / size));
+  const no = Math.min(p, count);
+  return { count, no, rows: list.slice((no - 1) * size, no * size) };
 }
 
-// ── graph: one stacked bar per row ──────────────────────────────────────────
+// ── graph: one stacked bar per row (Chart.js) ───────────────────────────────
+
+const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`; };
+
+/** A solid fill, or (for a striped series) a diagonal-stripe pattern, in the given opacity. Cached per colour. */
+function paint(s, alpha, cache) {
+  const k = `${s.color}|${alpha}|${s.hatched ? 1 : 0}`;
+  if (cache.has(k)) return cache.get(k);
+  let fill = hexA(s.color, alpha);
+  if (s.hatched) {
+    const tile = document.createElement("canvas");
+    tile.width = 10; tile.height = 10;
+    const x = tile.getContext("2d");
+    x.fillStyle = fill; x.fillRect(0, 0, 10, 10);
+    x.strokeStyle = "rgba(255,255,255,0.45)"; x.lineWidth = 3;
+    x.beginPath();
+    x.moveTo(-5, 5); x.lineTo(5, -5); x.moveTo(0, 10); x.lineTo(10, 0); x.moveTo(5, 15); x.lineTo(15, 5);
+    x.stroke();
+    fill = x.createPattern(tile, "repeat") || fill;
+  }
+  cache.set(k, fill);
+  return fill;
+}
 
 /**
- * Y = the rows, X = the amount (or a count) along the bottom. Each bar is split by `series`; a series is skipped
- * when it is in `hidden` or when its value is 0 or less. Clicking a bar selects it: the table highlights the same
- * row and thin bars appear under it for its children (drawn with `childSeries`, else the same series).
- *   axis   "money" (default: pesos, converted to the chosen currency) or "count"
- * A row's `total` is the bar length; the scale is taken from `scaleMax` so bars compare across pages.
+ * Y = the methods, X = the amount along the bottom. Each bar is split by `series`; a series is skipped when it is in `hidden`
+ * or when its value is 0 or less. `sourceSeries` adds a thin second bar per row. Clicking a bar opens the same window as the
+ * View button of its table row. The scale is taken from `scaleMax` so bars compare across pages.
+ * Chart.js draws the axes, the hover tooltip and the resizing; the numbers inside the segments come from a tiny plugin.
  */
-function SplitBars({ rows, scaleMax = 0, series, childSeries, sourceSeries, sourceLabel = "Received from", hidden = NONE, selectedId, onSelect, money, axis = "money", axisLabel }) {
+function SplitBars({ rows, scaleMax = 0, series, sourceSeries, sourceLabel = "Received from", hidden = NONE, onOpen, money }) {
   const { convert, currency, SYMBOLS } = useCurrency();
-  const isMoney = axis === "money";
-  const sym = isMoney ? (SYMBOLS?.[currency] || "₱") : "";
-  const cols = series.filter((s) => !hidden.has(s.key));
-  const kidCols = childSeries || cols;
-  const show = (v) => (isMoney ? compact(convert(v)) : String(v));
+  const sym = SYMBOLS?.[currency] || "₱";
+  const canvasRef = useRef(null);
+  const live = useRef({});
+  live.current = { onOpen, money };   // the newest callbacks, so the chart is not rebuilt on every render
+  const hasSrc = !!sourceSeries && rows.some((r) => r.online > 0 || r.inPerson > 0);
 
-  const maxTotal = Math.max(1, scaleMax, ...rows.map((r) => r.barTotal ?? r.total));
-  const step = niceStep(maxTotal);
-  const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
-  const ticks = [];
-  for (let t = 0; t <= axisMax; t += step) ticks.push(t);
-  const fill = (s) => (s.hatched ? `repeating-linear-gradient(45deg, ${s.color}, ${s.color} 5px, ${s.color}b3 5px, ${s.color}b3 10px)` : s.color);
+  useEffect(() => {
+    if (!canvasRef.current) return undefined;
+    const cache = new Map();
+    const cols = series.filter((s) => !hidden.has(s.key));
 
-  const segLabel = (v) => (v / axisMax >= 0.07 ? show(v) : "");   // a number sits inside its segment only when it fits
-  const tip = (s, v) => `${s.label}: ${money ? money(v) : v}`;
+    const maxTotal = Math.max(1, convert(scaleMax), ...rows.map((r) => convert(r.barTotal ?? r.total)));
+    const step = niceStep(maxTotal);
+    const axisMax = Math.max(step, Math.ceil(maxTotal / step) * step);
+
+    const dataset = (s, stack) => ({
+      label: s.label,
+      key: s.key,
+      stack,
+      data: rows.map((r) => (r[s.key] > 0 ? convert(r[s.key]) : null)),
+      backgroundColor: paint(s, 1, cache),
+      borderSkipped: false,
+      barPercentage: stack === "src" ? 0.4 : 0.9,
+    });
+    const datasets = [
+      ...cols.map((s) => dataset(s, "main")),
+      ...(hasSrc ? sourceSeries.map((s) => dataset(s, "src")) : []),
+    ];
+
+    // the amount written inside a segment, only when the segment is wide enough to hold it
+    const segLabels = {
+      id: "segLabels",
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        ctx.save();
+        ctx.font = "600 10px sans-serif";
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        chart.data.datasets.forEach((ds, di) => {
+          if (ds.stack === "src") return;
+          chart.getDatasetMeta(di).data.forEach((el, i) => {
+            const v = ds.data[i];
+            if (v == null) return;
+            const txt = compact(v);
+            if (Math.abs(el.x - el.base) < txt.length * 6 + 10) return;
+            ctx.fillText(txt, (el.x + el.base) / 2, el.y);
+          });
+        });
+        ctx.restore();
+      },
+    };
+
+    const chart = new ChartJS(canvasRef.current, {
+      type: "bar",
+      data: { labels: rows.map((r) => r.name), datasets },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        categoryPercentage: 0.9,
+        layout: { padding: { right: 8 } },
+        interaction: { mode: "nearest", axis: "y", intersect: true },
+        onHover: (_e, els, c) => { c.canvas.style.cursor = els.length ? "pointer" : "default"; },
+        onClick: (_e, els) => { if (els.length) live.current.onOpen(rows[els[0].index]); },
+        scales: {
+          x: {
+            stacked: true, min: 0, max: axisMax,
+            grid: { color: "#f3f4f6" }, border: { display: false },
+            ticks: { stepSize: step, color: "#9ca3af", font: { size: 10 }, callback: (v) => `${sym}${compact(v)}` },
+            title: { display: true, text: `Amount (${currency})`, color: "#9ca3af", font: { size: 11, weight: "normal" } },
+          },
+          y: {
+            stacked: true,
+            grid: { display: false }, border: { color: "#d1d5db" },
+            ticks: {
+              autoSkip: false, color: "#374151", font: { size: 11, weight: "600" },
+              callback(value) { const l = this.getLabelForValue(value); return l.length > 24 ? `${l.slice(0, 23)}…` : l; },
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },   // the Legend above the graph already says which colour is which
+          tooltip: {
+            callbacks: {
+              title: (items) => rows[items[0].dataIndex].name,
+              label: (item) => {
+                const raw = rows[item.dataIndex][item.dataset.key];
+                const txt = live.current.money ? live.current.money(raw) : raw;
+                return item.dataset.stack === "src" ? `${sourceLabel} · ${item.dataset.label}: ${txt}` : `${item.dataset.label}: ${txt}`;
+              },
+              footer: (items) => {
+                const r = rows[items[0].dataIndex];
+                return `Total: ${live.current.money ? live.current.money(r.total) : r.total}`;
+              },
+            },
+          },
+        },
+      },
+      plugins: [segLabels],
+    });
+    return () => chart.destroy();
+  }, [rows, scaleMax, series, sourceSeries, sourceLabel, hidden, convert, currency, sym, hasSrc]);
 
   return (
-    <div>
-      <div className="relative">
-        <div className="absolute top-0 bottom-0 right-0 pointer-events-none border-l border-gray-300" style={{ left: GAP_LEFT }}>
-          {ticks.slice(1).map((t) => (
-            <div key={t} className="absolute top-0 bottom-0 border-l border-gray-100" style={{ left: `${(t / axisMax) * 100}%` }} />
-          ))}
-        </div>
+    <div className="relative w-full" style={{ height: Math.max(130, rows.length * (hasSrc ? 44 : 32) + 64) }}>
+      <canvas ref={canvasRef} role="img" aria-label="Amount by method, split by what it was for" />
+    </div>
+  );
+}
 
-        <div className="space-y-2 py-1">
-          {rows.map((r) => {
-            const isSel = r.id === selectedId;
-            return (
-              <div key={r.id}>
-                <button onClick={() => onSelect(isSel ? null : r.id)} aria-pressed={isSel} className="relative w-full flex items-center gap-3 text-left">
-                  <span title={r.name} className={`${LABEL_W} shrink-0 text-xs truncate ${isSel ? "font-bold text-teal-700" : "font-semibold text-gray-800"}`}>{r.name}</span>
-                  <div className={`flex-1 flex h-7 overflow-hidden rounded-r-lg transition-shadow ${isSel ? "ring-2 ring-teal-600 shadow-md" : selectedId ? "opacity-50" : ""}`}>
-                    {cols.map((s) => r[s.key] > 0 && (
-                      <div key={s.key} title={tip(s, r[s.key])} className="h-full flex items-center justify-center text-xs font-semibold text-white overflow-hidden"
-                        style={{ width: `${(r[s.key] / axisMax) * 100}%`, background: fill(s) }}>
-                        {segLabel(r[s.key])}
-                      </div>
-                    ))}
-                  </div>
-                </button>
+// ── tables: same format as the Bookings page and Revenue & Expense ───────────
 
-                {sourceSeries && (r.online > 0 || r.inPerson > 0) && (
-                  <div className={`flex items-center gap-3 mt-0.5 ${selectedId && !isSel ? "opacity-50" : ""}`}>
-                    <span className={`${LABEL_W} shrink-0 pl-4 text-[10px] text-gray-400`}>{sourceLabel}</span>
-                    <div className="flex-1 flex h-2.5 overflow-hidden rounded-r-md">
-                      {sourceSeries.map((s) => r[s.key] > 0 && (
-                        <div key={s.key} title={tip(s, r[s.key])} style={{ width: `${(r[s.key] / axisMax) * 100}%`, background: s.color }} />
-                      ))}
-                    </div>
-                  </div>
-                )}
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-                {isSel && r.children?.length > 0 && (
-                  <div className="relative mt-1.5 mb-1 space-y-1">
-                    {r.children.map((c) => (
-                      <div key={c.id} className="flex items-center gap-3">
-                        <span title={c.name} className={`${LABEL_W} shrink-0 pl-4 text-[11px] truncate text-gray-500`}>↳ {c.name}</span>
-                        <div className="flex-1 flex h-4 overflow-hidden rounded-r-md">
-                          {kidCols.map((s) => c[s.key] > 0 && (
-                            <div key={s.key} title={tip(s, c[s.key])} className="h-full flex items-center justify-center text-[10px] font-semibold text-white overflow-hidden"
-                              style={{ width: `${Math.min(100, (c[s.key] / axisMax) * 100)}%`, background: fill(s), opacity: 0.75 }}>
-                              {segLabel(c[s.key])}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-      <div className="flex gap-3 border-t border-gray-300">
-        <div className={`${LABEL_W} shrink-0`} />
-        <div className="relative flex-1 h-5">
-          {ticks.map((t) => (
-            <span key={t} className="absolute top-1 -translate-x-1/2 text-[10px] font-medium text-gray-400" style={{ left: `${(t / axisMax) * 100}%` }}>{sym}{show(t)}</span>
-          ))}
-        </div>
-      </div>
-      <div className="flex gap-3">
-        <div className={`${LABEL_W} shrink-0`} />
-        <p className="flex-1 text-center text-[11px] text-gray-400">{axisLabel || (isMoney ? `Amount (${currency})` : "Number")}</p>
+const IconClose = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+/** Clickable header cell, same look as the Bookings table. `sort` is { key, dir }; onSort receives the next one. */
+function SortableTh({ label, sortKey, sort, onSort }) {
+  const active = sort.key === sortKey;
+  const click = () => onSort({ key: sortKey, dir: active ? (sort.dir === "asc" ? "desc" : "asc") : sortKey === "name" ? "asc" : "desc" });
+  return (
+    <th className="px-4 py-3 text-left select-none">
+      <button onClick={click}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors whitespace-nowrap ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}>
+        {label}
+        {active ? <IconSortArrow dir={sort.dir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
+/** A money cell: "—" when zero, coloured otherwise (red when negative). */
+function MoneyCell({ value, color, fmt }) {
+  const empty = !value;
+  return (
+    <td className={`px-4 py-3 whitespace-nowrap ${empty ? "text-gray-300" : "font-semibold"}`}
+      style={empty ? undefined : { color: value < 0 ? C_RED : color }}>
+      {empty ? "—" : fmt(value)}
+    </td>
+  );
+}
+
+/** "Showing 1–10 of 23" with Prev / page numbers / Next: the footer of the Bookings table. */
+function TablePagination({ page, totalPages, onChange, pageSize, count }) {
+  if (count === 0) return null;
+  const start = (page - 1) * pageSize;
+  const rangeEnd = Math.min(start + pageSize, count);
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  if (totalPages > 1) nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((x, y) => x - y);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">Showing {start + 1}–{rangeEnd} of {count}</p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>{n}</button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
       </div>
     </div>
   );
 }
 
-// ── table under the graph ───────────────────────────────────────────────────
+const viewBtn = "px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors";
+const TH = "px-4 py-3 text-left font-semibold whitespace-nowrap";
+const THEAD = "bg-gray-50 text-gray-400 text-xs uppercase tracking-wide";
 
-/**
- * Always shown under its SplitBars with the same rows. A row opens (arrow) to show its `children`.
- *   columns   [{ key, label, color?, fmt?(value, row) }]   number columns after the name; hidden keys are left out
- *   total     { key, label, fmt?(value, row) }             the last column, drawn as a pill (red when negative)
- *   childNote(child)   replaces a child's number columns with one line of text
- *   emptyChild         text shown when an opened row has no children
- * A row with no children (and no emptyChild) has no arrow.
- */
-function SplitTable({ rows, nameLabel, columns, total, hidden = NONE, sort, onSort, selectedId, onSelect, childNote, emptyChild }) {
-  const [open, setOpen] = useState(() => new Set());
+/** One row per method (Money in / Money out), paged with the graph above it. "View" opens that method's breakdown in a window. */
+function MethodTable({ rows, nameLabel, columns, hidden = NONE, sort, onSort, onView, page, pageCount, count, onPage, fmt }) {
   const cols = columns.filter((c) => !hidden.has(c.key));
-  const canOpen = (r) => (r.children && r.children.length > 0) || !!emptyChild;
-
-  const toggleOpen = (r) => {
-    if (r.id === selectedId) { onSelect(null); return; }          // a selected row is always open: the arrow clears it
-    setOpen((prev) => { const next = new Set(prev); if (next.has(r.id)) next.delete(r.id); else next.add(r.id); return next; });
-  };
-
-  const head = (key, label, align = "right") => (
-    <th key={key} className={`px-3 py-2.5 font-semibold text-${align} whitespace-nowrap`}>
-      <button onClick={() => onSort({ key, dir: sort.key === key && sort.dir === "desc" ? "asc" : key === "name" ? "asc" : "desc" })} className="inline-flex items-center gap-1 hover:text-gray-700">
-        {label}
-        <span className={sort.key === key ? "text-teal-700" : "text-gray-300"}>{sort.key === key ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
-      </button>
-    </th>
+  const th = (label, key) => <SortableTh key={key} label={label} sortKey={key} sort={sort} onSort={onSort} />;
+  return (
+    <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className={THEAD}>
+            <tr>
+              {th(nameLabel, "name")}
+              {cols.map((c) => th(c.label, c.key))}
+              {th("Total", "total")}
+              <th className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
+                <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{r.name}</td>
+                {cols.map((c) => c.key === "count"
+                  ? <td key={c.key} className="px-4 py-3 text-gray-600">{r.count || <span className="text-gray-300">—</span>}</td>
+                  : <MoneyCell key={c.key} value={r[c.key]} color={c.color} fmt={fmt} />)}
+                <td className="px-4 py-3">
+                  <span className={`inline-block px-2 py-0.5 rounded-full text-white text-xs font-bold whitespace-nowrap ${(r.total || 0) < 0 ? "bg-red-500" : "bg-teal-700"}`}>{fmt(r.total || 0)}</span>
+                </td>
+                <td className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">
+                  <button onClick={() => onView(r)} className={viewBtn}>View</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <TablePagination page={page} totalPages={pageCount} onChange={onPage} pageSize={PAGE_SIZE} count={count} />
+    </div>
   );
+}
 
-  const cell = (c, row, child) => {
-    const v = row[c.key];
-    const empty = v === 0 || v === undefined || v === null;
-    const color = empty ? undefined : v < 0 ? C_RED : c.color;
-    return (
-      <td key={c.key} className={`px-3 ${child ? "py-2" : "py-2.5"} text-right whitespace-nowrap ${empty ? "text-gray-300" : color ? (child ? "font-semibold" : "font-bold") : "text-gray-600"}`} style={color ? { color } : undefined}>
-        {empty ? "–" : c.fmt ? c.fmt(v, row) : v}
-      </td>
-    );
-  };
+const MODAL_PAGE_SIZE = 10;   // same page size as the Bookings table
+
+/** A window with a title, a one-line summary and a paged table. `renderRow(item)` returns a <tr>. */
+function RowsModal({ title, subtitle, heads, items, renderRow, emptyText, onClose }) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / MODAL_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = items.slice((safePage - 1) * MODAL_PAGE_SIZE, safePage * MODAL_PAGE_SIZE);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   return (
-    <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100">
-      <table className="w-full text-xs">
-        <thead className="bg-gray-50 text-gray-400">
-          <tr>
-            {head("name", nameLabel, "left")}
-            {cols.map((c) => head(c.key, c.label))}
-            {head(total.key, total.label)}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const isSel = r.id === selectedId;
-            const expandable = canOpen(r);
-            const isOpen = expandable && (isSel || open.has(r.id));
-            const tv = r[total.key] || 0;
-            return (
-              <Fragment key={r.id}>
-                <tr onClick={() => onSelect(isSel ? null : r.id)} className={`border-t border-gray-50 cursor-pointer ${isSel ? "bg-teal-50" : "hover:bg-gray-50/60"}`}>
-                  <td className={`px-3 py-2.5 font-semibold whitespace-nowrap ${isSel ? "text-teal-700" : "text-gray-800"}`} style={isSel ? { boxShadow: "inset 3px 0 0 #0f766e" } : undefined}>
-                    <span className="inline-flex items-center gap-1.5">
-                      {expandable ? (
-                        <button type="button" aria-label={isOpen ? `Close ${r.name}` : `Open ${r.name}`} aria-expanded={isOpen}
-                          onClick={(e) => { e.stopPropagation(); toggleOpen(r); }} className="w-4 text-gray-400 hover:text-gray-700">
-                          {isOpen ? "▾" : "▸"}
-                        </button>
-                      ) : <span className="w-4" />}
-                      {r.name}
-                    </span>
-                  </td>
-                  {cols.map((c) => cell(c, r, false))}
-                  <td className="px-3 py-2.5 text-right">
-                    <span className={`inline-block px-2 py-0.5 rounded-full text-white font-bold text-center whitespace-nowrap ${tv < 0 ? "bg-red-500" : "bg-teal-700"}`}>
-                      {total.fmt ? total.fmt(tv, r) : tv}
-                    </span>
-                  </td>
-                </tr>
-
-                {isOpen && (r.children || []).length === 0 && emptyChild && (
-                  <tr className="border-t border-gray-50 bg-gray-50/60">
-                    <td colSpan={cols.length + 2} className="py-2 pl-9 pr-3 text-gray-400 italic">{emptyChild}</td>
-                  </tr>
-                )}
-
-                {isOpen && (r.children || []).map((c) => (
-                  <tr key={`${r.id}:${c.id}`} className="border-t border-gray-50 bg-gray-50/60">
-                    <td className="py-2 pl-9 pr-3 text-gray-600 whitespace-nowrap">{c.name}</td>
-                    {childNote ? (
-                      <td colSpan={cols.length + 1} className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{childNote(c)}</td>
-                    ) : (
-                      <>
-                        {cols.map((col) => cell(col, c, true))}
-                        <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${(c[total.key] || 0) < 0 ? "text-red-500" : "text-gray-600"}`}>
-                          {total.fmt ? total.fmt(c[total.key] || 0, c) : c[total.key]}
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                ))}
-
-                {isOpen && r.childrenMore > 0 && (
-                  <tr className="border-t border-gray-50 bg-gray-50/60">
-                    <td colSpan={cols.length + 2} className="py-2 pl-9 pr-3 text-gray-400 italic">and {r.childrenMore} more</td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-bold text-lg text-gray-800 truncate">{title}</h2>
+            <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 shrink-0"><IconClose /></button>
+          </div>
+          {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
+        </div>
+        <div className="overflow-auto flex-1 px-6 py-5">
+          <div className="rounded-xl border border-gray-100 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className={THEAD}>
+                  <tr>{heads.map((h) => <th key={h} className={TH}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {pageItems.length === 0
+                    ? <tr><td colSpan={heads.length} className="text-center text-gray-400 py-12">{emptyText}</td></tr>
+                    : pageItems.map(renderRow)}
+                </tbody>
+              </table>
+            </div>
+            <TablePagination page={safePage} totalPages={totalPages} onChange={setPage} pageSize={MODAL_PAGE_SIZE} count={items.length} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -503,8 +560,8 @@ const SRC_SERIES = [
   { key: "inPerson", label: "In person", color: C_PURPLE },
 ];
 // Channel dropdown: when Online or In person is picked, the thin bar and the Online / In person columns are redundant, and
-// unpaid / awaiting amounts have no channel yet, so they are left out.
-const FILTER_HIDE = new Set(["online", "inPerson", "unpaid", "expected"]);
+// unpaid and could-go-back amounts have no channel yet, so they are left out.
+const FILTER_HIDE = new Set(["online", "inPerson", "unpaid", "expected", "pendRefund", "pendDeposit", "pendDiscount"]);
 const OUT_KIND_KEY = { "Refund": "refund", "Deposit return": "depositReturn", "Discount return": "discountReturn" };
 
 // Money out is laid out like Money in: a row per method, split by the reason the money left. The thin bar under it is the
@@ -513,7 +570,10 @@ const OUT_SERIES = [
   { key: "refund",         label: "Refunds",                 color: C_ORANGE },
   { key: "depositReturn",  label: "Deposits returned",       color: C_LIME },
   { key: "discountReturn", label: "Discounts returned",      color: C_FUCHSIA },
-  { key: "expected",       label: "Awaiting payout",         color: C_RED, hatched: true },
+  // striped = could still go back, nothing has moved yet (same look as Unpaid on Money in)
+  { key: "pendRefund",     label: "Scheduled return",        color: C_ORANGE,      hatched: true },
+  { key: "pendDeposit",    label: "Deposit held",            color: C_LIME,        hatched: true },
+  { key: "pendDiscount",   label: "Discount held",           color: C_FUCHSIA,     hatched: true },
 ];
 
 // same labels as the Payments page
@@ -530,32 +590,53 @@ const Stage = ({ stage }) => (
   <span className={`inline-block px-2 py-0.5 rounded-full border text-[11px] font-semibold whitespace-nowrap ${STAGE_STYLE[stage] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{stage}</span>
 );
 
+
+/** "Booking · Customer" -> ["Booking", "Customer"] */
+const splitName = (name) => {
+  const i = String(name).indexOf(" · ");
+  return i < 0 ? [String(name), ""] : [name.slice(0, i), name.slice(i + 3)];
+};
+
+/** A smaller title for a group inside a card (Unpaid balances under Money in, Possible return under Money out). */
+function SubGroup({ title, children }) {
+  return (
+    <div className="mt-6 pt-5 border-t border-gray-100">
+      <h3 className="font-sans text-lg font-bold text-arl-dark text-center mb-3">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
 function PaymentsTransactionsView({ report }) {
   const { fmt } = useCurrency();
+  const navigate = useNavigate();
   const cards = report.cards || {};
   const methods = useMemo(() => report.methods || [], [report.methods]);
-  const unpaid = report.unpaid || [];
+  const unpaid = useMemo(() => report.unpaid || [], [report.unpaid]);
   const outflows = useMemo(() => report.outflows || [], [report.outflows]);
+  const possible = useMemo(() => report.possible || { total: 0, byKind: {}, items: [] }, [report.possible]);
 
   // money in
   const [inSort, setInSort] = useState({ key: "total", dir: "desc" });
-  const [inSel, setInSel] = useState(null);
   const [inPage, setInPage] = useState(1);
-  // PayMongo fees
-  const fees = report.fees || { rows: [], total: 0, unrecorded: 0, gatewayReceived: 0, bookingFees: 0 };
-  // unpaid
+  const [viewIn, setViewIn] = useState(null);       // the method whose window is open
+  // unpaid (under money in)
   const [unpaidPage, setUnpaidPage] = useState(1);
   // money out
   const [outSort, setOutSort] = useState({ key: "total", dir: "desc" });
-  const [outSel, setOutSel] = useState(null);
   const [outPage, setOutPage] = useState(1);
+  const [viewOut, setViewOut] = useState(null);
+  // possible to return (under money out)
+  const [possPage, setPossPage] = useState(1);
   // channel: overall (online + in person side by side) | online only | in person only. Applies to Money in and Money out.
   const [channel, setChannel] = useState("all");
   const byChannel = channel !== "all";
   const hide = byChannel ? FILTER_HIDE : NONE;
   const chName = channel === "online" ? "Online" : channel === "inPerson" ? "In person" : "";
   const chWord = channel === "online" ? " online" : channel === "inPerson" ? " in person" : "";
-  useEffect(() => { setInPage(1); setOutPage(1); setUnpaidPage(1); }, [report]);
+  useEffect(() => { setInPage(1); setOutPage(1); setUnpaidPage(1); setPossPage(1); }, [report]);
+  const closeIn = useCallback(() => setViewIn(null), []);
+  const closeOut = useCallback(() => setViewOut(null), []);
 
   // ── channel filter ──
   // Money in: each method already carries one child per channel with the full split, so a channel is just that child.
@@ -563,17 +644,17 @@ function PaymentsTransactionsView({ report }) {
     if (channel === "all") return methods;
     return methods.map((m) => {
       const kid = (m.children || []).find((c) => c[channel] > 0);
-      return kid ? { ...m, ...kid, id: m.id, name: m.name, unpaid: 0, barTotal: kid.total, children: [] } : null;
+      return kid ? { ...m, ...kid, id: m.id, name: m.name, unpaid: 0, barTotal: kid.total, children: [kid] } : null;
     }).filter(Boolean);
   }, [methods, channel]);
   // Money out: keep the transactions that went through the channel and rebuild each method's numbers from them.
-  // "Awaiting payout" has no channel yet, so it drops out.
+  // Money that could still go back has no channel yet (nothing was paid), so it drops out.
   const outScoped = useMemo(() => {
     if (channel === "all") return outflows;
-    return outflows.filter((o) => o.id !== "awaiting").map((o) => {
+    return outflows.map((o) => {
       const kids = o.children.filter((c) => c[channel] > 0);
       if (!kids.length) return null;
-      const row = { ...o, count: kids.length, refund: 0, depositReturn: 0, discountReturn: 0, online: 0, inPerson: 0, total: 0, children: kids };
+      const row = { ...o, count: kids.length, refund: 0, depositReturn: 0, discountReturn: 0, pendRefund: 0, pendDeposit: 0, pendDiscount: 0, expected: 0, online: 0, inPerson: 0, total: 0, children: kids };
       kids.forEach((c) => {
         const k = OUT_KIND_KEY[c.kindLabel];
         if (k) row[k] += c.total;
@@ -587,52 +668,45 @@ function PaymentsTransactionsView({ report }) {
 
   // ── graphs + tables: money in / money out ──
   const inRows = useMemo(() => sortRows(inScoped, inSort), [inScoped, inSort]);
-  const SHOW_TX = 10;   // transactions listed under an opened Money out row (the rest are counted as "and N more")
-  const outRows = useMemo(() => sortRows(
-    outScoped.map((o) => ({ ...o, children: o.children.slice(0, SHOW_TX), childrenMore: Math.max(0, o.children.length - SHOW_TX) })),
-    outSort,
-  ), [outScoped, outSort]);
-  const inSelId = inRows.some((r) => r.id === inSel) ? inSel : null;
-  const outSelId = outRows.some((r) => r.id === outSel) ? outSel : null;
-  const inShown = useMemo(() => pinSelected(inRows, inSelId), [inRows, inSelId]);
-  const outShown = useMemo(() => pinSelected(outRows, outSelId), [outRows, outSelId]);
-  const page = (list, p) => {
-    const count = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-    const no = Math.min(p, count);
-    return { count, no, rows: list.slice((no - 1) * PAGE_SIZE, no * PAGE_SIZE) };
-  };
-  const inP = page(inShown, inPage);
-  const outP = page(outShown, outPage);
+  const outRows = useMemo(() => sortRows(outScoped, outSort), [outScoped, outSort]);
+  const inP = useMemo(() => paged(inRows, inPage), [inRows, inPage]);
+  const outP = useMemo(() => paged(outRows, outPage), [outRows, outPage]);
 
-  // ── unpaid ──
-  const UNPAID_PAGE = 7;
-  const unpaidCount = Math.max(1, Math.ceil(unpaid.length / UNPAID_PAGE));
-  const unpaidNo = Math.min(unpaidPage, unpaidCount);
-  const unpaidRows = unpaid.slice((unpaidNo - 1) * UNPAID_PAGE, unpaidNo * UNPAID_PAGE);
+  const unpaidP = useMemo(() => paged(unpaid, unpaidPage, PAGE_SIZE), [unpaid, unpaidPage]);
+  const possP = useMemo(() => paged(possible.items, possPage, PAGE_SIZE), [possible.items, possPage]);
+  const POSS_KINDS = [
+    { key: "refund",   label: "Scheduled return", color: C_ORANGE },
+    { key: "deposit",  label: "Deposits held", color: C_LIME },
+    { key: "discount", label: "Discounts held", color: C_FUCHSIA },
+  ];
 
   const inColumns = [
     { key: "count",     label: "Payments" },
-    { key: "rental",    label: "Rental",    color: C_TEAL,   fmt },
-    { key: "service",   label: "Service",   color: C_SKY,    fmt },
-    { key: "gateway",   label: "Gateway",   color: C_PINK,   fmt },
-    { key: "deposit",   label: "Deposit",   color: C_LIME,   fmt },
-    { key: "penalties", label: "Penalties", color: C_INDIGO, fmt },
-    { key: "unpaid",    label: "Unpaid",    color: C_AMBER,  fmt },
-    { key: "online",    label: "Online",    color: C_BLUE,   fmt },
-    { key: "inPerson",  label: "In person", color: C_PURPLE, fmt },
+    { key: "rental",    label: "Rental",    color: C_TEAL },
+    { key: "service",   label: "Service",   color: C_SKY },
+    { key: "gateway",   label: "Gateway",   color: C_PINK },
+    { key: "deposit",   label: "Deposit",   color: C_LIME },
+    { key: "penalties", label: "Penalties", color: C_INDIGO },
+    { key: "unpaid",    label: "Unpaid",    color: C_AMBER },
+    { key: "online",    label: "Online",    color: C_BLUE },
+    { key: "inPerson",  label: "In person", color: C_PURPLE },
   ];
   const outColumns = [
     { key: "count",          label: "Transactions" },
-    { key: "refund",         label: "Refunds",   color: C_ORANGE,  fmt },
-    { key: "depositReturn",  label: "Deposits",  color: C_LIME,    fmt },
-    { key: "discountReturn", label: "Discounts", color: C_FUCHSIA, fmt },
-    { key: "online",         label: "Online",    color: C_BLUE,    fmt },
-    { key: "inPerson",       label: "In person", color: C_PURPLE,  fmt },
+    { key: "refund",         label: "Refunds",   color: C_ORANGE },
+    { key: "depositReturn",  label: "Deposits",  color: C_LIME },
+    { key: "discountReturn", label: "Discounts", color: C_FUCHSIA },
+    { key: "expected",       label: "Possible return", color: C_AMBER },
+    { key: "online",         label: "Online",    color: C_BLUE },
+    { key: "inPerson",       label: "In person", color: C_PURPLE },
   ];
-  const outTotalFmt = (v, r) => (r.id === "awaiting" ? fmt(r.expected) : fmt(v));   // the awaiting row has nothing paid out yet: its pill shows what is waiting
 
   const moneyInValue = byChannel ? inRows.reduce((sum, r) => sum + r.total, 0) : (cards.moneyIn ?? 0);
   const moneyOutValue = byChannel ? outRows.reduce((sum, r) => sum + r.total, 0) : (cards.returned ?? 0);
+
+  // the windows
+  const inCols = inColumns.filter((c) => c.key !== "online" && c.key !== "inPerson" && !hide.has(c.key));
+  const goBooking = (id) => navigate(`/bookings?open=${encodeURIComponent(id)}`);
 
   return (
     <div className="space-y-4">
@@ -643,7 +717,7 @@ function PaymentsTransactionsView({ report }) {
           <StatCard title={byChannel ? `Money out · ${chName}` : "Money out"} value={fmt(moneyOutValue)} Icon={IconArrowUp} color="bg-red-500 text-white" />
           <StatCard title="Unpaid balances" value={fmt(cards.unpaid ?? 0)} Icon={IconWarning} color="bg-amber-500 text-white" />
           <StatCard title="Deposits held" value={fmt(cards.depositsHeld ?? 0)} Icon={IconLock} color="bg-blue-600 text-white" />
-          <StatCard title="Deposits kept" value={fmt(cards.depositsKept ?? 0)} Icon={IconCheck} color="bg-teal-600 text-white" />
+          <StatCard title="Possible return" value={fmt(cards.possibleReturn ?? 0)} Icon={IconClock} color="bg-amber-500 text-white" />
         </div>
 
         {/* Channel dropdown. Overall shows online and in person side by side (thin bar + columns); the others narrow Money in and Money out. */}
@@ -662,112 +736,182 @@ function PaymentsTransactionsView({ report }) {
             </select>
             {byChannel && (
               <span className="text-gray-400">
-                Applies to Money in and Money out. Unpaid balances, deposits and PayMongo fees are not split by channel, and Awaiting payout is hidden because it has no channel yet.
+                Applies to Money in and Money out. Unpaid balances, deposits and PayMongo fees are not split by channel, and the striped "possible return" amounts are hidden because nothing has been paid yet, so they have no channel.
               </span>
             )}
           </div>
         </div>
       </Card>
 
-      {/* Money in */}
+      {/* Money in, with the unpaid balances that are still expected */}
       <Card className="p-4">
-        <SectionHead title="Money in" hint="What was received in this period, by how it was paid and what it was for. The thin bar under each method is the same money by where it was received, online or in person. The deposit is refundable, so it is money you hold for the customer, not income. The gateway fee is what customers paid for paying online (PayMongo's cut is under Money out, fees paid). Bookings only part-paid are split in proportion. The striped orange part is the unpaid balance still expected under that method. Open a method to split it into online and in person." />
+        <SectionHead title="Money in" />
         {inRows.length === 0 ? (
           <Empty>No money was received{chWord} in {report.label}.</Empty>
         ) : (
           <>
             <Legend items={[...IN_SERIES, ...SRC_SERIES].filter((x) => !hide.has(x.key))} />
             <SplitBars sourceLabel="Received from" rows={inP.rows} scaleMax={Math.max(0, ...inRows.map((r) => r.barTotal ?? r.total))} series={IN_SERIES} sourceSeries={byChannel ? undefined : SRC_SERIES} hidden={hide}
-              selectedId={inSelId} onSelect={(id) => { setInSel(id); setInPage(1); }} money={fmt} />
-            <Pager page={inP.no} pageCount={inP.count} total={inShown.length} onPage={setInPage} />
-            <SplitTable rows={inP.rows} nameLabel="Method" columns={inColumns} hidden={hide} total={{ key: "total", label: "Total", fmt }}
-              sort={inSort} onSort={(s) => { setInSort(s); setInPage(1); }} selectedId={inSelId}
-              onSelect={(id) => { setInSel(id); setInPage(1); }} />
+              onOpen={setViewIn} money={fmt} />
+            <MethodTable rows={inP.rows} nameLabel="Method" columns={inColumns} hidden={hide} sort={inSort} onSort={(s) => { setInSort(s); setInPage(1); }}
+              onView={setViewIn} page={inP.no} pageCount={inP.count} count={inRows.length} onPage={setInPage} fmt={fmt} />
           </>
         )}
+
+        <SubGroup title="Unpaid balances">
+          {unpaid.length === 0 ? (
+            <Empty>Nothing is owed on payments made in {report.label}.</Empty>
+          ) : (
+            <div className="rounded-xl border border-gray-100 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className={THEAD}>
+                    <tr>
+                      {["Booking", "Customer", "Vehicle", "Status", "Trip date", "Total", "Paid", "Balance"].map((h) => <th key={h} className={TH}>{h}</th>)}
+                      <th className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unpaidP.rows.map((r) => (
+                      <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{r.bookingID}</td>
+                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.customer}</td>
+                        <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{r.car}</td>
+                        <td className="px-4 py-3"><Stage stage={r.stage} /></td>
+                        <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmtDate(r.tripStart)}</td>
+                        <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmt(r.total)}</td>
+                        <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{r.paid ? fmt(r.paid) : <span className="text-gray-300">—</span>}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="inline-block px-2 py-0.5 rounded-full bg-red-500 text-white text-xs font-bold">{fmt(r.balance)}</span>
+                        </td>
+                        <td className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">
+                          <button onClick={() => goBooking(r.bookingID)} className={viewBtn}>View</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <TablePagination page={unpaidP.no} totalPages={unpaidP.count} onChange={setUnpaidPage} pageSize={PAGE_SIZE} count={unpaid.length} />
+            </div>
+          )}
+        </SubGroup>
       </Card>
 
-      {/* Money out */}
+      {/* Money out, with what could still go back */}
       <Card className="p-4">
-        <SectionHead title="Money out" hint="What went back to customers in this period, by the day it went out and the method it went through: refunds, deposits returned and discounts returned. The thin bar under each method is the same money by where it went, online or in person. Awaiting payout is its own row (striped red): approved refunds not sent yet, and deposit or discount returns PayMongo has not confirmed, as of today. Open a row to see each one. A returned deposit is money held for the customer, not a loss." />
+        <SectionHead title="Money out" />
         {outRows.length === 0 ? (
           <Empty>No money went out{chWord} in {report.label}.</Empty>
         ) : (
           <>
             <Legend items={[...OUT_SERIES, ...SRC_SERIES].filter((x) => !hide.has(x.key))} />
             <SplitBars sourceLabel="Paid out through" rows={outP.rows} scaleMax={Math.max(0, ...outRows.map((r) => r.barTotal ?? r.total))} series={OUT_SERIES} sourceSeries={byChannel ? undefined : SRC_SERIES} hidden={hide}
-              selectedId={outSelId} onSelect={(id) => { setOutSel(id); setOutPage(1); }} money={fmt} />
-            <Pager page={outP.no} pageCount={outP.count} total={outShown.length} onPage={setOutPage} />
-            <SplitTable rows={outP.rows} nameLabel="Method" columns={outColumns} hidden={hide} total={{ key: "total", label: "Total", fmt: outTotalFmt }}
-              sort={outSort} onSort={(s) => { setOutSort(s); setOutPage(1); }} selectedId={outSelId}
-              onSelect={(id) => { setOutSel(id); setOutPage(1); }}
-              childNote={(c) => c.note ? (
-                <>
-                  {c.note}{" · "}<span className="font-semibold text-gray-700">{fmt(c.expected)}</span>
-                </>
-              ) : (
-                <>
-                  {[c.date ? fmtDate(c.date) : null, c.method !== "—" ? c.method : null, c.kindLabel || null, c.online > 0 ? "Online" : "In person"].filter(Boolean).join(" · ")}
-                  {" · "}<span className="font-semibold text-gray-700">{fmt(c.total)}</span>
-                </>
-              )} />
-            {fees.total > 0 && (
-              <p className="mt-3 text-xs text-gray-500">
-                Not counted above: PayMongo kept <span className="font-semibold text-gray-700">{fmt(fees.total)}</span> in fees on the online payments received in this period. That is a cost to you, not money handed back.
-              </p>
-            )}
-            {fees.gatewayReceived > 0 && (
-              <p className="mt-3 text-xs text-gray-500">
-                On bookings: customers paid <span className="font-semibold text-gray-700">{fmt(fees.gatewayReceived)}</span> in gateway fees, PayMongo kept{" "}
-                <span className="font-semibold text-gray-700">{fmt(fees.bookingFees)}</span>, leaving{" "}
-                <span className={`font-semibold ${fees.gatewayReceived - fees.bookingFees < 0 ? "text-red-500" : "text-green-600"}`}>{fmt(fees.gatewayReceived - fees.bookingFees)}</span>.
-              </p>
-            )}
-            {fees.unrecorded > 0 && (
-              <p className="mt-2 text-xs text-amber-600">{fees.unrecorded} online payment{fees.unrecorded === 1 ? "" : "s"} in this period {fees.unrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so {fees.unrecorded === 1 ? "it is" : "they are"} not counted here.</p>
-            )}
+              onOpen={setViewOut} money={fmt} />
+            <MethodTable rows={outP.rows} nameLabel="Method" columns={outColumns} hidden={hide} sort={outSort} onSort={(s) => { setOutSort(s); setOutPage(1); }}
+              onView={setViewOut} page={outP.no} pageCount={outP.count} count={outRows.length} onPage={setOutPage} fmt={fmt} />
           </>
+        )}
+
+        {!byChannel && (
+          <SubGroup title="Possible return">
+            {possible.items.length === 0 ? (
+              <Empty>Nothing is waiting to be returned.</Empty>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 mb-3 text-xs text-gray-600">
+                  {POSS_KINDS.map((k) => (
+                    <span key={k.key} className="inline-flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-sm" style={{ background: `repeating-linear-gradient(45deg, ${k.color}, ${k.color} 3px, ${k.color}b3 3px, ${k.color}b3 6px)` }} />
+                      {k.label} <span className="font-semibold text-gray-800">{fmt(possible.byKind?.[k.key] || 0)}</span>
+                    </span>
+                  ))}
+                </div>
+                <div className="rounded-xl border border-gray-100 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className={THEAD}>
+                        <tr>
+                          {["Booking", "Customer", "Type", "Method", "Amount"].map((h) => <th key={h} className={TH}>{h}</th>)}
+                          <th className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {possP.rows.map((r) => {
+                          const [bookingID, customer] = splitName(r.name);
+                          return (
+                            <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
+                              <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{bookingID}</td>
+                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{customer || <span className="text-gray-300">—</span>}</td>
+                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.kindLabel}</td>
+                              <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{r.method}</td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className="inline-block px-2 py-0.5 rounded-full bg-amber-500 text-white text-xs font-bold">{fmt(r.amount)}</span>
+                              </td>
+                              <td className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">
+                                {bookingID !== "—" && <button onClick={() => goBooking(bookingID)} className={viewBtn}>View</button>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <TablePagination page={possP.no} totalPages={possP.count} onChange={setPossPage} pageSize={PAGE_SIZE} count={possible.items.length} />
+                </div>
+              </>
+            )}
+          </SubGroup>
         )}
       </Card>
 
-      {/* Unpaid balances */}
-      <Card className="p-4">
-        <SectionHead title="Unpaid balances" hint="Payments made in this period that still owe money, biggest first. Pending = nothing received yet; Partial = deposit received, balance owed." />
-        {unpaid.length === 0 ? (
-          <Empty>Nothing is owed on payments made in {report.label}.</Empty>
-        ) : (
-          <>
-            <div className="overflow-x-auto rounded-xl border border-gray-100">
-              <table className="w-full text-xs">
-                <thead className="bg-gray-50 text-gray-400">
-                  <tr>
-                    {["Booking", "Customer", "Vehicle", "Status", "Trip date", "Total", "Paid", "Balance"].map((h, i) => (
-                      <th key={h} className={`px-3 py-2.5 font-semibold whitespace-nowrap ${i < 5 ? "text-left" : "text-right"}`}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {unpaidRows.map((r) => (
-                    <tr key={r.id} className="border-t border-gray-50 hover:bg-gray-50/60">
-                      <td className="px-3 py-2.5 font-semibold text-gray-800 whitespace-nowrap">{r.bookingID}</td>
-                      <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.customer}</td>
-                      <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{r.car}</td>
-                      <td className="px-3 py-2.5"><Stage stage={r.stage} /></td>
-                      <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{fmtDate(r.tripStart)}</td>
-                      <td className="px-3 py-2.5 text-right text-gray-600 whitespace-nowrap">{fmt(r.total)}</td>
-                      <td className="px-3 py-2.5 text-right text-gray-600 whitespace-nowrap">{r.paid ? fmt(r.paid) : "–"}</td>
-                      <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                        <span className="inline-block px-2 py-0.5 rounded-full bg-red-500 text-white font-bold">{fmt(r.balance)}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Pager page={unpaidNo} pageCount={unpaidCount} total={unpaid.length} onPage={setUnpaidPage} pageSize={UNPAID_PAGE} />
-          </>
-        )}
-      </Card>
+      {/* Money in: one method's breakdown, by channel */}
+      {viewIn && (
+        <RowsModal
+          title={viewIn.name}
+          subtitle={<>{viewIn.count} payment{viewIn.count === 1 ? "" : "s"} · <span className="text-teal-700 font-semibold">Total {fmt(viewIn.total)}</span>{viewIn.unpaid > 0 && !byChannel ? <> · <span className="text-amber-600 font-semibold">Unpaid {fmt(viewIn.unpaid)}</span></> : null}</>}
+          heads={["Channel", ...inCols.map((c) => c.label), "Total"]}
+          items={viewIn.children || []}
+          emptyText="No breakdown for this method"
+          onClose={closeIn}
+          renderRow={(c) => (
+            <tr key={c.id} className="border-t hover:bg-gray-50 transition-colors">
+              <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{c.name}</td>
+              {inCols.map((col) => col.key === "count"
+                ? <td key={col.key} className="px-4 py-3 text-gray-600">{c.count || <span className="text-gray-300">—</span>}</td>
+                : <MoneyCell key={col.key} value={c[col.key]} color={col.color} fmt={fmt} />)}
+              <MoneyCell value={c.total} color="#374151" fmt={fmt} />
+            </tr>
+          )}
+        />
+      )}
+
+      {/* Money out: one method's transactions */}
+      {viewOut && (
+        <RowsModal
+          title={viewOut.name}
+          subtitle={<>{viewOut.count} transaction{viewOut.count === 1 ? "" : "s"} · <span className="text-red-500 font-semibold">Total {fmt(viewOut.total)}</span>{viewOut.expected > 0 ? <> · <span className="text-amber-600 font-semibold">Possible return {fmt(viewOut.expected)}</span></> : null}</>}
+          heads={["Booking ID", "Customer", "Date", "Type", "Channel", "Amount"]}
+          items={viewOut.children || []}
+          emptyText="No transactions for this method"
+          onClose={closeOut}
+          renderRow={(c) => {
+            const [first, rest] = splitName(c.name);
+            return (
+              <tr key={c.id} className="border-t hover:bg-gray-50 transition-colors">
+                <td className="px-4 py-3 whitespace-nowrap"><span className="font-mono text-xs text-gray-600">{first}</span></td>
+                <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rest || <span className="text-gray-300">—</span>}</td>
+                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.date ? fmtDate(c.date) : <span className="text-gray-300">—</span>}</td>
+                <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{c.kindLabel || <span className="text-gray-300">—</span>}</td>
+                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.pending ? <span className="text-gray-300">—</span> : c.online > 0 ? "Online" : "In person"}</td>
+                {c.pending
+                  ? <MoneyCell value={c.expected} color={C_AMBER} fmt={fmt} />
+                  : <MoneyCell value={c.total} color="#374151" fmt={fmt} />}
+              </tr>
+            );
+          }}
+        />
+      )}
 
     </div>
   );
