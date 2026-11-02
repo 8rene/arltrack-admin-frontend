@@ -90,27 +90,27 @@ const IconFileText = ({ className = "w-5 h-5" }) => (
 // cancelled/stolen), replacing the retired approved/pending statuses this
 // used to have. If a new status is added, update both files.
 const STATUS_DOT = {
-  "to pay":  "bg-orange-400",
-  upcoming:  "bg-yellow-400",
-  ongoing:   "bg-blue-500",
+  "to pay": "bg-orange-400",
+  upcoming: "bg-yellow-400",
+  ongoing: "bg-blue-500",
   completed: "bg-green-500",
   cancelled: "bg-red-500",
-  stolen:    "bg-red-700",
+  stolen: "bg-red-700",
 };
 
 const STATUS_BG = {
-  "to pay":  "bg-orange-50 border border-orange-200",
-  upcoming:  "bg-yellow-50 border border-yellow-200",
-  ongoing:   "bg-blue-50 border border-blue-200",
+  "to pay": "bg-orange-50 border border-orange-200",
+  upcoming: "bg-yellow-50 border border-yellow-200",
+  ongoing: "bg-blue-50 border border-blue-200",
   completed: "bg-green-50 border border-green-200",
   cancelled: "bg-red-50 border border-red-200",
-  stolen:    "bg-red-100 border border-red-300",
+  stolen: "bg-red-100 border border-red-300",
 };
 
 function StatusBadge({ status }) {
-  const s   = (status || "").toLowerCase();
+  const s = (status || "").toLowerCase();
   const dot = STATUS_DOT[s] || "bg-gray-400";
-  const bg  = STATUS_BG[s]  || "bg-gray-50 border border-gray-200";
+  const bg = STATUS_BG[s] || "bg-gray-50 border border-gray-200";
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${bg}`}>
       <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
@@ -129,9 +129,8 @@ function StatCard({ title, value, icon, color, loading, onClick }) {
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
       onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
-      className={`bg-white p-5 rounded-2xl border shadow-sm flex items-center gap-4 transition-all ${
-        clickable ? "cursor-pointer hover:shadow-md hover:border-teal-200" : ""
-      }`}
+      className={`bg-white p-5 rounded-2xl border shadow-sm flex items-center gap-4 transition-all ${clickable ? "cursor-pointer hover:shadow-md hover:border-teal-200" : ""
+        }`}
     >
       <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
         {icon}
@@ -199,12 +198,12 @@ function HelpTip({ title, items, label }) {
 export default function Dashboard() {
   const { getToken } = useAuth();
   const navigate = useNavigate();
-  const [metrics, setMetrics]                 = useState(null);
-  const [loading, setLoading]                 = useState(true);
-  const [error, setError]                     = useState(null);
-  const [cancelBookings, setCancelBookings]    = useState([]);
-  const [damagedParts, setDamagedParts]        = useState([]);
-  const [upcomingBookings, setUpcomingBookings]       = useState([]);
+  const [metrics, setMetrics] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [cancelBookings, setCancelBookings] = useState([]);
+  const [damagedParts, setDamagedParts] = useState([]);
+  const [upcomingBookings, setUpcomingBookings] = useState([]);
   const [upcomingMaintenance, setUpcomingMaintenance] = useState([]);
 
   // "pending" was retired as a booking status — bookings land straight in
@@ -243,41 +242,41 @@ export default function Dashboard() {
   // Polled every 5 minutes while the tab is visible. (The query is cheap now, so it could go back to a
   // real-time listener if you want alerts to appear instantly.)
   const loadDamagedParts = async () => {
-      let partsSnap;
+    let partsSnap;
+    try {
+      partsSnap = await getDocs(
+        query(collection(db, "carParts"), where("status", "in", ["Damaged", "Stolen", "Missing"]))
+      );
+    } catch { return; }
+
+    const parts = partsSnap.docs.map((d) => ({
+      id: d.id,
+      carPartID: d.id,
+      carID: d.data().carID,
+      carPartName: d.data().carPartName || "Unknown Part",
+      status: d.data().status,
+      _type: "damaged_part",
+    }));
+
+    const carIDs = [...new Set(parts.map(p => p.carID).filter(Boolean))];
+    let carNameMap = {};
+    if (carIDs.length > 0) {
       try {
-        partsSnap = await getDocs(
-          query(collection(db, "carParts"), where("status", "in", ["Damaged", "Stolen", "Missing"]))
-        );
-      } catch { return; }
+        const [carsSnap, brandsSnap, modelsSnap] = await Promise.all([
+          getDocs(query(collection(db, "cars"), where("__name__", "in", carIDs))),
+          getDocs(collection(db, "brand")),
+          getDocs(collection(db, "model")),
+        ]);
+        const brandMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data().brandName || ""]));
+        const modelMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, { modelName: d.data().modelName || "", brandID: d.data().brandID }]));
+        carsSnap.docs.forEach(d => {
+          const model = modelMap[d.data().modelID] || {};
+          carNameMap[d.id] = `${brandMap[model.brandID] || ""} ${model.modelName || ""}`.trim() || d.id;
+        });
+      } catch { }
+    }
 
-      const parts = partsSnap.docs.map((d) => ({
-        id: d.id,
-        carPartID: d.id,
-        carID: d.data().carID,
-        carPartName: d.data().carPartName || "Unknown Part",
-        status: d.data().status,
-        _type: "damaged_part",
-      }));
-
-      const carIDs = [...new Set(parts.map(p => p.carID).filter(Boolean))];
-      let carNameMap = {};
-      if (carIDs.length > 0) {
-        try {
-          const [carsSnap, brandsSnap, modelsSnap] = await Promise.all([
-            getDocs(query(collection(db, "cars"), where("__name__", "in", carIDs))),
-            getDocs(collection(db, "brand")),
-            getDocs(collection(db, "model")),
-          ]);
-          const brandMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data().brandName || ""]));
-          const modelMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, { modelName: d.data().modelName || "", brandID: d.data().brandID }]));
-          carsSnap.docs.forEach(d => {
-            const model = modelMap[d.data().modelID] || {};
-            carNameMap[d.id] = `${brandMap[model.brandID] || ""} ${model.modelName || ""}`.trim() || d.id;
-          });
-        } catch {}
-      }
-
-      setDamagedParts(parts.map(p => ({ ...p, carName: carNameMap[p.carID] || p.carID || "—" })));
+    setDamagedParts(parts.map(p => ({ ...p, carName: carNameMap[p.carID] || p.carID || "—" })));
   };
   usePolling(loadDamagedParts, 5 * 60 * 1000);
 
@@ -303,7 +302,7 @@ export default function Dashboard() {
   // Bookings get a tighter window since a pickup is a handoff someone has
   // to physically be there for; maintenance gets more lead time since it's
   // usually pre-plannable.
-  const BOOKING_WARNING_HOURS     = 6;
+  const BOOKING_WARNING_HOURS = 6;
   const MAINTENANCE_WARNING_HOURS = 24;
 
   const toJsDate = (val) => {
@@ -336,7 +335,7 @@ export default function Dashboard() {
   // out below from the current time, so an open dashboard moves a license from
   // Warning to Alerts on its own without re-reading Firestore.
   const [licenseRows, setLicenseRows] = useState([]);
-  const [licenseNow, setLicenseNow]   = useState(() => Date.now());
+  const [licenseNow, setLicenseNow] = useState(() => Date.now());
 
   // Driver's-license expiry — the join against `user`/`userDetails` for
   // role + name isn't cheap to do inside a raw onSnapshot, so instead of a
@@ -371,7 +370,7 @@ export default function Dashboard() {
       // backend/utils/roles/role.util.js's ROLE_IDS. No shared config between
       // the two codebases currently, same duplication risk already flagged
       // elsewhere in this file (pagePermissions.js's own comment about this).
-      const DRIVER_ROLE_ID     = "Na0Jpt86nldSO5SjfcLa";
+      const DRIVER_ROLE_ID = "Na0Jpt86nldSO5SjfcLa";
       const SUPERVISOR_ROLE_ID = "fFA8G2R2ANLbVsH00jlv";
 
       // One row per person. A driver can end up with more than one
@@ -493,9 +492,9 @@ export default function Dashboard() {
     // Which Users tab a request belongs to. The request's own role is only a fallback: the account is the source of truth.
     const roleOf = (u, data) =>
       u.roleID === ROLE_ID.driver ? "driver"
-      : u.roleID === ROLE_ID.supervisor ? "supervisor"
-      : data?.role ? String(data.role).toLowerCase()
-      : "customer";
+        : u.roleID === ROLE_ID.supervisor ? "supervisor"
+          : data?.role ? String(data.role).toLowerCase()
+            : "customer";
     const usersLoaded = getDocs(collection(db, "user")).then((snap) => {
       userMapRef.current = Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
       // New accounts whose ID has not been verified yet: the same "Pending Verification" the Users page counts.
@@ -513,7 +512,7 @@ export default function Dashboard() {
           };
         });
       setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "verification"), ...rows]);
-    }).catch(() => {});
+    }).catch(() => { });
 
     const unsubEdit = onSnapshot(
       query(collection(db, "editRequests"), where("status", "==", "pending")),
@@ -613,7 +612,16 @@ export default function Dashboard() {
   const requestTitle = (r) =>
     r.kind === "refundRequest" ? "Refund Request" : r.kind === "verification" ? "ID Verification" : r.kind === "idResubmit" ? "ID Resubmit Request" : "Profile Edit Request";
   const roleLabel = (role) => (role ? role.charAt(0).toUpperCase() + role.slice(1) : "");
-
+  
+  const submittedAgoLabel = (r) => {
+    const mins = Math.floor((Date.now() - r._due.getTime()) / 60000);
+    if (mins < 1) return "Submitted just now";
+    if (mins < 60) return `Submitted ${mins} minute${mins === 1 ? "" : "s"} ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `Submitted ${hours} hour${hours === 1 ? "" : "s"} ago`;
+    const days = Math.floor(hours / 24);
+    return `Submitted ${days} day${days === 1 ? "" : "s"} ago`;
+  };
   // Maintenance still not done, past its own due date — mirrors the
   // booking pickup_overdue/return_overdue pattern: no separate "Overdue"
   // status to remember to set, just a date that's slipped by while the
@@ -769,19 +777,19 @@ export default function Dashboard() {
 
       {/* STATS ROW */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <StatCard title="Total Vehicles"       value={metrics?.totalVehicles ?? "—"}   icon={<IconCar className="w-6 h-6" />}      color="bg-blue-50 text-blue-600"    loading={loading}
+        <StatCard title="Total Vehicles" value={metrics?.totalVehicles ?? "—"} icon={<IconCar className="w-6 h-6" />} color="bg-blue-50 text-blue-600" loading={loading}
           onClick={() => navigate("/fleet")} />
-        <StatCard title="Upcoming Bookings"    value={metrics?.activeBookings ?? "—"}  icon={<IconCheck className="w-6 h-6" />}    color="bg-green-50 text-green-600"  loading={loading}
+        <StatCard title="Upcoming Bookings" value={metrics?.activeBookings ?? "—"} icon={<IconCheck className="w-6 h-6" />} color="bg-green-50 text-green-600" loading={loading}
           onClick={() => navigate("/bookings?tab=Upcoming")} />
-        <StatCard title="Vehicles In Use"      value={metrics?.vehiclesInUse ?? "—"}   icon={<IconKey className="w-6 h-6" />}      color="bg-purple-50 text-purple-600" loading={loading}
+        <StatCard title="Vehicles In Use" value={metrics?.vehiclesInUse ?? "—"} icon={<IconKey className="w-6 h-6" />} color="bg-purple-50 text-purple-600" loading={loading}
           onClick={() => navigate("/car-tracking")} />
       </div>
 
       {/* WAITING ON STAFF — counts only. The ones that failed or are late are listed under Alerts. */}
       {(() => {
-        const refundReqs   = pendingRequestWarnings.filter((r) => r.kind === "refundRequest");
+        const refundReqs = pendingRequestWarnings.filter((r) => r.kind === "refundRequest");
         const lateRefundReqs = refundReqs.filter((r) => requestAgeDays(r) > REQUEST_STALE_DAYS).length;
-        const profileReqs  = pendingRequestWarnings.filter((r) => r.kind !== "refundRequest").length;
+        const profileReqs = pendingRequestWarnings.filter((r) => r.kind !== "refundRequest").length;
         return (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <StatCard title={lateRefundReqs > 0 ? `Refund Requests (${lateRefundReqs} overdue)` : "Refund Requests"} value={refundReqs.length}
@@ -832,12 +840,12 @@ export default function Dashboard() {
               </div>
             ) : (
               alerts.map((a) => {
-                const isDamaged  = a._type === "damaged_part";
-                const isLicense  = a._type === "license";
-                const isRequest  = a._type === "request";
+                const isDamaged = a._type === "damaged_part";
+                const isLicense = a._type === "license";
+                const isRequest = a._type === "request";
                 const isOverdueMaint = a._type === "maintenance_overdue";
-                const isRefund   = isRequest && a.kind === "refundRequest";
-                const isCancel   = a.status === "cancellation_request";
+                const isRefund = isRequest && a.kind === "refundRequest";
+                const isCancel = a.status === "cancellation_request";
                 const goTo = () => {
                   // Damaged part: Maintenance opens the latest Scheduled job that already covers this part,
                   // or a new job with this part pre-selected when there isn't one.
@@ -949,20 +957,19 @@ export default function Dashboard() {
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
-                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                      isDamaged
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${isDamaged
                         ? "bg-red-50 border-red-100 hover:bg-red-100"
                         : isCancel
-                        ? "bg-orange-50 border-orange-100 hover:bg-orange-100"
-                        : "bg-yellow-50 border-yellow-100 hover:bg-yellow-100"
-                    }`}
+                          ? "bg-orange-50 border-orange-100 hover:bg-orange-100"
+                          : "bg-yellow-50 border-yellow-100 hover:bg-yellow-100"
+                      }`}
                   >
                     <span className={`shrink-0 mt-0.5 ${isDamaged ? "text-red-500" : isCancel ? "text-orange-500" : "text-yellow-500"}`}>
                       {isDamaged
                         ? <IconWrench className="w-5 h-5" />
                         : isCancel
-                        ? <IconWarning className="w-5 h-5" />
-                        : <IconBell className="w-5 h-5" />
+                          ? <IconWarning className="w-5 h-5" />
+                          : <IconBell className="w-5 h-5" />
                       }
                     </span>
                     <div className="flex-1 min-w-0">
@@ -1022,7 +1029,7 @@ export default function Dashboard() {
               </div>
             ) : (
               warnings.map((w) => {
-                const isMaint   = w._type === "maintenance";
+                const isMaint = w._type === "maintenance";
                 const isLicense = w._type === "license";
                 const isRequestW = w._type === "request";
                 const goTo = () => {
@@ -1048,7 +1055,7 @@ export default function Dashboard() {
                         <p className="text-sm font-semibold text-gray-800 leading-snug">{requestTitle(w)} · Pending</p>
                         <p className="text-xs text-gray-500 mt-0.5">{w.name}{w.role ? ` · ${roleLabel(w.role)}` : ""}</p>
                         <p className="text-xs text-gray-400">
-                          {w.daysWaiting === 0 ? "Submitted today" : `Waiting ${w.daysWaiting} day${w.daysWaiting === 1 ? "" : "s"}`} — needs review
+                          {submittedAgoLabel(w)} — needs review
                         </p>
                       </div>
                     </div>
@@ -1144,21 +1151,21 @@ export default function Dashboard() {
               {loading
                 ? Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} />)
                 : metrics?.recentBookings?.length === 0
-                ? (
-                  <tr>
-                    <td colSpan={5} className="text-center text-gray-400 py-10">No bookings found</td>
-                  </tr>
-                )
-                : metrics?.recentBookings?.slice(0, 8).map((b) => (
-                  <tr key={b.id} onClick={() => navigate(`/bookings?open=${b.bookingID || b.id}`)}
-                    className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer">
-                    <td className="px-4 py-3 text-gray-600">{b.bookingID || b.id}</td>
-                    <td className="px-4 py-3 font-medium text-gray-800">{b.customerName || b.userName || b.name || "—"}</td>
-                    <td className="px-4 py-3 text-gray-600">{b.vehicleName || "—"}</td>
-                    <td className="px-4 py-3 text-gray-500">{fmtDate(b.startDateTime)} – {fmtDate(b.endDateTime)}</td>
-                    <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
-                  </tr>
-                ))
+                  ? (
+                    <tr>
+                      <td colSpan={5} className="text-center text-gray-400 py-10">No bookings found</td>
+                    </tr>
+                  )
+                  : metrics?.recentBookings?.slice(0, 8).map((b) => (
+                    <tr key={b.id} onClick={() => navigate(`/bookings?open=${b.bookingID || b.id}`)}
+                      className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer">
+                      <td className="px-4 py-3 text-gray-600">{b.bookingID || b.id}</td>
+                      <td className="px-4 py-3 font-medium text-gray-800">{b.customerName || b.userName || b.name || "—"}</td>
+                      <td className="px-4 py-3 text-gray-600">{b.vehicleName || "—"}</td>
+                      <td className="px-4 py-3 text-gray-500">{fmtDate(b.startDateTime)} – {fmtDate(b.endDateTime)}</td>
+                      <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
+                    </tr>
+                  ))
               }
             </tbody>
           </table>
