@@ -54,9 +54,9 @@ function buildEntries(info) {
       // "Marilao Monday 7:00 AM to 8:00 PM" then "Plate NB***4"
       const where = [a.city, fmtRule(a.rule) || a.reason].filter(Boolean).join(" ");
       const detail = [where, a.plate ? `Plate ${a.plate}` : null].filter(Boolean).join("\n");
-      add(a.at, "Coding Restriction Started", detail, notesOf(a));
+      add(a.at, "Entered coding restricted area", detail, notesOf(a));
     } else {
-      add(a.at, "Coding Restriction Ended", a.city, notesOf(a));
+      add(a.at, a.windowEnded ? "Coding window ended" : "Left coding restricted area", a.city, notesOf(a));
     }
   });
 
