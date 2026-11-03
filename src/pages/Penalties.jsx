@@ -1181,7 +1181,8 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
 
   const statusLabel = isReview ? "Under review" : isConfirmed ? (p.settlementStatus || "Confirmed") : p.status;
   const outlineBtn = "text-sm px-4 py-2 rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 font-medium";
-  const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light";
+  const inputBase = "border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light";
+  const inputCls = `w-full ${inputBase}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1238,9 +1239,9 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                 {editItems.map((li, i) => (
                   <div key={i} className="flex gap-2 items-center">
                     <input type="text" value={li.description} onChange={(e) => setEditItem(i, { description: e.target.value })}
-                      placeholder="Description (e.g. Missing floor mat)" className={`flex-1 min-w-0 ${inputCls}`} />
+                      placeholder="Description (e.g. Missing floor mat)" className={`flex-1 min-w-0 ${inputBase}`} />
                     <input type="number" value={li.amount} onChange={(e) => setEditItem(i, { amount: e.target.value })}
-                      placeholder="₱0" className={`w-28 ${inputCls}`} />
+                      placeholder="₱0" className={`w-28 shrink-0 ${inputBase}`} />
                     <button onClick={() => setEditItems((items) => items.filter((_, idx) => idx !== i))} disabled={editItems.length === 1}
                       className="text-gray-300 hover:text-red-500 disabled:opacity-30 disabled:hover:text-gray-300 p-1" title="Remove this item">
                       <IconX className="w-3.5 h-3.5" />
