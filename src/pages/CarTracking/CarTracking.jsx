@@ -286,27 +286,27 @@ const CB_STATUS_CHIP = {
   completed: "bg-green-50 text-green-700 border-green-200",
 };
 
-function CbRow({ label, hint, children, tone }) {
+// Same look as the Booking Information card on the Bookings page (InfoSection / InfoField): a white bordered card with
+// a gray title strip, and each value sits under a small uppercase label in a two-column grid.
+function CbRow({ label, hint, children, tone, wide }) {
   return (
-    <div className="flex justify-between gap-3 items-start">
-      <span className="text-gray-500">
-        {label}
-        {hint && <span className="block text-[11px] text-gray-400">{hint}</span>}
-      </span>
-      <span className={`font-medium text-right ${tone || "text-arl-dark"}`}>{children}</span>
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className={`text-sm font-medium mt-0.5 break-words ${tone || "text-gray-800"}`}>{children}</div>
+      {hint && <p className="text-[11px] text-gray-400 mt-0.5">{hint}</p>}
     </div>
   );
 }
 
 function CbSection({ title, aside, children }) {
   return (
-    <div className="bg-gray-50 rounded-xl p-3 text-sm space-y-1.5">
-      <div className="flex items-center justify-between">
-        <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{title}</p>
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
         {aside}
       </div>
-      {children}
-    </div>
+      <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>
+    </section>
   );
 }
 
@@ -359,14 +359,13 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
   return createPortal(
     <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-3">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="font-bold text-arl-dark truncate">{booking.customerName || "Customer"}</h3>
             <p className="text-xs text-gray-500 mt-0.5">
               {booking.phone && booking.phone !== "—" ? booking.phone : "No phone on file"}
             </p>
-            <p className="text-[11px] text-gray-400 font-mono mt-0.5 break-all">{booking.bookingID || booking.id}</p>
           </div>
           <div className="flex items-start gap-2 shrink-0">
             {status && (
@@ -393,7 +392,7 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
           <>
             <CbSection title="Security deposit">
               {data.depositHeld == null ? (
-                <p className="text-gray-400 text-xs">No security deposit recorded for this booking.</p>
+                <p className="col-span-2 text-gray-400 text-xs">No security deposit recorded for this booking.</p>
               ) : (
                 <>
                   <CbRow label="Deposit" hint={data.depositStatus ? `Status: ${data.depositStatus}` : null}>{cbPeso(data.depositHeld)}</CbRow>
@@ -401,7 +400,7 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
                     <CbRow label="Used for penalties" tone="text-red-600">− {cbPeso(data.depositDeducted)}</CbRow>
                   )}
                   {(data.discountCredit || 0) > 0 && (
-                    <CbRow label="Discount credit (returns with the deposit)" tone="text-green-700">+ {cbPeso(data.discountCredit)}</CbRow>
+                    <CbRow wide label="Discount credit (returns with the deposit)" tone="text-green-700">+ {cbPeso(data.discountCredit)}</CbRow>
                   )}
 
                   {held && (
@@ -410,7 +409,7 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
                         tone={(data.amountToReturn ?? 0) < 0 ? "text-red-600" : "text-green-700"}>
                         {cbPeso(Math.abs(data.amountToReturn || 0))}
                       </CbRow>
-                      <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                      <p className="col-span-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                         Deposit still held. {status === "completed" ? "Return it on Payments." : "Complete the booking first, then return it on Payments."}
                       </p>
                     </>
@@ -425,11 +424,11 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
                       {returnedAmount > 0 && returnState && <CbRow label="Status" tone={returnState.cls}>{returnState.text}</CbRow>}
                       {returnedAmount > 0 && cbFmtWhen(dr?.at) && <CbRow label="When">{cbFmtWhen(dr.at)}</CbRow>}
                       {returnedAmount > 0 && dr?.referenceNumber && (
-                        <CbRow label="Reference"><span className="font-mono text-xs break-all">{dr.referenceNumber}</span></CbRow>
+                        <CbRow wide label="Reference"><span className="font-mono text-xs break-all">{dr.referenceNumber}</span></CbRow>
                       )}
-                      {dr?.state === "failed" && dr.errorNote && <p className="text-[11px] text-red-600">{dr.errorNote}</p>}
+                      {dr?.state === "failed" && dr.errorNote && <p className="col-span-2 text-[11px] text-red-600">{dr.errorNote}</p>}
                       {returnedAmount === 0 && (
-                        <p className="text-[11px] text-gray-400">Penalties used the whole deposit.</p>
+                        <p className="col-span-2 text-[11px] text-gray-400">Penalties used the whole deposit.</p>
                       )}
                     </>
                   )}
@@ -445,9 +444,9 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
               penalties.length > 0 ? <span className="text-[11px] font-semibold text-red-600">Total {cbPeso(confirmedTotal)}</span> : null
             }>
               {penalties.length === 0 ? (
-                <p className="text-gray-400 text-xs">No penalties written for this booking.</p>
+                <p className="col-span-2 text-gray-400 text-xs">No penalties written for this booking.</p>
               ) : (
-                <ul className="bg-white border border-gray-100 rounded-lg divide-y divide-gray-100 text-xs max-h-48 overflow-y-auto">
+                <ul className="col-span-2 bg-white border border-gray-100 rounded-lg divide-y divide-gray-100 text-xs max-h-48 overflow-y-auto">
                   {penalties.map((pen, idx) => {
                     const items = Array.isArray(pen.lineItems) ? pen.lineItems : [];
                     const inactive = pen.status && pen.status !== "Confirmed";
@@ -568,8 +567,9 @@ export default function CarTracking() {
   // reinitialize against the current div every time.
   useEffect(() => {
     if (tab !== "live" || !mapRef.current || leafletMap.current) return;
-    leafletMap.current = L.map(mapRef.current, { zoomControl: true })
+    leafletMap.current = L.map(mapRef.current, { zoomControl: false })
       .setView([14.5995, 120.9842], 12);
+    L.control.zoom({ position: "topright" }).addTo(leafletMap.current); // buttons live top-left, zoom top-right
     // A drag by the admin (not a programmatic pan) stops auto-follow until a car is selected again.
     leafletMap.current.on("dragstart", () => { followRef.current = false; });
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -1552,14 +1552,13 @@ export default function CarTracking() {
               doc was reliably created at booking time) — now the panels
               themselves say "no active session" instead of vanishing. */}
           {selected && (
-            <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 items-end">
+            <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-2 items-start">
               <button
                 onClick={() => { setShowBookingInfo(v => !v); setShowLogs(false); }}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
                   showBookingInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                 }`}
               >
-                <Icons.Info className="w-3.5 h-3.5" />
                 Booking Information
               </button>
               <button
@@ -1568,8 +1567,7 @@ export default function CarTracking() {
                   showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                 }`}
               >
-                <Icons.List className="w-3.5 h-3.5" />
-                Logs
+                Booking Logs
               </button>
             </div>
           )}

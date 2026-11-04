@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import GeofenceBanner from "../../components/GeofenceBanner";
-import { isGeofenceBreachedAt, isCodingRestrictedAt, activeAlertAt, formatCodingRule } from "../../utils/geofenceAlerts";
+import { isGeofenceBreachedAt, isCodingRestrictedAt, activeAlertAt } from "../../utils/geofenceAlerts";
 import LogsPanel from "./LogsPanel";
 import TracebackBookingInfoPanel from "./TracebackBookingInfoPanel";
 import TripSummaryPanel from "./TripSummaryPanel";
@@ -486,7 +486,8 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   useEffect(() => {
     if (!mapRef.current || leafletMap.current) return;
     leafletMap.current = // preferCanvas: a long trail as one SVG path is slow to re-render every time the map moves; canvas draws it fast.
-    L.map(mapRef.current, { zoomControl: true, preferCanvas: true }).setView([14.5995, 120.9842], 12);
+    L.map(mapRef.current, { zoomControl: false, preferCanvas: true }).setView([14.5995, 120.9842], 12);
+    L.control.zoom({ position: "topright" }).addTo(leafletMap.current); // buttons live top-left, zoom top-right
     leafletMap.current.on("dragstart", () => { followRef.current = false; });
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors", maxZoom: 19 }).addTo(leafletMap.current);
     return () => { if (leafletMap.current) { leafletMap.current.stop(); leafletMap.current.remove(); leafletMap.current = null; } };
@@ -654,9 +655,8 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
         entries.push({ id: `breach-${c.id}`, tone: "breach", text: `🚨 ${c.name} is outside its zone` });
       }
       if (isCodingRestrictedAt(za.codingAlerts, currentTimeMs)) {
-        // Show the rule that was saved when it fired (when this trip has one).
-        const ruleText = formatCodingRule(activeAlertAt(za.codingAlerts, currentTimeMs, "restricted")?.rule);
-        entries.push({ id: `restricted-${c.id}`, tone: "restricted", text: `🚫 ${c.name} is coding-restricted${ruleText ? ` — ${ruleText}` : ""}` });
+        // Kept short, same as Live: the day / hours / plate list was too much for a warning.
+        entries.push({ id: `restricted-${c.id}`, tone: "restricted", text: `🚫 ${c.name} is coding-restricted` });
       }
       return entries;
     });
@@ -1150,7 +1150,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
 
           {/* Trip Summary / Logs follow the selected car. A saved trip with only one car keeps them available even when
               that car is deselected (nothing else could be meant), so deselecting never hides them there. */}
-          <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 items-end">
+          <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-2 items-start">
             {panelCar && (
               <>
                 <button
@@ -1159,7 +1159,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                     showBookingInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                   }`}
                 >
-                  ℹ {isReview ? "Trip Summary" : "Booking Information"}
+                  {isReview ? "Trip Summary" : "Booking Information"}
                 </button>
                 <button
                   onClick={() => { setShowLogs(v => !v); setShowBookingInfo(false); }}
@@ -1167,7 +1167,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                     showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                   }`}
                 >
-                  🗒 Logs
+                  Booking Logs
                 </button>
               </>
             )}
@@ -1175,7 +1175,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
               onClick={handleDownload}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm bg-white/95 text-gray-700 hover:bg-white transition-all"
             >
-              ⬇ Download
+              Download
             </button>
             {downloadNotice && (
               <span
