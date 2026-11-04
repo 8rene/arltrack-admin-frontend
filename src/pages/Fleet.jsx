@@ -1361,7 +1361,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
                   desc: "The deposit is returned, but the online payment fee is not.",
                   off: open ? "Not available while the customer's own refund request is open." : !(nm && nm.available) ? "No online payment fee on this booking, so it would be the same as a Full refund." : null },
                 { v: "no_show", title: "No Deposit Refund",
-                  desc: "The deposit is not returned. Everything else the customer paid is refunded.",
+                  desc: "The deposit and the online payment fee are not returned. Everything else the customer paid is refunded.",
                   off: open ? "Not available while the customer's own refund request is open." : !ns ? "Not available for this booking." : null },
                 { v: "cancel", title: "Cancel only (no refund)", desc: "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.",
                   off: open ? "The customer has an open refund request: approve or reject it first, or choose Full refund." : null },
@@ -1388,6 +1388,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
                   ) : (
                     <>
                       {choice === "no_show" && pv.noShow && <p className="text-xs text-amber-700">Deposit not refunded: -{fmt(pv.noShow.forfeit)}</p>}
+                      {choice === "no_show" && pv.noShow && Number(pv.noShow.gatewayFeeKept) > 0 && <p className="text-xs text-amber-700">Online payment fee kept: -{fmt(pv.noShow.gatewayFeeKept)}</p>}
                       {choice === "normal" && pv.normal && <p className="text-xs text-amber-700">Online payment fee kept: -{fmt(pv.normal.gatewayFeeKept)}</p>}
                       <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(f.total)}</span></p>
                       {pv.existingRequest && (

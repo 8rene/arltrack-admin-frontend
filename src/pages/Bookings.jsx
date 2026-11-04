@@ -615,7 +615,7 @@ function EditModal({ booking, onClose, onSave }) {
 // + GPS session, flips the refund-request/payment records and notifies the customer:
 //   Full refund      -- our issue: deposit returned, gateway fee returned     POST /refund-cancel { refundType: "full" }
 //   Normal refund    -- deposit returned, gateway fee kept                    POST /refund-cancel { refundType: "normal" }
-//   No Deposit Refund -- deposit kept, everything else returned                POST /no-show
+//   No Deposit Refund -- deposit and gateway fee kept, everything else returned  POST /no-show
 // "Cancel only" cancels without returning any money.
 
 function RefundCancelModal({ booking, onClose, onDone }) {
@@ -780,7 +780,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
                 {opt(
                   "no_show",
                   "No Deposit Refund",
-                  "The deposit is not returned. Everything else the customer paid is refunded.",
+                  "The deposit and the online payment fee are not returned. Everything else the customer paid is refunded.",
                   canNoDeposit ? null : "Not available for this booking."
                 )}
                 {opt("cancel", "Cancel only (no refund)", "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.")}
@@ -791,6 +791,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
               <div className={`text-sm border p-3 rounded-xl space-y-1 ${mode === "full" ? "bg-gray-50 border-gray-200" : "bg-amber-50 border-amber-200"}`}>
                 {paidSoFar > 0 && <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(paidSoFar)}</span></div>}
                 {mode === "no_show" && ns && <div className="flex justify-between text-amber-700"><span>Deposit not refunded</span><span className="font-semibold">-{fmt(ns.forfeit)}</span></div>}
+                {mode === "no_show" && ns && Number(ns.gatewayFeeKept) > 0 && <div className="flex justify-between text-amber-700"><span>Online payment fee kept</span><span className="font-semibold">-{fmt(ns.gatewayFeeKept)}</span></div>}
                 {mode === "normal" && nm && <div className="flex justify-between text-amber-700"><span>Online payment fee kept</span><span className="font-semibold">-{fmt(nm.gatewayFeeKept)}</span></div>}
                 <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(sel.total)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Via PayMongo (automatic)</span><span>{fmt(sel.online)}</span></div>
@@ -840,7 +841,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
 // Nothing is sent to PayMongo. It is handed back in store and marked as handed back on the Refund Requests page.
 //   Full refund      -- our issue: nothing kept
 //   Normal refund    -- deposit returned, gateway fee kept (the customer's loss is the fee)
-//   No deposit refund -- deposit kept, gateway fee returned (the customer's loss is the deposit)
+//   No deposit refund -- deposit and gateway fee kept (the customer's loss is the deposit and the fee)
 //   Custom amount    -- staff type the amount, up to what the customer paid
 function RefundAfterCancelModal({ booking, onClose, onDone }) {
   const { fmt } = useCurrency();
@@ -930,8 +931,8 @@ function RefundAfterCancelModal({ booking, onClose, onDone }) {
                 opts.normal.available ? `The deposit goes back but the ${fmt(opts.normal.gatewayFeeKept)} online payment fee is not returned: ${fmt(opts.normal.total)} back.` : "The deposit goes back but the online payment fee is not.",
                 opts.normal.available ? null : "This booking has no online payment fee to keep, so it would be the same as a Full refund.")}
               {opt("no_show", "No deposit refund",
-                opts.no_show.available ? `The ${fmt(opts.no_show.forfeit)} deposit is kept, the rest goes back: ${fmt(opts.no_show.total)} back.` : "The deposit is kept, everything else goes back.",
-                opts.no_show.available ? null : "The deposit is all that was paid, so nothing would go back.")}
+                opts.no_show.available ? `The ${fmt(opts.no_show.forfeit)} deposit${Number(opts.no_show.gatewayFeeKept) > 0 ? ` and the ${fmt(opts.no_show.gatewayFeeKept)} online payment fee are` : " is"} kept, the rest goes back: ${fmt(opts.no_show.total)} back.` : "The deposit and the online payment fee are kept, everything else goes back.",
+                opts.no_show.available ? null : "The deposit and the fee are all that was paid, so nothing would go back.")}
               {opt("manual", "Custom amount", `You decide how much goes back (up to ${fmt(opts.manual.max)}). The rest is kept.`)}
             </div>
 
@@ -1804,7 +1805,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                   <InfoField wide label="Reason" value={booking.cancelDisplayReason} />
                   {booking.refundSummary?.byStaff && (
                     <InfoField wide label="Refund Type" value={
-                      booking.refundSummary.depositForfeited > 0 ? `No Deposit Refund · ${fmt(booking.refundSummary.depositForfeited)} deposit not returned`
+                      booking.refundSummary.depositForfeited > 0 ? `No Deposit Refund · ${fmt(booking.refundSummary.depositForfeited)} deposit${booking.refundSummary.gatewayFeeKept > 0 ? ` and ${fmt(booking.refundSummary.gatewayFeeKept)} payment fee` : ""} not returned`
                       : booking.refundSummary.gatewayFeeKept > 0 ? `Normal refund · ${fmt(booking.refundSummary.gatewayFeeKept)} payment fee not returned`
                       : booking.refundSummary.bookingPaid > (booking.refundSummary.amount || 0) ? `Partial refund · ${fmt(booking.refundSummary.bookingPaid - booking.refundSummary.amount)} not returned`
                       : "Full refund"

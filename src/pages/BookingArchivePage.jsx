@@ -1091,7 +1091,7 @@ function BookingTab({ record, details, detailsLoading, detailsError, peso, viewe
     : canc.cancelledBy === "staff" ? (canc.cancelledByName ? `${canc.cancelledByName} · ${canc.cancelledByRole || "Staff"}` : "Staff · name not recorded")
     : "Not recorded";
   const refundType = !refund?.byStaff ? null
-    : refund.depositForfeited > 0 ? `No Deposit Refund · ${peso(refund.depositForfeited)} deposit not returned`
+    : refund.depositForfeited > 0 ? `No Deposit Refund · ${peso(refund.depositForfeited)} deposit${refund.gatewayFeeKept > 0 ? ` and ${peso(refund.gatewayFeeKept)} payment fee` : ""} not returned`
     : refund.gatewayFeeKept > 0 ? `Normal refund · ${peso(refund.gatewayFeeKept)} payment fee not returned`
     : refund.bookingPaid > (refund.amount || 0) ? `Partial refund · ${peso(refund.bookingPaid - refund.amount)} not returned`
     : "Full refund";

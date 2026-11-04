@@ -304,9 +304,9 @@ const policyOf = (r) => {
   return { tier, kept: pv ? Number(pv.forfeit) || 0 : Number(r.depositForfeited) || 0, gw: pv ? Number(pv.gatewayFeeKept) || 0 : Number(r.gatewayFeeKept) || 0, hours: pv ? pv.hoursBeforePickup : null };
 };
 // The type is read from what is kept, the same way the backend does it (refundKindOf):
-//   deposit kept                  -> No deposit refund  (asked under 48h before pickup, or after it: the gateway fee goes back)
-//   gateway fee kept              -> Normal refund      (asked 48h+ before pickup, or inside the 2-hour grace: the deposit goes back)
-//   nothing kept                  -> Full refund        (only staff give this, when the cancellation is the business's own issue)
+//   deposit kept (and the fee too) -> No deposit refund  (asked under 48h before pickup, or after it: the gateway fee is kept as well)
+//   gateway fee kept only          -> Normal refund      (asked 48h+ before pickup, or inside the 2-hour grace: the deposit goes back)
+//   nothing kept                   -> Full refund        (only staff give this, when the cancellation is the business's own issue)
 const TYPE_STYLE = {
   no_deposit: { label: "No deposit refund", cls: "bg-amber-100 text-amber-700 border-amber-200" },
   normal:     { label: "Normal refund",     cls: "bg-blue-100 text-blue-700 border-blue-200" },
@@ -417,7 +417,7 @@ function CancellationBlock({ r, fmt }) {
   const paid = Number(pv ? (pv.bookingPaid ?? pv.grossPaid) : r.bookingPaid) || 0;
   const amt  = Number(pv ? pv.total : r.amount) || 0;
   const refundType = rejected ? "No refund"
-    : kept > 0 ? `No Deposit Refund · ${fmt(kept)} deposit not returned`
+    : kept > 0 ? `No Deposit Refund · ${fmt(kept)} deposit${gw > 0 ? ` and ${fmt(gw)} payment fee` : ""} not returned`
     : gw > 0 ? `Normal refund · ${fmt(gw)} payment fee not returned`
     : paid > amt ? `Partial refund · ${fmt(paid - amt)} not returned`
     : paid > 0 ? "Full refund" : null;
@@ -832,6 +832,10 @@ export default function RefundRequests() {
   const [approveTarget, setApproveTarget] = useState(null);
   const [waiveForfeit, setWaiveForfeit]   = useState(false);
   const [waiveReason, setWaiveReason]     = useState("");
+  // When approving would refund a different amount than the customer was quoted, the server refuses (QUOTE_CHANGED) and this
+  // holds the two figures until staff confirm the difference, with a reason.
+  const [quoteChange, setQuoteChange]   = useState(null);   // { id, quoted, current, customerName }
+  const [quoteReason, setQuoteReason]   = useState("");
   // Which method staff picked when handing the in-person part of a refund back, per request id.
   // Method staff pick when they hand the in-person part of a refund back, per request id (default Cash).
   const [handbackMethod, setHandbackMethod] = useState({});
@@ -923,20 +927,34 @@ export default function RefundRequests() {
   const approve = async (id, opts = {}) => {
     setBusyId(id);
     try {
+      // The refund shown on screen goes with the request, so the server can refuse if the figure changed meanwhile.
+      // Not sent with a waived forfeit: that changes the amount on purpose.
+      const shown = requests.find((r) => r.refundRequestID === id);
+      const expectedAmount = opts.expectedAmount ?? (!opts.waiveForfeit && shown && shown.planPreview ? shown.planPreview.total : undefined);
+      const body = opts.waiveForfeit ? { waiveForfeit: true, waiveReason: opts.waiveReason } : {};
+      if (expectedAmount !== undefined) body.expectedAmount = expectedAmount;
+      if (opts.confirmQuoteChange) { body.confirmQuoteChange = true; body.reason = opts.reason; }
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/refund-requests/${id}/approve`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(opts.waiveForfeit ? { waiveForfeit: true, waiveReason: opts.waiveReason } : {}),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
+      // Approving would refund a different amount than the customer was quoted: nothing was approved. Show both numbers.
+      if (res.status === 409 && data.code === "QUOTE_CHANGED") {
+        setQuoteChange({ id, quoted: data.quotedAmount, current: data.currentAmount, customerName: (shown && shown.customerName) || "" });
+        setQuoteReason("");
+        return;
+      }
       if (!res.ok) throw new Error(data.message || "Failed to approve refund.");
+      setQuoteChange(null);
       showToast(data.message || "Refund approved and sent to PayMongo.");
       // Approval can now change the amount (recomputed from what the customer has
       // actually paid), split it into PayMongo refunds + a manual part, and cancel the
       // booking — so take the server's version of the request rather than guessing.
       setRequests((prev) => prev.map((r) => r.refundRequestID === id ? { ...r, ...(data.data || {}), status: "Approved", planPreview: undefined } : r));
       setViewId(null);
-    } catch (e) { showToast(e.message, "error"); fetchRequests(); }
+    } catch (e) { setQuoteChange(null); showToast(e.message, "error"); fetchRequests(); }
     finally { setBusyId(null); setApproveTarget(null); }
   };
 
@@ -1189,7 +1207,7 @@ export default function RefundRequests() {
                 <button onClick={() => setApproveTarget(null)} className="text-gray-400 hover:text-gray-600"><IconX /></button>
               </div>
               <p className="text-sm text-gray-500">{approveTarget.customerName}</p>
-              {willSchedule && !waiveForfeit && (
+              {willSchedule && (
                 <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm space-y-1">
                   <p className="text-violet-800 font-semibold">This payment was made today</p>
                   <p className="text-xs text-violet-800">
@@ -1198,17 +1216,12 @@ export default function RefundRequests() {
                   </p>
                 </div>
               )}
-              {willSchedule && waiveForfeit && (
-                <p className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
-                  With the forfeit waived the full amount is refunded, which PayMongo can accept on the same day, so it may be sent right away instead of being scheduled.
-                </p>
-              )}
               <div className={`rounded-xl border p-3 text-sm space-y-1 ${hasForfeit ? "border-amber-200 bg-amber-50" : "border-gray-200 bg-gray-50"}`}>
                 {hasForfeit && <p className="text-amber-800 font-semibold">Requested {when}</p>}
                 <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(pv.grossPaid)}</span></div>
                 {hasForfeit && <div className="flex justify-between text-amber-700"><span>Deposit kept (48-hour policy)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.forfeit)}</span></div>}
-                {Number(pv.gatewayFeeKept) > 0 && <div className="flex justify-between text-amber-700"><span>Gateway fee kept (deposit returned)</span><span className="font-semibold">-{fmt(waiveForfeit ? 0 : pv.gatewayFeeKept)}</span></div>}
-                <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(waiveForfeit ? pv.grossPaid : pv.total)}</span></div>
+                {Number(pv.gatewayFeeKept) > 0 && <div className="flex justify-between text-amber-700"><span>Online payment fee kept</span><span className="font-semibold">-{fmt(pv.gatewayFeeKept)}</span></div>}
+                <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(waiveForfeit ? (pv.totalIfDepositReturned ?? pv.grossPaid - (Number(pv.gatewayFeeKept) || 0)) : pv.total)}</span></div>
               </div>
               {Number(pv.qrphAmount) > 0 && (
                 <p className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-800">
@@ -1218,13 +1231,13 @@ export default function RefundRequests() {
               {hasForfeit && <p className="text-[11px] text-gray-400">The timing is judged by when the customer sent the request, not by when you approve it.</p>}
               {hasForfeit && <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
                 <input type="checkbox" className="mt-0.5" checked={waiveForfeit} onChange={(e) => setWaiveForfeit(e.target.checked)} />
-                <span>Waive the deposit forfeit and refund the full {fmt(pv.grossPaid)} <span className="text-gray-400">(goodwill, duplicate charge, etc.)</span></span>
+                <span>Return the {fmt(pv.forfeit)} deposit to the customer <span className="text-gray-400">(goodwill, duplicate charge, etc. The online payment fee is still kept.)</span></span>
               </label>}
               {hasForfeit && waiveForfeit && (
                 <textarea
                   value={waiveReason}
                   onChange={(e) => setWaiveReason(e.target.value)}
-                  placeholder="Reason for waiving (required, saved in the audit log)"
+                  placeholder="Reason for returning the deposit (required, saved in the audit log)"
                   rows={2}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
                 />
@@ -1236,13 +1249,52 @@ export default function RefundRequests() {
                   disabled={busyId === approveTarget.refundRequestID || (waiveForfeit && !waiveReason.trim())}
                   className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
                 >
-                  {busyId === approveTarget.refundRequestID ? "Approving..." : (willSchedule && !waiveForfeit ? "Confirm & Schedule" : "Confirm Approve")}
+                  {busyId === approveTarget.refundRequestID ? "Approving..." : (willSchedule ? "Confirm & Schedule" : "Confirm Approve")}
                 </button>
               </div>
             </div>
           </div>
         );
       })()}
+
+      {/* Quote changed: approving would refund a different amount than the customer was shown */}
+      {quoteChange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setQuoteChange(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-arl-dark">The amount is different</h3>
+              <button onClick={() => setQuoteChange(null)} className="text-gray-400 hover:text-gray-600"><IconX /></button>
+            </div>
+            {quoteChange.customerName && <p className="text-sm text-gray-500">{quoteChange.customerName}</p>}
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm space-y-1">
+              <div className="flex justify-between"><span className="text-gray-600">Quoted to the customer</span><span className="font-semibold">{fmt(quoteChange.quoted)}</span></div>
+              <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Approving now refunds</span><span className="font-black">{fmt(quoteChange.current)}</span></div>
+            </div>
+            <p className="text-xs text-gray-500">
+              Nothing has been approved yet. The amount is worked out again from what the customer has paid, so it can change if a payment came in or a discount was added after they asked.
+              If you go on, the customer is refunded {fmt(quoteChange.current)}, and both figures and your reason are saved.
+            </p>
+            <textarea
+              value={quoteReason}
+              onChange={(e) => setQuoteReason(e.target.value)}
+              placeholder="Reason for approving a different amount (required, saved in the audit log)"
+              rows={2}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setQuoteChange(null)} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button
+                onClick={() => approve(quoteChange.id, { expectedAmount: quoteChange.current, confirmQuoteChange: true, reason: quoteReason.trim() })}
+                disabled={busyId === quoteChange.id || !quoteReason.trim()}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+              >
+                {busyId === quoteChange.id ? "Approving..." : `Approve ${fmt(quoteChange.current)}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reject reason modal */}
       {rejectTarget && (
