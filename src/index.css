@@ -279,15 +279,11 @@ main.flex-1 > * {
   background-color: #181b27 !important;
   color: #475569 !important;
 }
-/* ── Geofence / coding-restriction pulsing banner (Car Tracking: Live,
+/* ── Geofence / coding-restriction warning banner (Car Tracking: Live,
    Traceback, History review, Review upload) ─────────────────────────── */
-@keyframes geofencePulse {
-  0%   { transform: scale(1);    opacity: 1; }
-  50%  { transform: scale(1.05); opacity: 0.85; }
-  100% { transform: scale(1);    opacity: 1; }
-}
+/* Static (no pulse) — warnings should sit still. */
 .geofence-pulse-banner {
-  animation: geofencePulse 1.2s ease-in-out infinite;
+  animation: none;
 }
 .geofence-pulse-dot {
   width: 6px;

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import TracebackPanel from "./TracebackPanel";
 
 // Fields recognized on an uploaded row — covers both this app's own archive
@@ -57,8 +57,10 @@ function groupRows(rows, fallbackName) {
  * (round-trips exactly), or a raw geo-test/GPS-test style export — and
  * review it in the same scrubber/player used everywhere else.
  */
-export default function ReviewPanel({ cars, token }) {
-  const [reviewData, setReviewData] = useState(null);
+export default function ReviewPanel({ cars, token, initialReview = null, onExitHandoff = null }) {
+  // `initialReview` is a trip the History tab opened here; closing it goes back to History instead of the upload page.
+  const [reviewData, setReviewData] = useState(initialReview);
+  useEffect(() => { if (initialReview) setReviewData(initialReview); }, [initialReview]);
   const [error, setError]           = useState(null);
   const [dragOver, setDragOver]     = useState(false);
   const [busy, setBusy]             = useState(false);
@@ -100,7 +102,10 @@ export default function ReviewPanel({ cars, token }) {
         cars={cars}
         token={token}
         reviewData={reviewData}
-        onExitReview={() => { setReviewData(null); setError(null); }}
+        onExitReview={() => {
+          if (initialReview && reviewData === initialReview && onExitHandoff) { onExitHandoff(); return; }
+          setReviewData(null); setError(null);
+        }}
       />
     );
   }

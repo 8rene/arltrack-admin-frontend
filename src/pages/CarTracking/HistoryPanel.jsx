@@ -26,6 +26,16 @@ function mergeSessionMeta(fileSession, listFields) {
   return finished ? { ...fromList, ...fromFile } : { ...fromFile, ...fromList };
 }
 
+// Fallback when a car has no photo (HistoryPanel has no icon set of its own).
+const CarGlyph = ({ style }) => (
+  <svg style={style} className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 16V11l2-5h10l2 5v5" />
+    <path d="M3 16h18v3H3z" />
+    <circle cx="7.5" cy="16" r="0.5" />
+    <circle cx="16.5" cy="16" r="0.5" />
+  </svg>
+);
+
 const STATUS_STYLES = {
   ended:     "bg-teal-50 text-teal-700",
   stolen:    "bg-red-50 text-red-700",
@@ -37,9 +47,10 @@ const STATUS_STYLES = {
  * Car Tracking's History tab. Left column: pick a car. Right column: every
  * archived (Firebase-Storage-flushed) trip for that car, newest first, with
  * a "No GPS record" fallback when the list comes back empty. "Review" loads
- * that trip's archive JSON and hands off to TracebackPanel in review mode.
+ * that trip's archive JSON and hands it to the Review tab (onOpenReview). Without that callback it falls back to
+ * showing the review in place.
  */
-export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = null }) {
+export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = null, onOpenReview = null }) {
   const [selectedCar, setSelectedCar] = useState(null);
   const [history, setHistory]         = useState([]);
   // Which car the current `history` list belongs to. The auto-open below must wait for this, otherwise it runs in the
@@ -50,6 +61,8 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
   const [reviewData, setReviewData]   = useState(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [deepLinkNotice, setDeepLinkNotice] = useState(null);
+  const [flushingId, setFlushingId] = useState(null); // trip being saved right now by the manual flush
+  const [flushNote, setFlushNote]   = useState(null); // { id, ok, msg } -- result of the last manual flush
 
   // Deep-link from Bookings' "Trip History" button: select the car once —
   // guarded so it doesn't fight the user if they click a different car
@@ -107,6 +120,28 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
     if (selectedCar) fetchHistory(selectedCar);
   }, [selectedCar, fetchHistory, refreshTick]);
 
+  // Manual flush: save this trip's latest GPS points to its archive file now (the nightly job does the same at
+  // midnight), then reload the list so the new "Archived" time and point count show.
+  async function handleFlush(item) {
+    setFlushingId(item.bookingSessionID);
+    setFlushNote(null);
+    try {
+      const res = await fetch(`${API}/api/gps/sessions/${item.bookingSessionID}/flush`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.status !== "ok") throw new Error(json.message || "Couldn't save this trip's data right now.");
+      const n = json.data?.pointCount;
+      setFlushNote({ id: item.bookingSessionID, ok: true, msg: typeof n === "number" ? `Saved — ${n.toLocaleString()} points` : "Saved" });
+      await fetchHistory(selectedCar);
+    } catch (e) {
+      setFlushNote({ id: item.bookingSessionID, ok: false, msg: e.message });
+    } finally {
+      setFlushingId(null);
+    }
+  }
+
   async function handleReview(item) {
     const car = cars.find(c => c.id === selectedCar);
     setReviewLoading(true);
@@ -138,9 +173,9 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
         startedAt:        item.startedAt,
         endedAt:          item.endedAt,
       });
-      setReviewData({
+      const data = {
         label: `${car?.name || selectedCar} · ${fmtDateTime(meta.startedAt)} → ${meta.endedAt ? fmtDateTime(meta.endedAt) : meta.status === "ended" ? "—" : "ongoing"}`,
-        cars: [{ id: selectedCar, name: car?.name || selectedCar }],
+        cars: [{ id: selectedCar, name: car?.name || selectedCar, imageURL: car?.imageURL || null }],
         records: { [selectedCar]: points },
         zonesAlerts: isLegacyArray ? undefined : {
           [selectedCar]: {
@@ -161,7 +196,9 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
         },
         // See mergeSessionMeta: the file is the record for a finished trip; the list only fills gaps.
         sessionMeta: { [selectedCar]: meta },
-      });
+      };
+      if (onOpenReview) onOpenReview(data);   // the Review tab shows it
+      else setReviewData(data);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -191,7 +228,21 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                 selectedCar === car.id ? "border-teal-500 ring-1 ring-teal-200" : "border-gray-100 hover:border-teal-300"
               }`}
             >
-              <p className="font-bold text-gray-800 text-sm truncate">{car.name}</p>
+              <div className="flex items-center gap-3">
+                {/* Same car photo as the Live list; falls back to a car glyph when there is none or it fails to load. */}
+                <div className="w-10 h-10 rounded-xl bg-gray-50 text-gray-400 flex items-center justify-center shrink-0 overflow-hidden">
+                  {car.imageURL ? (
+                    <img
+                      src={car.imageURL}
+                      alt={car.name}
+                      className="w-full h-full object-cover"
+                      onError={e => { e.currentTarget.style.display = "none"; e.currentTarget.nextElementSibling.style.display = "block"; }}
+                    />
+                  ) : null}
+                  <CarGlyph style={car.imageURL ? { display: "none" } : undefined} />
+                </div>
+                <p className="font-bold text-gray-800 text-sm truncate min-w-0">{car.name}</p>
+              </div>
             </button>
           ))
         )}
@@ -261,13 +312,28 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                         )}
                       </p>
                     </div>
-                    <button
-                      onClick={() => handleReview(item)}
-                      disabled={reviewLoading}
-                      className="shrink-0 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50"
-                    >
-                      {reviewLoading ? "…" : "Review"}
-                    </button>
+                    <div className="shrink-0 flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleFlush(item)}
+                          disabled={!!flushingId || reviewLoading}
+                          title="Save this trip's latest GPS points to its archive now, instead of waiting for midnight"
+                          className="px-3 py-1.5 bg-white border border-teal-300 text-teal-700 rounded-lg text-xs font-semibold hover:bg-teal-50 active:scale-95 transition-all disabled:opacity-50"
+                        >
+                          {flushingId === item.bookingSessionID ? "Saving…" : "Flush now"}
+                        </button>
+                        <button
+                          onClick={() => handleReview(item)}
+                          disabled={reviewLoading || !!flushingId}
+                          className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50"
+                        >
+                          {reviewLoading ? "…" : "Review"}
+                        </button>
+                      </div>
+                      {flushNote?.id === item.bookingSessionID && (
+                        <p className={`text-[10px] font-medium ${flushNote.ok ? "text-teal-600" : "text-red-500"}`}>{flushNote.msg}</p>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

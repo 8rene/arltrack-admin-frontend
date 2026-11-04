@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import GeofenceBanner from "../../components/GeofenceBanner";
@@ -54,8 +54,22 @@ function makeStartIcon(color) {
 }
 
 // Records come from the backend as { lat, lng, at } — `at` is a plain ISO string.
+// Parsed once per record. This is called inside sorts, binary searches and per-tick scans over thousands of
+// pings, and re-parsing the date string every time was the main cost of playing / scrubbing a long trip.
+const gpsMsCache = new WeakMap();
 function gpsMs(record) {
-  return new Date(record.at).getTime();
+  let v = gpsMsCache.get(record);
+  if (v === undefined) { v = new Date(record.at).getTime(); gpsMsCache.set(record, v); }
+  return v;
+}
+
+// Time of day, with the date in front when the shown range crosses midnight -- otherwise "6:26 PM" and "10:53 AM"
+// look like the same day and the end of a trip that ran overnight reads as a mistake.
+function fmtStamp(ms, withDate) {
+  if (!ms) return "—";
+  const d = new Date(ms);
+  const t = d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  return withDate ? `${d.toLocaleDateString("en-PH", { month: "short", day: "numeric" })}, ${t}` : t;
 }
 
 function fmtTime(record) {
@@ -86,6 +100,22 @@ function closestIdx(records, targetMs) {
   return lo;
 }
 
+// First ping at or after `ms` / last ping at or before `ms` (records are sorted by time). Used by the slider so a
+// position that falls in a no-data gap moves on to the far side of it instead of snapping back.
+function ceilIdx(records, ms) {
+  let lo = 0, hi = records.length - 1;
+  if (hi < 0) return 0;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (gpsMs(records[mid]) < ms) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+function floorIdx(records, ms) {
+  let lo = 0, hi = records.length - 1;
+  if (hi < 0) return 0;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (gpsMs(records[mid]) <= ms) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+
+const TRAIL_CHUNK = 250; // pings per fixed chunk of the played trail (see the layer sync effect)
 const GAP_THRESHOLD_MS = 20 * 60 * 1000; // 20 min gap breaks a segment
 function buildSegments(records) {
   if (!records.length) return [];
@@ -166,6 +196,10 @@ function buildTimeScale(globalStartMs, globalEndMs, allSegmentSets) {
 
 // The moments of a trip that are shown as flags on the bar, by TIME -- not as map points. A drop-off at 9:30
 // with the last ping at 9:00 sits 30 minutes along the bar with the gap in between, same for completed / stolen.
+// Pickup / dropped-off / completed / stolen flags on the bar are hidden: Traceback is for retrieving the path, and
+// these are already in Logs / Trip Summary. Flip to true to bring them (and the bar stretching to them) back.
+const SHOW_TRIP_FLAGS = false;
+
 function buildTripEvents(session, za) {
   const ms = (v) => { const t = v ? new Date(v).getTime() : NaN; return Number.isNaN(t) ? null : t; };
   return [
@@ -213,7 +247,7 @@ function pickEntry(list, ms) {
   return hit || lastBefore || list[0];
 }
 
-function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focusedCar, globalStartMs, globalEndMs, eventsByCar, mode = "merged", onModeChange }) {
+function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focusedCar, globalStartMs, globalEndMs, eventsByCar, mode = "merged", onModeChange, withDate = false }) {
   const allSegmentSets = cars
     .filter(car => visible[car.id] && (traceData[car.id] || []).length)
     .map(car => buildSegments(traceData[car.id]));
@@ -310,7 +344,7 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
               </button>
             ))}
           </div>
-          <span className="text-[10px] w-14 shrink-0 text-right text-gray-400 font-mono">{fmtTime({ at: new Date(globalStartMs).toISOString() })}</span>
+          <span className={`text-[10px] ${withDate ? "w-24" : "w-14"} shrink-0 text-right text-gray-400 font-mono`}>{fmtStamp(globalEndMs, withDate)}</span>
         </div>
       )}
       {!merged && cars.map((car, idx) => {
@@ -358,7 +392,7 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
                 </button>
               ))}
             </div>
-            <span className="text-[10px] w-14 shrink-0 text-right text-gray-400 font-mono">{fmtTime(records[0])}</span>
+            <span className={`text-[10px] ${withDate ? "w-24" : "w-14"} shrink-0 text-right text-gray-400 font-mono`}>{fmtStamp(globalEndMs, withDate)}</span>
           </div>
         );
       })}
@@ -414,10 +448,23 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   const [focusedCar, setFocusedCar] = useState(null);
   const [flyPos, setFlyPos] = useState(null);
   const playRef = useRef(null);
+  const lastRawRef = useRef(null); // slider value at the previous change event, to know which way it is being moved
+  const followRef = useRef(true); // keep the selected car centered while playing / scrubbing; off after the admin drags the map
+
+  // Slider drag state must always clear on release. onPointerUp on the input alone misses a touch that gets
+  // cancelled (page scroll) or a release outside the input, which left the thumb stuck on the old drag value.
+  useEffect(() => {
+    if (dragPct === null) return;
+    const end = () => { setDragPct(null); lastRawRef.current = null; };
+    const evts = ["pointerup", "pointercancel", "mouseup", "touchend", "touchcancel"];
+    evts.forEach(t => window.addEventListener(t, end));
+    return () => evts.forEach(t => window.removeEventListener(t, end));
+  }, [dragPct === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mapRef = useRef(null);
   const leafletMap = useRef(null);
-  const layersRef = useRef({}); // { [carId]: { start, current, ghost, active } }
+  const layersRef = useRef({}); // { [carId]: { start, current, ghost, chunks: Polyline[], tail } }
+  const posCacheRef = useRef({}); // { [carId]: { records, positions } } -- lat/lng pairs, rebuilt only when the records change
   const zoneLayersRef = useRef([]); // geofence-zone Circle/Marker layers currently drawn
   const codingLayersRef = useRef([]); // coding-restriction area (city outline + label) currently drawn
   const [cityBoundaries, setCityBoundaries] = useState({}); // { [cityLower]: { geometry, lat, lng } | null (lookup failed) }
@@ -438,7 +485,9 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   // ── Init Leaflet map ────────────────────────────────────────────────────
   useEffect(() => {
     if (!mapRef.current || leafletMap.current) return;
-    leafletMap.current = L.map(mapRef.current, { zoomControl: true }).setView([14.5995, 120.9842], 12);
+    leafletMap.current = // preferCanvas: a long trail as one SVG path is slow to re-render every time the map moves; canvas draws it fast.
+    L.map(mapRef.current, { zoomControl: true, preferCanvas: true }).setView([14.5995, 120.9842], 12);
+    leafletMap.current.on("dragstart", () => { followRef.current = false; });
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors", maxZoom: 19 }).addTo(leafletMap.current);
     return () => { if (leafletMap.current) { leafletMap.current.stop(); leafletMap.current.remove(); leafletMap.current = null; } };
   }, []);
@@ -537,7 +586,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   }
 
   const allPoints = Object.entries(traceData).filter(([id]) => visible[id]).flatMap(([, r]) => r);
-  const allVisible = buildAllVisible(traceData, visible);
+  const allVisible = useMemo(() => buildAllVisible(traceData, visible), [traceData, visible]); // eslint-disable-line react-hooks/exhaustive-deps
   const hasData = allVisible.length > 0;
   // What the timeline bars + the bottom slider cover: the selected car alone when one is selected, otherwise
   // every visible car. (The map keeps using allPoints / allVisible, so deselecting still fits all cars.)
@@ -552,7 +601,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   const dayEndMs   = !isReview && date ? new Date(`${date}T23:59:59.999+08:00`).getTime() : null;
   const eventsByCar = {};
   effectiveCars.forEach((car) => {
-    if (!inScope(car.id)) return;
+    if (!SHOW_TRIP_FLAGS || !inScope(car.id)) return;
     eventsByCar[car.id] = (entriesByCar[car.id] || []).flatMap(e => buildTripEvents(e.session, e))
       .filter((e) => dayStartMs === null || (e.ms >= dayStartMs && e.ms <= dayEndMs));
   });
@@ -587,7 +636,9 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   );
   // Selected car -> its own pings; nothing selected -> every visible car combined.
   const sliderRecs = focusedRecs?.length ? focusedRecs : allVisible;
-  const fmtMs = (ms) => (ms ? fmtTime({ at: new Date(ms).toISOString() }) : "—");
+  // The range crosses midnight (an overnight trip in History / Review): show dates beside the times.
+  const spansDays = hasData && new Date(globalStartMs).toDateString() !== new Date(globalEndMs).toDateString();
+  const fmtMs = (ms) => fmtStamp(ms, spansDays);
 
   // ── Geofence / coding-restriction banner at the scrubbed instant ─────────
   // Only consider visible cars (matches what's actually drawn on the map).
@@ -684,16 +735,18 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
     setDownloadNotice({ ok: true, msg: "Downloaded" });
   }
 
+  // Records are sorted by time, so "how many pings are at or before now" is a binary search, not a scan.
+  function playedCountFor(records) {
+    let lo = 0, hi = records.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (gpsMs(records[mid]) <= currentTimeMs) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
   function currentRecordFor(records) {
     if (!records.length || currentTimeMs < gpsMs(records[0])) return null;
-    let result = records[0];
-    for (const r of records) { if (gpsMs(r) <= currentTimeMs) result = r; else break; }
-    return result;
-  }
-  function playedCountFor(records) {
-    let count = 0;
-    for (const r of records) { if (gpsMs(r) <= currentTimeMs) count++; else break; }
-    return count;
+    return records[Math.max(playedCountFor(records) - 1, 0)];
   }
 
   useEffect(() => {
@@ -706,6 +759,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   }, [playing, playSpeed, maxLen]);
 
   function handleCarClick(carId) {
+    followRef.current = true;
     if (focusedCar === carId) {
       const merged = buildAllVisible(traceData, visible);
       setScrubIdx(merged.length ? closestIdx(merged, currentTimeMs) : 0);
@@ -723,6 +777,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   }
   function handleCarPlay(e, carId) {
     e.stopPropagation();
+    followRef.current = true;
     if (focusedCar === carId && playing) { setPlaying(false); return; }
     setFocusedCar(carId);
     if (!visible[carId]) setVisible(v => ({ ...v, [carId]: true }));
@@ -735,6 +790,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
     setPlaying(true);
   }
   function handleTimelineScrub(carId, ms) {
+    followRef.current = true;
     setPlaying(false);
     // Nothing selected: the bar scrubs the COMBINED timeline (earliest ping of any car -> latest ping of any
     // car) and does not pick a car. Only when a car is already selected does touching another car's row switch to it.
@@ -760,8 +816,11 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
     // Remove layers for cars no longer visible/present
     Object.keys(layersRef.current).forEach(carId => {
       if (!visible[carId] || !(traceData[carId] || []).length) {
-        Object.values(layersRef.current[carId]).forEach(layer => layer?.remove());
+        Object.values(layersRef.current[carId]).forEach(layer => {
+          if (Array.isArray(layer)) layer.forEach(l => l.remove()); else layer?.remove?.();
+        });
         delete layersRef.current[carId];
+        delete posCacheRef.current[carId];
       }
     });
 
@@ -770,25 +829,41 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
       if (!visible[car.id] || !records.length) return;
       const color = colorForCar(idx);
       const isFocused = focusedCar === car.id;
-      const positions = records.map(r => [r.lat, r.lng]);
+      let cache = posCacheRef.current[car.id];
+      const recordsChanged = !cache || cache.records !== records;
+      if (recordsChanged) cache = posCacheRef.current[car.id] = { records, positions: records.map(r => [r.lat, r.lng]) };
+      const positions = cache.positions;
       const cur = currentRecordFor(records);
       const played = playedCountFor(records);
 
       let entry = layersRef.current[car.id];
       if (!entry) {
         entry = {
-          ghost: L.polyline(positions, { color, weight: 2, opacity: 0.2 }).addTo(leafletMap.current),
-          active: L.polyline(played > 1 ? positions.slice(0, played) : [], { color, weight: 3, opacity: 0.9 }).addTo(leafletMap.current),
-          start: L.marker(positions[0], { icon: makeStartIcon(color) }).addTo(leafletMap.current).bindPopup(`<b>${car.name}</b><br>Start: ${fmtTime(records[0])}`),
+          ghost: L.polyline(positions, { color, weight: 2, opacity: 0.2, smoothFactor: 2 }).addTo(leafletMap.current),
+          chunks: [],
+          tail: L.polyline([], { color, weight: 3, opacity: 0.9, interactive: false }).addTo(leafletMap.current),
+          start: L.marker(positions[0], { icon: makeStartIcon(color) }).addTo(leafletMap.current).bindPopup(`<b>${car.name}</b><br>Start: ${fmtStamp(gpsMs(records[0]), true)}`),
           current: null,
         };
         entry.ghost.on("click", () => handleCarClick(car.id));
         layersRef.current[car.id] = entry;
-      } else {
+      } else if (recordsChanged) {
         entry.ghost.setLatLngs(positions);
-        entry.active.setLatLngs(played > 1 ? positions.slice(0, played) : []);
+        entry.chunks.forEach(l => l.remove());
+        entry.chunks = [];
         entry.start.setLatLng(positions[0]);
       }
+
+      // The played part of the trail is drawn as fixed-size chunks that are built once and left alone, plus one short
+      // "tail" that is the only piece redrawn on each tick. Redrawing the whole played trail every tick (or every
+      // slider-drag event) is what made long trips in Review lag.
+      const full = played > 1 ? Math.floor((played - 1) / TRAIL_CHUNK) : 0;
+      while (entry.chunks.length < full) {
+        const i = entry.chunks.length;
+        entry.chunks.push(L.polyline(positions.slice(i * TRAIL_CHUNK, (i + 1) * TRAIL_CHUNK + 1), { color, weight: 3, opacity: 0.9, interactive: false }).addTo(leafletMap.current));
+      }
+      while (entry.chunks.length > full) entry.chunks.pop().remove();
+      entry.tail.setLatLngs(played - full * TRAIL_CHUNK > 1 ? positions.slice(full * TRAIL_CHUNK, played) : []);
 
       if (cur && currentTimeMs >= gpsMs(records[0])) {
         if (entry.current) {
@@ -800,7 +875,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
             .on("click", () => handleCarClick(car.id));
         }
         entry.current.bindPopup(
-          `<b>${car.name}</b><br>${fmtTime(cur)}<br>` +
+          `<b>${car.name}</b><br>${fmtStamp(gpsMs(cur), true)}<br>` +
           `Speed: ${typeof cur.speed === "number" ? cur.speed.toFixed(1) : "0.0"} km/h` +
           (cur.offline ? `<br><span style="color:#d97706">📦 Offline flush</span>` : "")
         );
@@ -924,6 +999,23 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [codingShapeKey, cityBoundaries, focusedCar, visible, effectiveCars]);
 
+  // ── Follow the selected car while it plays / is scrubbed ────────────────
+  // Declared BEFORE the fly-to effect below so that, on first selecting a car, the fly-to still wins.
+  useEffect(() => {
+    // A saved trip with a single car keeps following it even when that car is deselected (same rule as the panels).
+    const followCar = focusedCar || panelCar;
+    if (!leafletMap.current || !followCar || !followRef.current) return;
+    const recs = traceData[followCar] || [];
+    const cur = recs[Math.min(scrubIdx, recs.length - 1)];
+    if (!cur || typeof cur.lat !== "number" || typeof cur.lng !== "number") return;
+    // Only move the map once the car is leaving the middle of the view. Panning on every tick makes Leaflet
+    // re-project and redraw the whole trail each time, which made playback lag on long trips.
+    const pos = [cur.lat, cur.lng];
+    if (leafletMap.current.getBounds().pad(-0.3).contains(pos)) return;
+    leafletMap.current.panTo(pos, { animate: playSpeed <= 2, duration: 0.4 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrubIdx, focusedCar, panelCar]);
+
   // ── Fit bounds / fly-to ─────────────────────────────────────────────────
   useEffect(() => {
     if (!leafletMap.current) return;
@@ -1004,6 +1096,20 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                   className="w-4 h-4 rounded-full border-2 shrink-0 cursor-pointer"
                   style={{ background: on ? color : "transparent", borderColor: color }}
                 />
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 overflow-hidden bg-gray-50 text-gray-400"
+                  style={{ border: `2px solid ${color}` }}
+                >
+                  {car.imageURL ? (
+                    <img
+                      src={car.imageURL}
+                      alt={car.name}
+                      className="w-full h-full object-cover"
+                      onError={e => { e.currentTarget.style.display = "none"; e.currentTarget.nextElementSibling.style.display = "flex"; }}
+                    />
+                  ) : null}
+                  <span className="text-lg leading-none" style={car.imageURL ? { display: "none" } : undefined}>🚗</span>
+                </div>
                 <span className="text-sm font-semibold text-gray-800 flex-1 truncate">{car.name}</span>
                 <span className="text-[10px] text-gray-400">{records.length} pts</span>
                 {records.length > 0 && (
@@ -1018,14 +1124,14 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
               </div>
               {records.length > 0 ? (
                 <p className="text-[10px] text-gray-400 mt-1 ml-6 font-mono">
-                  {fmtTime(records[0])} → {fmtTime(records[records.length - 1])}
+                  {fmtStamp(gpsMs(records[0]), spansDays)} → {fmtStamp(gpsMs(records[records.length - 1]), spansDays)}
                 </p>
               ) : (
                 <p className="text-[10px] text-gray-300 italic mt-1 ml-6">No data for this date</p>
               )}
               {on && cur && (
                 <p className="text-[10px] text-gray-500 mt-0.5 ml-6 font-mono">
-                  ▶ {fmtTime(cur)} · {typeof cur.speed === "number" ? cur.speed.toFixed(1) : "0.0"} km/h
+                  ▶ {fmtStamp(gpsMs(cur), spansDays)} · {typeof cur.speed === "number" ? cur.speed.toFixed(1) : "0.0"} km/h
                   {cur.offline && <span className="text-amber-600 ml-1">📦</span>}
                 </p>
               )}
@@ -1039,7 +1145,8 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
         <div className="flex-1 min-h-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden relative">
           <div ref={mapRef} className="w-full h-full" style={{ minHeight: "300px" }} />
 
-          <GeofenceBanner banners={mapBanners} />
+          {/* Lower-left: one "Warnings" box holding every active warning, same as the Live tab. */}
+          <GeofenceBanner banners={mapBanners} placement="box" />
 
           {/* Trip Summary / Logs follow the selected car. A saved trip with only one car keeps them available even when
               that car is deselected (nothing else could be meant), so deselecting never hides them there. */}
@@ -1146,14 +1253,14 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
               currentTimeMs={currentTimeMs} onScrub={handleTimelineScrub}
               focusedCar={focusedCar} globalStartMs={globalStartMs} globalEndMs={globalEndMs}
               eventsByCar={eventsByCar}
-              mode={barMode} onModeChange={setBarMode}
+              mode={barMode} onModeChange={setBarMode} withDate={spansDays}
             />
 
             <div className="px-4 py-3 border-t border-gray-100">
               <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1.5">
                 <span>{fmtMs(globalStartMs)}</span>
                 <span className="flex items-center gap-2">
-                  <span className="font-mono text-sm text-gray-700 font-semibold">{fmtTime(curRec)}</span>
+                  <span className="font-mono text-sm text-gray-700 font-semibold">{curRec ? fmtStamp(currentTimeMs, spansDays) : "—"}</span>
                   {curRec && (
                     <span className="font-mono text-gray-500">
                       {typeof curRec.speed === "number" ? curRec.speed.toFixed(1) : "0.0"} km/h
@@ -1170,13 +1277,22 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                 value={dragPct ?? barScale.toPct(currentTimeMs)}
                 onChange={e => {
                   const pct = Number(e.target.value);
+                  followRef.current = true;
                   setPlaying(false);
                   setDragPct(pct);
-                  if (sliderRecs.length) setScrubIdx(closestIdx(sliderRecs, barScale.toMs(pct)));
+                  if (!sliderRecs.length) return;
+                  // The bar squeezes stretches with no GPS data, and nothing can be shown inside them. Snapping to the
+                  // NEAREST ping there pulled the thumb back to the edge it came from, so it felt stuck (and arrow keys
+                  // could never cross a gap). Instead snap in the direction of travel: forward lands on the next ping,
+                  // backward on the previous one.
+                  const prev = lastRawRef.current ?? barScale.toPct(currentTimeMs);
+                  lastRawRef.current = pct;
+                  const ms = barScale.toMs(pct);
+                  setScrubIdx(pct > prev ? ceilIdx(sliderRecs, ms) : pct < prev ? floorIdx(sliderRecs, ms) : closestIdx(sliderRecs, ms));
                 }}
-                onPointerUp={() => setDragPct(null)}
-                onKeyUp={() => setDragPct(null)}
-                onBlur={() => setDragPct(null)}
+                onPointerUp={() => { setDragPct(null); lastRawRef.current = null; }}
+                onKeyUp={() => { setDragPct(null); lastRawRef.current = null; }}
+                onBlur={() => { setDragPct(null); lastRawRef.current = null; }}
                 className="w-full accent-teal-600"
               />
               <div className="flex items-center justify-center gap-2 mt-2">

@@ -137,6 +137,7 @@ export default function LogsPanel({ sessionInfo, loading = false, holidayToday =
           </div>
         )}
       </div>
+      
     </div>
   );
 }

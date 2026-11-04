@@ -15,6 +15,28 @@ function fmtDateTime(val) {
   } catch { return "—"; }
 }
 
+const isPickupZone  = (z) => /pickup/i.test(z?.label || "");
+const isDropoffZone = (z) => /drop/i.test(z?.label || "") && !isPickupZone(z);
+const hasCoords     = (p) => typeof p?.lat === "number" && typeof p?.lng === "number";
+
+// Order of a trip's zones, for display and for saving: Pickup first, then the destination / extra stops, Drop-off last.
+// The customer backend only writes Pickup + the stops, so the Drop-off zone is added from the trip's dropoffLocation;
+// when the booking has none, it sits at the Pickup zone's spot (the car comes back where it started). The Drop-off is
+// listed even when it is the same place as the Pickup.
+function arrangeZones(list, dropoffLoc) {
+  const base    = Array.isArray(list) ? list : [];
+  const pickups = base.filter(isPickupZone);
+  const drops   = base.filter(isDropoffZone);
+  const middle  = base.filter((z) => !isPickupZone(z) && !isDropoffZone(z));
+  if (drops.length === 0) {
+    const spot = hasCoords(dropoffLoc) ? dropoffLoc : pickups.find(hasCoords);
+    if (spot) {
+      drops.push({ label: "Drop-off", lat: spot.lat, lng: spot.lng, radius: pickups[0]?.radius ?? middle[0]?.radius ?? 500 });
+    }
+  }
+  return [...pickups, ...middle, ...drops];
+}
+
 /**
  * "Booking Information" floating panel — right side of the Live map.
  * (Renamed from "Car Information" — this is genuinely about the car's
@@ -46,6 +68,7 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState(null);
   const [saved, setSaved]     = useState(false);
+  const [editing, setEditing] = useState(null);   // index of the zone whose name / radius can be changed right now
 
   // Default to the current trip, else the nearest upcoming one; keep the pick while it is still valid.
   useEffect(() => {
@@ -59,18 +82,17 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
   const targetBooking  = isActiveTarget ? null : (upcomingTrips.find(b => b.bookingSessionID === targetID) || null);
   const sourceZones    = isActiveTarget ? (sessionInfo?.geofenceZones || []) : (targetBooking?.geofenceZones || []);
   const sourceKey      = JSON.stringify(sourceZones);
-  const targetLabel    = isActiveTarget
-    ? "this trip"
-    : targetBooking ? `${targetBooking.customerName || "upcoming booking"}'s trip` : null;
-  const canPickTrip    = (activeSessionID ? 1 : 0) + upcomingTrips.length > 1;
+  const dropoffLoc     = isActiveTarget ? sessionInfo?.dropoffLocation : targetBooking?.dropoffLocation;
+  const dropoffKey     = JSON.stringify(dropoffLoc || null);
 
   // Load the picked trip's zones. Keyed on the zones' content, not object identity, so a background
   // refresh that changes nothing doesn't wipe edits that haven't been saved yet.
   useEffect(() => {
     setSaved(false);
     setError(null);
-    setZones(sourceZones);
-  }, [carId, targetID, sourceKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    setEditing(null);
+    setZones(arrangeZones(sourceZones, dropoffLoc));
+  }, [carId, targetID, sourceKey, dropoffKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Push every edit (drag, type, add, remove) up to the map immediately —
   // this is what makes the circle on the Live map resize in real time as
@@ -86,6 +108,7 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
   }
   function removeZone(i) {
     setZones(prev => prev.filter((_, idx) => idx !== i));
+    setEditing(null);
     setSaved(false);
   }
   function addZoneAtCurrentPosition() {
@@ -96,7 +119,12 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
         : "This car has no known GPS location yet — can't place a new zone. Try again once it's reported a location at least once.");
       return;
     }
-    setZones(prev => [...prev, { label: `Zone ${prev.length + 1}`, lat: pos.lat, lng: pos.lng, radius: 500 }]);
+    // New zones go in before the Drop-off, which always stays last — and open for editing so it can be named.
+    const next = { label: `Zone ${zones.length + 1}`, lat: pos.lat, lng: pos.lng, radius: 500 };
+    const di   = zones.findIndex(isDropoffZone);
+    const at   = di === -1 ? zones.length : di;
+    setZones([...zones.slice(0, at), next, ...zones.slice(at)]);
+    setEditing(at);
     setSaved(false);
   }
 
@@ -136,20 +164,7 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
             Stolen panel, just without the action buttons, which stay down
             there since they're frequent enough to want always-visible,
             no-extra-click access. */}
-        {ongoingBooking ? (
-          <div
-            onClick={() => activeSessionID && setTargetID(activeSessionID)}
-            className={`bg-teal-50 border border-teal-100 rounded-xl p-3 ${activeSessionID ? "cursor-pointer" : ""} ${isActiveTarget ? "ring-2 ring-teal-400" : ""}`}
-          >
-            <p className="text-xs font-semibold text-teal-800 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
-              Current trip — {ongoingBooking.customerName || "—"}
-            </p>
-            <p className="text-xs text-teal-600 mt-1">
-              {fmtDateTime(ongoingBooking.startDateTime)} → {fmtDateTime(ongoingBooking.endDateTime)}
-            </p>
-          </div>
-        ) : upcomingBookings.length === 0 ? (
+        {ongoingBooking ? null : upcomingBookings.length === 0 ? (
           <p className="text-xs text-gray-400 italic px-1">No upcoming bookings for this car.</p>
         ) : (
           <div className="space-y-1.5">
@@ -172,7 +187,7 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
         )}
 
         <p className="text-[11px] font-semibold text-gray-500 pt-1 px-1">
-          {targetLabel ? `Geofence zones — ${targetLabel}` : "Geofence zones"}
+          Geofence Zones:
         </p>
 
         {!targetID && (
@@ -185,51 +200,77 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
           </div>
         )}
 
-        {targetID && canPickTrip && (
-          <p className="text-[11px] text-gray-400 italic px-1 -mt-1">Tap a booking above to switch which trip you're editing.</p>
-        )}
-
         {!!targetID && zones.length === 0 && (
           <p className="text-xs text-gray-400 italic px-1">No zones set for this trip yet.</p>
         )}
-        {!!targetID && zones.length > 0 && (
-          <p className="text-[11px] text-gray-400 italic px-1 -mt-1">Tap a zone to focus the map on it.</p>
-        )}
-
-        {!!targetID && zones.map((zone, i) => (
-          <div
-            key={i}
-            onClick={() => onFocusZone?.(zone)}
-            title="Focus the map on this zone"
-            className="bg-gray-50 rounded-xl border border-gray-100 p-3 cursor-pointer hover:border-teal-300 hover:bg-teal-50/60 transition-all"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-5 h-5 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
-              <input
-                value={zone.label || ""}
-                onClick={e => e.stopPropagation()}
-                onChange={e => updateZone(i, "label", e.target.value)}
-                placeholder={`Zone ${i + 1}`}
-                className="flex-1 min-w-0 text-xs font-semibold bg-white border border-gray-200 rounded-lg px-2 py-1"
-              />
-              <button onClick={e => { e.stopPropagation(); removeZone(i); }} className="shrink-0 text-gray-300 hover:text-red-500 text-sm">✕</button>
+        {!!targetID && zones.map((zone, i) => {
+          // Pickup and Drop-off keep their names (the backend recognises them by name); only their radius can change.
+          const fixed     = isPickupZone(zone) || isDropoffZone(zone);
+          const isEditing = editing === i;
+          return (
+            <div
+              key={i}
+              onClick={() => onFocusZone?.(zone)}
+              title="Focus the map on this zone"
+              className="bg-gray-50 rounded-xl border border-gray-100 p-3 cursor-pointer hover:border-teal-300 hover:bg-teal-50/60 transition-all"
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-5 h-5 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
+                {isEditing && !fixed ? (
+                  <input
+                    autoFocus
+                    value={zone.label || ""}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => updateZone(i, "label", e.target.value)}
+                    placeholder={`Zone ${i + 1}`}
+                    className="flex-1 min-w-0 text-xs font-semibold bg-white border border-gray-200 rounded-lg px-2 py-1"
+                  />
+                ) : (
+                  <p className="flex-1 min-w-0 truncate text-xs font-semibold text-gray-800">
+                    {/* Same start / end markers the Traceback timeline (🚩) and the Live map's destination pin (🏁) use. */}
+                    {isPickupZone(zone) ? "🚩 " : isDropoffZone(zone) ? "🏁 " : ""}{zone.label || `Zone ${i + 1}`}
+                  </p>
+                )}
+                <button
+                  onClick={e => { e.stopPropagation(); setEditing(isEditing ? null : i); }}
+                  className={`shrink-0 text-[11px] font-semibold px-2.5 py-0.5 rounded-lg border transition-all ${
+                    isEditing
+                      ? "bg-teal-600 text-white border-teal-600"
+                      : "bg-white text-gray-500 border-gray-200 hover:border-teal-300 hover:text-teal-600"
+                  }`}
+                >
+                  {isEditing ? "Done" : "Edit"}
+                </button>
+              </div>
+              {isEditing ? (
+                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                  <input
+                    type="range" min={100} max={3000} step={50}
+                    value={zone.radius ?? 500}
+                    onChange={e => updateZone(i, "radius", Number(e.target.value))}
+                    className="flex-1 accent-teal-600"
+                  />
+                  <span className="text-[11px] font-mono text-gray-500 w-14 text-right shrink-0">{zone.radius ?? 500} m</span>
+                </div>
+              ) : (
+                <p className="text-[11px] text-gray-500">Radius: {zone.radius ?? 500} m</p>
+              )}
+              {typeof zone.lat === "number" && typeof zone.lng === "number" && (
+                <p className="text-[11px] text-gray-400 mt-1.5" onClick={e => e.stopPropagation()}>
+                  <PlaceLabel lat={zone.lat} lng={zone.lng} />
+                </p>
+              )}
+              {isEditing && !fixed && (
+                <button
+                  onClick={e => { e.stopPropagation(); removeZone(i); }}
+                  className="mt-2 text-[11px] font-semibold text-red-500 hover:text-red-600"
+                >
+                  Remove zone
+                </button>
+              )}
             </div>
-            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-              <input
-                type="range" min={100} max={3000} step={50}
-                value={zone.radius ?? 500}
-                onChange={e => updateZone(i, "radius", Number(e.target.value))}
-                className="flex-1 accent-teal-600"
-              />
-              <span className="text-[11px] font-mono text-gray-500 w-14 text-right shrink-0">{zone.radius ?? 500} m</span>
-            </div>
-            {typeof zone.lat === "number" && typeof zone.lng === "number" && (
-              <p className="text-[11px] text-gray-400 mt-1.5" onClick={e => e.stopPropagation()}>
-                <PlaceLabel lat={zone.lat} lng={zone.lng} />
-              </p>
-            )}
-          </div>
-        ))}
+          );
+        })}
 
         {!!targetID && (
           <button
