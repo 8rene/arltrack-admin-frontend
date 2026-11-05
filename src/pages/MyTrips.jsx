@@ -1073,7 +1073,10 @@ function ActiveTripsTab({ tab, setTab }) {
       method: "POST", body: JSON.stringify(body),
     });
     const json = await res.json();
-    if (!res.ok) throw new Error(json.message || "Couldn't charge the penalty.");
+    if (!res.ok) {
+      await fetchTrips({ silent: true });   // the trip may have just ended (completed/cancelled): bring this screen up to date
+      throw new Error(json.message || "Couldn't charge the penalty.");
+    }
     showToast("Penalty sent for review — the customer isn't notified until a supervisor confirms it.");
     await fetchTrips({ silent: true });
   };
