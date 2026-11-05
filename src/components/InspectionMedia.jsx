@@ -70,6 +70,19 @@ const shrinkToJpeg = async (file) => {
   );
 };
 
+/* Firebase's own messages ("storage/unknown ... check the error payload") tell staff nothing. Map the usual causes to what to do. */
+const explainUploadError = (err) => {
+  const code = String(err?.code || "");
+  if (code === "storage/unauthorized" || code === "storage/unauthenticated") return "Storage refused the upload (permissions). Sign out and back in; if it keeps happening, the Storage rules need to allow staff to write to vehicleDocs/.";
+  if (code === "storage/canceled") return "The upload was cancelled.";
+  if (code === "storage/quota-exceeded") return "The Firebase Storage quota is used up, so nothing more can be uploaded.";
+  if (code === "storage/retry-limit-exceeded") return "The connection kept dropping, so the upload gave up. Check the signal / Wi-Fi and try again, or record a shorter or lower-resolution video.";
+  if (code === "storage/unknown" || code === "storage/object-not-found" || code === "storage/bucket-not-found" || code === "storage/invalid-argument") {
+    return "Couldn't reach Firebase Storage. Turn off any ad blocker or privacy shield for this site and try again. If it still fails, ask your developer to check the storage bucket and its CORS settings.";
+  }
+  return err?.message || "Upload failed.";
+};
+
 /* Uploads a Blob/File to Storage with progress, resolves with its download URL + the storage ref. */
 const uploadWithProgress = (storage, path, blob, contentType, onProgress) =>
   new Promise((resolve, reject) => {
@@ -109,7 +122,7 @@ const removeMedia = async ({ apiUrl, segment, phase, bookingID, url }) => {
     { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
   );
   const json = await res.json().catch(() => ({}));
-  if (!res.ok || !json.success) throw new Error(json.message || "Could not remove it.");
+  if (!res.ok || !json.success) throw new Error(json.message || `Could not remove it (server said ${res.status}).`);
 };
 
 /* ── Video tile (thumbnail comes from the video's own first frame) ── */
@@ -186,7 +199,7 @@ export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, ite
       notify("Video uploaded.");
     } catch (err) {
       console.error("[InspectionMedia] video upload failed:", err);
-      notify(err.message || "Video upload failed.", "error");
+      notify(explainUploadError(err), "error");
     } finally {
       setProgress(null);
     }
@@ -285,7 +298,7 @@ export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID
         onAdded(data.item, data.recordID);
       } catch (err) {
         console.error("[InspectionMedia] extra photo failed:", err);
-        notify(err.message || "Photo upload failed.", "error");
+        notify(explainUploadError(err), "error");
       } finally {
         setUploadingCount((n) => Math.max(n - 1, 0));
       }

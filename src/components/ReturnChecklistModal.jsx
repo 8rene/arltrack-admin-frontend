@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
+const fmtSendDate = (d) => (d ? new Date(d).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" }) : "the next day");
 const REFUND_METHODS = ["Cash", "GCash", "Maya", "BankTransfer"];
 
 /**
@@ -95,6 +96,8 @@ export default function ReturnChecklistModal({
       const err = o.deposit?.error || o.credit?.error;
       const which = o.state === "partial" ? (o.deposit?.state === "failed" ? "the deposit" : "the discount credit") : (both ? "both returns" : result?.creditReturn > 0 && !(result?.depositReturn > 0) ? "the discount credit" : "the deposit");
       setNotice({ type: "warn", text: `Deposit settled, but PayMongo refused ${which}${err ? ` (${err})` : ""}. Retry it or hand it back in store from the Refunds page.${o.state === "partial" ? " The other return went through." : ""}` });
+    } else if (o?.state === "scheduled") {
+      setNotice({ type: "info", text: `Deposit settled. The customer paid today and PayMongo can't partially refund a same-day payment, so ${peso(result.net)} is scheduled and will be sent to the customer's ${channelName} automatically from ${fmtSendDate(o.sendAfter)}. Track it on the Refunds page.` });
     } else if (o?.state === "processing") {
       setNotice({ type: "info", text: `Deposit settled. PayMongo is returning ${peso(result.net)}${both ? ` (${peso(result.depositReturn)} deposit + ${peso(result.creditReturn)} discount, as two refunds)` : ""} to the customer's ${channelName}. This can take up to 24 hours; track it on the Refunds page under Under Process.` });
     }
@@ -153,7 +156,9 @@ export default function ReturnChecklistModal({
               <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs border ${data.depositReturn.state === "failed" ? "bg-red-50 border-red-200 text-red-800" : "bg-blue-50 border-blue-200 text-blue-800"}`}>
                 <span>{data.depositReturn.state === "failed"
                   ? "PayMongo could not return this deposit. Retry it or record an in-store hand-back on the Refunds page."
-                  : "The deposit is being returned through PayMongo. It can take up to 24 hours. Follow it on the Refunds page."}</span>
+                  : data.depositReturn.sendAfter
+                    ? `The deposit return is scheduled and will be sent through PayMongo from ${fmtSendDate(data.depositReturn.sendAfter)}. Follow it on the Refunds page.`
+                    : "The deposit is being returned through PayMongo. It can take up to 24 hours. Follow it on the Refunds page."}</span>
                 <button type="button" onClick={onOpenRefunds} className="shrink-0 font-semibold underline">Open Refunds</button>
               </div>
             )}
@@ -270,7 +275,12 @@ export default function ReturnChecklistModal({
                 {refundDue && !canOnline && onlineOpt?.reason && (
                   <p className="text-[11px] text-gray-400">Online refund isn't available: {onlineOpt.reason}</p>
                 )}
-                {goOnline && (
+                {goOnline && onlineOpt?.scheduled && (
+                  <p className="text-[11px] text-violet-700">
+                    The customer paid today, and PayMongo can't partially refund a same-day payment. This will be scheduled and sent automatically from {fmtSendDate(onlineOpt.sendAfter)} (just after midnight, Manila time). If you'd rather give it now, choose Hand back in store.
+                  </p>
+                )}
+                {goOnline && !onlineOpt?.scheduled && (
                   <p className="text-[11px] text-gray-500">
                     PayMongo sends it back to the customer's {channelName}, taken from your PayMongo payout balance. It can take up to 24 hours and will show on the Refunds page until it is confirmed.
                   </p>

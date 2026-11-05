@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
@@ -277,9 +277,13 @@ export default function VehicleDocs() {
   const [confirmingInspection, setConfirmingInspection] = useState(false);
   const [toast, setToast]         = useState(null);
 
+  // Long messages (upload errors explain what to do) need time to be read: ~70 ms per character, 3.5 s minimum, 15 s maximum.
+  // The previous timer is cleared so an older toast can't hide a newer one early.
+  const toastTimer = useRef(null);
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), Math.min(15000, Math.max(3500, String(msg || "").length * 70)));
   };
 
   /* ── Load cars + carPartTypes on mount (same as Inventory) ── */
@@ -1280,11 +1284,14 @@ export default function VehicleDocs() {
     <div className="p-4 bg-gray-50">
 
       {toast && (
-        <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
+        <div role={toast.type === "success" ? "status" : "alert"} className={`fixed top-5 right-5 z-50 max-w-[calc(100vw-2.5rem)] sm:max-w-md flex items-start gap-3 px-5 py-3 rounded-xl shadow-lg text-sm font-medium break-words ${
           toast.type === "success"
             ? "bg-green-50 text-green-700 border border-green-200"
             : "bg-red-50 text-red-700 border border-red-200"
-        }`}>{toast.msg}</div>
+        }`}>
+          <span className="flex-1 min-w-0">{toast.msg}</span>
+          <button type="button" onClick={() => { clearTimeout(toastTimer.current); setToast(null); }} aria-label="Dismiss" className="shrink-0 leading-none opacity-60 hover:opacity-100">✕</button>
+        </div>
       )}
 
       {/* Header */}
