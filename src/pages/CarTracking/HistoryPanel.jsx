@@ -26,23 +26,42 @@ function toDateObj(val) {
   } catch { return null; }
 }
 
+// 95 minutes -> "1h 35m", 40 hours -> "1d 16h".
+function fmtSpan(ms) {
+  const mins = Math.max(0, Math.floor(ms / 60000));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
+  const d = Math.floor(h / 24), rh = h % 24;
+  return rh ? `${d}d ${rh}h` : `${d}d`;
+}
+
+// Date and time as separate pieces, like the Bookings table ("Oct 26, 2026 | 12:39 PM").
+const fmtDate = (val) => { const d = toDateObj(val); return d ? d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—"; };
+const fmtTime = (val) => { const d = toDateObj(val); return d ? d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }) : "—"; };
+function DateTime({ value }) {
+  if (!toDateObj(value)) return <span className="text-gray-300">—</span>;
+  return (
+    <>
+      <span className="text-gray-700">{fmtDate(value)}</span>
+      <span className="mx-1.5 text-gray-300">|</span>
+      <span className="text-gray-500">{fmtTime(value)}</span>
+    </>
+  );
+}
+
 // { ms, text, open }. Finished trips: start -> end. A trip with no end (stolen / still going) counts up to now and is marked open.
 function tripDuration(item) {
   const a = toDateObj(item.startedAt);
   if (!a) return null;
   const b = toDateObj(item.endedAt);
-  const end = b || new Date();
+  // A stolen trip has no end time, so it stops at the moment it was flagged stolen (a fixed record, not a growing number).
+  const stolenAt = item.status === "stolen" ? toDateObj(item.stolenAt) : null;
+  const end = b || stolenAt || new Date();
   if (end < a) return null;
   const ms = end - a;
-  const mins = Math.floor(ms / 60000);
-  let text;
-  if (mins < 60) text = `${mins} min`;
-  else {
-    const h = Math.floor(mins / 60), m = mins % 60;
-    if (h < 24) text = m ? `${h}h ${m}m` : `${h}h`;
-    else { const d = Math.floor(h / 24), rh = h % 24; text = rh ? `${d}d ${rh}h` : `${d}d`; }
-  }
-  return { ms, text, open: !b };
+  const text = fmtSpan(ms);
+  return { ms, text, open: !b && !stolenAt };
 }
 
 // Same wording as the Bookings table: a finished trip reads "completed", a live one "ongoing".
@@ -96,6 +115,137 @@ function SortableTh({ label, sortKey, activeKey, dir, onSort }) {
   );
 }
 
+const PAGE_SIZE = 10;
+
+// Same as Bookings.jsx.
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);   // clamp if the list shrinks
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (count === 0) return null;
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  if (totalPages > 1) nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+  const rangeEnd = Math.min(start + pageSize, count);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">Showing {start + 1}–{rangeEnd} of {count}</p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Card + label-over-value cell, same look as the Bookings view window.
+function InfoSection({ title, aside, children, cols = 2 }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {aside}
+      </div>
+      <div className={`p-4 grid ${cols === 3 ? "grid-cols-3" : "grid-cols-2"} gap-x-6 gap-y-4`}>{children}</div>
+    </section>
+  );
+}
+function InfoField({ label, value, wide }) {
+  return (
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</div>
+    </div>
+  );
+}
+
+// "View" window: everything about the archive itself, kept out of the table so the rows stay light.
+function TripDetailsModal({ item, onClose, onFlush, onReview, flushing, busy, note }) {
+  const status = displayStatus(item.status);
+  const dur = tripDuration(item);
+  const stolen = item.status === "stolen";
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <h2 className="font-bold text-lg text-gray-800">Trip Details</h2>
+
+        <InfoSection title="Trip Information">
+          <InfoField label="Start" value={<DateTime value={item.startedAt} />} />
+          <InfoField
+            label="End"
+            value={item.endedAt ? <DateTime value={item.endedAt} />
+              : stolen ? null
+              : item.status === "ended" ? null : "Ongoing"}
+          />
+          <InfoField label="Duration" value={dur ? dur.text : null} />
+          <InfoField label="Status" value={<StatusBadge status={status} />} />
+        </InfoSection>
+
+        <InfoSection title="Archive Information">
+          <InfoField
+            label="Recorded Points"
+            value={typeof item.pointCount !== "number" ? null
+              : item.pointCount === 0 ? <span className="text-amber-600">No GPS points</span>
+              : item.pointCount.toLocaleString()}
+          />
+          <InfoField label="Last Archived" value={<DateTime value={item.lastArchivedAt} />} />
+          {item.droppedOffAt && <InfoField label="Dropped Off" value={<DateTime value={item.droppedOffAt} />} />}
+          {item.stolenAt && <InfoField label="Flagged Stolen" value={<DateTime value={item.stolenAt} />} />}
+        </InfoSection>
+
+        {note && (
+          <p className={`text-xs font-medium ${note.ok ? "text-teal-600" : "text-red-500"}`}>{note.msg}</p>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors">Close</button>
+          {/* Only a trip that is still active can receive new GPS points. Completed and stolen trips were saved for the
+              last time when they changed status, so a Flush there would only rewrite the same file. */}
+          {item.status === "active" && (
+            <button
+              onClick={onFlush}
+              disabled={flushing || busy}
+              title="Save this trip's latest GPS points to its archive now, instead of waiting for midnight"
+              className="px-4 py-2 rounded-lg text-xs font-semibold border text-teal-700 border-teal-300 hover:bg-teal-50 transition-colors disabled:opacity-50"
+            >
+              {flushing ? "Saving…" : "Flush now"}
+            </button>
+          )}
+          <button
+            onClick={onReview}
+            disabled={flushing || busy}
+            className="px-4 py-2 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-50"
+          >
+            {busy ? "…" : "Review"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Session info for a trip being reviewed. A FINISHED trip (ended / stolen) has a final file -- the last save is made
 // when it ends, and the nightly job retries it if that save failed -- so the file is the record and the trip list
 // only fills what an older file lacks. A trip still going has a file up to a day old, so there the list is fresher.
@@ -145,6 +295,8 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
     else { setSortKey(key); setSortDir("desc"); }
   }
 
+  const [detailId, setDetailId] = useState(null);   // trip whose "View" window is open
+
   const rows = useMemo(() => {
     const val = (h) => {
       switch (sortKey) {
@@ -161,6 +313,10 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
       return a < b ? -dir : a > b ? dir : 0;
     });
   }, [history, sortKey, sortDir]);
+
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(rows);
+  useEffect(() => { setPage(1); setDetailId(null); }, [selectedCar, setPage]);   // new car: back to page 1
+  const detailItem = detailId ? history.find(h => h.bookingSessionID === detailId) : null;
 
   // Deep-link from Bookings' "Trip History" button: select the car once —
   // guarded so it doesn't fight the user if they click a different car
@@ -372,13 +528,13 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                 <p className="text-xs text-gray-300 mt-1">This car has no archived trips yet.</p>
               </div>
             ) : (
+              <div className="mx-4 mb-4 rounded-xl border border-gray-100 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
                     <tr>
                       <SortableTh label="Start" sortKey="start" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                       <SortableTh label="End" sortKey="end" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                      <SortableTh label="Recorded Points" sortKey="points" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                       <SortableTh label="Duration" sortKey="duration" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                       <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                       <th className="pl-4 pr-8 py-3 text-right">Action</th>
@@ -388,13 +544,13 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                     {loading ? (
                       Array.from({ length: 3 }).map((_, i) => (
                         <tr key={i} className="border-t">
-                          {Array.from({ length: 6 }).map((__, j) => (
+                          {Array.from({ length: 5 }).map((__, j) => (
                             <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
                           ))}
                         </tr>
                       ))
                     ) : (
-                      rows.map(item => {
+                      pageItems.map(item => {
                         const dur    = tripDuration(item);
                         const stolen = item.status === "stolen";
                         const status = displayStatus(item.status);
@@ -403,66 +559,58 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                             key={item.bookingSessionID}
                             className={`border-t hover:bg-gray-50 transition-colors ${stolen ? "bg-red-50/60 border-l-4 border-l-red-500" : ""}`}
                           >
-                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{fmtDateTime(item.startedAt)}</td>
-                            <td className="px-4 py-3 whitespace-nowrap" title={item.droppedOffAt ? `Dropped off ${fmtDateTime(item.droppedOffAt)}` : undefined}>
-                              {item.endedAt ? (
-                                <span className="text-gray-700">{fmtDateTime(item.endedAt)}</span>
-                              ) : stolen ? (
-                                <>
-                                  <span className="text-gray-400 italic">Not recovered</span>
-                                  {item.stolenAt && <p className="text-[11px] font-semibold text-red-600 mt-0.5">Flagged {fmtDateTime(item.stolenAt)}</p>}
-                                </>
-                              ) : (
-                                <span className="text-gray-400">{item.status === "ended" ? "—" : "Ongoing"}</span>
-                              )}
-                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap"><DateTime value={item.startedAt} /></td>
                             <td className="px-4 py-3 whitespace-nowrap">
-                              {typeof item.pointCount !== "number" ? (
-                                <span className="text-gray-400">—</span>
-                              ) : item.pointCount === 0 ? (
-                                <span className="font-semibold text-amber-600">No GPS points</span>
-                              ) : (
-                                <span className="font-semibold text-gray-700">{item.pointCount.toLocaleString()}</span>
-                              )}
-                              <p className="text-[11px] text-gray-400 mt-0.5">Archived {fmtDateTime(item.lastArchivedAt)}</p>
+                              {item.endedAt ? <DateTime value={item.endedAt} />
+                                : stolen ? <span className="text-gray-400">—</span>
+                                : <span className="text-gray-400">{item.status === "ended" ? "—" : "Ongoing"}</span>}
                             </td>
                             <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                              {dur ? <>{dur.text}{dur.open && <span className="text-xs text-gray-400 ml-1">so far</span>}</> : "—"}
+                              {dur ? dur.text : "—"}
                             </td>
                             <td className="px-4 py-3"><StatusBadge status={status} /></td>
                             <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-2">
                                 <button
-                                  onClick={() => handleFlush(item)}
-                                  disabled={!!flushingId || reviewLoading}
-                                  title="Save this trip's latest GPS points to its archive now, instead of waiting for midnight"
-                                  className="px-3 py-1 rounded-lg text-xs font-semibold text-teal-700 border border-teal-300 hover:bg-teal-50 transition-colors disabled:opacity-50"
+                                  onClick={() => { setFlushNote(null); setDetailId(item.bookingSessionID); }}
+                                  title="View archive details"
+                                  className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
                                 >
-                                  {flushingId === item.bookingSessionID ? "Saving…" : "Flush"}
-                                </button>
-                                <button
-                                  onClick={() => handleReview(item)}
-                                  disabled={reviewLoading || !!flushingId}
-                                  className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-50"
-                                >
-                                  {reviewLoading ? "…" : "Review"}
+                                  View
                                 </button>
                               </div>
-                              {flushNote?.id === item.bookingSessionID && (
-                                <p className={`text-[11px] font-medium mt-1 ${flushNote.ok ? "text-teal-600" : "text-red-500"}`}>{flushNote.msg}</p>
-                              )}
                             </td>
                           </tr>
                         );
                       })
                     )}
+                    {/* Same as Bookings: pad a short page with empty rows so the table always keeps its 10-row height. */}
+                    {!loading && pageItems.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
+                      <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                        <td colSpan={5} className="h-[53px]">&nbsp;</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
+              </div>
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
               </div>
             )}
           </div>
         )}
       </div>
+
+      {detailItem && (
+        <TripDetailsModal
+          item={detailItem}
+          onClose={() => setDetailId(null)}
+          onFlush={() => handleFlush(detailItem)}
+          onReview={() => { setDetailId(null); handleReview(detailItem); }}
+          flushing={flushingId === detailItem.bookingSessionID}
+          busy={reviewLoading}
+          note={flushNote?.id === detailItem.bookingSessionID ? flushNote : null}
+        />
+      )}
     </div>
   );
 }

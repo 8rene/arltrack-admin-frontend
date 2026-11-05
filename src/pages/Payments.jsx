@@ -322,8 +322,7 @@ export default function Payments() {
 
   // Deep-link from other pages (e.g. Car Tracking's payment modal linking
   // here with ?bookingID=...) — pre-fill the search box so the relevant
-  // payment is right there in the filtered table, and jump straight into
-  // its detail panel if it's the only match.
+  // payment is right there in the filtered table (the detail modal is not auto-opened).
   useEffect(() => {
     // ?paymentID= (e.g. from Refund Requests) is the precise link; ?bookingID=
     // is the looser one and can match more than one payment.
@@ -333,10 +332,7 @@ export default function Payments() {
     if (!key || payments.length === 0) return;
     setSearchBy(paymentID ? "paymentID" : "bookingID");
     setSearch(key);
-    const matches = paymentID
-      ? payments.filter((p) => p.paymentID === paymentID || p.id === paymentID)
-      : payments.filter((p) => p.bookingID === bookingID);
-    if (matches.length === 1) openDetail(matches[0].id);
+    // Modals stay hidden by default: the link only pre-fills the search and no longer auto-opens the detail modal.
     // The link has been used, so take it out of the URL (same as Bookings.jsx does with ?open=). Without this the
     // effect runs again every time `payments` changes -- the 45-second refresh, a status change, recording a payment
     // -- and re-opened the details no matter how the user closed them.
@@ -836,7 +832,7 @@ export default function Payments() {
                       </Section>
 
                       {/* What the booking cost, what was paid, and what happened to the deposit / discount / refund. */}
-                      <InfoSection title="Fee Breakdown" cols={3}>
+                      <InfoSection title="Fee Breakdown" cols={3} defaultOpen={false}>
                         <InfoField label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
                         <InfoField label="Extra Fee" value={peso(selected.extraFee, fmtCurrency)} />
                         {selected.driversFee > 0 && <InfoField label="Driver's Fee" value={peso(selected.driversFee, fmtCurrency)} />}
@@ -965,7 +961,7 @@ export default function Payments() {
                       {/* LAST on the summary: where the security deposit stands, and where it is handed back. Penalties are
                           deducted from it first (Deposit Settled), the rest goes back to the customer (Deposit Returned). */}
                       {selected.securityDeposit > 0 && (
-                        <InfoSection title="Deposit Breakdown" cols={3}>
+                        <InfoSection title="Deposit Breakdown" cols={3} defaultOpen={false}>
                           <InfoField label="Security Deposit" value={peso(selected.securityDeposit, fmtCurrency)} />
                           {selected.depositStatus && <InfoField label="Deposit Status" value={selected.depositStatus} />}
                           <InfoField label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />
@@ -1652,7 +1648,7 @@ function GatewayBreakdown({ payment, fmt }) {
   const sale = round2(receivedTotal - feeTotal);
 
   return (
-    <InfoSection title="Gateway Breakdown" cols={3}>
+    <InfoSection title="Gateway Breakdown" cols={3} defaultOpen={false}>
       <InfoField label="Payment Gateway" color="text-green-600" value={peso(paymentReceived, fmt)}
         note={g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid on the booking"} />
       {pen
@@ -1708,7 +1704,7 @@ function GainBreakdown({ payment, summary, fmt }) {
   const n = (v) => Number(v) || 0;
   if (!summary) {
     return (
-      <InfoSection title="Booking Gain / Loss" flush>
+      <InfoSection title="Booking Gain / Loss" flush collapsible={false}>
         <p className="px-4 py-4 text-xs text-gray-400">Calculating from the money movements...</p>
       </InfoSection>
     );
@@ -1717,7 +1713,7 @@ function GainBreakdown({ payment, summary, fmt }) {
   const penaltyIn = round2(n(summary.penaltyPaid));
   if (paidIn <= 0 && penaltyIn <= 0) {                     // nothing was ever received: still shown, as 0
     return (
-      <InfoSection title="Booking Gain / Loss" flush>
+      <InfoSection title="Booking Gain / Loss" flush collapsible={false}>
         <p className="px-4 py-4 text-xs text-gray-500">Nothing was received on this booking, so there is no gain, no loss and no PayMongo fee. Total {peso(0, fmt)}.</p>
       </InfoSection>
     );
@@ -1767,7 +1763,7 @@ function GainBreakdown({ payment, summary, fmt }) {
   );
 
   return (
-    <InfoSection title="Booking Gain / Loss" flush>
+    <InfoSection title="Booking Gain / Loss" flush collapsible={false}>
       <table className="w-full text-sm">
         <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
           <tr>
@@ -1843,6 +1839,7 @@ function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null, onVie
     <InfoSection
       title="Penalty Breakdown"
       flush
+      defaultOpen={false}
       aside={onNotePenalty ? (
         <button type="button" onClick={onNotePenalty}
           className="text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg px-2.5 py-1 transition-colors">
