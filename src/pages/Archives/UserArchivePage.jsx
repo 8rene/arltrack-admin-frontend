@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import { ROLES } from "../config/pagePermissions";
+import { useAuth } from "../../context/AuthContext";
+import { ROLES } from "../../config/pagePermissions";
 
 const PAGE_SIZE = 10;
 

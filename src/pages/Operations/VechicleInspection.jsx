@@ -1,0 +1,2682 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import {
+  collection, getDocs, query, where, doc, getDoc,
+} from "firebase/firestore";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { initializeApp, getApps } from "firebase/app";
+import { db } from "../../fireabase";
+import { useAuth } from "../../context/AuthContext";
+import { InspectionVideos, InspectionExtraPhotos, InspectionMediaGallery, hasInspectionMedia } from "../../components/InspectionMedia";
+
+const API_URL = process.env.REACT_APP_API_URL;
+
+/* ── Firebase Storage ── */
+const firebaseConfig = {
+  apiKey: "AIzaSyDXSIR_zZh6LolqoW7tkERyXMglGCPGHdg",
+  authDomain: "arltrack-carrentalservices.firebaseapp.com",
+  projectId: "arltrack-carrentalservices",
+  storageBucket: "arltrack-carrentalservices.firebasestorage.app",
+  messagingSenderId: "803760784395",
+  appId: "1:803760784395:web:1f428b6bb2b51e2721b30e",
+};
+const fbApp   = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+const storage = getStorage(fbApp);
+
+/* ── Fixed exterior views ── */
+const EXTERIOR_SLOTS = [
+  { key: "frontViewUrl", label: "Front View", icon: "⬆️" },
+  { key: "sideViewUrl",  label: "Side View",  icon: "◀️" },
+  { key: "backViewUrl",  label: "Back View",  icon: "⬇️" },
+];
+
+/* ── Collection & ID field names per trip phase ── */
+const PHASE = {
+  before: {
+    collection: "vehicleDocumentationBeforeTrip",
+    idField:    "vehicleDocumentationBeforeTripID",
+  },
+  after: {
+    collection: "vehicleDocumentationAfterTrip",
+    idField:    "vehicleDocumentationAfterTripID",
+  },
+};
+
+/* ── Helpers ── */
+const partNameToFieldKey = (str = "") => {
+  const camel = str
+    .replace(/[^a-zA-Z0-9 ]/g, "")
+    .trim()
+    .split(/\s+/)
+    .map((w, i) =>
+      i === 0 ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+    )
+    .join("");
+  return camel ? `${camel}Url` : "";
+};
+
+const NEEDS_DRIVER_MSG = "This booking is With Chauffeur but has no driver assigned yet. Assign a driver in Driver Dispatch first, then record the inspection.";
+
+const fmtDate = (val) => {
+  if (!val) return "—";
+  const d = val?.toDate?.() || (val?._seconds ? new Date(val._seconds * 1000) : new Date(val));
+  if (isNaN(d)) return "—";
+  return d.toLocaleString("en-PH", {
+    month: "short", day: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
+};
+
+const fmtDateShort = (val) => {
+  if (!val) return "—";
+  const d = val?.toDate?.() || (val?._seconds ? new Date(val._seconds * 1000) : new Date(val));
+  if (isNaN(d)) return "—";
+  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+};
+
+// Bordered card + label-over-value cell — same as Bookings.jsx's InfoSection / InfoField.
+function InfoSection({ title, aside, children }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {aside}
+      </div>
+      <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>
+    </section>
+  );
+}
+function InfoField({ label, value }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</div>
+    </div>
+  );
+}
+
+const toSec = (val) => {
+  if (val?._seconds !== undefined) return val._seconds;
+  if (typeof val === "number") return val;
+  if (typeof val === "string" || val instanceof Date) {
+    const ms = new Date(val).getTime();
+    return isNaN(ms) ? NaN : ms / 1000;
+  }
+  if (typeof val?.toDate === "function") return val.toDate().getTime() / 1000;
+  return NaN;
+};
+
+/* Is there inspection evidence on this record: at least one video, or all 3 exterior photos? Same rule as the backend. */
+const docHasEvidence = (doc) =>
+  !!(doc?.frontViewUrl && doc?.sideViewUrl && doc?.backViewUrl) || (doc?.videos?.length || 0) > 0;
+
+/* Fold every photo doc of a booking into one record (oldest → newest, newest non-empty value wins).
+ * `videos` / `extraPhotos` are lists, so they are combined by item id instead of replaced. */
+const mergePhotoDocs = (snap) => {
+  if (snap.empty) return null;
+  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  docs.sort((a, b) => toSec(a.updatedAt || a.createdAt) - toSec(b.updatedAt || b.createdAt));
+  const merged = {};
+  docs.forEach(d => Object.entries(d).forEach(([k, v]) => {
+    if (Array.isArray(v)) {
+      if (!v.length) return;
+      const keyOf = (i) => i?.url || i?.id;   // entries are identified by their url (older ones may also carry an id)
+      const seen = new Set((merged[k] || []).map(keyOf));
+      merged[k] = [...(merged[k] || []), ...v.filter(i => !seen.has(keyOf(i)))];
+      return;
+    }
+    if (v !== "" && v !== null && v !== undefined) merged[k] = v;
+  }));
+  merged.id = docs[docs.length - 1].id;
+  return merged;
+};
+
+// Full part-condition palette — Admin/Owner/Supervisor see all of these
+// via PartEditDropdown; Drivers only ever see/set Good or Damaged via
+// StatusToggle, but existing Worn/Missing/Stolen records still need to
+// render correctly for everyone, hence the full map living here.
+const PART_STATUS_STYLE = {
+  New:     "bg-blue-50 border border-blue-200",
+  Good:    "bg-green-50 border border-green-200",
+  Damaged: "bg-red-50 border border-red-200",
+  Worn:    "bg-yellow-100 text-yellow-700",
+  Missing: "bg-gray-200 text-gray-500",
+  Stolen:  "bg-purple-50 border border-purple-200",
+};
+
+// Staff (drivers and admins alike) can only ever set a part to one of
+// these two going forward — New/Worn/Missing/Stolen are legacy values.
+// Existing records with those old statuses still render correctly via
+// PART_STATUS_STYLE above; this list only controls what's selectable.
+const EDITABLE_STATUSES = ["Good", "Damaged"];
+
+const STATUS_STYLE = {
+  Active:      "bg-green-50 border border-green-200",
+  Inactive:    "bg-gray-100 text-gray-500",
+  Maintenance: "bg-yellow-100 text-yellow-700",
+};
+
+const BOOKING_STATUS_STYLE = {
+  upcoming:             "bg-yellow-50 border border-yellow-200",
+  ongoing:              "bg-green-50 border border-green-200",
+  completed:            "bg-blue-50 border border-blue-200",
+  cancelled:            "bg-red-100 text-red-600",
+  cancellation_request: "bg-orange-100 text-orange-700",
+  stolen:               "bg-red-900 text-white",
+};
+
+/* ═══════════════════════════════════════════════
+   Main Component
+═══════════════════════════════════════════════ */
+export default function VehicleDocs() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { user, effectiveRole } = useAuth();
+  const isDriver         = user?.role === "Driver";
+  // Direct edit of past-trip history — Admin only. effectiveRole (not raw
+  // user.role) so an Admin using "preview as X" correctly sees the same
+  // read-only view that role would — same pattern as Fleet.jsx/archive
+  // pages. Deliberately not a dual-value "correction" UI.
+  const canEditHistory   = effectiveRole === "Admin";
+  const deepLinkCarID    = searchParams.get("carID");
+  const deepLinkBookingID = searchParams.get("bookingID");
+  const pickupFlow       = searchParams.get("action") === "pickup";
+  const returnFlow       = searchParams.get("action") === "return";
+
+  // Whether we're still in the pickup "focus" state — separate from
+  // pickupFlow (which reflects the URL) because the driver can back out
+  // of the focus/lock UI (Cancel, or switching to After Trip) without us
+  // needing to touch the URL/navigate away. Resets whenever a fresh
+  // pickup deep link comes in (new carID/action=pickup on this same
+  // mounted page, e.g. navigating from one trip's "Start Pickup" to
+  // another without a full page reload).
+  const [pickupCancelled, setPickupCancelled] = useState(false);
+  useEffect(() => { setPickupCancelled(false); }, [pickupFlow, deepLinkCarID]);
+  const inPickupMode = pickupFlow && !pickupCancelled;
+  const cancelPickupFocus = () => setPickupCancelled(true);
+
+  // Same "focus" pattern as pickup, mirrored for Return — landing here
+  // from Car Tracking/My Trips' Return button locks the page onto this
+  // car's After Trip photos instead of letting Return silently skip them.
+  const [returnCancelled, setReturnCancelled] = useState(false);
+  useEffect(() => { setReturnCancelled(false); }, [returnFlow, deepLinkCarID]);
+  const inReturnMode = returnFlow && !returnCancelled;
+  const cancelReturnFocus = () => setReturnCancelled(true);
+
+  const [cars, setCars]               = useState([]);
+  const [carsLoading, setCarsLoading] = useState(true);
+  const [selectedCar, setSelectedCar] = useState(null);
+  const [carParts, setCarParts]       = useState([]);
+  const [partTypes, setPartTypes]     = useState({});
+  const [partsLoading, setPartsLoading] = useState(false);
+
+  // Same booking logic as Inventory
+  const [activeBooking, setActiveBooking]   = useState(null);
+  const [bookingUser, setBookingUser]       = useState(null);
+  const [bookingLoading, setBookingLoading] = useState(false);
+
+  // Every upcoming/ongoing booking for the selected car (not just the
+  // nearest one) — lets staff browse and inspect each one via Next/
+  // Previous instead of only ever seeing whichever booking sorted first.
+  // activeBooking is always upcomingBookings[activeBookingIndex] once a
+  // car with open bookings is selected; sorted soonest-first, same order
+  // selectCar always used for picking the default "target" booking.
+  const [upcomingBookings, setUpcomingBookings]     = useState([]);
+  const [activeBookingIndex, setActiveBookingIndex] = useState(0);
+  // A "With Chauffeur" booking can't have its inspection saved until a driver is assigned (the backend enforces it
+  // too — see assertDriverAssignedForInspection in vehicleDocumentation.service.js). Counts an "assigned" OR "completed" assignment, same as the backend.
+  // If the assignments can't be read from here, this stays false and the backend is the one that refuses.
+  const [driverMissing, setDriverMissing] = useState(false);
+  const [bookingDriver, setBookingDriver] = useState(null); // { fullName } of the assigned driver, shown on the Booking card
+  useEffect(() => {
+    setDriverMissing(false);
+    setBookingDriver(null);
+    const key = activeBooking?.bookingID || activeBooking?.id;
+    const st  = activeBooking?.status?.toLowerCase();
+    if (!key || st === "cancelled" || st === "stolen") return undefined;
+    if (!(activeBooking?.modeOfDriving || "").toLowerCase().includes("chauffeur")) return undefined;
+    let alive = true;
+    getDocs(query(collection(db, "driverAssignments"), where("bookingID", "==", key)))
+      .then(async (snap) => {
+        if (!alive) return;
+        const rows = snap.docs.map((d) => d.data());
+        // The current driver is the "assigned" row; a "completed" row still counts (the trip is done).
+        const row = rows.find((r) => r.status === "assigned") || rows.find((r) => r.status === "completed");
+        setDriverMissing(!row);
+        if (!row?.driverID) return;
+        try {
+          const [detailDoc, userDoc] = await Promise.all([
+            getDoc(doc(db, "userDetails", row.driverID)),
+            getDoc(doc(db, "user", row.driverID)),
+          ]);
+          const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
+          const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+          const { email = "" } = userDoc.exists() ? userDoc.data() : {};
+          if (alive) setBookingDriver({ fullName: fullName || email || "—" });
+        } catch { /* name is display-only; the card just shows "—" */ }
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [activeBooking]);
+  // True only while goToUpcomingIndex is fetching the next booking's data —
+  // deliberately separate from bookingLoading (which still gates the full
+  // panel skeleton on the *first* load of a car). Scoped this narrowly so
+  // stepping Next/Previous only refreshes the booking info card itself —
+  // Before/After Trip, Past Trips etc. stay mounted and don't re-skeleton.
+  const [switchingBooking, setSwitchingBooking]     = useState(false);
+
+  // Active tab: "before" | "after"  — same as Inventory's activeTab
+  const [tripType, setTripType] = useState("before");
+  // Top-level tab for the selected car: "upcoming" (inspect the open booking)
+  // or "history" (past trips table). The Upcoming content stays mounted
+  // (CSS-hidden) while History is open, so staged uploads/status edits survive
+  // a tab switch.
+  const [pageTab, setPageTab] = useState("upcoming");
+
+  // Existing docs per phase (same as Inventory's beforeRecord / afterRecord)
+  const [beforeDoc, setBeforeDoc] = useState(null);
+  const [afterDoc, setAfterDoc]   = useState(null);
+
+  // Part condition status (Good/Damaged) — same inventoryBeforeTrip/AfterTrip
+  // collections Inventory.jsx (admin) reads and writes. Staged locally like
+  // photo uploads are, and only committed to Firestore on Save/Save All —
+  // never written immediately on toggle.
+  const [beforeInv, setBeforeInv]                 = useState(null); // existing record for this booking, or null
+  const [afterInv, setAfterInv]                   = useState(null);
+  const [beforeStatusEdits, setBeforeStatusEdits] = useState({});   // { carPartID: "Good" | "Damaged" }
+  const [afterStatusEdits, setAfterStatusEdits]   = useState({});
+
+  // Past trips — moved over from the old Inventory page. Lazy-loaded per
+  // row on expand, same pattern as before.
+  const [pastBookings, setPastBookings]         = useState([]);
+  // Customer names for the COLLAPSED row header, keyed by bookingID.
+  // Previously the collapsed row only had the raw booking ID to show
+  // (customer name was fetched lazily per-row on expand, in
+  // toggleHistoryRow) — batch-fetched once up front instead so the list
+  // reads as names, not gibberish IDs.
+  const [pastBookingNames, setPastBookingNames] = useState({});
+  const [expandedHistoryID, setExpandedHistoryID] = useState(null);
+  const [historyRecords, setHistoryRecords]     = useState({});
+  // Set when a deep link points at an already-closed booking — consumed
+  // (and cleared) by the effect below once that row is found, expanded,
+  // and scrolled into view.
+  const [historyFocusID, setHistoryFocusID]     = useState(null);
+  const [viewingPhoto, setViewingPhoto]         = useState(null);
+  const [, setDocsLoading] = useState(false);
+
+  // Pending file uploads { fieldKey: { file, preview } }
+  const [uploads, setUploads]     = useState({});
+  const [uploading, setUploading] = useState({});
+  const [saving, setSaving]       = useState(false);
+  const [confirmingInspection, setConfirmingInspection] = useState(false);
+  const [toast, setToast]         = useState(null);
+
+  // Long messages (upload errors explain what to do) need time to be read: ~70 ms per character, 3.5 s minimum, 15 s maximum.
+  // The previous timer is cleared so an older toast can't hide a newer one early.
+  const toastTimer = useRef(null);
+  const showToast = (msg, type = "success") => {
+    setToast({ msg, type });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), Math.min(15000, Math.max(3500, String(msg || "").length * 70)));
+  };
+
+  /* ── Load cars + carPartTypes on mount (same as Inventory) ── */
+  useEffect(() => {
+    setCarsLoading(true);
+    Promise.all([
+      getDocs(collection(db, "cars")),
+      getDocs(collection(db, "brand")),
+      getDocs(collection(db, "model")),
+      getDocs(collection(db, "carImages")),
+    ])
+      .then(([carsSnap, brandsSnap, modelsSnap, imgsSnap]) => {
+        const bMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data()]));
+        const mMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, d.data()]));
+        const iMap = {};
+        imgsSnap.docs.forEach(d => {
+          if (d.data().carID) iMap[d.data().carID] = d.data().imageURL;
+        });
+        setCars(
+          carsSnap.docs.map(d => {
+            const c     = { id: d.id, ...d.data() };
+            const model = mMap[c.modelID] || {};
+            const brand = bMap[model.brandID] || {};
+            return {
+              ...c,
+              label:     `${brand.brandName || ""} ${model.modelName || ""}`.trim() || d.id,
+              brandName: brand.brandName || "—",
+              modelName: model.modelName || "—",
+              imageURL:  iMap[d.id] || null,
+            };
+          })
+        );
+      })
+      .catch(console.error)
+      .finally(() => setCarsLoading(false));
+
+    getDocs(collection(db, "carPartTypes")).then(snap => {
+      const map = {};
+      snap.docs.forEach(d => { map[d.id] = d.data().carPartName || d.id; });
+      setPartTypes(map);
+    });
+  }, []);
+
+  // Admin-only: replace (or add) a single photo on a past trip's
+  // documentation record. Upload goes straight to Storage (same as the
+  // driver flow), then the backend just needs to know the new URL to
+  // record it and log the change — see adminReplaceHistoryPhoto.
+  const handleReplaceHistoryPhoto = useCallback(async (bID, carID, tripPhase, fieldKey, file) => {
+    const jpegBlob = await normalizeToJpeg(file);
+    const storagePath = `vehicleDocs/${carID}/${bID}/${tripPhase}/${fieldKey}_admin_${Date.now()}.jpg`;
+    await uploadBytes(ref(storage, storagePath), jpegBlob, { contentType: "image/jpeg" });
+    const newUrl = await getDownloadURL(ref(storage, storagePath));
+
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_URL}/api/vehicle-docs/history/${tripPhase}/${bID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ carID, fieldKey, newUrl }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.message || "Failed to replace photo.");
+
+    setHistoryRecords(prev => {
+      const current = prev[bID] || {};
+      const key = tripPhase === "before" ? "beforePhoto" : "afterPhoto";
+      const photoDoc = current[key] || { id: data.data.recordID, bookingID: bID, carID };
+      return { ...prev, [bID]: { ...current, [key]: { ...photoDoc, [fieldKey]: newUrl } } };
+    });
+  }, []);
+
+  /* ── Load existing photo docs for a booking (equivalent to Inventory's loadInventoryRecords) ── */
+  const loadPhotoDocs = useCallback(async (bookingID) => {
+    if (!bookingID) return;
+    setDocsLoading(true);
+    try {
+      const [beforeSnap, afterSnap] = await Promise.all([
+        getDocs(query(collection(db, PHASE.before.collection), where("bookingID", "==", bookingID))),
+        getDocs(query(collection(db, PHASE.after.collection),  where("bookingID", "==", bookingID))),
+      ]);
+      // Merge every doc for the booking (see mergePhotoDocs) — older saves split
+      // the 3 photos across separate docs, and the backend completeness check
+      // merges them the same way.
+      setBeforeDoc(mergePhotoDocs(beforeSnap));
+      setAfterDoc(mergePhotoDocs(afterSnap));
+    } catch (e) {
+      console.error("photo docs fetch error:", e);
+    } finally {
+      setDocsLoading(false);
+    }
+  }, []);
+
+  /* ── Load existing part-condition status for this booking ──
+   * Same inventoryBeforeTrip/inventoryAfterTrip collections and "pick
+   * most recent doc" pattern Inventory.jsx uses, so both sides always
+   * agree on which record is current. */
+  const loadInventoryStatus = useCallback(async (bookingID) => {
+    if (!bookingID) return;
+    try {
+      const [beforeSnap, afterSnap] = await Promise.all([
+        getDocs(query(collection(db, "inventoryBeforeTrip"), where("bookingID", "==", bookingID))),
+        getDocs(query(collection(db, "inventoryAfterTrip"),  where("bookingID", "==", bookingID))),
+      ]);
+      const pickLatest = (snap) => {
+        if (snap.empty) return null;
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        docs.sort((a, b) => toSec(b.recordedAt) - toSec(a.recordedAt));
+        return docs[0];
+      };
+      setBeforeInv(pickLatest(beforeSnap));
+      setAfterInv(pickLatest(afterSnap));
+    } catch (e) {
+      console.error("inventory status fetch error:", e);
+    }
+  }, []);
+
+  /* ── Toggle + lazy-load a past trip's before/after records + photos ── */
+  const toggleHistoryRow = useCallback(async (booking) => {
+    const bID = booking.bookingID || booking.id;
+
+    if (expandedHistoryID === bID) {
+      setExpandedHistoryID(null);
+      return;
+    }
+    setExpandedHistoryID(bID);
+
+    // Already fetched — don't re-query.
+    if (historyRecords[bID] && !historyRecords[bID].loading) return;
+
+    setHistoryRecords(prev => ({ ...prev, [bID]: { loading: true, before: null, after: null, beforePhoto: null, afterPhoto: null, userFullName: null } }));
+
+    try {
+      const [beforeSnap, afterSnap, beforePhotoSnap, afterPhotoSnap, detailDoc, userDoc] = await Promise.all([
+        getDocs(query(collection(db, "inventoryBeforeTrip"), where("bookingID", "==", bID))),
+        getDocs(query(collection(db, "inventoryAfterTrip"),  where("bookingID", "==", bID))),
+        getDocs(query(collection(db, "vehicleDocumentationBeforeTrip"), where("bookingID", "==", bID))),
+        getDocs(query(collection(db, "vehicleDocumentationAfterTrip"),  where("bookingID", "==", bID))),
+        booking.userID ? getDoc(doc(db, "userDetails", booking.userID)) : Promise.resolve(null),
+        booking.userID ? getDoc(doc(db, "user", booking.userID)) : Promise.resolve(null),
+      ]);
+
+      const pickLatest = (snap, sortField = "recordedAt") => {
+        if (snap.empty) return null;
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        docs.sort((a, b) => toSec(b[sortField]) - toSec(a[sortField]));
+        return docs[0];
+      };
+
+      let userFullName = "—";
+      if (detailDoc?.exists()) {
+        const { firstName = "", lastName = "" } = detailDoc.data();
+        userFullName = [firstName, lastName].filter(Boolean).join(" ").trim() || userFullName;
+      }
+      if (userFullName === "—" && userDoc?.exists()) {
+        const { username = "", email = "" } = userDoc.data();
+        userFullName = username || email || "—";
+      }
+
+      setHistoryRecords(prev => ({
+        ...prev,
+        [bID]: {
+          loading: false,
+          before: pickLatest(beforeSnap),
+          after:  pickLatest(afterSnap),
+          beforePhoto: mergePhotoDocs(beforePhotoSnap),
+          afterPhoto:  mergePhotoDocs(afterPhotoSnap),
+          userFullName,
+        },
+      }));
+    } catch (e) {
+      console.error("[VD] Failed to load history record:", e);
+      setHistoryRecords(prev => ({ ...prev, [bID]: { loading: false, before: null, after: null, beforePhoto: null, afterPhoto: null, userFullName: "—" } }));
+    }
+  }, [expandedHistoryID, historyRecords]);
+
+  // Admin-only: directly edit a part's status on an already-recorded past
+  // trip. Backend logs an audit entry with the previous value (see
+  // adminUpdateHistoryPartStatus) — this just fires the call and updates
+  // the row in place on success. Also handles the "no record yet" case:
+  // backend upserts by bookingID, so this creates the record on first edit.
+  const handleEditHistoryPart = useCallback(async (bID, carID, tripPhase, carPartID, newStatus) => {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_URL}/api/inventory/history/${tripPhase}/${bID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ carID, carPartID, newStatus }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.message || "Failed to update part status.");
+
+    setHistoryRecords(prev => {
+      const current = prev[bID] || {};
+      const key = tripPhase === "before" ? "before" : "after";
+      const record = current[key] || { id: data.data.recordID, bookingID: bID, carID, damageParts: [] };
+      const damageParts = Array.isArray(record.damageParts) ? [...record.damageParts] : [];
+      const idx = damageParts.findIndex(p => p.carPartID === carPartID);
+      if (newStatus === "Good" || newStatus === "New") {
+        if (idx >= 0) damageParts.splice(idx, 1);
+      } else if (idx >= 0) {
+        damageParts[idx] = { ...damageParts[idx], status: newStatus };
+      } else {
+        damageParts.push({ carPartID, status: newStatus });
+      }
+      return {
+        ...prev,
+        [bID]: { ...current, [key]: { ...record, damageParts, inventoryOverallStatus: data.data.inventoryOverallStatus } },
+      };
+    });
+
+  }, []);
+
+  // ── Deep-linked into a closed booking → switch to the History tab and open
+  // that trip's record in the modal (instead of showing it in the Upcoming
+  // panel, which is built for pickup/return). Waits for pastBookings to
+  // actually contain the row (it loads async right after this flag is set in
+  // selectCar), opens it once, then clears the flag so closing the modal
+  // later doesn't get forced back open.
+  useEffect(() => {
+    if (!historyFocusID) return;
+    const match = pastBookings.find(b => (b.bookingID || b.id) === historyFocusID);
+    if (!match) return;
+    setPageTab("history");
+    toggleHistoryRow(match);
+    setHistoryFocusID(null);
+  }, [historyFocusID, pastBookings, toggleHistoryRow]);
+
+  /* ── Open a car — mirrors Inventory's openCar exactly ── */
+  const selectCar = useCallback(async (car, forcedBookingID) => {
+    setSelectedCar(car);
+    setCarParts([]);
+    setActiveBooking(null);
+    setBookingUser(null);
+    setBeforeDoc(null);
+    setAfterDoc(null);
+    setBeforeInv(null);
+    setAfterInv(null);
+    setBeforeStatusEdits({});
+    setAfterStatusEdits({});
+    setUploads({});
+    setTripType("before");
+    setPastBookings([]);
+    setPastBookingNames({});
+    setExpandedHistoryID(null);
+    setHistoryRecords({});
+    setHistoryFocusID(null);
+    setUpcomingBookings([]);
+    setActiveBookingIndex(0);
+    setPageTab("upcoming");
+
+    // Load parts
+    setPartsLoading(true);
+    try {
+      const snap = await getDocs(
+        query(collection(db, "carParts"), where("carID", "==", car.carID || car.id))
+      );
+      setCarParts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) { console.error(e); }
+    finally { setPartsLoading(false); }
+
+    setBookingLoading(true);
+    try {
+      let target = null;
+      let forcedBooking = null;
+
+      if (forcedBookingID) {
+        const snap = await getDoc(doc(db, "bookings", forcedBookingID));
+        if (snap.exists()) forcedBooking = { id: snap.id, ...snap.data() };
+      }
+
+      // A forced booking that's still open wins outright as the target —
+      // e.g. the "Start Pickup" deep link, where the "nearest booking"
+      // heuristic below can pick the wrong doc (a stale/duplicate
+      // "completed" booking for the same car with an earlier start date).
+      if (forcedBooking && ["upcoming", "ongoing"].includes(forcedBooking.status?.toLowerCase())) {
+        target = forcedBooking;
+      }
+
+      // Always load the full bookings list — even with a forced booking —
+      // so Past Trips is populated. A forced booking that's already
+      // completed/cancelled/stolen (e.g. "View full record →" from the
+      // Booking Details modal) belongs in that history list, not force-fit
+      // into the panel above, which is built for pickup/return, not for
+      // browsing a closed trip.
+      const snap = await getDocs(
+        query(collection(db, "bookings"), where("carID", "==", car.carID || car.id))
+      );
+      // Who drives a booking lives in driverAssignments now, not on the booking.
+      // A driver's own bookings = the ones they hold or completed (booking.driverID is no longer read).
+      let myKeys = null;
+      if (isDriver) {
+        const aSnap = await getDocs(
+          query(collection(db, "driverAssignments"), where("driverID", "==", user?.uid))
+        );
+        myKeys = new Set(
+          aSnap.docs
+            .map(d => d.data())
+            .filter(a => a.status === "assigned" || a.status === "completed")
+            .map(a => a.bookingID)
+        );
+      }
+      const all = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        // A driver only ever gets their own bookings for this car — this
+        // is what makes it safe to show them the Past Trips section
+        // below at all (see the toggled condition on that section).
+        // Without this, a driver deep-linked here would see every other
+        // driver's/customer's trip history for the same car.
+        .filter(b => !isDriver || myKeys.has(b.bookingID || b.id));
+
+      // Every upcoming/ongoing booking for this car (not just whichever one
+      // sorts first) — feeds both the default "target" pick below and the
+      // Next/Previous browsing UI. Trust status, not scheduled dates, to
+      // decide what's "active": a late pickup or delayed return whose
+      // original startDateTime/endDateTime has already passed is still
+      // very much active until it's actually marked completed/cancelled.
+      // Sort by startDateTime only to order multiple open bookings, never
+      // to exclude one.
+      const candidates = all
+        .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
+        .sort((a, b) => toSec(a.startDateTime) - toSec(b.startDateTime));
+
+      if (!target) {
+        target = candidates[0] || null;
+      }
+      setUpcomingBookings(candidates);
+
+      // Past trips for this car — every booking that's actually run its
+      // course, excluding whichever one we just picked as active.
+      const targetID = target ? (target.bookingID || target.id) : null;
+      // Where `target` landed within `candidates` — drives the "X of Y"
+      // indicator and which Next/Previous step it starts from. A target
+      // that isn't itself upcoming/ongoing (a completed booking opened via
+      // "View full record →") has no position in this list; default to 0
+      // rather than -1 so the arrows still land somewhere sensible.
+      const targetIdx = targetID ? candidates.findIndex(b => (b.bookingID || b.id) === targetID) : -1;
+      setActiveBookingIndex(targetIdx >= 0 ? targetIdx : 0);
+      const past = all
+        .filter(b => {
+          const status = b.status?.toLowerCase();
+          const bID = b.bookingID || b.id;
+          if (bID === targetID) return false;
+          return ["completed", "cancelled", "stolen"].includes(status);
+        })
+        .sort((a, b) => toSec(b.startDateTime) - toSec(a.startDateTime));
+      setPastBookings(past);
+
+      // Batch-resolve one name per unique customer up front (instead of
+      // per-row on expand) so the collapsed list can show "Customer" —
+      // not the booking ID — without waiting for a click.
+      const uniqueUserIDs = [...new Set(past.map(b => b.userID).filter(Boolean))];
+      if (uniqueUserIDs.length) {
+        Promise.all(
+          uniqueUserIDs.map(async (uid) => {
+            try {
+              const [detailDoc, userDoc] = await Promise.all([
+                getDoc(doc(db, "userDetails", uid)),
+                getDoc(doc(db, "user", uid)),
+              ]);
+              const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
+              let name = [firstName, lastName].filter(Boolean).join(" ").trim();
+              if (!name && userDoc.exists()) {
+                const { username = "", email = "" } = userDoc.data();
+                name = username || email || "";
+              }
+              return [uid, name || null];
+            } catch {
+              return [uid, null];
+            }
+          })
+        ).then(entries => {
+          const byUser = Object.fromEntries(entries.filter(([, n]) => n));
+          const byBooking = {};
+          past.forEach(b => {
+            const bID = b.bookingID || b.id;
+            if (byUser[b.userID]) byBooking[bID] = byUser[b.userID];
+          });
+          setPastBookingNames(byBooking);
+        });
+      }
+
+      // Deep-linked into a closed booking → flag it so the Past Trips
+      // effect below auto-expands that exact row and scrolls it into view
+      // once it's rendered, instead of silently landing wherever "nearest
+      // active booking" happens to be.
+      if (forcedBooking && forcedBookingID !== targetID &&
+          ["completed", "cancelled", "stolen"].includes(forcedBooking.status?.toLowerCase())) {
+        setHistoryFocusID(forcedBookingID);
+      }
+
+      setActiveBooking(target);
+
+      if (target) {
+        // Resolve user info (same as Inventory)
+        const userID = target.userID;
+        if (userID) {
+          try {
+            const [detailDoc, userDoc] = await Promise.all([
+              getDoc(doc(db, "userDetails", userID)),
+              getDoc(doc(db, "user", userID)),
+            ]);
+            const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
+            const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+            const { email = "", phone = "" } = userDoc.exists() ? userDoc.data() : {};
+            setBookingUser({ fullName: fullName || email || "—", email, phone });
+          } catch (e) {
+            setBookingUser(null);
+          }
+        }
+
+        // Load existing photo docs + part-condition status for this booking
+        const bID = target.bookingID || target.id;
+        await Promise.all([loadPhotoDocs(bID), loadInventoryStatus(bID)]);
+      }
+    } catch (e) {
+      console.error("booking fetch error:", e);
+    } finally {
+      setBookingLoading(false);
+    }
+    // Intentionally not re-created when isDriver/user change — this only
+    // runs on car/booking switches, same as before these sort changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadPhotoDocs, loadInventoryStatus]);
+
+  // ── Deep-link from Car Tracking's Pickup button (?carID=&action=pickup) ──
+  // Auto-select the matching car once the cars list has loaded, so staff
+  // land straight on the right vehicle's before-trip photos instead of
+  // having to find it again in the grid.
+  //
+  // `deepLinkConsumed` makes this a ONE-SHOT per incoming link. It used to
+  // guard on `!selectedCar` alone, which meant clicking the ✕ to close the
+  // car (setSelectedCar(null)) made this effect re-fire immediately — the
+  // URL still had the same ?carID=&bookingID=, so it just re-selected the
+  // same car and snapped the person right back. There was no way to
+  // actually leave a deep-linked record once you'd landed on it.
+  const [deepLinkConsumed, setDeepLinkConsumed] = useState(false);
+  useEffect(() => { setDeepLinkConsumed(false); }, [deepLinkCarID, deepLinkBookingID]);
+  // There is no longer a way to close/deselect a car, so a car is ALWAYS
+  // open: the deep-linked one when the URL names it, otherwise the first
+  // car in the list.
+  useEffect(() => {
+    if (carsLoading || !cars.length) return;
+    if (deepLinkCarID && !deepLinkConsumed) {
+      const match = cars.find(c => (c.carID || c.id) === deepLinkCarID);
+      if (match) {
+        selectCar(match, deepLinkBookingID);
+        setDeepLinkConsumed(true);
+        return;
+      }
+    }
+    if (!selectedCar) selectCar(cars[0]);
+  }, [deepLinkCarID, deepLinkBookingID, carsLoading, cars, selectedCar, selectCar, deepLinkConsumed]);
+
+
+  // ── Deep-link from Return (?action=return) — land on After Trip instead
+  // of selectCar's default "before" tab. Runs as its own effect (rather
+  // than folding into selectCar) because selectCar resets tripType to
+  // "before" synchronously on every call, including the one above. ──
+  useEffect(() => {
+    if (!returnFlow || !selectedCar || !deepLinkCarID) return;
+    if ((selectedCar.carID || selectedCar.id) !== deepLinkCarID) return;
+    setTripType("after");
+  }, [returnFlow, selectedCar, deepLinkCarID]);
+
+  /* ── File pick & upload ──
+   * Photos are handed to us straight from the device's file picker /
+   * camera. Phone cameras (iPhones especially) often produce HEIC/HEIF
+   * files, or a File object whose reported `.type` is empty/wrong. If we
+   * upload that as-is, Storage saves it with a Content-Type the browser
+   * can't decode in an <img> tag, and it renders as a solid black box
+   * instead of erroring — which is exactly what was happening here.
+   *
+   * Fix: always normalize to a real JPEG client-side (via canvas) before
+   * it ever reaches Storage, so what's saved is guaranteed renderable.
+   */
+  const normalizeToJpeg = async (file) => {
+    // Already a normal, browser-decodable image — re-encode is unnecessary,
+    // but we still funnel it through canvas so the stored file's
+    // Content-Type is always explicit and correct.
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch (e) {
+      // Browser couldn't decode it natively (classic HEIC/HEIF case on
+      // Chrome/Firefox/Edge — only Safari can decode HEIC in-browser).
+      throw new Error(
+        "This photo format (likely HEIC from an iPhone) can't be processed by this browser. " +
+        "On iPhone: Settings → Camera → Formats → set to \"Most Compatible\" so photos save as JPEG, then retake/re-upload."
+      );
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0);
+    const blob = await new Promise((resolve, reject) =>
+      canvas.toBlob(b => (b ? resolve(b) : reject(new Error("JPEG encode failed"))), "image/jpeg", 0.9)
+    );
+    return blob;
+  };
+
+  /* ── Videos / additional photos: the components upload + register on their own;
+   * these just fold the result into the open before/after doc so the UI updates. ── */
+  const applyMediaChange = (kind, change) => {
+    const setDoc = tripType === "before" ? setBeforeDoc : setAfterDoc;
+    setDoc(prev => {
+      const list = Array.isArray(prev?.[kind]) ? prev[kind] : [];
+      return {
+        ...(prev || {}),
+        bookingID: activeBooking?.bookingID || activeBooking?.id,
+        carID: selectedCar?.carID || selectedCar?.id,
+        [kind]: change(list),
+      };
+    });
+  };
+  const mediaProps = (kind) => ({
+    storage,
+    apiUrl: API_URL,
+    phase: tripType,
+    bookingID: activeBooking?.bookingID || activeBooking?.id,
+    carID: selectedCar?.carID || selectedCar?.id,
+    items: (tripType === "before" ? beforeDoc : afterDoc)?.[kind] || [],
+    onAdded: (item, recordID) => {
+      applyMediaChange(kind, list => [...list, item]);
+      const setDoc = tripType === "before" ? setBeforeDoc : setAfterDoc;
+      setDoc(prev => (prev && !prev.id && recordID ? { ...prev, id: recordID } : prev));
+    },
+    onRemoved: (url) => applyMediaChange(kind, list => list.filter(i => i.url !== url)),
+    onView: setViewingPhoto,
+    notify: showToast,
+  });
+
+  const handleFilePick = (fieldKey, file) => {
+    if (!file) return;
+    setUploads(prev => ({ ...prev, [fieldKey]: { file, preview: URL.createObjectURL(file) } }));
+  };
+
+  /* ── Commit staged Good/Damaged edits ──
+   * Writes into inventoryBeforeTrip/inventoryAfterTrip — the SAME
+   * collections and damageParts[] shape Inventory.jsx (admin) reads and
+   * writes — so a driver's check and an admin's edit land in one place,
+   * not two disconnected records. Never called on toggle; only from
+   * uploadSlot/saveAll, i.e. whenever the person hits Save or Save All.
+   *
+   * `force` writes the record even with nothing staged — that's the
+   * "Confirm parts condition" button. The pickup/return gate needs a saved
+   * parts record, and an untouched all-Good car would otherwise never get
+   * one (Good is the implicit default, so nothing ever gets staged).
+   */
+  const commitStatusEdits = async (bID, editsToCommit, { force = false } = {}) => {
+    const keys = Object.keys(editsToCommit);
+    if (!keys.length && !force) return;
+
+    // For a first-ever After-trip save (no afterInv exists yet), seed the
+    // merge base from beforeInv instead of nothing. Otherwise a part that's
+    // still damaged and simply wasn't touched in this After session (since
+    // it needed no change — see getEffectivePartStatus's Before-carryover
+    // fallback above) would get silently saved as implicitly "Good" here,
+    // because only *edited* parts get merged in below — the fact that it
+    // displayed as Damaged doesn't put it in `editsToCommit` by itself.
+    // Once a real afterInv exists (any later save), it takes over and
+    // Before is no longer consulted — this is only a one-time seed.
+    const existingInv = tripType === "before" ? beforeInv : (afterInv || beforeInv);
+
+    // Merge on top of whatever's already recorded so committing one
+    // part's status doesn't clobber damage already saved for another.
+    const merged = {};
+    (existingInv?.damageParts || []).forEach(d => { merged[d.carPartID] = d; });
+    carParts.forEach(part => {
+      if (editsToCommit[part.id] !== undefined) {
+        merged[part.id] = {
+          carPartID:    part.id,
+          carPartName:  part.carPartName || "—",
+          serialNumber: part.serialNumber || "—",
+          status:       editsToCommit[part.id],
+        };
+      }
+    });
+    // Same convention as Inventory.jsx: only non-Good entries are stored,
+    // Good is the implicit default for any part not listed.
+    const damageParts  = Object.values(merged).filter(d => d.status !== "Good" && d.status !== "New");
+    const overallStatus = damageParts.length > 0 ? "has damage" : "good";
+
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_URL}/api/vehicle-docs/inventory-status`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        bookingID: bID,
+        carID: selectedCar.carID || selectedCar.id,
+        tripType,
+        overallStatus,
+        damageParts,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || "Failed to save part status.");
+    const savedId = json.data.id;
+
+    const updatedInv = { id: savedId, bookingID: bID, carID: selectedCar.carID || selectedCar.id, inventoryOverallStatus: overallStatus, damageParts };
+    if (tripType === "before") {
+      setBeforeInv(updatedInv);
+      setBeforeStatusEdits(prev => { const n = { ...prev }; keys.forEach(k => delete n[k]); return n; });
+    } else {
+      setAfterInv(updatedInv);
+      setAfterStatusEdits(prev => { const n = { ...prev }; keys.forEach(k => delete n[k]); return n; });
+    }
+  };
+
+  const uploadSlot = async (fieldKey) => {
+    if (!uploads[fieldKey] || !selectedCar || !activeBooking) return;
+    if (driverMissing) { showToast(NEEDS_DRIVER_MSG, "error"); return; }
+    setUploading(prev => ({ ...prev, [fieldKey]: true }));
+
+    const bID    = activeBooking.bookingID || activeBooking.id;
+    const existingDoc = tripType === "before" ? beforeDoc : afterDoc;
+
+    try {
+      const { file } = uploads[fieldKey];
+      const jpegBlob = await normalizeToJpeg(file);
+      const storagePath = `vehicleDocs/${selectedCar.id}/${bID}/${tripType}/${fieldKey}_${Date.now()}.jpg`;
+      await uploadBytes(ref(storage, storagePath), jpegBlob, { contentType: "image/jpeg" });
+      const url = await getDownloadURL(ref(storage, storagePath));
+
+      // POST /api/vehicle-docs/before-trip or /after-trip upserts by
+      // bookingID server-side — no need to track/send a doc id from here.
+      const token = localStorage.getItem("token");
+      const endpoint = tripType === "before" ? "before-trip" : "after-trip";
+      const res = await fetch(`${API_URL}/api/vehicle-docs/${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          bookingID: bID,
+          carID: selectedCar.carID || selectedCar.id,
+          photoFields: { [fieldKey]: url },
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Upload failed.");
+      const savedDocId = json.data.vehicleDocumentationBeforeTripID || json.data.vehicleDocumentationAfterTripID;
+
+      // Update local state
+      const updatedDoc = { ...(existingDoc || {}), id: savedDocId, bookingID: bID, carID: selectedCar.carID || selectedCar.id, [fieldKey]: url };
+      if (tripType === "before") setBeforeDoc(updatedDoc);
+      else setAfterDoc(updatedDoc);
+
+      setUploads(prev => { const n = { ...prev }; delete n[fieldKey]; return n; });
+
+      // Commit any staged Good/Damaged edits together with this save —
+      // status is never written on toggle, only here.
+      // Only once the phase has evidence (a video or all 3 exterior photos) — otherwise the staged
+      // statuses stay staged and are saved later, so the parts are never recorded "with nothing".
+      const currentStatusEdits = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
+      const statusHeldBack = Object.keys(currentStatusEdits).length > 0 && !docHasEvidence(updatedDoc);
+      if (Object.keys(currentStatusEdits).length && !statusHeldBack) {
+        await commitStatusEdits(bID, currentStatusEdits);
+      }
+
+      showToast(statusHeldBack ? "Photo saved — part statuses will save once a video or all 3 exterior photos are added." : `Photo saved!`);
+    } catch (e) {
+      console.error(e);
+      showToast("Upload failed: " + e.message, "error");
+    } finally {
+      setUploading(prev => ({ ...prev, [fieldKey]: false }));
+    }
+  };
+
+  const saveAll = async () => {
+    if (!activeBooking) { showToast("No active booking to link photos to.", "error"); return false; }
+    if (driverMissing) { showToast(NEEDS_DRIVER_MSG, "error"); return false; }
+    if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return false; }
+    const pending = Object.keys(uploads);
+    const currentStatusEdits = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
+    const pendingStatusKeys  = Object.keys(currentStatusEdits);
+    // Save All now covers BOTH pending photos and pending Good/Damaged
+    // toggles — a driver who only flagged a part as Damaged (no new
+    // photo) still needs this button to actually persist it.
+    // Save All also records the parts condition (same as the "Confirm parts
+    // condition" button) when none is saved yet for this trip phase — so it
+    // still has work to do even with no photos or toggles staged.
+    const needsPartsRecord = !hasPartsRecord;
+    if (!pending.length && !pendingStatusKeys.length && !needsPartsRecord) {
+      showToast("Nothing to save.", "error");
+      return false;
+    }
+
+    setSaving(true);
+    setUploading(prev => { const n = { ...prev }; pending.forEach(k => n[k] = true); return n; });
+
+    const bID    = activeBooking.bookingID || activeBooking.id;
+    // Read the existing doc ONCE, up front — this is the fix. The old
+    // version called uploadSlot() once per pending photo in a loop, and
+    // every one of those calls shared the same stale beforeDoc/afterDoc
+    // closure from the render at click-time. So slot 1 would see "no
+    // existing doc" and create one, slot 2 would ALSO see "no existing
+    // doc" (its closure never saw slot 1's write) and create a second,
+    // separate doc with only its own field, slot 3 a third — three
+    // orphaned docs instead of one merged doc, and whichever save
+    // finished last is the only one that ended up reflected on screen.
+    // (Now moot for the actual write — the backend upserts by bookingID,
+    // so even parallel calls land on the same doc — but Promise.all below
+    // still uploads all files in parallel and sends ONE combined request,
+    // which is simply more efficient than one request per photo.)
+    const existingDoc = tripType === "before" ? beforeDoc : afterDoc;
+
+    try {
+      // Upload every pending file to storage in parallel and collect
+      // { fieldKey: downloadURL } for all of them before writing anything.
+      // (Empty when this Save All run is status-edits-only.)
+      if (pending.length) {
+        const entries = await Promise.all(pending.map(async (fieldKey) => {
+          const { file } = uploads[fieldKey];
+          const jpegBlob = await normalizeToJpeg(file);
+          const storagePath = `vehicleDocs/${selectedCar.id}/${bID}/${tripType}/${fieldKey}_${Date.now()}.jpg`;
+          await uploadBytes(ref(storage, storagePath), jpegBlob, { contentType: "image/jpeg" });
+          const url = await getDownloadURL(ref(storage, storagePath));
+          return [fieldKey, url];
+        }));
+        const urlMap = Object.fromEntries(entries);
+
+        const token = localStorage.getItem("token");
+        const endpoint = tripType === "before" ? "before-trip" : "after-trip";
+        const res = await fetch(`${API_URL}/api/vehicle-docs/${endpoint}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            bookingID: bID,
+            carID: selectedCar.carID || selectedCar.id,
+            photoFields: urlMap,
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Save failed.");
+        const savedDocId = json.data.vehicleDocumentationBeforeTripID || json.data.vehicleDocumentationAfterTripID;
+
+        // Single state update with ALL saved fields merged in — not one
+        // overwrite per photo.
+        const updatedDoc = { ...(existingDoc || {}), id: savedDocId, bookingID: bID, carID: selectedCar.carID || selectedCar.id, ...urlMap };
+        if (tripType === "before") setBeforeDoc(updatedDoc);
+        else setAfterDoc(updatedDoc);
+
+        setUploads({});
+      }
+
+      // Commit any staged Good/Damaged edits together with this save, and
+      // create the parts-condition record if there isn't one yet (force) —
+      // anything not flagged Damaged is recorded as Good, exactly like the
+      // "Confirm parts condition" button.
+      if (pendingStatusKeys.length || needsPartsRecord) {
+        await commitStatusEdits(bID, currentStatusEdits, { force: true });
+      }
+
+      showToast(needsPartsRecord ? "All changes saved — parts condition recorded!" : "All changes saved!");
+      return true;
+    } catch (e) {
+      console.error(e);
+      showToast("Save failed: " + e.message, "error");
+      return false;
+    } finally {
+      setUploading(prev => { const n = { ...prev }; pending.forEach(k => n[k] = false); return n; });
+      setSaving(false);
+    }
+  };
+
+  // Final step of an inspection: staff confirm the car (exterior) and every car part were checked and are in the
+  // condition recorded above. Anything still staged -- or a parts record that doesn't exist yet -- is saved first, so
+  // the confirmation always covers exactly what is on screen. The backend then stamps the record and notifies the customer.
+  const confirmInspection = async () => {
+    if (!activeBooking || !selectedCar) return;
+    if (driverMissing) { showToast(NEEDS_DRIVER_MSG, "error"); return; }
+    if (!canSaveInspection) { showToast(NEEDS_EVIDENCE_MSG, "error"); return; }
+    setConfirmingInspection(true);
+    try {
+      if (hasUnsavedChanges || !hasPartsRecord) {
+        const saved = await saveAll();
+        if (!saved) return;
+      }
+      const res = await fetch(`${API_URL}/api/vehicle-docs/${tripType}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ bookingID: activeBooking.bookingID || activeBooking.id, carID: selectedCar.carID || selectedCar.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Could not confirm the inspection.");
+      const setDoc = tripType === "before" ? setBeforeDoc : setAfterDoc;
+      setDoc(prev => ({ ...(prev || {}), inspectionConfirmed: { at: new Date(), damagedPartCount: json.data?.damagedPartCount ?? 0, notifiedTo: json.data?.notifiedTo || null } }));
+      if (json.data?.notifiedTo === "driver") showToast("Inspection confirmed. The assigned driver was notified.");
+      else if (json.data?.notifiedTo === "customer") showToast("Inspection confirmed. The customer was notified.");
+      else showToast("Inspection confirmed, but nobody could be notified.", "error");
+    } catch (e) {
+      console.error(e);
+      showToast("Could not confirm the inspection: " + e.message, "error");
+    } finally {
+      setConfirmingInspection(false);
+    }
+  };
+
+  // One Save button: saves everything staged, and the first time also confirms the inspection (which notifies).
+  // Once confirmed, later saves just save -- the backend rejects a second confirm.
+  const handleSave = async () => {
+    const currentDoc = tripType === "before" ? beforeDoc : afterDoc;
+    if (currentDoc?.inspectionConfirmed) await saveAll();
+    else await confirmInspection();
+  };
+
+  const getSlotImage = (fieldKey) => {
+    if (uploads[fieldKey]?.preview) return uploads[fieldKey].preview;
+    const currentDoc = tripType === "before" ? beforeDoc : afterDoc;
+    return currentDoc?.[fieldKey] || null;
+  };
+
+  const getPartFieldKey = (part) => {
+    const typeName = partTypes[part.carPartTypeID] || "";
+    const combined = `${typeName} ${part.carPartName || ""}`.trim();
+    return partNameToFieldKey(combined) || partNameToFieldKey(part.carPartName || part.id);
+  };
+
+  const bID        = activeBooking ? (activeBooking.bookingID || activeBooking.id) : null;
+  const currentDoc = tripType === "before" ? beforeDoc : afterDoc;
+
+  // After Trip used to be locked until the booking was already
+  // "completed" (view-only, after the fact). It now also opens up while
+  // "ongoing", so After Trip photos can be taken *before* Return —
+  // mirroring how Before Trip opens up during "upcoming", before Pickup.
+  const isAfterTripLocked = tripType === "after" && !["ongoing", "completed"].includes(activeBooking?.status?.toLowerCase());
+
+  // ── Pickup completion ──────────────────────────────────────────
+  // The 3 exterior shots are the only ones marked Required in the UI
+  // (part photos are shown but optional) — matches the same rule the
+  // backend enforces in booking.service.js's updateBooking, so a booking
+  // can't reach "ongoing" without this being true either way.
+  // The 3 exterior photos, OR at least one video (a video can stand in for them) — same rule as the backend's photosComplete.
+  const hasRequiredBeforePhotos = !!(beforeDoc?.frontViewUrl && beforeDoc?.sideViewUrl && beforeDoc?.backViewUrl) || (beforeDoc?.videos?.length || 0) > 0;
+  const hasUnsavedUploads       = Object.keys(uploads).length > 0;
+  const currentStatusEdits      = tripType === "before" ? beforeStatusEdits : afterStatusEdits;
+  const setCurrentStatusEdits   = tripType === "before" ? setBeforeStatusEdits : setAfterStatusEdits;
+  const currentInv              = tripType === "before" ? beforeInv : afterInv;
+  const hasUnsavedStatusEdits   = Object.keys(currentStatusEdits).length > 0;
+  // HARD RULE: nothing about the parts condition is saved until the trip phase has a video or all 3 exterior photos.
+  // Videos upload the moment they're picked, so they count as saved; exterior photos count once saved OR staged
+  // (Save All uploads them first, then records the parts).
+  const canSaveInspection = (currentDoc?.videos?.length || 0) > 0
+    || EXTERIOR_SLOTS.every(slot => !!currentDoc?.[slot.key] || !!uploads[slot.key]);
+  const NEEDS_EVIDENCE_MSG = "Add a video, or all 3 exterior photos (front, side, back), before the parts condition can be saved.";
+  const hasUnsavedChanges       = hasUnsavedUploads || hasUnsavedStatusEdits;
+  const pendingChangeCount      = Object.keys(uploads).length + Object.keys(currentStatusEdits).length;
+
+  // ── Next/Previous through this car's other upcoming/ongoing bookings —
+  // same booking-switch work selectCar does for its initial pick (resolve
+  // customer, load photo docs + parts status), just re-run for whichever
+  // entry in upcomingBookings was stepped to. Warns before discarding
+  // unsaved photo/status edits, since unlike switching cars (which has
+  // always silently reset these) this is a one-click accident away.
+  const goToUpcomingIndex = async (idx) => {
+    const nextBooking = upcomingBookings[idx];
+    if (!nextBooking || idx === activeBookingIndex) return;
+
+    if (hasUnsavedChanges && !window.confirm(
+      "You have unsaved changes on this booking. Switch to the other booking anyway? Unsaved changes will be lost."
+    )) {
+      return;
+    }
+
+    setActiveBookingIndex(idx);
+    setActiveBooking(nextBooking);
+    setBookingUser(null);
+    setBeforeDoc(null);
+    setAfterDoc(null);
+    setBeforeInv(null);
+    setAfterInv(null);
+    setBeforeStatusEdits({});
+    setAfterStatusEdits({});
+    setUploads({});
+    setTripType("before");
+
+    setSwitchingBooking(true);
+    try {
+      const userID = nextBooking.userID;
+      if (userID) {
+        const [detailDoc, userDoc] = await Promise.all([
+          getDoc(doc(db, "userDetails", userID)),
+          getDoc(doc(db, "user", userID)),
+        ]);
+        const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
+        const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+        const { email = "", phone = "" } = userDoc.exists() ? userDoc.data() : {};
+        setBookingUser({ fullName: fullName || email || "—", email, phone });
+      }
+      const nextBID = nextBooking.bookingID || nextBooking.id;
+      await Promise.all([loadPhotoDocs(nextBID), loadInventoryStatus(nextBID)]);
+    } catch (e) {
+      console.error("booking switch error:", e);
+    } finally {
+      setSwitchingBooking(false);
+    }
+  };
+
+  // Whether a saved parts-condition record exists for the tab being viewed
+  // (After deliberately doesn't fall back to Before's — the After trip needs
+  // its own). Photos alone no longer complete an inspection; the backend
+  // gate (getPhaseChecklist) requires this record too.
+  const hasPartsRecord      = !!currentInv;
+  const canCompletePickup =
+    activeBooking?.status?.toLowerCase() === "upcoming" &&
+    hasRequiredBeforePhotos &&
+    !!beforeInv &&
+    !hasUnsavedChanges;
+
+  // ── Return completion — same required-photos rule as Pickup, mirrored
+  // for the after-trip set. Matches the server-side guard in
+  // booking.service.js's updateBooking, so a booking can't reach
+  // "completed" without this being true either way. ──
+  const hasRequiredAfterPhotos = !!(afterDoc?.frontViewUrl && afterDoc?.sideViewUrl && afterDoc?.backViewUrl) || (afterDoc?.videos?.length || 0) > 0;
+  const canCompleteReturn =
+    activeBooking?.status?.toLowerCase() === "ongoing" &&
+    hasRequiredAfterPhotos &&
+    !!afterInv &&
+    !hasUnsavedChanges;
+
+  // Good/Damaged effective status per part — saved record, overridden by
+  // whatever's staged locally but not yet saved.
+  //
+  // On the After tab specifically, before any after-trip record has been
+  // saved yet, this used to default straight to "Good" — meaning a part
+  // marked Damaged in Before would silently show as Good the first time
+  // After was opened, with no indication it had ever been flagged. That's
+  // backwards: an unassessed part should carry over whatever Before said,
+  // not reset to the safest-looking value, so staff have to actively
+  // confirm "yes, this got fixed" rather than the form quietly assuming it
+  // did. Falls back to Before's own recorded status first, "Good" only if
+  // Before never recorded anything for this part either.
+  const getEffectivePartStatus = (part) => {
+    const savedEntry = currentInv?.damageParts?.find(d => d.carPartID === part.id);
+    let savedStatus = savedEntry?.status;
+    if (savedStatus === undefined && tripType === "after") {
+      const beforeEntry = beforeInv?.damageParts?.find(d => d.carPartID === part.id);
+      savedStatus = beforeEntry?.status;
+    }
+    savedStatus = savedStatus || "Good";
+    return currentStatusEdits[part.id] !== undefined ? currentStatusEdits[part.id] : savedStatus;
+  };
+
+  // NOTE: Pickup/Return are no longer completed from this page. The actual
+  // status-change PATCH (previously handleCompletePickup/handleCompleteReturn
+  // here) now happens from Car Tracking (staff) and My Trips (driver), since
+  // those pages carry payment and driver-assignment data this page doesn't.
+  // canCompletePickup/canCompleteReturn above still drive the "photos ready"
+  // banners on this page.
+
+  return (
+    <div className="p-4 bg-gray-50">
+
+      {toast && (
+        <div role={toast.type === "success" ? "status" : "alert"} className={`fixed top-5 right-5 z-50 max-w-[calc(100vw-2.5rem)] sm:max-w-md flex items-start gap-3 px-5 py-3 rounded-xl shadow-lg text-sm font-medium break-words ${
+          toast.type === "success"
+            ? "bg-green-50 text-green-700 border border-green-200"
+            : "bg-red-50 text-red-700 border border-red-200"
+        }`}>
+          <span className="flex-1 min-w-0">{toast.msg}</span>
+          <button type="button" onClick={() => { clearTimeout(toastTimer.current); setToast(null); }} aria-label="Dismiss" className="shrink-0 leading-none opacity-60 hover:opacity-100">✕</button>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-arl-dark">Vehicle Inspections</h1>
+        </div>
+      </div>
+
+      <div className="flex gap-4">
+
+        {/* Car list — same layout as Inventory */}
+        <div className="w-72 shrink-0">
+          {inPickupMode && selectedCar && (
+            <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+              <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                📍 Pending Pickup Task
+              </p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                Finish the Before Trip photos for <span className="font-semibold">{selectedCar.label}</span> — other vehicles are locked until this is done.
+              </p>
+              <button
+                onClick={cancelPickupFocus}
+                className="text-xs font-semibold text-amber-800 underline hover:text-amber-900 mt-1.5"
+              >
+                Cancel pickup task
+              </button>
+            </div>
+          )}
+
+          {inReturnMode && selectedCar && (
+            <div className="mb-3 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5">
+              <p className="text-xs font-semibold text-blue-800 flex items-center gap-1.5">
+                📍 Pending Return Task
+              </p>
+              <p className="text-xs text-blue-700 mt-0.5">
+                Finish the After Trip photos for <span className="font-semibold">{selectedCar.label}</span> — other vehicles are locked until this is done.
+              </p>
+              <button
+                onClick={cancelReturnFocus}
+                className="text-xs font-semibold text-blue-800 underline hover:text-blue-900 mt-1.5"
+              >
+                Cancel return task
+              </button>
+            </div>
+          )}
+
+          {carsLoading ? (
+            <div className="space-y-3">
+              {[1,2,3].map(i => (
+                <div key={i} className="bg-white rounded-2xl border border-gray-100 p-4 h-20 animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-3 grid-cols-1">
+              {cars.length === 0 && (
+                <p className="text-gray-400 text-sm col-span-full text-center py-8">No vehicles found.</p>
+              )}
+              {cars.map(car => {
+                const isSelected = selectedCar?.id === car.id;
+                const isLockedOut = (inPickupMode || inReturnMode) && !isSelected;
+                return (
+                <button key={car.id}
+                  disabled={isLockedOut}
+                  onClick={() => { if (!isSelected) selectCar(car); }}
+                  className={`w-full text-left bg-white rounded-2xl border transition-all duration-200 shadow-soft p-4 ${
+                    isLockedOut
+                      ? "opacity-40 grayscale cursor-not-allowed border-gray-100"
+                      : `hover:shadow-md ${isSelected ? "border-teal-400 ring-2 ring-teal-100" : "border-gray-100 hover:border-teal-200"}`
+                  }`}>
+                  <div className="flex items-center gap-3">
+                    {car.imageURL ? (
+                      <img src={car.imageURL} alt="car"
+                        className="rounded-xl object-cover w-10 h-10" />
+                    ) : (
+                      <div className="rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 w-10 h-10">
+                        🚗
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
+                      <p className="text-xs text-gray-400 truncate">{car.plateNumber || "—"}</p>
+                      <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium text-black ${STATUS_STYLE[car.status] || "bg-gray-50 border border-gray-200"}`}><span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_STYLE[car.status]?.includes("green") ? "bg-green-500" : "bg-gray-400"}`} />
+                        {car.status}
+                      </span>
+                    </div>
+                    {isSelected && (
+                      <div className="shrink-0 w-5 h-5 rounded-full bg-teal-500 flex items-center justify-center">
+                        <svg className="w-3 h-3 text-white" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );})}
+            </div>
+          )}
+        </div>
+
+        {/* Detail panel */}
+        {selectedCar && (
+          <div className="flex-1 min-w-0 space-y-4">
+
+            {/* Car header */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-bold text-arl-dark text-base">{selectedCar.label}</h2>
+                  <p className="text-xs text-gray-400">
+                    {selectedCar.plateNumber || "—"}
+                    {" · "}{selectedCar.year || "—"}
+                    {" · "}{selectedCar.bodyType || "—"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-black ${STATUS_STYLE[selectedCar.status] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_STYLE[selectedCar.status]?.includes("green") ? "bg-green-500" : "bg-gray-400"}`} />
+                    {selectedCar.status || "—"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Upcoming | History — Upcoming is where inspections are done,
+                History is the searchable record of past trips. History is
+                locked during a pickup/return task, same as the other-vehicle
+                lock. */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-1.5 flex gap-1">
+              <PageTab
+                active={pageTab === "upcoming"}
+                onClick={() => setPageTab("upcoming")}
+                label="Upcoming"
+                count={bookingLoading ? null : upcomingBookings.length}
+                dot={hasUnsavedChanges}
+                dotTitle="Unsaved changes"
+              />
+              <PageTab
+                active={pageTab === "history"}
+                onClick={() => setPageTab("history")}
+                label="History"
+                count={bookingLoading ? null : pastBookings.length}
+                disabled={inPickupMode || inReturnMode}
+                disabledTitle="Finish or cancel this pickup/return first"
+              />
+            </div>
+
+            {/* Upcoming tab — kept mounted (hidden) while History is open so
+                staged photos/status edits aren't lost. */}
+            <div className={pageTab === "upcoming" ? "space-y-4" : "hidden"}>
+            {/* Booking + Docs Section — same structure as Inventory.
+                Gated on bookingLoading only (the first load of a car) —
+                NOT docsLoading/switchingBooking, so stepping Next/Previous
+                between this car's own upcoming bookings never collapses
+                Before/After Trip or Past Trips into this skeleton; only
+                the booking info card below shows its own lighter loading
+                treatment for that. */}
+            {bookingLoading ? (
+              <div className="bg-white rounded-2xl border border-gray-100 p-5 animate-pulse h-48" />
+            ) : !activeBooking ? (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-soft px-5 py-3 flex items-center gap-3">
+                <span className="text-xl">📋</span>
+                <div>
+                  <p className="text-sm font-semibold text-gray-500">No upcoming booking for this vehicle</p>
+                  <p className="text-xs text-gray-400">
+                    Photo documentation is tied to bookings.{" "}
+                    {pastBookings.length > 0 && (
+                      <button type="button" onClick={() => setPageTab("history")} className="text-teal-600 hover:text-teal-700 font-semibold">
+                        View trip history →
+                      </button>
+                    )}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+
+                {/* Booking card — same bordered card as Booking Information in Bookings */}
+                <InfoSection
+                  title="Booking"
+                  aside={(
+                    <div className="flex items-center gap-2">
+                      {/* Prev / Next — only shown once this car actually has more
+                          than one open booking to browse between. Segmented
+                          control with text labels + a position pill, and the
+                          neighbouring booking's start date in the tooltip. */}
+                      {upcomingBookings.length > 1 && (() => {
+                        const locked   = switchingBooking || inPickupMode || inReturnMode;
+                        const prevB    = upcomingBookings[activeBookingIndex - 1];
+                        const nextB    = upcomingBookings[activeBookingIndex + 1];
+                        const lockHint = "Finish or cancel this pickup/return first";
+                        const btn = "flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-teal-50 hover:text-teal-700 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-600 disabled:cursor-not-allowed transition-colors";
+                        return (
+                          <div className="inline-flex items-stretch rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-x divide-gray-200">
+                            <button
+                              type="button"
+                              onClick={() => goToUpcomingIndex(activeBookingIndex - 1)}
+                              disabled={!prevB || locked}
+                              title={locked && (inPickupMode || inReturnMode) ? lockHint : prevB ? `Previous booking · starts ${fmtDateShort(prevB.startDateTime)}` : "No earlier booking"}
+                              className={btn}
+                            >
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                              Prev
+                            </button>
+                            <span className="flex items-center px-3 text-xs font-bold text-gray-700 tabular-nums bg-gray-50 min-w-[64px] justify-center">
+                              {switchingBooking ? "…" : `${activeBookingIndex + 1} / ${upcomingBookings.length}`}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => goToUpcomingIndex(activeBookingIndex + 1)}
+                              disabled={!nextB || locked}
+                              title={locked && (inPickupMode || inReturnMode) ? lockHint : nextB ? `Next booking · starts ${fmtDateShort(nextB.startDateTime)}` : "No later booking"}
+                              className={btn}
+                            >
+                              Next
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                >
+                  {/* Only these fields dim/pulse while switchingBooking — everything else on the page
+                      (Before/After Trip, Past Trips) stays as it was until the new booking's data lands. */}
+                  <div className="col-span-2 flex items-center gap-2 flex-wrap">
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("green") ? "bg-green-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("yellow") ? "bg-yellow-400" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("blue") ? "bg-blue-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("red") ? "bg-red-500" : "bg-gray-400"}`} />
+                        {activeBooking.status?.replace("_", " ") || "—"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
+                        title="Open this booking in Bookings"
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                      >
+                        View Booking →
+                      </button>
+                  </div>
+                  <InfoField label="Customer"   value={switchingBooking ? "—" : bookingUser?.fullName} />
+                  <InfoField label="Driver"     value={switchingBooking ? "—" : (
+                    (activeBooking.modeOfDriving || "").toLowerCase().includes("chauffeur")
+                      ? (bookingDriver?.fullName || (driverMissing ? <span className="italic font-normal text-gray-400">No driver assigned</span> : "—"))
+                      : null
+                  )} />
+                  <InfoField label="Start Date" value={fmtDateShort(activeBooking.startDateTime)} />
+                  <InfoField label="End Date"   value={fmtDateShort(activeBooking.endDateTime)} />
+                </InfoSection>
+
+                {/* Before / After Tabs — same as Inventory */}
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+                  {/* Tab bar */}
+                  <div className={`flex items-center bg-gray-50 border-gray-100 p-1 gap-1 border-b`}>
+                    <TabButton
+                      active={tripType === "before"}
+                      onClick={() => {
+                        // Switching away from After Trip mid-return counts as
+                        // backing out of the focused return task — same as
+                        // hitting Cancel, just via a different door.
+                        if (inReturnMode) cancelReturnFocus();
+                        setTripType("before");
+                        setUploads({});
+                      }}
+                      emoji="🚀"
+                      label="Before Trip"
+                      badge={beforeDoc ? "✓ Has Photos" : null}
+                      badgeColor="bg-teal-100 text-teal-700"
+                      dimmed={inReturnMode}
+                    />
+                    <TabButton
+                      active={tripType === "after"}
+                      onClick={() => {
+                        // Switching away from Before Trip mid-pickup counts as
+                        // backing out of the focused pickup task — same as
+                        // hitting Cancel, just via a different door.
+                        if (inPickupMode) cancelPickupFocus();
+                        setTripType("after");
+                        setUploads({});
+                      }}
+                      emoji="🏁"
+                      label="After Trip"
+                      badge={afterDoc ? "✓ Has Photos" : null}
+                      badgeColor="bg-blue-100 text-blue-700"
+                      dimmed={inPickupMode}
+                    />
+
+                  </div>
+
+                  {/* Tab content */}
+                  <div className="p-5 space-y-5">
+
+                    {/* Chauffeur booking with no driver yet: inspection can't be saved */}
+                    {driverMissing && (
+                      <div className="flex items-start justify-between gap-3 bg-amber-50 border border-amber-300 p-3 rounded-xl text-xs text-amber-800">
+                        <div className="flex items-start gap-2">
+                          <span className="shrink-0">🚫</span>
+                          <p>
+                            <span className="font-semibold">No driver assigned yet.</span> This is a With Chauffeur booking, so the inspection can't be saved until a driver is assigned.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => navigate("/driver-dispatch", { state: { assignBookingId: activeBooking.bookingID || activeBooking.id } })}
+                          className="shrink-0 px-3 py-1.5 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-700 transition-colors"
+                        >
+                          Driver Dispatch
+                        </button>
+                      </div>
+                    )}
+
+                    {/* After trip locked notice */}
+                    {isAfterTripLocked && (
+                      <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 p-3 rounded-xl text-xs text-amber-800">
+                        <span className="shrink-0">🔒</span>
+                        <p>
+                          <span className="font-semibold">After Trip is locked.</span> Photos can only be added once the trip is{" "}
+                          <span className="font-bold">picked up</span>. Current status:{" "}
+                          <span className="font-bold capitalize">{activeBooking.status?.replace("_", " ") || "—"}</span>.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Pickup gate — landed here from Car Tracking's Pickup button, or
+                        the booking just hasn't been picked up yet either way */}
+                    {tripType === "before" && activeBooking.status?.toLowerCase() === "upcoming" && (
+                      <div className={`flex items-start gap-2 p-3 rounded-xl text-xs ${
+                        canCompletePickup ? "bg-green-50 border border-green-200 text-green-800" : "bg-blue-50 border border-blue-200 text-blue-800"
+                      }`}>
+                        <span className="shrink-0">{canCompletePickup ? "✅" : "📋"}</span>
+                        <p>
+                          {canCompletePickup ? (
+                            <>Photos and parts condition are both recorded — this trip is ready for pickup.</>
+                          ) : (
+                            <>
+                              <span className="font-semibold">Pickup requires the vehicle inspection first.</span>{" "}
+                              Add a video (or the front, side, and back view photos) and record the parts condition below, then Save, before this car can be picked up.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Return gate — landed here from Car Tracking/My Trips' Return
+                        button, or the booking is ongoing and hasn't been returned yet
+                        either way. Mirrors the Pickup gate above exactly. */}
+                    {tripType === "after" && activeBooking.status?.toLowerCase() === "ongoing" && (
+                      <div className={`flex items-start gap-2 p-3 rounded-xl text-xs ${
+                        canCompleteReturn ? "bg-green-50 border border-green-200 text-green-800" : "bg-blue-50 border border-blue-200 text-blue-800"
+                      }`}>
+                        <span className="shrink-0">{canCompleteReturn ? "✅" : "📋"}</span>
+                        <p>
+                          {canCompleteReturn ? (
+                            <>Photos and parts condition are both recorded — this trip is ready to be marked returned.</>
+                          ) : (
+                            <>
+                              <span className="font-semibold">Return requires the vehicle inspection first.</span>{" "}
+                              Add a video (or the front, side, and back view photos) and record the parts condition below, then Save, before this car can be marked returned.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    )}
+
+                    {!isAfterTripLocked && (
+                      <>
+{/* Save All -- first thing on the page, above the video. Videos and additional photos upload the moment they are
+                            added; this saves the exterior photos and the parts condition. */}
+                        <div className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${hasUnsavedChanges ? "bg-amber-50 border-amber-200" : "bg-white border-gray-100 shadow-sm"}`}>
+                          <div className="min-w-0">
+                            <p className={`text-base font-semibold ${hasUnsavedChanges ? "text-amber-800" : "text-gray-800"}`}>
+                              {hasUnsavedChanges
+                                ? `${pendingChangeCount} unsaved change${pendingChangeCount !== 1 ? "s" : ""}${hasUnsavedUploads && hasUnsavedStatusEdits ? " (photos + status)" : hasUnsavedStatusEdits ? " (status)" : ""}`
+                                : hasPartsRecord ? "All changes saved" : "Nothing saved yet"}
+                            </p>
+                            {(currentDoc?.inspectionConfirmed || currentDoc?.updatedAt) && (
+                              <p className="text-xs text-gray-500">
+                                {currentDoc?.inspectionConfirmed
+                                  ? `\u2713 Confirmed${currentDoc.inspectionConfirmed.at ? ` ${fmtDate(currentDoc.inspectionConfirmed.at)}` : ""}`
+                                  : `Last saved ${fmtDate(currentDoc.updatedAt)}`}
+                              </p>
+                            )}
+                            {!currentDoc?.inspectionConfirmed && (
+                              <p className="text-xs text-gray-500">
+                                Saving also confirms the inspection and notifies the driver (or the customer if there is no driver).
+                              </p>
+                            )}
+                            {hasUnsavedChanges && !canSaveInspection && (
+                              <p className="text-xs text-amber-700 mt-0.5">
+                                Save All is locked: {NEEDS_EVIDENCE_MSG} You can still save each photo with its own Save button.
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {hasUnsavedChanges && (
+                              <button onClick={() => { setUploads({}); setCurrentStatusEdits({}); }}
+                                className="text-xs text-amber-600 hover:underline font-semibold">Discard</button>
+                            )}
+                            <button onClick={handleSave}
+                              disabled={saving || confirmingInspection || driverMissing || !canSaveInspection || (!hasUnsavedChanges && hasPartsRecord && !!currentDoc?.inspectionConfirmed)}
+                              title={driverMissing ? NEEDS_DRIVER_MSG : canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
+                              className="text-sm bg-teal-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-50">
+                              {saving || confirmingInspection ? "Saving..." : currentDoc?.inspectionConfirmed ? "Save" : "Save & confirm"}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 1. Video -- free-form: it is not tied to the exterior or to any part */}
+                        <SectionBox title="Video" hint="Optional. One walkaround can show the exterior and the parts together, and it can stand in for the 3 exterior photos.">
+                          <InspectionVideos {...mediaProps("videos")} />
+                        </SectionBox>
+
+                        {/* 2. Additional photos -- free-form, a label is optional */}
+                        <SectionBox title="Additional photos" hint="Optional. Add any photo you want to keep. Give it a label (a view or a part) if you like, or leave it unlabelled.">
+                          <InspectionExtraPhotos {...mediaProps("extraPhotos")}
+                            labelOptions={["Front view", "Side view", "Back view", ...carParts.map(p => p.carPartName)]} />
+                        </SectionBox>
+
+                        {/* 3. Car exterior */}
+                        <SectionBox title="Car exterior"
+                          hint={(currentDoc?.videos?.length || 0) > 0 ? "Optional, because a video was added." : "Required unless you add a video."}>
+                          <div className="grid grid-cols-3 gap-4">
+                            {EXTERIOR_SLOTS.map(slot => (
+                              <PhotoSlot key={slot.key} fieldKey={slot.key} label={slot.label} icon={slot.icon}
+                                image={getSlotImage(slot.key)} uploading={uploading[slot.key]} isPending={!!uploads[slot.key]}
+                                onFilePick={f => handleFilePick(slot.key, f)} onUpload={() => uploadSlot(slot.key)} required={(currentDoc?.videos?.length || 0) === 0} />
+                            ))}
+                          </div>
+                        </SectionBox>
+
+                        {/* 4. Car parts */}
+                        <SectionBox title={`Car parts${carParts.length ? ` (${carParts.length})` : ""}`}
+                          hint="Anything not flagged Damaged is recorded as Good.">
+                                                {partsLoading ? (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                            {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-48 rounded-2xl bg-gray-100 animate-pulse" />)}
+                          </div>
+                        ) : carParts.length > 0 ? (
+                          <>
+                                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                              {carParts.map(part => {
+                                const fieldKey = getPartFieldKey(part);
+                                const effectiveStatus = getEffectivePartStatus(part);
+                                return (
+                                  <div key={part.id} className="space-y-1.5">
+                                    <PhotoSlot fieldKey={fieldKey} label={part.carPartName || "Part"}
+                                      sub={partTypes[part.carPartTypeID] || ""} image={getSlotImage(fieldKey)}
+                                      uploading={uploading[fieldKey]} isPending={!!uploads[fieldKey]}
+                                      onFilePick={f => handleFilePick(fieldKey, f)} onUpload={() => uploadSlot(fieldKey)} />
+                                    {isDriver ? (
+                                      <StatusToggle
+                                        status={effectiveStatus}
+                                        isDirty={currentStatusEdits[part.id] !== undefined}
+                                        onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
+                                      />
+                                    ) : (
+                                      <div className="flex items-center justify-between gap-1.5">
+                                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                          PART_STATUS_STYLE[effectiveStatus] || "bg-gray-100 text-gray-500"
+                                        }`}>
+                                          {effectiveStatus}
+                                        </span>
+                                        <PartEditDropdown
+                                          currentStatus={effectiveStatus}
+                                          onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="p-6 text-center text-gray-400 text-sm">
+                            🔧 No parts found in inventory for this vehicle.
+                          </div>
+                        )}
+
+                        </SectionBox>
+
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            </div>
+
+            {/* History tab — past trips table. Staff see every past trip for
+                the car; a Driver only sees their own (pastBookings is already
+                filtered to the driver's bookings in selectCar). Edit controls
+                stay Admin-only via canEditHistory. */}
+            {pageTab === "history" && (
+              bookingLoading ? (
+                <div className="bg-white rounded-2xl border border-gray-100 p-5 animate-pulse h-48" />
+              ) : (
+                <PastTripsSection
+                  pastBookings={pastBookings}
+                  pastBookingNames={pastBookingNames}
+                  parts={carParts}
+                  carID={selectedCar?.carID || selectedCar?.id}
+                  expandedHistoryID={expandedHistoryID}
+                  historyRecords={historyRecords}
+                  onToggleRow={toggleHistoryRow}
+                  onCloseRow={() => setExpandedHistoryID(null)}
+                  getPartFieldKey={getPartFieldKey}
+                  onViewPhoto={setViewingPhoto}
+                  lightboxOpen={!!viewingPhoto}
+                  canEditHistory={canEditHistory}
+                  onEditPart={handleEditHistoryPart}
+                  onReplacePhoto={handleReplaceHistoryPhoto}
+                />
+              )
+            )}
+          </div>
+        )}
+      </div>
+
+      {viewingPhoto && (
+        <PhotoLightbox photo={viewingPhoto} onClose={() => setViewingPhoto(null)} />
+      )}
+    </div>
+  );
+}
+
+function SectionBox({ title, hint, children }) {
+  return (
+    <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+      <div>
+        <h2 className="font-bold text-gray-700 text-sm uppercase tracking-wider">{title}</h2>
+        {hint && <p className="text-[11px] text-gray-400 mt-0.5">{hint}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function PageTab({ active, onClick, label, count, dot, dotTitle, disabled, disabledTitle }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={disabled ? disabledTitle : undefined}
+      className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-all ${
+        active
+          ? "bg-teal-600 text-white shadow-sm"
+          : disabled
+            ? "text-gray-300 cursor-not-allowed"
+            : "text-gray-500 hover:text-gray-800 hover:bg-gray-50"
+      }`}
+    >
+      <span>{label}</span>
+      {count !== null && count !== undefined && (
+        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${active ? "bg-white/25 text-white" : "bg-gray-100 text-gray-500"}`}>
+          {count}
+        </span>
+      )}
+      {dot && <span title={dotTitle} className="w-2 h-2 rounded-full bg-amber-400" />}
+    </button>
+  );
+}
+
+function TabButton({ active, onClick, emoji, label, badge, badgeColor, dimmed }) {
+  return (
+    <button onClick={onClick}
+      title={dimmed ? "Switching here will cancel the pending pickup/return task" : undefined}
+      className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-sm font-semibold transition-all ${
+        active ? "bg-white shadow-sm text-gray-800" : dimmed ? "text-gray-300 hover:text-gray-500" : "text-gray-500 hover:text-gray-700 hover:bg-white/60"
+      }`}>
+      <span className={dimmed && !active ? "opacity-40" : ""}>{emoji}</span>
+      <span>{label}</span>
+      {badge && (
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>{badge}</span>
+      )}
+    </button>
+  );
+}
+
+/* ── Good/Damaged part-condition toggle ──
+ * Purely local until Save/Save All commits it (see commitStatusEdits) —
+ * clicking this never writes to Firestore by itself. */
+function StatusToggle({ status, isDirty, onChange }) {
+  const isDamaged = status === "Damaged";
+  return (
+    <div className="relative">
+      <div className="flex rounded-lg border border-gray-100 overflow-hidden text-[11px] font-semibold">
+        <button
+          type="button"
+          onClick={() => onChange("Good")}
+          className={`flex-1 py-1 transition-colors ${
+            !isDamaged ? "bg-green-50 text-green-700" : "bg-white text-gray-400 hover:bg-gray-50"
+          }`}
+        >
+          ✓ Good
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange("Damaged")}
+          className={`flex-1 py-1 border-l border-gray-100 transition-colors ${
+            isDamaged ? "bg-red-50 text-red-700" : "bg-white text-gray-400 hover:bg-gray-50"
+          }`}
+        >
+          ⚠ Damaged
+        </button>
+      </div>
+      {isDirty && (
+        <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" title="Unsaved" />
+      )}
+    </div>
+  );
+}
+
+/* ── Admin/Owner/Supervisor's status dropdown — same control the old
+ * Inventory.jsx used. Restricted to Good/Damaged, same as drivers'
+ * StatusToggle — legacy New/Worn/Missing/Stolen values still display
+ * correctly wherever they're already recorded, just aren't selectable
+ * from here anymore. ── */
+function PartEditDropdown({ currentStatus, onChange }) {
+  // Always includes the part's current value even if it's a legacy
+  // status (Worn/Missing/Stolen/New) not in EDITABLE_STATUSES — so an
+  // old record still displays its true status instead of the <select>
+  // rendering blank. It just isn't offered as a fresh pick for anything
+  // that isn't already Good/Damaged.
+  const options = EDITABLE_STATUSES.includes(currentStatus)
+    ? EDITABLE_STATUSES
+    : [currentStatus, ...EDITABLE_STATUSES];
+
+  return (
+    <select
+      value={currentStatus}
+      onChange={e => onChange(e.target.value)}
+      className="text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-teal-300 cursor-pointer"
+    >
+      {options.map(s => (
+        <option key={s} value={s}>{s}</option>
+      ))}
+    </select>
+  );
+}
+
+function PhotoSlot({ fieldKey, label, sub, icon, image, uploading, isPending, onFilePick, onUpload, required }) {
+  const inputId = `slot_${fieldKey}`;
+  return (
+    <div className={`bg-white rounded-2xl border-2 overflow-hidden transition-all ${
+      isPending ? "border-teal-400" : "border-gray-100 hover:border-gray-200"
+    }`}>
+      <label htmlFor={inputId} className="block cursor-pointer relative">
+        <input id={inputId} type="file" accept="image/*" className="hidden"
+          onChange={e => e.target.files[0] && onFilePick(e.target.files[0])} />
+        <div className="h-36 bg-gray-50 flex items-center justify-center relative overflow-hidden">
+          {image ? (
+            <>
+              <img src={image} alt={label} className="w-full h-full object-cover" />
+              <div className="absolute inset-0 bg-black/0 hover:bg-black/30 transition-all flex items-center justify-center opacity-0 hover:opacity-100">
+                <span className="text-white text-xs font-semibold bg-black/50 px-2 py-1 rounded-lg">Change</span>
+              </div>
+              {isPending && (
+                <div className="absolute top-2 right-2 bg-teal-500 text-white text-xs px-2 py-0.5 rounded-full font-semibold">New</div>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-col items-center gap-1 text-gray-300">
+              {icon ? <span className="text-2xl">{icon}</span> : (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
+                    d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+              )}
+              <span className="text-xs">Tap to add</span>
+              {required && <span className="text-xs text-red-400 font-semibold">Required</span>}
+            </div>
+          )}
+        </div>
+      </label>
+      <div className="px-3 py-2">
+        <p className="font-semibold text-gray-800 text-xs truncate">{label}</p>
+        {sub && <p className="text-xs text-gray-400 truncate">{sub}</p>}
+        <p className="text-xs text-gray-300 font-mono truncate mt-0.5">{fieldKey}</p>
+        {isPending && (
+          <button onClick={onUpload} disabled={uploading}
+            className="mt-1.5 w-full py-1 text-xs bg-teal-600 text-white rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
+            {uploading ? "Uploading…" : "Save ↑"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Users.jsx) -----
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (count === 0) return null;
+
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
+
+  const rangeEnd = Math.min(start + pageSize, count);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const PAST_TRIPS_PAGE_SIZE = 10;
+const isoLocalDate = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// "YYYY-MM-DD" (local day) of a Firestore/ISO/ms value, or null — what the History date picker compares against.
+const dayKey = (val) => {
+  const sec = toSec(val);
+  return isFinite(sec) ? isoLocalDate(new Date(sec * 1000)) : null;
+};
+const SEARCH_BY = [
+  { key: "customer", label: "Customer",          type: "text" },
+  { key: "start",    label: "Trip Start",        type: "date" },
+  { key: "end",      label: "Trip End",          type: "date" },
+];
+
+const tripDays = (b) => {
+  const st = toSec(b.startDateTime), en = toSec(b.endDateTime);
+  if (!isFinite(st) || !isFinite(en) || en < st) return "—";
+  const n = Math.max(1, Math.ceil((en - st) / 86400));
+  return `${n} day${n > 1 ? "s" : ""}`;
+};
+
+/* ── Past Trips — moved over from the old Inventory page. Lazy-loads
+ * each row's before/after status + photo docs only when expanded. ── */
+// Same clickable-header sort as Bookings/Users/Refund Requests, adapted to
+// this section's CSS-grid rows (there's no <table> here).
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+function SortableHeader({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <button
+      onClick={() => onSort(key)}
+      className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${className} ${
+        active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+      }`}
+    >
+      {label}
+      {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+    </button>
+  );
+}
+
+function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expandedHistoryID, historyRecords, onToggleRow, onCloseRow, getPartFieldKey, onViewPhoto, lightboxOpen, canEditHistory, onEditPart, onReplacePhoto }) {
+  const [page, setPage] = useState(1);
+  const [jumpedFor, setJumpedFor] = useState(null);
+  const [sortKey, setSortKey] = useState(null); // null = default (API order)
+  const [sortDir, setSortDir] = useState("asc");
+  const [search, setSearch]     = useState("");
+  const [searchBy, setSearchBy] = useState("customer");
+  const [dateValue, setDateValue] = useState(""); // "YYYY-MM-DD" from the date picker
+  const [statusFilter, setStatusFilter] = useState("all"); // "all" | "completed" | "cancelled" | "stolen"
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+    setPage(1);
+  };
+
+  const hasFilters   = !!search.trim() || !!dateValue || statusFilter !== "all";
+  const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("all"); setPage(1); };
+
+  // Search: "Search by" mirrors the table columns. Customer is a text match
+  // (every space-separated word must match); Trip Start and Trip End are
+  // exact-day date picks. Status has its own dropdown.
+  const terms  = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const searchType = SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
+
+  const filteredBookings = pastBookings.filter((b) => {
+    const id = b.bookingID || b.id;
+    if (statusFilter !== "all" && b.status?.toLowerCase() !== statusFilter) return false;
+    if (searchType === "date") {
+      if (!dateValue) return true;
+      if (searchBy === "start") return dayKey(b.startDateTime) === dateValue;
+      return dayKey(b.endDateTime) === dateValue;
+    }
+    if (!terms.length) return true;
+    const hay = (pastBookingNames[id] || "").toLowerCase();
+    return terms.every((t) => hay.includes(t));
+  });
+
+  const sortedBookings = !sortKey ? filteredBookings : [...filteredBookings].sort((a, b) => {
+    const aID = a.bookingID || a.id, bID = b.bookingID || b.id;
+    if (sortKey === "status") {
+      const c = (a.status || "").localeCompare(b.status || "");
+      return sortDir === "asc" ? c : -c;
+    }
+    if (sortKey === "customer") {
+      const c = (pastBookingNames[aID] || aID || "").localeCompare(pastBookingNames[bID] || bID || "");
+      return sortDir === "asc" ? c : -c;
+    }
+    let av, bv;
+    if (sortKey === "start")        { av = toSec(a.startDateTime) || 0; bv = toSec(b.startDateTime) || 0; }
+    else if (sortKey === "end")     { av = toSec(a.endDateTime) || 0;   bv = toSec(b.endDateTime) || 0; }
+    else if (sortKey === "duration"){
+      const aSt = toSec(a.startDateTime), aEn = toSec(a.endDateTime);
+      const bSt = toSec(b.startDateTime), bEn = toSec(b.endDateTime);
+      av = isFinite(aSt) && isFinite(aEn) ? aEn - aSt : -Infinity;
+      bv = isFinite(bSt) && isFinite(bEn) ? bEn - bSt : -Infinity;
+    }
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  // Deep links (Car Tracking / Bookings / Dashboard) open one trip's modal by
+  // id. Jump the table to the page containing that trip so it's visible
+  // behind the modal. Done during render (not in an effect) so the right page
+  // is already showing by the time the modal opens.
+  const focusID = expandedHistoryID;
+  if (focusID !== jumpedFor) {
+    setJumpedFor(focusID);
+    if (focusID) {
+      const idx = sortedBookings.findIndex((b) => (b.bookingID || b.id) === focusID);
+      if (idx >= 0) setPage(Math.floor(idx / PAST_TRIPS_PAGE_SIZE) + 1);
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(sortedBookings.length / PAST_TRIPS_PAGE_SIZE));
+  const safePage   = Math.min(page, totalPages);
+  const visible    = sortedBookings.slice((safePage - 1) * PAST_TRIPS_PAGE_SIZE, safePage * PAST_TRIPS_PAGE_SIZE);
+
+  const openBooking = expandedHistoryID
+    ? pastBookings.find((b) => (b.bookingID || b.id) === expandedHistoryID)
+    : null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+      {/* Search by (field picker) + status filter */}
+      <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-gray-100">
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+          <select
+            value={searchBy}
+            onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); setPage(1); }}
+            className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+          >
+            {SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+        </div>
+        <div className="relative flex-1 min-w-[220px]">
+          {searchType === "date" ? (
+            <input
+              type="date"
+              value={dateValue}
+              onChange={(e) => { setDateValue(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+            />
+          ) : (
+            <>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                placeholder="Enter customer name…"
+                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </>
+          )}
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+          className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+        >
+          <option value="all">All statuses</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="stolen">Stolen</option>
+        </select>
+        {hasFilters && (
+          <button onClick={clearFilters} className="px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 rounded-xl transition-colors">
+            Clear
+          </button>
+        )}
+      </div>
+
+      {/* Table — same layout as Bookings. Every row opens that trip's record in a modal */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+            <tr>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Trip Start" sortKey="start" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Trip End" sortKey="end" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Status" sortKey="status" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="pl-4 pr-8 py-3 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="text-center text-gray-400 py-12">
+                  {pastBookings.length === 0
+                    ? "No past trips for this vehicle yet."
+                    : "No trips match your search."}
+                </td>
+              </tr>
+            ) : visible.map((booking) => {
+              const bID    = booking.bookingID || booking.id;
+              const status = booking.status?.toLowerCase();
+              return (
+                <tr key={bID} className="border-t hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3 max-w-[260px]">
+                    <span className="block font-medium text-gray-800 truncate">{pastBookingNames[bID] || bID}</span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDateShort(booking.startDateTime)}</td>
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDateShort(booking.endDateTime)}</td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{tripDays(booking)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center justify-center text-xs font-semibold px-2.5 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
+                      {status?.replace("_", " ") || "—"}
+                    </span>
+                  </td>
+                  <td className="pl-4 pr-8 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => onToggleRow(booking)}
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                    >
+                      View
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {/* Pad a short page with empty rows so the table always keeps its 10-row height (same as Bookings). */}
+            {visible.length > 0 && Array.from({ length: Math.max(0, PAST_TRIPS_PAGE_SIZE - visible.length) }).map((_, i) => (
+              <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                <td colSpan={6} className="h-[53px]">&nbsp;</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <Pagination
+        page={safePage}
+        totalPages={totalPages}
+        onChange={setPage}
+        start={(safePage - 1) * PAST_TRIPS_PAGE_SIZE}
+        pageSize={PAST_TRIPS_PAGE_SIZE}
+        count={sortedBookings.length}
+      />
+
+      {openBooking && (
+        <TripHistoryModal
+          key={expandedHistoryID}
+          booking={openBooking}
+          customerName={pastBookingNames[expandedHistoryID]}
+          record={historyRecords[expandedHistoryID]}
+          parts={parts}
+          carID={carID}
+          getPartFieldKey={getPartFieldKey}
+          onViewPhoto={onViewPhoto}
+          canEditHistory={canEditHistory}
+          onEditPart={onEditPart}
+          onReplacePhoto={onReplacePhoto}
+          onClose={onCloseRow}
+          escDisabled={lightboxOpen}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── One past trip's full inspection record, shown over the table instead of
+   expanding inline. z-[60] (portaled) so it clears the page header; the photo lightbox (z-[70]) opens on top of it. ── */
+function TripHistoryModal({ booking, customerName, record, parts, carID, getPartFieldKey, onViewPhoto, canEditHistory, onEditPart, onReplacePhoto, onClose, escDisabled }) {
+  const bID    = booking.bookingID || booking.id;
+  const status = booking.status?.toLowerCase();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !escDisabled) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, escDisabled]);
+
+  // Portaled to <body> so the page header (relative z-50) can't sit on top of
+  // the modal and clip its title/top row. z-[60] keeps it above the header
+  // while staying below the photo lightbox (z-[70]).
+  return createPortal(
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center px-4 py-10 sm:py-14" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-full flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-6 px-7 py-4 border-b border-gray-100">
+          <h3 className="font-bold text-gray-800 text-base">Trip Inspection Record</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none shrink-0" aria-label="Close">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-7 py-5 space-y-4">
+          <InfoSection
+            title="Booking Information"
+            aside={(
+              <button
+                type="button"
+                onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+              >
+                View Booking →
+              </button>
+            )}
+          >
+            <InfoField label="Customer" value={customerName || record?.userFullName} />
+            <InfoField label="Status" value={(
+              <span className={`inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
+                {status?.replace("_", " ") || "—"}
+              </span>
+            )} />
+            <InfoField label="Booking ID" value={bID} />
+            <InfoField label="Duration"   value={tripDays(booking)} />
+            <InfoField label="Start Date" value={fmtDate(booking.startDateTime)} />
+            <InfoField label="End Date"   value={fmtDate(booking.endDateTime)} />
+          </InfoSection>
+
+          {!record || record.loading ? (
+            <div className="h-32 flex items-center justify-center text-gray-400 text-xs">Loading trip record…</div>
+          ) : (
+            <PastTripDetail
+              record={record}
+              parts={parts}
+              getPartFieldKey={getPartFieldKey}
+              onViewPhoto={onViewPhoto}
+              canEditHistory={canEditHistory}
+              onEditPart={onEditPart}
+              onReplacePhoto={onReplacePhoto}
+              bID={bID}
+              carID={carID}
+            />
+          )}
+        </div>
+
+        {/* Sticky footer — stays visible while the record scrolls (same as Bookings) */}
+        <div className="px-7 py-4 border-t border-gray-100 shrink-0">
+          <button onClick={onClose} className="w-full py-1.5 border rounded-xl text-sm">Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ── Expanded past-trip detail: own Before/After tab toggle. Read-only for
+   everyone except Admin — Admin gets an editable status dropdown per part,
+   a direct correction (not a dual-value overlay), logged to auditLogs with
+   the previous value. See handleEditHistoryPart / adminUpdateHistoryPartStatus. ── */
+function PastTripDetail({ record, parts, getPartFieldKey, onViewPhoto, canEditHistory, onEditPart, onReplacePhoto, bID, carID }) {
+  const [rowTab, setRowTab] = useState("before");
+  const isBeforeTab = rowTab === "before";
+  const currentRecord = isBeforeTab ? record.before : record.after;
+  const currentPhotoDoc = isBeforeTab ? record.beforePhoto : record.afterPhoto;
+
+  return (
+    <div className="space-y-3">
+      {/* Boxed tabs: tab bar and content share one bordered card */}
+      <div className="rounded-2xl border border-gray-200 overflow-hidden bg-white">
+        <div className="flex bg-gray-50 border-b border-gray-200" role="tablist">
+          {[["before", "🔍 Before Trip"], ["after", "🔎 After Trip"]].map(([key, label]) => {
+            const active = rowTab === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setRowTab(key)}
+                className={`flex-1 px-4 py-3 text-xs font-semibold transition-colors border-b-2 -mb-px ${active ? "bg-white text-teal-700 border-teal-600" : "text-gray-400 border-transparent hover:text-gray-600"}`}
+              >{label}</button>
+            );
+          })}
+        </div>
+
+        <div className="p-5">
+          <HistoryPartsTable record={currentRecord} parts={parts} photoDoc={currentPhotoDoc} getPartFieldKey={getPartFieldKey} onViewPhoto={onViewPhoto} canEditHistory={canEditHistory}
+            onEditPart={canEditHistory ? (carPartID, newStatus) => onEditPart(bID, carID, rowTab, carPartID, newStatus) : null}
+            onReplacePhoto={canEditHistory ? (fieldKey, file) => onReplacePhoto(bID, carID, rowTab, fieldKey, file) : null} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Full parts table for one past before/after record — every part for
+   the car, mirroring the live Before/After Trip table. Read-only unless
+   onEditPart is passed (Admin only — see PastTripDetail above), in which
+   case the status cell becomes an editable dropdown instead of a badge. ──
+   NOTE: `record` (inventoryBeforeTrip/AfterTrip) and `photoDoc`
+   (vehicleDocumentationBeforeTrip/AfterTrip) are two SEPARATE Firestore
+   docs, only written together when a driver actually flags a part as
+   Damaged (see commitStatusEdits, only called when there are pending
+   status edits). A trip where every part stayed "Good" — the common
+   case — saves photos but never creates an inventory doc. This used to
+   bail out to "No record saved for this trip" on `!record` alone,
+   which silently hid photos that WERE saved. Now it only bails when
+   there's truly nothing (no inventory record AND no photos of any kind). */
+/* ── Small file-input control for Admin's photo replace/upload — a hidden
+   <input type="file"> behind a text button, own saving/error state so
+   each photo slot fails independently of the others. ── */
+function PhotoReplaceControl({ fieldKey, label, onReplacePhoto, compact }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState(false);
+  const inputID = `photo-replace-${fieldKey}`;
+
+  const handleChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    setSaving(true);
+    setError(false);
+    try {
+      await onReplacePhoto(fieldKey, file);
+    } catch (err) {
+      console.error("[VD] Failed to replace history photo:", err);
+      setError(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <label
+      htmlFor={inputID}
+      className={`inline-flex items-center gap-1 cursor-pointer text-[10px] font-semibold ${
+        error ? "text-red-500" : "text-teal-600 hover:text-teal-700"
+      } ${compact ? "" : "px-2 py-1 rounded-lg bg-teal-50 border border-teal-200"}`}
+    >
+      {saving ? "Uploading…" : error ? "Failed — retry" : `📤 ${label}`}
+      <input id={inputID} type="file" accept="image/*" className="hidden" onChange={handleChange} disabled={saving} />
+    </label>
+  );
+}
+
+function HistoryPartsTable({ record, parts, photoDoc, getPartFieldKey, onViewPhoto, onEditPart, onReplacePhoto }) {
+  const [savingID, setSavingID] = useState(null);
+  const [errorID, setErrorID]   = useState(null);
+  const [revealEmpty, setRevealEmpty] = useState(false); // Admin clicked "Edit" on a trip with no recorded inspection
+
+  const handleStatusChange = async (carPartID, newStatus) => {
+    if (!onEditPart) return;
+    setSavingID(carPartID);
+    setErrorID(null);
+    try {
+      await onEditPart(carPartID, newStatus);
+    } catch (e) {
+      console.error("[VD] Failed to edit history part:", e);
+      setErrorID(carPartID);
+    } finally {
+      setSavingID(null);
+    }
+  };
+  const hasExteriorPhoto = !!(photoDoc?.frontViewUrl || photoDoc?.sideViewUrl || photoDoc?.backViewUrl);
+  const hasPartPhoto = photoDoc ? parts.some(p => !!photoDoc[getPartFieldKey(p)]) : false;
+  const hasAnyPhoto = hasExteriorPhoto || hasPartPhoto || hasInspectionMedia(photoDoc);
+
+  if (!record && !hasAnyPhoto && !revealEmpty) {
+    return (
+      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 text-center space-y-2">
+        <p className="text-xs text-gray-400">No record saved for this trip.</p>
+        {onEditPart && (
+          <button
+            onClick={() => setRevealEmpty(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100"
+          >
+            Edit — set parts status for this trip
+          </button>
+        )}
+      </div>
+    );
+  }
+
+
+  const isGood = !record || record.inventoryOverallStatus !== "has damage";
+  const partRows = parts.map(p => {
+    const savedEntry = record?.damageParts?.find(d => d.carPartID === p.id);
+    const photoUrl = photoDoc?.[getPartFieldKey(p)] || null;
+    return { ...p, effectiveStatus: savedEntry?.status || "Good", photoUrl };
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${isGood ? "bg-green-500" : "bg-red-500"}`} />
+          <p className="text-xs font-semibold text-gray-700 capitalize">
+            {record ? `Overall: ${record.inventoryOverallStatus}` : "No damage flagged (parts assumed good — no inventory report was filed)"}
+          </p>
+        </div>
+        {record?.recordedAt && (
+          <p className="text-xs text-gray-400">Recorded: {fmtDateShort(record.recordedAt)}</p>
+        )}
+      </div>
+
+      {/* Videos + additional photos (only rendered when the trip has any) */}
+      <InspectionMediaGallery doc={photoDoc} onView={onViewPhoto} />
+
+      {/* Exterior shots (front/side/back) — these are the required photos
+          taken every trip, but were previously never shown in history at
+          all, only per-part photos were. */}
+      {hasExteriorPhoto || onReplacePhoto ? (
+        <div className="grid grid-cols-3 gap-2">
+          {EXTERIOR_SLOTS.map(slot => {
+            const url = photoDoc?.[slot.key];
+            if (!url) {
+              return (
+                <div key={slot.key} className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-center space-y-1">
+                  <p className="text-[10px] text-gray-300">{slot.label} — not taken</p>
+                  {onReplacePhoto && <PhotoReplaceControl fieldKey={slot.key} label="Upload" onReplacePhoto={onReplacePhoto} />}
+                </div>
+              );
+            }
+            return (
+              <div key={slot.key} className="rounded-xl border border-gray-100 overflow-hidden">
+                <button
+                  onClick={() => onViewPhoto({ url, label: slot.label })}
+                  className="block w-full hover:ring-2 hover:ring-teal-300 transition-all"
+                >
+                  <img src={url} alt={slot.label} className="w-full h-20 object-cover" />
+                </button>
+                <div className="flex items-center justify-between px-1.5 py-1">
+                  <p className="text-[10px] text-gray-500">{slot.icon} {slot.label}</p>
+                  {onReplacePhoto && <PhotoReplaceControl fieldKey={slot.key} label="Replace" onReplacePhoto={onReplacePhoto} compact />}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400 italic">No exterior photos saved for this trip.</p>
+      )}
+
+      <div className="rounded-xl border border-gray-100 overflow-hidden">
+        <table className="w-full text-sm table-fixed">
+          <colgroup>
+            <col style={{ width: "38%" }} />
+            <col style={{ width: "24%" }} />
+            <col style={{ width: "20%" }} />
+            <col style={{ width: "18%" }} />
+          </colgroup>
+          <thead>
+            <tr className="text-xs text-gray-400 uppercase tracking-wide bg-gray-50 border-b border-gray-100">
+              <th className="px-4 py-2 text-left font-semibold">Part Name</th>
+              <th className="px-4 py-2 text-left font-semibold">Serial No.</th>
+              <th className="px-4 py-2 text-left font-semibold">Status</th>
+              <th className="px-4 py-2 text-center font-semibold">Photo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {partRows.map((p, i) => (
+              <tr key={p.id} className={`border-t border-gray-50 ${i % 2 === 1 ? "bg-gray-50/20" : ""}`}>
+                <td className="px-4 py-2.5 font-medium text-gray-800 text-xs truncate">{p.carPartName || "—"}</td>
+                <td className="px-4 py-2.5 font-mono text-xs text-gray-500 truncate">{p.serialNumber || "—"}</td>
+                <td className="px-4 py-2.5">
+                  {onEditPart ? (
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={p.effectiveStatus}
+                        disabled={savingID === p.id}
+                        onChange={(e) => handleStatusChange(p.id, e.target.value)}
+                        className={`px-2 py-1 rounded-full text-xs font-semibold border-0 cursor-pointer disabled:opacity-50 ${PART_STATUS_STYLE[p.effectiveStatus] || "bg-gray-100 text-gray-500"}`}
+                      >
+                        {(EDITABLE_STATUSES.includes(p.effectiveStatus)
+                          ? EDITABLE_STATUSES
+                          : [p.effectiveStatus, ...EDITABLE_STATUSES]
+                        ).map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                      {savingID === p.id && <span className="text-[10px] text-gray-400">Saving…</span>}
+                      {errorID === p.id && <span className="text-[10px] text-red-500">Failed</span>}
+                    </div>
+                  ) : (
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${PART_STATUS_STYLE[p.effectiveStatus] || "bg-gray-100 text-gray-500"}`}>
+                      {p.effectiveStatus}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    {p.photoUrl ? (
+                      <button
+                        onClick={() => onViewPhoto({ url: p.photoUrl, label: p.carPartName || "Part" })}
+                        className="text-xs text-teal-600 hover:text-teal-700 font-semibold"
+                      >
+                        📷 View
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-300">—</span>
+                    )}
+                    {onReplacePhoto && (
+                      <PhotoReplaceControl fieldKey={getPartFieldKey(p)} label={p.photoUrl ? "Replace" : "Upload"} onReplacePhoto={onReplacePhoto} compact />
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ── Photo lightbox — click-outside/X-to-close overlay for viewing a
+   single part/exterior photo, used from the Past Trips history view. ── */
+function PhotoLightbox({ photo, onClose }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div
+      className="fixed inset-0 bg-black/70 z-[70] flex items-center justify-center p-6"
+      onClick={onClose}
+    >
+      <div
+        className={`bg-white rounded-2xl overflow-hidden w-full shadow-2xl ${photo.type === "video" ? "max-w-3xl" : "max-w-lg"}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-800">{photo.label}</p>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+          >✕</button>
+        </div>
+        {photo.type === "video" ? (
+          <div className="w-full bg-black">
+            <video src={photo.url} controls autoPlay playsInline className="w-full max-h-[70vh]" />
+          </div>
+        ) : failed ? (
+          <div className="w-full h-[60vh] flex flex-col items-center justify-center gap-2 bg-gray-50 text-gray-400">
+            <span className="text-2xl">🖼️</span>
+            <p className="text-xs">Photo failed to load.</p>
+            <a href={photo.url} target="_blank" rel="noreferrer" className="text-xs text-teal-600 hover:text-teal-700 font-semibold">
+              Open original link
+            </a>
+          </div>
+        ) : (
+          // Fixed-height box, independent of the photo's own dimensions —
+          // object-contain fills it without ever resizing the modal to
+          // match whatever size/aspect-ratio the actual image happens to be.
+          <div className="w-full h-[60vh] bg-gray-50">
+            <img
+              src={photo.url}
+              alt={photo.label}
+              className="w-full h-full object-contain"
+              onError={() => setFailed(true)}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,1892 @@
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "../../../fireabase";
+import usePolling from "../../../hooks/usePolling";
+import { getCarCatalog } from "../../../utils/carCatalog";
+import TracebackPanel from "./TracebackPanel";
+import HistoryPanel from "./HistoryPanel";
+import ReviewPanel from "./ReviewPanel";
+import BookingInfoPanel from "./BookingInfoPanel";
+import LogsPanel from "./LogsPanel";
+import { readCodingWarnings, warningsByCity } from "../../../utils/codingWarnings";
+import ReturnChecklistModal from "../../../components/ReturnChecklistModal";
+import DriverPenaltyModal from "../../../components/DriverPenaltyModal";
+import GeofenceBanner from "../../../components/GeofenceBanner";
+import PlaceLabel from "../../../components/PlaceLabel";
+import { reverseGeocode, roundKey } from "../../../utils/reverseGeocode";
+import { isGeofenceBreachedNow, isCodingRestrictedNow, activeCodingAlertNow } from "../../../utils/geofenceAlerts";
+import { colorForCar } from "../../../utils/carColors";
+import { fetchCityBoundary } from "../../../utils/cityBoundary";
+
+// ── Fix Leaflet default marker icons ─────────────────────────────────────────
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
+  iconUrl:       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
+  shadowUrl:     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+});
+
+// ─── SVG ICONS ────────────────────────────────────────────────────────────────
+const Icons = {
+  Car: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 11l2-4h10l2 4M3 11h18v8H3v-8zm4 8v2m10-2v2" />
+      <circle cx="7.5" cy="15" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="16.5" cy="15" r="1.5" fill="currentColor" stroke="none"/>
+    </svg>
+  ),
+  Satellite: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <ellipse cx="12" cy="12" rx="3" ry="3" />
+      <path d="M6.3 6.3a8 8 0 000 11.4M17.7 6.3a8 8 0 010 11.4M3.5 3.5a13 13 0 000 17M20.5 3.5a13 13 0 010 17" />
+    </svg>
+  ),
+  MapPin: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z" />
+      <circle cx="12" cy="10" r="3" />
+    </svg>
+  ),
+  Map: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+      <line x1="8" y1="2" x2="8" y2="18" />
+      <line x1="16" y1="6" x2="16" y2="22" />
+    </svg>
+  ),
+  Peso: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 20V4h6a4 4 0 010 8H7M4 10h11M4 13h9" />
+    </svg>
+  ),
+  Refresh: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+    </svg>
+  ),
+  Clock: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  ),
+  AlertTriangle: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  Navigation: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="3 11 22 2 13 21 11 13 3 11" />
+    </svg>
+  ),
+  Calendar: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  ),
+  Play: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
+  ),
+  Flag: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+      <line x1="4" y1="22" x2="4" y2="15" />
+    </svg>
+  ),
+  SteeringWheel: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="2.3" />
+      <path d="M12 3v6.7M12 14.3V21M4.2 7.5l5.6 3.2M14.2 13.3l5.6 3.2M19.8 7.5l-5.6 3.2M9.8 13.3l-5.6 3.2" />
+    </svg>
+  ),
+  UserCheck: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 20c1-3.3 3.6-5.2 5.5-5.2s4.5 1.9 5.5 5.2" />
+      <polyline points="16 10 18 12 22 7" />
+    </svg>
+  ),
+  Siren: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2a7 7 0 00-7 7v6h14V9a7 7 0 00-7-7z" />
+      <line x1="5" y1="15" x2="19" y2="15" />
+      <line x1="12" y1="2" x2="12" y2="4" />
+      <line x1="3" y1="22" x2="21" y2="22" />
+    </svg>
+  ),
+  X: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  ),
+  ChevronUp: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="18 15 12 9 6 15" />
+    </svg>
+  ),
+  ChevronDown: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  ),
+  Info: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+  ),
+  List: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="8" y1="6" x2="21" y2="6" />
+      <line x1="8" y1="12" x2="21" y2="12" />
+      <line x1="8" y1="18" x2="21" y2="18" />
+      <line x1="3" y1="6" x2="3.01" y2="6" />
+      <line x1="3" y1="12" x2="3.01" y2="12" />
+      <line x1="3" y1="18" x2="3.01" y2="18" />
+    </svg>
+  ),
+  Eye: (props) => (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+};
+
+// Car SVG string for the Leaflet divIcon (can't use React components there).
+// Kept in two forms: raw markup for inline fallback content, and a
+// URI-encoded data: src for when there's no car photo to show at all.
+const CAR_SVG_RAW = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" width="20" height="20">
+  <path d="M5 11l2-4h10l2 4M3 11h18v8H3v-8zm4 8v2m10-2v2"/>
+  <circle cx="7.5" cy="15" r="1.5"/>
+  <circle cx="16.5" cy="15" r="1.5"/>
+</svg>`;
+
+const POLL_MS = 30_000; // was 10s — each poll costs backend Firestore reads
+const API     = process.env.REACT_APP_API_URL;
+
+// A car on an active trip whose tracker has sent nothing for this long is flagged on its card
+// (display only -- worked out in the browser from the last location time; no alert is sent).
+const SILENT_AFTER_MIN = 10;
+const VERY_SILENT_AFTER_MIN = 30;
+
+function timeAgo(iso) {
+  if (!iso) return "—";
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60)   return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  return `${Math.floor(diff / 3600)}h ago`;
+}
+
+// Booking dates come back from the API as Firestore Timestamps serialized
+// over JSON — same shape handled the same way as Bookings.jsx.
+function fmtDateTime(val) {
+  if (!val) return "—";
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else d = new Date(val);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch { return "—"; }
+}
+
+function sortByStartAsc(a, b) {
+  const av = a?.startDateTime?._seconds ?? (a?.startDateTime ? new Date(a.startDateTime).getTime() / 1000 : Infinity);
+  const bv = b?.startDateTime?._seconds ?? (b?.startDateTime ? new Date(b.startDateTime).getTime() / 1000 : Infinity);
+  return av - bv;
+}
+
+// `imageURL` comes from the same carImages collection VehicleDocs.jsx reads
+// (doc per car: { carID, imageURL }) — shows the vehicle's real photo on the
+// map marker instead of the generic icon, falling back to it on load error
+// or when a car simply has no photo uploaded yet.
+//
+// `status` overrides the normal teal "live" coloring — a car that's out of
+// service shouldn't visually look the same as one that's actually available,
+// even if its GPS is still reporting a location. Maintenance renders red,
+// Inactive renders a dashed/grayed "blocked" look, matching the same status
+// colors used in Fleet.jsx.
+function makeCarIcon(active = false, imageURL = null, status = "Active", color = "#0d9488") {
+  const isMaintenance = status === "Maintenance";
+  const isInactive = status === "Inactive";
+
+  const content = imageURL
+    ? `<img src="${imageURL}" style="width:100%;height:100%;object-fit:cover;display:block;${isInactive ? "filter:grayscale(1);" : ""}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+       <div style="display:none;align-items:center;justify-content:center;width:100%;height:100%;">${CAR_SVG_RAW}</div>`
+    : CAR_SVG_RAW;
+
+  const bg = isMaintenance
+    ? "#dc2626"
+    : isInactive
+      ? "#9ca3af"
+      : color;
+
+  const border = isMaintenance
+    ? "3px solid #7f1d1d"
+    : isInactive
+      ? "2px dashed #4b5563"
+      : (active ? `3px solid ${color}` : `2px solid ${color}`);
+
+  const badge = isMaintenance
+    ? `<div style="position:absolute;bottom:-2px;right:-2px;background:#dc2626;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border:2px solid white;font-size:9px;line-height:1;">🔧</div>`
+    : isInactive
+      ? `<div style="position:absolute;bottom:-2px;right:-2px;background:#6b7280;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border:2px solid white;font-size:9px;line-height:1;">⛔</div>`
+      : "";
+
+  return L.divIcon({
+    className: "",
+    html: `<div style="position:relative;width:36px;height:36px;">
+      <div style="
+        background:${bg};
+        color:white;border-radius:50%;width:36px;height:36px;
+        display:flex;align-items:center;justify-content:center;
+        overflow:hidden;
+        opacity:${isInactive ? "0.75" : "1"};
+        box-shadow:${(isMaintenance || isInactive) ? "" : "0 0 0 2px white,"}0 2px 10px rgba(0,0,0,${active ? "0.5" : "0.3"});
+        border:${border};
+        transition:all .2s">
+        ${content}
+      </div>
+      ${badge}
+    </div>`,
+    iconSize:   [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor:[0, -22],
+  });
+}
+
+// ── Customer / booking window: opened by the View button on a booking ─────────
+const cbPeso = (n) => `₱${Number(n || 0).toLocaleString()}`;
+const CB_METHOD_LABEL = { cash: "Cash", gcash: "GCash", maya: "Maya", bank_transfer: "Bank transfer" };
+const cbFmtWhen = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !isNaN(d) ? d.toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : null;
+};
+
+const CB_STATUS_CHIP = {
+  ongoing:   "bg-teal-50 text-teal-700 border-teal-200",
+  upcoming:  "bg-blue-50 text-blue-700 border-blue-200",
+  completed: "bg-green-50 text-green-700 border-green-200",
+};
+
+// Same look as the Booking Information card on the Bookings page (InfoSection / InfoField): a white bordered card with
+// a gray title strip, and each value sits under a small uppercase label in a two-column grid.
+function CbRow({ label, hint, children, tone, wide }) {
+  return (
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className={`text-sm font-medium mt-0.5 break-words ${tone || "text-gray-800"}`}>{children}</div>
+      {hint && <p className="text-[11px] text-gray-400 mt-0.5">{hint}</p>}
+    </div>
+  );
+}
+
+function CbSection({ title, aside, children }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {aside}
+      </div>
+      <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * Car Tracking's "who is this booking" window: customer, payment status, what happened to the security deposit, and
+ * every penalty already written, with one link each to the booking, its payments and its penalties.
+ * Nothing is changed here -- money and penalties are handled on their own pages.
+ *
+ *   booking         the Car Tracking booking row (name, phone, status, totals)
+ *   loadChecklist() the same data the return checklist uses: deposit position, penalties, depositReturn
+ */
+function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, onViewPayments, onViewPenalties }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!booking) return undefined;
+    let cancelled = false;
+    setData(null); setError(null); setLoading(true);
+    Promise.resolve(loadChecklist(booking))
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setError(e.message || "Couldn't load the deposit and penalty details."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking?.id]);
+
+  if (!booking) return null;
+
+  const status = String(booking.status || "").toLowerCase();
+  const paid = ["approved", "paid"].includes(String(booking.paymentStatus || "").toLowerCase()) && (booking.balance ?? 0) <= 0;
+  const penalties = Array.isArray(data?.penalties) ? data.penalties : [];
+  const confirmedTotal = penalties.filter((p) => p.status === "Confirmed").reduce((s, p) => s + (p.amount || 0), 0);
+  const dr = data?.depositReturn || null;
+
+  // ── Deposit lines ──────────────────────────────────────────────────────────
+  const held = data && data.depositStatus === "Held" && !data.depositSettled;
+  const returnedAmount = data?.depositSettled ? (dr?.amount ?? Math.max(0, data.amountToReturn || 0)) : 0;
+  const returnState = dr?.state === "refunded" ? { text: "Returned", cls: "text-green-700" }
+    : dr?.state === "processing" ? { text: "Waiting for PayMongo", cls: "text-amber-700" }
+    : dr?.state === "failed" ? { text: "PayMongo refused it — needs follow-up", cls: "text-red-600" }
+    : null;
+  const returnHow = !dr ? null
+    : dr.via === "paymongo" ? "Online through PayMongo"
+    : `In store${dr.method ? ` · ${CB_METHOD_LABEL[dr.method] || dr.method}` : ""}`;
+
+  const act = (fn) => () => { onClose(); fn(booking); };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b border-gray-100 shrink-0">
+          <div className="min-w-0">
+            <h3 className="font-bold text-arl-dark truncate">{booking.customerName || "Customer"}</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {booking.phone && booking.phone !== "—" ? booking.phone : "No phone on file"}
+            </p>
+          </div>
+          <div className="flex items-start gap-2 shrink-0">
+            {status && (
+              <span className={`text-[11px] font-semibold capitalize px-2 py-0.5 rounded-full border ${CB_STATUS_CHIP[status] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{status}</span>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+
+        <CbSection title="Payment" aside={
+          <span className={`text-[11px] font-semibold ${paid ? "text-green-700" : "text-amber-700"}`}>
+            {paid ? "Fully paid" : (booking.balance ?? 0) > 0 ? `${cbPeso(booking.balance)} unpaid` : "Not confirmed"}
+          </span>
+        }>
+          <CbRow label="Total">{booking.totalFee != null ? cbPeso(booking.totalFee) : "—"}</CbRow>
+          <CbRow label="Paid">{booking.amountPaid != null ? cbPeso(booking.amountPaid) : "—"}</CbRow>
+          {(booking.balance ?? 0) > 0 && <CbRow label="Balance" tone="text-red-600">{cbPeso(booking.balance)}</CbRow>}
+        </CbSection>
+
+        {loading && <p className="text-xs text-gray-400 px-1">Loading deposit and penalties…</p>}
+        {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
+
+        {data && (
+          <>
+            <CbSection title="Security deposit">
+              {data.depositHeld == null ? (
+                <p className="col-span-2 text-gray-400 text-xs">No security deposit recorded for this booking.</p>
+              ) : (
+                <>
+                  <CbRow label="Deposit" hint={data.depositStatus ? `Status: ${data.depositStatus}` : null}>{cbPeso(data.depositHeld)}</CbRow>
+                  {(data.depositDeducted || 0) > 0 && (
+                    <CbRow label="Used for penalties" tone="text-red-600">− {cbPeso(data.depositDeducted)}</CbRow>
+                  )}
+                  {(data.discountCredit || 0) > 0 && (
+                    <CbRow wide label="Discount credit (returns with the deposit)" tone="text-green-700">+ {cbPeso(data.discountCredit)}</CbRow>
+                  )}
+
+                  {held && (
+                    <>
+                      <CbRow label={(data.amountToReturn ?? 0) < 0 ? "Customer will owe" : "To return after penalties"}
+                        tone={(data.amountToReturn ?? 0) < 0 ? "text-red-600" : "text-green-700"}>
+                        {cbPeso(Math.abs(data.amountToReturn || 0))}
+                      </CbRow>
+                      <p className="col-span-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                        Deposit still held. {status === "completed" ? "Return it on Payments." : "Complete the booking first, then return it on Payments."}
+                      </p>
+                    </>
+                  )}
+
+                  {data.depositSettled && (
+                    <>
+                      <CbRow label="Deposit returned" tone={returnedAmount > 0 ? "text-green-700" : undefined}>
+                        {returnedAmount > 0 ? cbPeso(returnedAmount) : "Nothing to return"}
+                      </CbRow>
+                      {returnedAmount > 0 && returnHow && <CbRow label="How">{returnHow}</CbRow>}
+                      {returnedAmount > 0 && returnState && <CbRow label="Status" tone={returnState.cls}>{returnState.text}</CbRow>}
+                      {returnedAmount > 0 && cbFmtWhen(dr?.at) && <CbRow label="When">{cbFmtWhen(dr.at)}</CbRow>}
+                      {returnedAmount > 0 && dr?.referenceNumber && (
+                        <CbRow wide label="Reference"><span className="font-mono text-xs break-all">{dr.referenceNumber}</span></CbRow>
+                      )}
+                      {dr?.state === "failed" && dr.errorNote && <p className="col-span-2 text-[11px] text-red-600">{dr.errorNote}</p>}
+                      {returnedAmount === 0 && (
+                        <p className="col-span-2 text-[11px] text-gray-400">Penalties used the whole deposit.</p>
+                      )}
+                    </>
+                  )}
+
+                  {(data.stillOwed || 0) > 0 && (
+                    <CbRow label="Customer still owes" tone="text-red-600">{cbPeso(data.stillOwed)}</CbRow>
+                  )}
+                </>
+              )}
+            </CbSection>
+
+            <CbSection title={`Penalties (${penalties.length})`} aside={
+              penalties.length > 0 ? <span className="text-[11px] font-semibold text-red-600">Total {cbPeso(confirmedTotal)}</span> : null
+            }>
+              {penalties.length === 0 ? (
+                <p className="col-span-2 text-gray-400 text-xs">No penalties written for this booking.</p>
+              ) : (
+                <ul className="col-span-2 bg-white border border-gray-100 rounded-lg divide-y divide-gray-100 text-xs max-h-48 overflow-y-auto">
+                  {penalties.map((pen, idx) => {
+                    const items = Array.isArray(pen.lineItems) ? pen.lineItems : [];
+                    const inactive = pen.status && pen.status !== "Confirmed";
+                    const unpaid = Math.max(0, (pen.amount || 0) - (pen.paidAmount || 0));
+                    const label = pen.status === "UnderReview" ? "Under review — not counted yet"
+                      : inactive ? pen.status
+                      : unpaid > 0 ? `Unpaid · ${cbPeso(unpaid)} left` : "Paid";
+                    return (
+                      <li key={pen.penaltyID || pen.id || idx} className={`px-3 py-2 ${inactive ? "opacity-60" : ""}`}>
+                        <div className="flex justify-between gap-2">
+                          <span className="font-medium text-arl-dark">
+                            {items.length ? items.map((li) => li.description).filter(Boolean).join(", ") : (pen.description || pen.type || "Penalty")}
+                          </span>
+                          <span className={`font-semibold shrink-0 ${inactive ? "line-through text-gray-400" : "text-red-600"}`}>{cbPeso(pen.amount)}</span>
+                        </div>
+                        <p className={`text-[11px] mt-0.5 ${!inactive && unpaid > 0 ? "text-amber-700" : "text-gray-400"}`}>{label}</p>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CbSection>
+          </>
+        )}
+
+        </div>
+
+        {/* Actions: fixed at the bottom, same layout as the booking details window. */}
+        <div className="px-5 py-4 border-t border-gray-100 shrink-0 space-y-1.5">
+          <button onClick={act(onViewBooking)}
+            className="w-full py-2 rounded-xl text-sm font-semibold border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors">View booking</button>
+          <div className="flex items-center gap-2">
+            <button onClick={act(onViewPayments)}
+              className="flex-1 py-2 rounded-xl text-sm font-semibold border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors">View payments</button>
+            {!paid && (
+              <span className="shrink-0 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                ⚠ {(booking.balance ?? 0) > 0 ? `${cbPeso(booking.balance)} unpaid` : "Payment not confirmed"}
+              </span>
+            )}
+          </div>
+          <button onClick={act(onViewPenalties)}
+            className="w-full py-2 rounded-xl text-sm font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">View / create penalties</button>
+          <button onClick={onClose} className="w-full py-2 rounded-xl text-sm border text-gray-700 hover:bg-gray-50">Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+export default function CarTracking() {
+  const [allCars,      setAllCars]      = useState([]);
+  const [brandMap,     setBrandMap]     = useState({});
+  const [modelMap,     setModelMap]     = useState({});
+  const [gpsDevices,   setGpsDevices]   = useState([]);
+  const [locations,    setLocations]    = useState({}); // { [gpsDeviceID]: { lat, lng, updatedAt, lastLocation } }
+  const [bookings,     setBookings]     = useState([]); // upcoming + ongoing, raw from API
+  const [selected,     setSelected]     = useState(null); // carId or null
+  const selectedRef = useRef(null);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+  const [loading,      setLoading]      = useState(true);
+  const [notice,       setNotice]       = useState(null);
+  const [actionBusyId, setActionBusyId] = useState(null); // booking doc id currently being acted on
+  const [customerBooking, setCustomerBooking] = useState(null);   // small "who booked" modal
+  const [returnModalBooking, setReturnModalBooking] = useState(null); // Return checklist panel
+  const [penaltyBooking, setPenaltyBooking] = useState(null);         // in-place "Note a penalty" form
+  // Deep-link from Bookings' "Trip History" button — { tab: "history", carID, bookingID }.
+  // Only consumed once; switching tabs away and back won't re-trigger it since
+  // React Router keeps the same location.state for the life of this page visit,
+  // but HistoryPanel's own one-shot ref guards against re-opening on remount.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const historyDeepLink = location.state?.tab === "history" ? location.state : null;
+
+  // Deep-link BACK from GPS Setup after assigning a device to a car — see
+  // the "No GPS device assigned" button below and DeviceTrack.jsx's
+  // handleQuickAssign. Re-selects that car so its (now-assigned) device
+  // shows up immediately instead of landing back on an unselected Live tab.
+  const selectCarDeepLink = location.state?.selectCarId || null;
+  useEffect(() => {
+    if (selectCarDeepLink) setSelected(selectCarDeepLink);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectCarDeepLink]);
+
+  const [tab,          setTab]          = useState(historyDeepLink ? "history" : "live"); // "live" | "traceback" | "history"
+  // A trip opened from the History tab: History loads its archive, then hands the data to the Review tab to show.
+  const [reviewHandoff, setReviewHandoff] = useState(null);
+  const [deepLinkDone,  setDeepLinkDone]  = useState(false); // the Bookings → History deep link only auto-opens once
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [refreshTick,  setRefreshTick]  = useState(0);
+
+  const mapRef      = useRef(null);
+  const [sessionInfo,    setSessionInfo]    = useState(null); // active session for the focused car: zones + alerts
+  // Live preview of whatever's currently being dragged/typed in BookingInfoPanel,
+  // before Save — null means "nothing being edited, draw the saved zones".
+  // Lets the map circle resize in real time as the radius slider moves,
+  // instead of only updating once the edit is actually saved.
+  const [draftZones,     setDraftZones]     = useState(null);
+  useEffect(() => { setDraftZones(null); }, [selected]);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [showBookingInfo, setShowBookingInfo] = useState(false);
+  const [showLogs,       setShowLogs]       = useState(false);
+  useEffect(() => { if (!showBookingInfo) setDraftZones(null); }, [showBookingInfo]);
+  const zoneLayersRef = useRef({}); // { [carId]: { geofence: Layer[], destCircle, destMarker, codingShape, codingLabel } }
+  const leafletMap  = useRef(null);
+  const markersRef  = useRef({}); // { [carId]: L.Marker }
+  const followRef   = useRef(true);   // keep the selected car centered as it moves; turns off when the admin drags the map
+  const lastFocusRef = useRef(null);  // which car the focus effect last handled, to tell "selection changed" from "location updated"
+  const placeRef    = useRef({}); // { [roundKey]: address string | null } -- live reverse-geocode results for the marker popups
+  const token       = localStorage.getItem("token");
+
+  // ── Init Leaflet map ──────────────────────────────────────────────────────
+  // Runs whenever the Live tab becomes active, not just once on mount: the
+  // Live tab's whole subtree (including this map div) is conditionally
+  // unmounted while another tab is open (`{tab === "live" && (...)}` below),
+  // so mapRef.current is a brand-new DOM node every time the user comes back
+  // to Live. With an empty dep array this effect only ever ran on the very
+  // first mount, so the map stayed attached to the old, now-detached div and
+  // the "new" Live tab showed a blank/broken map. Depending on `tab` — and
+  // tearing the map down in the cleanup when leaving Live — makes it
+  // reinitialize against the current div every time.
+  useEffect(() => {
+    if (tab !== "live" || !mapRef.current || leafletMap.current) return;
+    leafletMap.current = L.map(mapRef.current, { zoomControl: false })
+      .setView([14.5995, 120.9842], 12);
+    L.control.zoom({ position: "topright" }).addTo(leafletMap.current); // buttons live top-left, zoom top-right
+    // A drag by the admin (not a programmatic pan) stops auto-follow until a car is selected again.
+    leafletMap.current.on("dragstart", () => { followRef.current = false; });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors",
+      maxZoom: 19,
+    }).addTo(leafletMap.current);
+    return () => {
+      if (leafletMap.current) {
+        // A flyTo/setView animation can still be mid-transition when this
+        // fires (e.g. switching tabs right after focusing a car). Removing
+        // the map while animated pan/zoom is in flight leaves Leaflet's own
+        // transitionend handler reading pane positions that .remove() just
+        // nulled out — "Cannot read properties of undefined (reading
+        // '_leaflet_pos')". .stop() cancels any in-progress animation first.
+        leafletMap.current.stop();
+        leafletMap.current.remove();
+        leafletMap.current = null;
+        markersRef.current = {};
+      }
+    };
+  }, [tab]);
+
+  // ── Fetch all cars + brand/model + photos from Firestore ──────────────────
+  // Served from a shared 5-minute cache (utils/carCatalog.js) instead of
+  // re-reading four whole collections every time this page opens.
+  const fetchAllCars = useCallback(async () => {
+    try {
+      const { cars, brandMap, modelMap, imgMap } = await getCarCatalog({ withImages: true });
+      setAllCars(cars.map(c => ({ ...c, imageURL: imgMap[c.id] || null })));
+      setBrandMap(brandMap);
+      setModelMap(modelMap);
+    } catch (e) {
+      console.error("[CarTracking] Firestore fetch error:", e);
+    }
+  }, []);
+
+  useEffect(() => { fetchAllCars(); }, [fetchAllCars]);
+
+  // ── Fetch GPS devices (read-only here — assignment lives in GPS Setup) ────
+  const fetchGpsDevices = useCallback(async () => {
+    try {
+      const res  = await fetch(`${API}/api/gps/devices`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setGpsDevices(json.data || []);
+    } catch (e) {
+      console.error("[CarTracking] fetchGpsDevices error:", e);
+    }
+  }, [token]);
+
+  useEffect(() => { fetchGpsDevices(); }, [fetchGpsDevices]);
+
+  // ── Fetch every assigned device's live location in one shot (unified map) ─
+  const fetchLocations = useCallback(async () => {
+    try {
+      const res  = await fetch(`${API}/api/gps`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      const map = {};
+      (json.data || []).forEach(loc => {
+        if (loc.deviceId && loc.lat && loc.lng) map[loc.deviceId] = loc;
+      });
+      setLocations(map);
+    } catch (e) {
+      console.error("[CarTracking] fetchLocations error:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  // Polls only while the tab is visible; refreshes once when it becomes visible again.
+  usePolling(fetchLocations, POLL_MS);
+
+  // ── Fetch upcoming + ongoing bookings (for the badges / pickup-return-stolen panel) ─
+  // Returns the freshly-combined array too (not just via setBookings) so
+  // callers that need the very latest data right after a mutation — e.g.
+  // handleApplyDiscount resyncing the open payment modal — don't have to
+  // wait a render cycle for `bookings` state to catch up.
+  const fetchBookings = useCallback(async () => {
+    try {
+      const [upRes, onRes] = await Promise.all([
+        fetch(`${API}/api/bookings?status=upcoming`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/api/bookings?status=ongoing`,  { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const [upJson, onJson] = await Promise.all([upRes.json(), onRes.json()]);
+      const combined = [...(upJson.data || []), ...(onJson.data || [])];
+      setBookings(combined);
+      return combined;
+    } catch (e) {
+      console.error("[CarTracking] fetchBookings error:", e);
+      return null;
+    }
+  }, [token]);
+
+  useEffect(() => { fetchBookings(); }, [fetchBookings]);
+
+  useEffect(() => { setShowAllUpcoming(false); }, [selected]);
+
+  // ── Realtime listener: only currently-active sessions ──────────────────────
+  // Cheapest way to know "which cars are geofence-breached / coding-restricted
+  // right now" for the whole fleet at once: instead of polling every car's
+  // one-car session endpoint on a timer (N reads every poll, forever, even for
+  // idle cars), listen directly to Firestore for sessions where
+  // status == "active" — only real trips cost a read, and Firestore only
+  // bills again when something actually changes, not on a fixed clock.
+  //
+  // This also now carries geofenceZones + dropoffLocation through (the
+  // listener already receives the whole doc — these were just being
+  // discarded before), which is what lets the map draw every car's zones/
+  // destination/coding-restriction at once without firing one
+  // /api/gps/:carId/session request per car.
+  const [liveSessionsByCar, setLiveSessionsByCar] = useState({}); // { [carID]: { geofenceAlerts, codingAlerts, geofenceZones, dropoffLocation } }
+  useEffect(() => {
+    const q = query(collection(db, "bookingSessions"), where("status", "==", "active"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const map = {};
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          if (!data.carID) return;
+          map[data.carID] = {
+            geofenceAlerts:  data.geofenceAlerts  || [],
+            codingAlerts:    data.codingAlerts    || [],
+            geofenceZones:   data.geofenceZones   || [],
+            dropoffLocation: data.dropoffLocation || null,
+          };
+        });
+        setLiveSessionsByCar(map);
+      },
+      (e) => console.error("[CarTracking] bookingSessions listener error:", e)
+    );
+    return () => unsub();
+  }, []);
+
+  // ── Holidays: coding is suspended on a holiday. The backend stops raising new restrictions, but a
+  // restriction logged before midnight stays "open" until a ping logs "cleared" — so the badge, banner and
+  // map area are also hidden here the moment today is a holiday, with no ping needed. Fetched once.
+  const [holidays, setHolidays] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API}/api/holidays`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled && Array.isArray(j.data)) setHolidays(j.data); })
+      .catch((e) => console.error("[CarTracking] holidays fetch error:", e));
+    return () => { cancelled = true; };
+  }, [token]);
+  const todayYmd = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); // Manila calendar day
+  const holidayToday = holidays.find((h) => h.holidayDate === todayYmd) || null;
+
+  // ── Real city boundary for whichever city(ies) currently have an active
+  // coding restriction — keyed by city name (lowercased), not by car, so two
+  // cars restricted in the same city at once share one fetch. Sequential
+  // with a short pause between requests, same ~1 req/sec courtesy the
+  // other Nominatim callers in this app follow for its usage policy. A `null`
+  // cache entry means "tried and failed" (falls back to a circle around the
+  // car's current position) — never retried in this session.
+  const [zoneBoundaries, setZoneBoundaries] = useState({}); // { [cityLower]: {geometry,lat,lng} | null }
+  const boundaryInFlightRef = useRef(new Set());
+  useEffect(() => {
+    const citiesNeeded = new Set();
+    Object.values(liveSessionsByCar).forEach((s) => {
+      const alert = holidayToday ? null : activeCodingAlertNow(s.codingAlerts);
+      if (alert?.city) citiesNeeded.add(alert.city);
+    });
+    const toFetch = [...citiesNeeded].filter((city) => {
+      const key = city.toLowerCase();
+      return !(key in zoneBoundaries) && !boundaryInFlightRef.current.has(key);
+    });
+    if (!toFetch.length) return;
+
+    let cancelled = false;
+    (async () => {
+      for (const city of toFetch) {
+        if (cancelled) return;
+        const key = city.toLowerCase();
+        boundaryInFlightRef.current.add(key);
+        try {
+          const boundary = await fetchCityBoundary(city);
+          if (!cancelled) setZoneBoundaries((z) => ({ ...z, [key]: boundary }));
+        } catch {
+          if (!cancelled) setZoneBoundaries((z) => ({ ...z, [key]: null }));
+        }
+        await new Promise((r) => setTimeout(r, 1100));
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSessionsByCar, holidayToday]);
+
+  // ── Active session for the focused car — geofence zones + alert logs ──────
+  const fetchCarSession = useCallback(async (carId) => {
+    setSessionLoading(true);
+    try {
+      const res  = await fetch(`${API}/api/gps/${carId}/session`, { headers: { Authorization: `Bearer ${token}` } });
+      const json = await res.json();
+      setSessionInfo(res.ok ? (json.data || null) : null);
+    } catch (e) {
+      console.error("[CarTracking] fetchCarSession error:", e);
+      setSessionInfo(null);
+    } finally {
+      setSessionLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    setShowBookingInfo(false);
+    setShowLogs(false);
+    if (tab === "live" && selected) fetchCarSession(selected);
+    else setSessionInfo(null);
+  }, [selected, tab, fetchCarSession]);
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const getCarLabel = (car) =>
+    [brandMap[car.brandID], modelMap[car.modelID]].filter(Boolean).join(" ") || car.id;
+
+  // Stable { id, name } list handed to Traceback/History/Review — see the
+  // note above the useMemo import. Without this, those panels' data-fetch
+  // effects re-fire (and re-hit the Sheets/Firestore-backed traceback
+  // endpoint) on every unrelated re-render of this component, not just when
+  // the car list, the selected date, or the Refresh button actually changes.
+  const trackingCars = useMemo(
+    () => allCars.map((c) => ({ id: c.id, name: getCarLabel(c), imageURL: c.imageURL || null })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allCars, brandMap, modelMap]
+  );
+
+  const deviceForCar = (carId) => gpsDevices.find(d => d.carID === carId && d.assigned);
+  const locationForCar = (carId) => {
+    const device = deviceForCar(carId);
+    return device ? locations[device.gpsDeviceID] : undefined;
+  };
+
+  // Group bookings by carID once per fetch — nearest upcoming first, ongoing separate.
+  const bookingsByCar = {};
+  bookings.forEach(b => {
+    if (!b.carID) return;
+    if (!bookingsByCar[b.carID]) bookingsByCar[b.carID] = { upcoming: [], ongoing: null };
+    if (b.status?.toLowerCase() === "ongoing") bookingsByCar[b.carID].ongoing = b;
+    else bookingsByCar[b.carID].upcoming.push(b);
+  });
+  Object.values(bookingsByCar).forEach(g => g.upcoming.sort(sortByStartAsc));
+
+  const nearestUpcoming = (carId) => bookingsByCar[carId]?.upcoming?.[0] || null;
+  const ongoingBooking  = (carId) => bookingsByCar[carId]?.ongoing || null;
+
+  // ── "Due" badges — purely derived from bookings already in memory, no new
+  // reads. A booking is late if its clock time has passed but its own
+  // status hasn't moved on yet (still "upcoming" past startDateTime, or
+  // still "ongoing" past endDateTime). ──────────────────────────────────────
+  const toDate = (v) => (v?.toDate ? v.toDate() : v ? new Date(v) : null);
+  const isDueNotPickedUp = (carId) => {
+    const b = nearestUpcoming(carId);
+    const start = b && toDate(b.startDateTime);
+    return !!(b && start && start.getTime() <= Date.now());
+  };
+  const isDueNotReturned = (carId) => {
+    const b = ongoingBooking(carId);
+    const end = b && toDate(b.endDateTime);
+    return !!(b && end && end.getTime() <= Date.now());
+  };
+
+  // ── Geofence / coding-restriction badges — from the realtime listener,
+  // cheap (only active-trip cars are ever in this map). ─────────────────────
+  const isBreached          = (carId) => isGeofenceBreachedNow(liveSessionsByCar[carId]?.geofenceAlerts);
+  const isCodingRestricted  = (carId) => !holidayToday && isCodingRestrictedNow(liveSessionsByCar[carId]?.codingAlerts);
+
+  // Cars currently breaching a zone right now — feeds the top-center pulsing
+  // banner on the map, same "show every breaching car, not just the focused
+  // one" behavior as the geo-test reference.
+  const breachedCars = allCars.filter((c) => isBreached(c.id));
+  const restrictedCars = allCars.filter((c) => isCodingRestricted(c.id));
+  const mapBanners = [
+    ...breachedCars.map((c) => ({ id: `breach-${c.id}`, tone: "breach", text: `🚨 ${getCarLabel(c)} is outside its zone` })),
+    ...restrictedCars.map((c) => ({ id: `restricted-${c.id}`, tone: "restricted", text: `🚫 ${getCarLabel(c)} is coding-restricted` })),
+  ];
+
+  // ── Sync map markers for every car with an assigned + located device ──────
+  useEffect(() => {
+    if (!leafletMap.current) return;
+    const seen = new Set();
+
+    allCars.forEach((car, carIdx) => {
+      const loc = locationForCar(car.id);
+      if (!loc?.lat || !loc?.lng) return;
+      seen.add(car.id);
+
+      const isSelected = selected === car.id;
+      const statusLine = car.status === "Maintenance"
+        ? `<span style="color:#dc2626;font-size:11px;font-weight:600">🔧 In Maintenance</span><br>`
+        : car.status === "Inactive"
+          ? `<span style="color:#6b7280;font-size:11px;font-weight:600">⛔ Inactive</span><br>`
+          : "";
+      // The address comes from the car's CURRENT coordinates (Nominatim, cached + rate-limited in reverseGeocode).
+      // The `lastLocation` text stored on the gpsLocations document is never refreshed by the backend, so it can be
+      // a stale label from a previous position -- it is not used here.
+      const placeKey = roundKey(loc.lat, loc.lng);
+      const buildPopup = (place) => `<b>${getCarLabel(car)}</b><br>
+        ${statusLine}
+        ${place ? `${place}<br>` : `<span style="color:#9ca3af;font-size:11px">${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}</span><br>`}
+        Speed: ${typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h<br>
+        ${loc.offline ? `<span style="color:#f59e0b;font-size:11px">📦 Offline flush</span><br>` : ""}
+        <span style="color:#9ca3af;font-size:11px">${timeAgo(loc.updatedAt)}</span>`;
+      const popupHtml = buildPopup(placeRef.current[placeKey]);
+      if (!(placeKey in placeRef.current)) {
+        placeRef.current[placeKey] = null;   // mark as requested so a poll doesn't queue it twice
+        reverseGeocode(loc.lat, loc.lng).then((label) => {
+          placeRef.current[placeKey] = label || null;
+          const m = markersRef.current[car.id];
+          if (label && m) m.setPopupContent(buildPopup(label));
+        });
+      }
+
+      const existing = markersRef.current[car.id];
+      if (existing) {
+        existing.setLatLng([loc.lat, loc.lng]);
+        existing.setIcon(makeCarIcon(isSelected, car.imageURL, car.status, colorForCar(carIdx)));
+        existing.setPopupContent(popupHtml);
+      } else {
+        const marker = L.marker([loc.lat, loc.lng], { icon: makeCarIcon(isSelected, car.imageURL, car.status, colorForCar(carIdx)) })
+          .addTo(leafletMap.current)
+          .bindPopup(popupHtml)
+          .on("click", () => setSelected(selectedRef.current === car.id ? null : car.id));
+        markersRef.current[car.id] = marker;
+      }
+    });
+
+    // Drop markers for cars that no longer have a live location.
+    Object.keys(markersRef.current).forEach(carId => {
+      if (!seen.has(carId)) {
+        markersRef.current[carId].remove();
+        delete markersRef.current[carId];
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allCars, gpsDevices, locations, tab]);
+
+  // ── Zones for every effectively-visible car — geofence zones, destination
+  // pin, and coding-restriction area, all colored per car (colorForCar) and
+  // clickable to focus that car + show whose zone/restriction it is (same
+  // click-to-select behavior as the car markers). Focusing one car hides
+  // every other car's zones/restriction, same as it already does for
+  // markers. Full clear + rebuild each run — infrequent enough (only on
+  // real Firestore session changes, not per animation frame) that this is
+  // simpler and safer than diffing individual layers in place. ─────────────
+  useEffect(() => {
+    if (!leafletMap.current) return;
+
+    Object.values(zoneLayersRef.current).forEach(entry => {
+      entry.geofence.forEach(l => l.remove());
+      entry.destCircle?.remove();
+      entry.destMarker?.remove();
+      entry.codingShape?.remove();
+      entry.codingLabel?.remove();
+    });
+    zoneLayersRef.current = {};
+
+    allCars.forEach((car, idx) => {
+      const effectivelyVisible = !selected || selected === car.id;
+      if (!effectivelyVisible) return;
+
+      const session = liveSessionsByCar[car.id];
+      const color = colorForCar(idx);
+      const entry = { geofence: [], destCircle: null, destMarker: null, codingShape: null, codingLabel: null };
+      const selectThisCar = () => setSelected(selectedRef.current === car.id ? null : car.id);
+
+      // ── Geofence zones (pickup / destination / extra stops from the booking) ──
+      const zones = car.id === selected ? (draftZones ?? session?.geofenceZones ?? []) : (session?.geofenceZones ?? []);
+      zones.forEach((zone, i) => {
+        if (typeof zone.lat !== "number" || typeof zone.lng !== "number") return;
+        const circle = L.circle([zone.lat, zone.lng], {
+          radius: zone.radius || 500, // meters — matches geofence.service.js's haversine comparison
+          color, fillColor: color, fillOpacity: 0.12, weight: 2, dashArray: "6 4",
+        })
+          .addTo(leafletMap.current)
+          .on("click", selectThisCar)
+          .bindPopup(`<b>${getCarLabel(car)}</b><br>${zone.label || `Zone ${i + 1}`}<br>Radius: ${zone.radius || 500} m`);
+
+        const numberIcon = L.divIcon({
+          className: "",
+          html: `<div style="background:${color};color:white;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${i + 1}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        });
+        const marker = L.marker([zone.lat, zone.lng], { icon: numberIcon })
+          .addTo(leafletMap.current)
+          .on("click", selectThisCar)
+          .bindPopup(`<b>${getCarLabel(car)}</b><br>${zone.label || `Zone ${i + 1}`}`);
+
+        entry.geofence.push(circle, marker);
+      });
+
+      // ── Destination pin (the session's actual dropoffLocation) ─────────
+      const dest = session?.dropoffLocation;
+      if (dest && typeof dest.lat === "number" && typeof dest.lng === "number") {
+        entry.destCircle = L.circle([dest.lat, dest.lng], {
+          radius: 400, color, fillColor: color, fillOpacity: 0.15, weight: 2, dashArray: "2 6",
+        }).addTo(leafletMap.current).on("click", selectThisCar);
+
+        const flagIcon = L.divIcon({
+          className: "",
+          html: `<div style="width:28px;height:28px;background:${color};border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;"><span style="transform:rotate(45deg);font-size:12px;">🏁</span></div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 28],
+        });
+        entry.destMarker = L.marker([dest.lat, dest.lng], { icon: flagIcon })
+          .addTo(leafletMap.current)
+          .on("click", selectThisCar)
+          .bindPopup(`<b>${getCarLabel(car)} — Destination</b><br>${dest.address || "Drop-off point"}`);
+      }
+
+      // ── Coding-restriction area — only exists while the car is actually
+      // under an active restriction right now (transient, not a saved
+      // zone). Uses the real city boundary once Nominatim resolves it;
+      // falls back to an approximate circle around the car's current
+      // position if the boundary fetch failed or hasn't resolved yet. ────
+      const codingAlert = holidayToday ? null : activeCodingAlertNow(session?.codingAlerts);
+      if (codingAlert?.city) {
+        const boundary = zoneBoundaries[codingAlert.city.toLowerCase()];
+        const style = { color, fillColor: color, fillOpacity: 0.28, weight: 3 };
+        const carLoc = locationForCar(car.id);
+
+        let shapeLayer = null, labelLatLng = null;
+        if (boundary?.geometry) {
+          shapeLayer = L.geoJSON(boundary.geometry, { style });
+          labelLatLng = [boundary.lat, boundary.lng];
+        } else if (carLoc?.lat && carLoc?.lng) {
+          shapeLayer = L.circle([carLoc.lat, carLoc.lng], { radius: 2500, ...style });
+          labelLatLng = [carLoc.lat, carLoc.lng];
+        }
+
+        if (shapeLayer) {
+          shapeLayer
+            .addTo(leafletMap.current)
+            .on("click", selectThisCar)
+            .bindPopup(
+              `<b>${getCarLabel(car)} — coding-restricted</b><br>${codingAlert.city}` +
+              (boundary?.geometry
+                ? `<br><span style="font-size:11px;color:#6b7280">Real city boundary (OpenStreetMap)</span>`
+                : `<br><span style="font-size:11px;color:#6b7280">Approximate — real boundary unavailable, showing the car's current area</span>`)
+            );
+          entry.codingShape = shapeLayer;
+
+          entry.codingLabel = L.marker(labelLatLng, {
+            icon: L.divIcon({
+              className: "",
+              html: `<div style="background:${color};color:white;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.3);transform:translateY(-26px);">🚫 ${codingAlert.city}</div>`,
+              iconSize: [0, 0],
+              iconAnchor: [0, 0],
+            }),
+          }).addTo(leafletMap.current).on("click", selectThisCar);
+        }
+      }
+
+      zoneLayersRef.current[car.id] = entry;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSessionsByCar, selected, draftZones, tab, allCars, zoneBoundaries, locations, gpsDevices, holidayToday]);
+
+  // ── Focus behavior: clicking a car hides the rest and zooms in; clearing shows all ──
+  useEffect(() => {
+    if (!leafletMap.current) return;
+    const markers = markersRef.current;
+    const ids = Object.keys(markers);
+    if (!ids.length) return;
+
+    // This effect also re-runs on every GPS poll. Only a change of selection should reset the zoom / re-fit;
+    // a plain location update just keeps the selected car centered (and keeps whatever zoom the admin chose).
+    const selectionChanged = lastFocusRef.current !== selected;
+    lastFocusRef.current = selected;
+    if (selectionChanged) followRef.current = true;
+
+    if (selected && markers[selected]) {
+      ids.forEach(carId => {
+        markers[carId].setOpacity(carId === selected ? 1 : 0);
+        const ci = allCars.findIndex(c => c.id === carId);
+        markers[carId].setIcon(makeCarIcon(carId === selected, allCars[ci]?.imageURL, allCars[ci]?.status, colorForCar(ci)));
+      });
+      const latlng = markers[selected].getLatLng();
+      if (selectionChanged) {
+        leafletMap.current.setView(latlng, 15, { animate: true });
+        markers[selected].openPopup();
+      } else if (followRef.current) {
+        leafletMap.current.panTo(latlng, { animate: true });
+      }
+    } else {
+      ids.forEach(carId => {
+        markers[carId].setOpacity(1);
+        const ci = allCars.findIndex(c => c.id === carId);
+        markers[carId].setIcon(makeCarIcon(false, allCars[ci]?.imageURL, allCars[ci]?.status, colorForCar(ci)));
+      });
+      if (!selectionChanged) {
+        // nothing selected and just a location update: leave the admin's view alone
+      } else if (ids.length === 1) {
+        leafletMap.current.setView(markers[ids[0]].getLatLng(), 13, { animate: true });
+      } else if (ids.length > 1) {
+        const bounds = L.latLngBounds(ids.map(carId => markers[carId].getLatLng()));
+        leafletMap.current.fitBounds(bounds, { padding: [40, 40] });
+      }
+    }
+  }, [selected, locations, gpsDevices, allCars]);
+
+  // ── Pickup / Return / Stolen actions ───────────────────────────────────────
+  const runBookingAction = async (bookingDocId, status, successMsg) => {
+    setActionBusyId(bookingDocId);
+    setNotice(null);
+    try {
+      const res  = await fetch(`${API}/api/bookings/${bookingDocId}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ status }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setNotice({ type: "ok", msg: successMsg });
+        await fetchBookings();
+        // Pickup/Return/Stolen change the *session's* active state, but that's
+        // only ever fetched by the [selected, tab] effect above — which never
+        // re-fires just because a booking action ran. Without this, Car
+        // Info/Logs keeps showing whatever sessionInfo was fetched before the
+        // action (correctly "no active session" back then), forever, until
+        // the user re-clicks the car.
+        if (selected) fetchCarSession(selected);
+      } else {
+        setNotice({ type: "error", msg: json.message || "Action failed." });
+      }
+    } catch (e) {
+      setNotice({ type: "error", msg: "Action failed — check your connection." });
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  // Pickup is now a smart trigger instead of an unconditional navigate to
+  // Vehicle Documentation:
+  //  - unresolved payment (not approved/paid, or balance still owed) →
+  //    hard block right here, no navigation. Vehicle Documentation has no
+  //    way to resolve payment, so sending staff there wouldn't help.
+  //  - payment resolved but before-trip photos aren't done yet → send them
+  //    to Vehicle Documentation to take the photos, same as before.
+  //  - both ready → complete the pickup directly, no detour. Still backed
+  //    by the same server-side checks in booking.service.js either way.
+  const handlePickup = (b) => {
+    const paymentReady = ["approved", "paid"].includes((b.paymentStatus || "").toLowerCase()) && (b.balance ?? 0) <= 0;
+    if (!paymentReady) {
+      setNotice({ type: "error", msg: "Payment still requires action. Remind the customer or record an in-store payment in Payments." });
+      return;
+    }
+    if (!b.beforeDocsComplete) {
+      navigate(`/vehicle-documentation?carID=${b.carID}&bookingID=${b.id}&action=pickup`);
+      return;
+    }
+    runBookingAction(b.id, "ongoing", "Pickup complete — GPS tracking is now active.");
+  };
+
+  // Return is always clickable: it opens the checklist, which shows what is
+  // still missing (drop-off, inspection, penalties, GPS device check) and
+  // only enables "Confirm Return" once everything is done. No override —
+  // the server enforces the same rules on the PATCH itself.
+  const handleReturn = (b) => { setReturnModalBooking(b); };
+  // Money lives on its own pages now: Car Tracking only links to them.
+  const bookingKey = (b) => encodeURIComponent(b?.bookingID || b?.id || "");
+  const goPayments  = (b) => navigate(`/payments?bookingID=${bookingKey(b)}`);
+  // Opens that booking's penalty window on the Penalties page (the list, with "Add penalty" inside it).
+  const goPenalties = (b) => navigate(`/penalties?viewBooking=${bookingKey(b)}`);
+
+  const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  // Same endpoint as the return checklist, for any booking: deposit position, penalties, how the deposit went back.
+  const loadCustomerChecklist = useCallback(async (b) => {
+    const res = await fetch(`${API}/api/bookings/${b.id}/return-checklist`, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't load the deposit and penalty details.");
+    return json.data;
+  }, [token]);
+  const loadReturnChecklist = useCallback(async () => {
+    if (!returnModalBooking) return null;
+    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/return-checklist`, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't load the checklist.");
+    return json.data;
+  }, [returnModalBooking, token]);
+
+  // Staff "Note a penalty" — same in-place form the driver gets, instead of
+  // sending them off to the Penalties page. Staff create via POST /api/penalties.
+  const loadLateFee = useCallback(async () => {
+    if (!penaltyBooking) return null;
+    const res = await fetch(`${API}/api/penalties/late-fee-preview/${encodeURIComponent(penaltyBooking.bookingID || penaltyBooking.id)}`, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    return res.ok ? json.data : null;
+  }, [penaltyBooking, token]);
+
+  const submitPenalty = async (body) => {
+    const res = await fetch(`${API}/api/penalties`, {
+      method: "POST", headers: authHeaders,
+      body: JSON.stringify({ ...body, bookingID: penaltyBooking.bookingID || penaltyBooking.id }),
+    });
+    const json = await res.json();
+    if (!res.ok || json.success === false) throw new Error(json.message || "Couldn't charge the penalty.");
+    setNotice({ type: "ok", msg: "Penalty charged — the customer was notified and it's deducted from the deposit." });
+    await fetchBookings();
+  };
+
+  const confirmReturn = async () => {
+    // Keep a copy — the modal clears returnModalBooking right after this resolves.
+    const returned = returnModalBooking;
+    const res = await fetch(`${API}/api/bookings/${returned.id}`, {
+      method: "PATCH", headers: authHeaders, body: JSON.stringify({ status: "completed" }),
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Return failed.");
+    setNotice({ type: "ok", msg: "Booking marked complete — trip history saved." });
+    await fetchBookings();
+    if (selected) fetchCarSession(selected);
+
+    // Hand off to Maintenance with the returned car selected and this
+    // booking linked (basis defaults to "Post-Rental" there). Only runs
+    // for a real Return. Drivers return from My Trips
+    // instead and can't open /maintenance, so this stays supervisor-side.
+    if (returned?.carID) {
+      const params = new URLSearchParams({
+        carID: returned.carID,
+        bookingID: returned.bookingID || returned.id || "",
+      });
+      navigate(`/maintenance?${params.toString()}`, { state: { returnedBooking: true } });
+    }
+  };
+
+  const dropoffFromChecklist = async () => {
+    const res = await fetch(`${API}/api/bookings/${returnModalBooking.id}/dropoff`, {
+      method: "PATCH", headers: { Authorization: `Bearer ${token}` },
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message || "Couldn't mark dropped off.");
+    await fetchBookings();
+  };
+
+  // Every booking type, separate from Return/runBookingAction above — this
+  // hits its own endpoint (PATCH /:id/dropoff) since it doesn't change
+  // booking.status at all, just stamps droppedOffTime on the session.
+  // Supervisor/staff is the only surface for a no-driver (self-drive)
+  // booking; also usable as a fallback for driver bookings.
+  const handleDropoff = async (b) => {
+    setActionBusyId(b.id);
+    setNotice(null);
+    try {
+      const res  = await fetch(`${API}/api/bookings/${b.id}/dropoff`, {
+        method:  "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (json.success) {
+        setNotice({ type: "ok", msg: "Marked dropped off." });
+        await fetchBookings();
+      } else {
+        setNotice({ type: "error", msg: json.message || "Action failed." });
+      }
+    } catch (e) {
+      setNotice({ type: "error", msg: "Action failed — check your connection." });
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleStolen  = (b) => {
+    // Once the car is marked dropped off it is physically back — it can't be flagged stolen any more.
+    if (b.droppedOffTime) return;
+    if (!window.confirm("Flag this car as stolen? This is logged permanently and the booking will be locked.")) return;
+    runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
+  };
+
+  // Flies the Live map to a geofence zone's location — used by BookingInfoPanel
+  // so clicking a zone entry focuses it, same idea as clicking a car marker.
+  function flyToZone(zone) {
+    if (!leafletMap.current || typeof zone?.lat !== "number" || typeof zone?.lng !== "number") return;
+    leafletMap.current.flyTo([zone.lat, zone.lng], 17, { animate: true });
+    const marker = (zoneLayersRef.current[selected]?.geofence || []).find(
+      l => l instanceof L.Marker && l.getLatLng().lat === zone.lat && l.getLatLng().lng === zone.lng
+    );
+    marker?.openPopup();
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <>
+    <div className="flex flex-col h-full min-h-0 gap-3">
+
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <div className="shrink-0">
+        <h1 className="text-2xl font-bold text-arl-dark">Car Tracking</h1>
+        {tab === "live" && holidayToday && (
+          <p className="text-sm text-gray-400 mt-0.5">
+            🎌 {holidayToday.holidayName || "Holiday"} — coding suspended today
+          </p>
+        )}
+      </div>
+
+      {/* ── Tabs + actions on one row ───────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-3 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 w-fit">
+            {[
+              { id: "live",       label: "Live" },
+              { id: "traceback",  label: "Traceback" },
+              { id: "history",    label: "History" },
+              { id: "review",     label: "Review" },
+            ].map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  tab === t.id ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {tab === "live" && (
+              <button
+                onClick={() => { fetchLocations(); fetchGpsDevices(); fetchBookings(); }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800"
+              >
+                <Icons.Refresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            )}
+            {tab !== "live" && tab !== "review" && (
+              <button
+                onClick={() => setRefreshTick(t => t + 1)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800"
+              >
+                <Icons.Refresh className="w-3.5 h-3.5" />
+                Refresh
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Notice */}
+      {tab === "live" && notice && (
+        <div className={`shrink-0 rounded-2xl px-4 py-3 text-xs font-medium border flex items-start gap-2 ${
+          notice.type === "ok"    ? "bg-green-50 border-green-200 text-green-700" :
+          notice.type === "warn"  ? "bg-yellow-50 border-yellow-200 text-yellow-700" :
+          "bg-red-50 border-red-200 text-red-700"
+        }`}>
+          <Icons.AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          {notice.msg}
+        </div>
+      )}
+
+      {tab === "traceback" && (
+        <TracebackPanel cars={trackingCars} token={token} refreshTick={refreshTick} />
+      )}
+
+      {tab === "history" && (
+        <HistoryPanel
+          cars={trackingCars}
+          token={token}
+          refreshTick={refreshTick}
+          autoOpen={historyDeepLink && !deepLinkDone ? { carID: historyDeepLink.carID, bookingID: historyDeepLink.bookingID } : null}
+          onOpenReview={(data) => { setReviewHandoff(data); setDeepLinkDone(true); setTab("review"); }}
+        />
+      )}
+
+      {tab === "review" && (
+        <ReviewPanel
+          cars={trackingCars}
+          token={token}
+          initialReview={reviewHandoff}
+          onExitHandoff={() => { setReviewHandoff(null); setTab("history"); }}
+        />
+      )}
+
+      {tab === "live" && (
+      <div className="flex flex-1 min-h-0 gap-4">
+
+      {/* ── Sidebar: car list ────────────────────────────────────────────── */}
+      <div className="w-80 shrink-0 flex flex-col gap-3 overflow-y-auto scrollbar-hide">
+        <div className="shrink-0 bg-white rounded-2xl border border-gray-100 shadow-soft px-4 py-3 space-y-2">
+          <p className="text-sm font-bold text-arl-dark">Map Legend</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-xs text-gray-600 min-w-0">
+              <Icons.Car className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+              <span className="truncate">{selected ? "Focused car" : "All tracked cars"}</span>
+            </p>
+            {selected && (
+              <button
+                onClick={() => setSelected(null)}
+                className="shrink-0 flex items-center gap-1 px-2.5 py-1 border border-gray-200 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-50"
+              >
+                <Icons.X className="w-3 h-3" />
+                Show all cars
+              </button>
+            )}
+          </div>
+        </div>
+        {loading && allCars.length === 0 ? (
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-white rounded-2xl border border-gray-100 p-4 h-24 animate-pulse" />
+          ))
+        ) : allCars.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-6 text-center">
+            <div className="flex justify-center mb-2">
+              <Icons.Car className="w-10 h-10 text-gray-300" />
+            </div>
+            <p className="text-sm text-gray-500 font-semibold">No cars in database</p>
+          </div>
+        ) : (
+          allCars.map((car, carIdx) => {
+            const isSelected = selected === car.id;
+            const carColor = colorForCar(carIdx);
+            const device      = deviceForCar(car.id);
+            const loc         = locationForCar(car.id);
+            const ongoing     = ongoingBooking(car.id);
+            const nextUpcoming = nearestUpcoming(car.id);
+            const dueNotPickedUp = isDueNotPickedUp(car.id);
+            const dueNotReturned = isDueNotReturned(car.id);
+            const breached = isBreached(car.id);
+            const codingRestricted = isCodingRestricted(car.id);
+            // Tracker silence only matters for a car that is out on a trip with a tracker assigned.
+            const sinceMin = loc?.updatedAt ? Math.floor((Date.now() - new Date(loc.updatedAt)) / 60000) : null;
+            const silent = !!(ongoing && device && sinceMin !== null && sinceMin >= SILENT_AFTER_MIN);
+            const veryStale = silent && sinceMin >= VERY_SILENT_AFTER_MIN;
+
+            return (
+              <button
+                key={car.id}
+                onClick={() => {
+                  setSelected(isSelected ? null : car.id);
+                  setNotice(null);
+                }}
+                style={isSelected ? { borderColor: carColor, boxShadow: `0 0 0 1px ${carColor}40` } : undefined}
+                className={`w-full text-left bg-white rounded-2xl border-2 shadow-soft p-4 transition-all ${
+                  isSelected ? "" : "border-gray-100 hover:border-gray-300"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    style={{ border: `2px solid ${carColor}` }}
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 overflow-hidden ${
+                    isSelected && loc ? "bg-teal-50 text-teal-600" : "bg-gray-50 text-gray-400"
+                  }`}>
+                    {car.imageURL ? (
+                      <img
+                        src={car.imageURL}
+                        alt={getCarLabel(car)}
+                        className="w-full h-full object-cover"
+                        onError={e => { e.currentTarget.style.display = "none"; e.currentTarget.nextElementSibling.style.display = "flex"; }}
+                      />
+                    ) : null}
+                    <Icons.Car className="w-5 h-5" style={car.imageURL ? { display: "none" } : undefined} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-bold text-gray-800 text-sm truncate">{getCarLabel(car)}</p>
+                      {/* Same status colors as Fleet.jsx (Maintenance/Inactive)
+                          so a car looks consistent across both pages —
+                          Active/Rented/Reserved don't need a badge here since
+                          the marker itself is already the "normal" color. */}
+                      {car.status === "Maintenance" && (
+                        <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-red-600">
+                          🔧 Maintenance
+                        </span>
+                      )}
+                      {car.status === "Inactive" && (
+                        <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-gray-500">
+                          ⛔ Inactive
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Device badge */}
+                    {device ? (
+                      <p className="text-xs text-teal-600 font-medium mt-0.5 flex items-center gap-1">
+                        <Icons.Satellite className="w-3 h-3" />
+                        {device.gpsName}
+                      </p>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation(); // don't also toggle this card's selection
+                          navigate("/gps-setup", { state: { assignCarId: car.id, assignCarLabel: getCarLabel(car) } });
+                        }}
+                        title="Go to GPS Setup and assign a device to this car"
+                        className="text-xs text-red-400 mt-0.5 italic flex items-center gap-1 hover:text-red-600 hover:not-italic"
+                      >
+                        <Icons.AlertTriangle className="w-3 h-3" />
+                        No GPS device assigned
+                      </button>
+                    )}
+
+                    {/* Location */}
+                    {loc ? (
+                      <>
+                        <p className={`text-xs mt-0.5 font-medium flex items-center gap-1 ${silent ? (veryStale ? "text-red-500" : "text-amber-600") : "text-green-500"}`}>
+                          <Icons.Clock className="w-3 h-3" />
+                          {timeAgo(loc.updatedAt)} · {typeof loc.speed === "number" ? loc.speed.toFixed(1) : "0.0"} km/h
+                        </p>
+                        {loc.offline && (
+                          <p className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2 py-0.5 mt-1 font-medium inline-flex items-center gap-1">
+                            📦 Offline flush — buffered ping, not live
+                          </p>
+                        )}
+                      </>
+                    ) : device ? (
+                      <p className={`text-xs mt-0.5 italic ${ongoing ? "text-amber-600 font-medium not-italic" : "text-gray-400"}`}>
+                        {ongoing ? "📡 No location received yet — on an active trip" : "No live location yet"}
+                      </p>
+                    ) : null}
+
+                    {/* On-trip / next-booking badge — "due" states override the
+                        neutral version once the clock has actually passed. */}
+                    {ongoing && dueNotReturned ? (
+                      <p className="text-xs text-orange-700 bg-orange-50 rounded-lg px-2 py-1 mt-1.5 font-medium flex items-center gap-1">
+                        <Icons.AlertTriangle className="w-3 h-3 shrink-0" />
+                        Due, not returned · {ongoing.customerName || "—"}
+                      </p>
+                    ) : ongoing ? (
+                      <p className="text-xs text-teal-700 bg-teal-50 rounded-lg px-2 py-1 mt-1.5 font-medium flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
+                        On trip · {ongoing.customerName || "—"}
+                      </p>
+                    ) : nextUpcoming && dueNotPickedUp ? (
+                      <p className="text-xs text-red-700 bg-red-50 rounded-lg px-2 py-1 mt-1.5 font-medium flex items-center gap-1">
+                        <Icons.AlertTriangle className="w-3 h-3 shrink-0" />
+                        Due, not picked up · {nextUpcoming.customerName || "—"}
+                      </p>
+                    ) : nextUpcoming ? (
+                      <p className="text-xs text-blue-700 bg-blue-50 rounded-lg px-2 py-1 mt-1.5 font-medium flex items-center gap-1">
+                        <Icons.Calendar className="w-3 h-3 shrink-0" />
+                        Next: {fmtDateTime(nextUpcoming.startDateTime)} · {nextUpcoming.customerName || "—"}
+                      </p>
+                    ) : null}
+
+                    {/* Geofence / coding-restriction badges — live, from the
+                        realtime bookingSessions listener. */}
+                    {breached && (
+                      <p className="text-xs text-red-700 bg-red-50 rounded-lg px-2 py-1 mt-1.5 font-medium flex items-center gap-1">
+                        🚧 Outside geofence
+                      </p>
+                    )}
+                    {codingRestricted && (
+                      <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-2 py-1 mt-1.5 font-medium flex items-center gap-1">
+                        🚫 Coding-restricted
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {/* ── Map + selected-car action panel ─────────────────────────────── */}
+      <div className="flex-1 min-w-0 flex flex-col gap-3">
+        <div className="flex-1 min-h-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden relative isolate">
+          <div ref={mapRef} className="w-full h-full" style={{ minHeight: "400px" }} />
+
+          {/* Top-center (the old warning spot): simple notice while no car has a live location. */}
+          <GeofenceBanner
+            banners={Object.keys(markersRef.current).length === 0
+              ? [{ id: "no-live-location", tone: "notice", text: "NO CARS REPORTING FOR LIVE LOCATION" }]
+              : []}
+          />
+
+          {/* Lower-left: one "Warnings" box holding every active warning (breach / coding-restricted). */}
+          <GeofenceBanner banners={mapBanners} placement="box" />
+
+          {/* Floating "Booking Information" / "Logs" buttons — always shown once a car
+              is focused. Previously gated on sessionInfo.hasActiveSession, which
+              hid these entirely for any car whose booking is "ongoing" but has no
+              linked bookingSessions doc (e.g. older bookings created before that
+              doc was reliably created at booking time) — now the panels
+              themselves say "no active session" instead of vanishing. */}
+          {selected && (
+            <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-2 items-start">
+              <button
+                onClick={() => { setShowBookingInfo(v => !v); setShowLogs(false); }}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
+                  showBookingInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                }`}
+              >
+                Booking Information
+              </button>
+              <button
+                onClick={() => { setShowLogs(v => !v); setShowBookingInfo(false); }}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
+                  showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                }`}
+              >
+                Booking Logs
+              </button>
+            </div>
+          )}
+
+          {showBookingInfo && selected && (
+            <BookingInfoPanel
+              carId={selected}
+              carLabel={getCarLabel(allCars.find(c => c.id === selected) || {})}
+              sessionInfo={sessionInfo}
+              lastKnownPosition={locationForCar(selected)}
+              ongoingBooking={ongoingBooking(selected)}
+              upcomingBookings={bookingsByCar[selected]?.upcoming || []}
+              token={token}
+              onClose={() => setShowBookingInfo(false)}
+              onSaved={() => { fetchCarSession(selected); fetchBookings(); }}
+              onFocusZone={flyToZone}
+              onZonesChange={setDraftZones}
+            />
+          )}
+
+          {showLogs && (
+            <LogsPanel sessionInfo={sessionInfo} loading={sessionLoading} holidayToday={holidayToday} onClose={() => setShowLogs(false)} />
+          )}
+        </div>
+
+        {/* ── Selected car: current trip (Return/Stolen) or upcoming bookings (Pickup) ── */}
+        {selected && (() => {
+          const car = allCars.find(c => c.id === selected);
+          if (!car) return null;
+          const ongoing = ongoingBooking(selected);
+          const upcoming = bookingsByCar[selected]?.upcoming || [];
+
+          return (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4 shrink-0 max-h-64 overflow-y-auto scrollbar-hide">
+              <p className="font-bold text-gray-800 text-sm mb-3">{getCarLabel(car)}</p>
+
+              {ongoing ? (
+                <div className="bg-teal-50 border border-teal-100 rounded-xl p-3">
+                  <p className="text-xs font-semibold text-teal-800 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
+                    Current trip — {ongoing.customerName || "—"}
+                  </p>
+                  <p className="text-xs text-teal-600 mt-1">
+                    {fmtDateTime(ongoing.startDateTime)} → {fmtDateTime(ongoing.endDateTime)}
+                  </p>
+                  {locationForCar(selected) && (
+                    <p className="text-[11px] text-teal-500 mt-1 flex items-center gap-1">
+                      <Icons.MapPin className="w-3 h-3 shrink-0" />
+                      <PlaceLabel lat={locationForCar(selected).lat} lng={locationForCar(selected).lng} />
+                    </p>
+                  )}
+
+                  {/* Number-coding warning the customer was shown at booking time — so when a live
+                      "Coding-restricted" alert fires, staff can see at a glance that they were told. */}
+                  {(() => {
+                    const warns = warningsByCity(readCodingWarnings(ongoing.codingWarnings));
+                    if (!warns.length) return null;
+                    return (
+                      <div className="mt-2 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                        <p className="text-[11px] font-semibold text-amber-800">⚠️ Booked with a coding warning</p>
+                        {warns.map((c, i) => (
+                          <p key={i} className="text-[11px] text-amber-700 mt-0.5">
+                            {[c.city, c.plateLastDigit != null ? `plate ending ${c.plateLastDigit}` : "", c.text].filter(Boolean).join(" · ")}
+                          </p>
+                        ))}
+                        {holidayToday && (
+                          <p className="text-[11px] text-blue-700 mt-1">🎌 Today is a holiday — coding is suspended.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Every booking, self-drive and chauffeur alike: the car
+                      itself has to be marked physically back before Return
+                      can be attempted — driver marks it from MyTrips on
+                      their own booking, supervisor/staff marks it here
+                      (the only surface that exists for a no-driver booking). */}
+                  <div className="mt-2 flex items-center justify-between gap-2 bg-white/60 border border-indigo-100 rounded-lg px-2.5 py-1.5">
+                    <span className="text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
+                      <Icons.MapPin className="w-3 h-3" />
+                      {ongoing.droppedOffTime
+                        ? `Dropped off ${fmtDateTime(ongoing.droppedOffTime)}`
+                        : "Not dropped off yet"}
+                    </span>
+                    {!ongoing.droppedOffTime && (
+                      <button
+                        onClick={() => handleDropoff(ongoing)}
+                        disabled={actionBusyId === ongoing.id}
+                        className="shrink-0 px-2 py-1 border border-indigo-300 text-indigo-700 rounded-lg text-[11px] font-semibold hover:bg-indigo-50 active:scale-95 transition-all disabled:opacity-50"
+                      >
+                        {actionBusyId === ongoing.id ? "…" : "Mark Dropped Off"}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <button
+                      onClick={() => handleReturn(ongoing)}
+                      disabled={actionBusyId === ongoing.id}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      <Icons.Flag className="w-3.5 h-3.5" />
+                      {actionBusyId === ongoing.id ? "…" : "Mark Complete"}
+                    </button>
+                    <button
+                      onClick={() => setCustomerBooking(ongoing)}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-300 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                    >
+                      <Icons.Eye className="w-3.5 h-3.5" />
+                      View
+                    </button>
+                    <button
+                      onClick={() => handleStolen(ongoing)}
+                      disabled={actionBusyId === ongoing.id || !!ongoing.droppedOffTime}
+                      title={ongoing.droppedOffTime ? "Already dropped off — can't be flagged stolen" : undefined}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-xl text-xs font-semibold hover:bg-red-700 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      <Icons.Siren className="w-3.5 h-3.5" />
+                      {actionBusyId === ongoing.id ? "…" : "Stolen"}
+                    </button>
+                  </div>
+                </div>
+              ) : upcoming.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">No upcoming bookings for this car.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {(showAllUpcoming ? upcoming : upcoming.slice(0, 2)).map((b, i) => {
+                    const isChauffeur = b.modeOfDriving === "With Chauffeur";
+                    const hasDriver   = !!b.driverID;
+                    // Payment must be approved/paid AND fully settled (balance <= 0)
+                    // before Pickup — a hard block, not just informational, same rule
+                    // the backend now enforces in updateBooking().
+                    const paymentReady = ["approved", "paid"].includes((b.paymentStatus || "").toLowerCase()) && (b.balance ?? 0) <= 0;
+                    const photosReady  = !!b.beforeDocsComplete;
+                    return (
+                    <div
+                      key={b.id}
+                      className={`flex items-center justify-between gap-2 rounded-xl p-3 border ${
+                        isChauffeur ? "bg-indigo-50 border-indigo-100" : "bg-blue-50 border-blue-100"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className={`text-xs font-semibold truncate ${isChauffeur ? "text-indigo-800" : "text-blue-800"}`}>
+                            {b.customerName || "—"}
+                          </p>
+                          {isChauffeur && (
+                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-600 text-white">
+                              <Icons.SteeringWheel className="w-2.5 h-2.5" /> Chauffeur
+                            </span>
+                          )}
+                        </div>
+                        <p className={`text-xs mt-0.5 ${isChauffeur ? "text-indigo-600" : "text-blue-600"}`}>
+                          {fmtDateTime(b.startDateTime)} → {fmtDateTime(b.endDateTime)}
+                        </p>
+                      </div>
+
+                      {i === 0 ? (
+                        isChauffeur && !hasDriver ? (
+                          // Chauffeur trip with nobody assigned yet — pickup is blocked
+                          // until dispatch happens, so this sends staff there instead
+                          // of letting them start a trip with no driver.
+                          <div className="shrink-0 flex items-center gap-1.5">
+                            <button
+                              onClick={() => setCustomerBooking(b)}
+                              title="Customer details and links"
+                              className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                            >
+                              <Icons.Eye className="w-3 h-3" />
+                              View
+                            </button>
+                            <button
+                              onClick={() => navigate("/driver-dispatch", { state: { assignBookingId: b.id, assignCustomerName: b.customerName, assignCarLabel: getCarLabel(car) } })}
+                              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold hover:bg-amber-600 active:scale-95 transition-all"
+                            >
+                              <Icons.SteeringWheel className="w-3 h-3" />
+                              Assign Driver First
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="shrink-0 flex flex-col items-end gap-1">
+                            <div className="flex items-center gap-1.5">
+                              {isChauffeur && hasDriver && (
+                                <button
+                                  onClick={() => navigate(`/driver-dispatch?driver=${b.driverID}`)}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg text-xs font-semibold hover:bg-indigo-100 active:scale-95 transition-all"
+                                >
+                                  <Icons.UserCheck className="w-3 h-3" />
+                                  View Driver
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setCustomerBooking(b)}
+                                title="Customer details and links"
+                                className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                              >
+                                <Icons.Eye className="w-3 h-3" />
+                                View
+                              </button>
+                              <button
+                                onClick={() => handlePickup(b)}
+                                disabled={actionBusyId === b.id || !paymentReady}
+                                title={!paymentReady ? "Payment still requires action" : undefined}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-white rounded-lg text-xs font-semibold active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                                  isChauffeur ? "bg-indigo-600 hover:bg-indigo-700" : "bg-blue-600 hover:bg-blue-700"
+                                }`}
+                              >
+                                <Icons.Play className="w-3 h-3" />
+                                {actionBusyId === b.id ? "…" : "Pickup"}
+                              </button>
+                            </div>
+                            {!paymentReady && (
+                              <span className="text-[11px] font-medium text-amber-600">
+                                Payment still requires action
+                              </span>
+                            )}
+                            {paymentReady && !photosReady && (
+                              <span className="text-[11px] text-gray-400">
+                                Photos not taken yet — Pickup opens Vehicle Documentation
+                              </span>
+                            )}
+                          </div>
+                        )
+                      ) : (
+                        // Only the nearest upcoming booking can be picked up — that
+                        // restriction stays. But dispatch isn't tied to pickup order,
+                        // and viewing the payment breakdown isn't either — a chauffeur
+                        // trip further down the queue can still be assigned (or its
+                        // assigned driver reviewed) ahead of time, and staff can check
+                        // balance on any upcoming booking, not just the next one.
+                        <div className="shrink-0 flex items-center gap-2">
+                          {isChauffeur && !hasDriver && (
+                            <button
+                              onClick={() => navigate("/driver-dispatch", { state: { assignBookingId: b.id, assignCustomerName: b.customerName, assignCarLabel: getCarLabel(car) } })}
+                              className="flex items-center gap-1 px-2 py-1 border border-amber-300 text-amber-700 rounded-lg text-[11px] font-semibold hover:bg-amber-50 active:scale-95 transition-all"
+                            >
+                              <Icons.SteeringWheel className="w-3 h-3" />
+                              Assign Driver
+                            </button>
+                          )}
+                          {isChauffeur && hasDriver && (
+                            <button
+                              onClick={() => navigate(`/driver-dispatch?driver=${b.driverID}`)}
+                              className="flex items-center gap-1 px-2 py-1 border border-indigo-200 text-indigo-600 rounded-lg text-[11px] font-semibold hover:bg-indigo-50 active:scale-95 transition-all"
+                            >
+                              <Icons.UserCheck className="w-3 h-3" />
+                              View Driver
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setCustomerBooking(b)}
+                            title="Customer details and links"
+                            className="flex items-center gap-1 px-2 py-1 border border-gray-200 text-gray-500 rounded-lg text-[11px] font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                          >
+                            <Icons.Eye className="w-3 h-3" />
+                            View
+                          </button>
+                          <span className={`text-[11px] italic px-1 ${isChauffeur ? "text-indigo-300" : "text-blue-300"}`}>Upcoming</span>
+                        </div>
+                      )}
+                    </div>
+                    );
+                  })}
+
+                  {upcoming.length > 2 && (
+                    <button
+                      onClick={() => setShowAllUpcoming(v => !v)}
+                      className="flex items-center justify-center gap-1 py-1.5 text-xs font-semibold text-gray-400 hover:text-gray-600"
+                    >
+                      {showAllUpcoming ? (
+                        <>Show less <Icons.ChevronUp className="w-3.5 h-3.5" /></>
+                      ) : (
+                        <>Show {upcoming.length - 2} more <Icons.ChevronDown className="w-3.5 h-3.5" /></>
+                      )}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+      </div>
+      )}
+    </div>
+
+    <ReturnChecklistModal
+      open={!!returnModalBooking}
+      onClose={() => setReturnModalBooking(null)}
+      title={returnModalBooking ? `${returnModalBooking.customerName} — ${returnModalBooking.vehicleName}` : ""}
+      driverName={returnModalBooking?.driverName}
+      loadChecklist={loadReturnChecklist}
+      onOpenPayments={() => { const b = returnModalBooking; setReturnModalBooking(null); goPayments(b); }}
+      onConfirmReturn={confirmReturn}
+      onMarkDroppedOff={dropoffFromChecklist}
+      onNotePenalty={() => { const b = returnModalBooking; setReturnModalBooking(null); setPenaltyBooking(b); }}
+    />
+
+    <DriverPenaltyModal
+      open={!!penaltyBooking}
+      onClose={() => setPenaltyBooking(null)}
+      title={penaltyBooking ? `${penaltyBooking.customerName} — ${penaltyBooking.vehicleName}` : ""}
+      loadLateFee={loadLateFee}
+      onSubmit={submitPenalty}
+    />
+
+    <CustomerBookingModal
+      booking={customerBooking}
+      onClose={() => setCustomerBooking(null)}
+      loadChecklist={loadCustomerChecklist}
+      onViewBooking={(b) => navigate(`/bookings?open=${bookingKey(b)}`)}
+      onViewPayments={goPayments}
+      onViewPenalties={goPenalties}
+    />
+    </>
+  );
+}

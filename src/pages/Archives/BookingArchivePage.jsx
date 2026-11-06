@@ -1,12 +1,12 @@
 import { Fragment, useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import { ROLES } from "../config/pagePermissions";
-import { useCurrency } from "../context/CurrencyContext";
+import { useAuth } from "../../context/AuthContext";
+import { ROLES } from "../../config/pagePermissions";
+import { useCurrency } from "../../context/CurrencyContext";
 import { MapContainer, TileLayer, CircleMarker, Circle, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { TermsVersionModal } from "../components/TripTermsModal";
+import { TermsVersionModal } from "../../components/TripTermsModal";
 
 const PAGE_SIZE = 10;
 
