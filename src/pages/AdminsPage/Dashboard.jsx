@@ -1,0 +1,1185 @@
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
+import { db } from "../../fireabase";
+import usePolling from "../../hooks/usePolling";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  onSnapshot,
+} from "firebase/firestore";
+
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+
+const IconCar = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M5 11l2.5-4h9L19 11" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="2" y="11" width="20" height="6" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    <circle cx="6.5" cy="17.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="17.5" cy="17.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M7 11h10" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCheck = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClock = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconKey = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="8" cy="12" r="4" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 12h8M18 12v3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconBell = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconBellOff = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M13.73 21a2 2 0 01-3.46 0M18.63 13A17.9 17.9 0 0118 8a6 6 0 00-9.33-5M6.26 6.26A5.86 5.86 0 006 8c0 7-3 9-3 9h14" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M2 2l20 20" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWarning = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconWrench = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconFileText = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+// STATUS_DOT / STATUS_BG / StatusBadge — kept identical to the copy in
+// Bookings.jsx so the same status always looks the same on both pages.
+// Uses Bookings.jsx's actual status set (upcoming/ongoing/completed/
+// cancelled/stolen), replacing the retired approved/pending statuses this
+// used to have. If a new status is added, update both files.
+const STATUS_DOT = {
+  "to pay": "bg-orange-400",
+  upcoming: "bg-yellow-400",
+  ongoing: "bg-blue-500",
+  completed: "bg-green-500",
+  cancelled: "bg-red-500",
+  stolen: "bg-red-700",
+};
+
+const STATUS_BG = {
+  "to pay": "bg-orange-50 border border-orange-200",
+  upcoming: "bg-yellow-50 border border-yellow-200",
+  ongoing: "bg-blue-50 border border-blue-200",
+  completed: "bg-green-50 border border-green-200",
+  cancelled: "bg-red-50 border border-red-200",
+  stolen: "bg-red-100 border border-red-300",
+};
+
+function StatusBadge({ status }) {
+  const s = (status || "").toLowerCase();
+  const dot = STATUS_DOT[s] || "bg-gray-400";
+  const bg = STATUS_BG[s] || "bg-gray-50 border border-gray-200";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      {status?.replace("_", " ")}
+    </span>
+  );
+}
+
+// ─── STAT CARD ────────────────────────────────────────────────────────────────
+
+function StatCard({ title, value, icon, color, loading, onClick }) {
+  const clickable = typeof onClick === "function";
+  return (
+    <div
+      onClick={onClick}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      className={`bg-white p-5 rounded-2xl border shadow-sm flex items-center gap-4 transition-all ${clickable ? "cursor-pointer hover:shadow-md hover:border-teal-200" : ""
+        }`}
+    >
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
+        {icon}
+      </div>
+      <div>
+        <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">{title}</div>
+        {loading ? (
+          <div className="h-7 w-20 bg-gray-200 rounded animate-pulse mt-1" />
+        ) : (
+          <div className="text-2xl font-bold text-gray-800 mt-0.5">{value}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── SKELETON ROW ─────────────────────────────────────────────────────────────
+
+function SkeletonRow() {
+  return (
+    <tr className="border-b border-gray-50">
+      {[1, 2, 3, 4, 5].map((i) => (
+        <td key={i} className="px-4 py-3">
+          <div className="h-4 bg-gray-200 rounded animate-pulse" style={{ width: `${50 + i * 8}%` }} />
+        </td>
+      ))}
+    </tr>
+  );
+}
+
+// "?" button that lists what counts as an alert / warning. Opens on click or keyboard focus and closes on an outside click,
+// so it works on touch screens as well as with a mouse.
+function HelpTip({ title, items, label }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  return (
+    <span ref={ref} className="relative inline-flex">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-label={label} aria-expanded={open}
+        className="w-5 h-5 rounded-full border border-gray-300 text-gray-500 text-[11px] font-bold leading-none flex items-center justify-center hover:bg-gray-100 hover:text-gray-700 transition-colors">
+        ?
+      </button>
+      {open && (
+        <div role="dialog" aria-label={title}
+          className="absolute left-0 top-7 z-30 w-72 sm:w-80 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-left font-normal">
+          <p className="text-xs font-semibold text-gray-700 mb-2">{title}</p>
+          <ul className="space-y-1.5 text-xs text-gray-600 list-disc pl-4">
+            {items.map((t) => <li key={t}>{t}</li>)}
+          </ul>
+        </div>
+      )}
+    </span>
+  );
+}
+
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const { getToken } = useAuth();
+  const navigate = useNavigate();
+  const [metrics, setMetrics] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [cancelBookings, setCancelBookings] = useState([]);
+  const [damagedParts, setDamagedParts] = useState([]);
+  const [upcomingBookings, setUpcomingBookings] = useState([]);
+  const [upcomingMaintenance, setUpcomingMaintenance] = useState([]);
+
+  // "pending" was retired as a booking status — bookings land straight in
+  // "upcoming" now, which isn't alert-worthy (every normal booking passes
+  // through it). The only booking-side alert left is a cancellation
+  // request, already covered by cancelBookings below.
+
+  // REAL-TIME — cancellation_request bookings
+  useEffect(() => {
+    // Pending requests are rows in cancellationRequests -- the only source.
+    const unsub = onSnapshot(
+      query(collection(db, "cancellationRequests"), where("status", "==", "pending")),
+      (snap) => {
+        // A pending row that has a refundRequestID belongs to a refund request (decided on the Refund Requests page),
+        // not a mid-trip cancellation request, so it is not counted here.
+        setCancelBookings(snap.docs.filter((d) => !d.data().refundRequestID).map((d) => {
+          const r = d.data();
+          const created = r.createdAt ?? r.requestedAt;   // requestedAt was renamed createdAt; old rows still have it
+          // bookingID is the booking's business ID, which is what the alert links to.
+          return { id: d.id, ...r, status: "cancellation_request", createdAt: created, updatedAt: created };
+        }));
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  // Damaged / stolen / missing parts — read from the parts' LIVE condition.
+  //
+  // `carParts.status` is kept up to date by the backend (services/carParts/carPartConditions.service.js):
+  // it is recomputed whenever an inspection is saved, edited, restored or deleted, or a maintenance job
+  // changes. A part stays flagged until a Completed job fixes it (and doesn't leave it "Damaged") — the same
+  // rule as utils/damagedParts.js, which the Maintenance page still uses. The inspection records themselves
+  // are never edited. So this alert is one small filtered query: no scan of the inspection history, and no
+  // reading of every Completed job.
+  //
+  // Polled every 5 minutes while the tab is visible. (The query is cheap now, so it could go back to a
+  // real-time listener if you want alerts to appear instantly.)
+  const loadDamagedParts = async () => {
+    let partsSnap;
+    try {
+      partsSnap = await getDocs(
+        query(collection(db, "carParts"), where("status", "in", ["Damaged", "Stolen", "Missing"]))
+      );
+    } catch { return; }
+
+    const parts = partsSnap.docs.map((d) => ({
+      id: d.id,
+      carPartID: d.id,
+      carID: d.data().carID,
+      carPartName: d.data().carPartName || "Unknown Part",
+      status: d.data().status,
+      _type: "damaged_part",
+    }));
+
+    const carIDs = [...new Set(parts.map(p => p.carID).filter(Boolean))];
+    let carNameMap = {};
+    if (carIDs.length > 0) {
+      try {
+        const [carsSnap, brandsSnap, modelsSnap] = await Promise.all([
+          getDocs(query(collection(db, "cars"), where("__name__", "in", carIDs))),
+          getDocs(collection(db, "brand")),
+          getDocs(collection(db, "model")),
+        ]);
+        const brandMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data().brandName || ""]));
+        const modelMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, { modelName: d.data().modelName || "", brandID: d.data().brandID }]));
+        carsSnap.docs.forEach(d => {
+          const model = modelMap[d.data().modelID] || {};
+          carNameMap[d.id] = `${brandMap[model.brandID] || ""} ${model.modelName || ""}`.trim() || d.id;
+        });
+      } catch { }
+    }
+
+    setDamagedParts(parts.map(p => ({ ...p, carName: carNameMap[p.carID] || p.carID || "—" })));
+  };
+  usePolling(loadDamagedParts, 5 * 60 * 1000);
+
+  // REAL-TIME — bookings not yet started (pickup coming up)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, "bookings"), where("status", "==", "upcoming")),
+      (snap) => setUpcomingBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+
+  // REAL-TIME — maintenance not yet done (still Scheduled)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, "maintenance"), where("status", "==", "Scheduled")),
+      (snap) => setUpcomingMaintenance(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+
+  // How far ahead each type counts as "coming up" — tune these as needed.
+  // Bookings get a tighter window since a pickup is a handoff someone has
+  // to physically be there for; maintenance gets more lead time since it's
+  // usually pre-plannable.
+  const BOOKING_WARNING_HOURS = 6;
+  const MAINTENANCE_WARNING_HOURS = 24;
+
+  const toJsDate = (val) => {
+    if (!val) return null;
+    if (typeof val?.toDate === "function") return val.toDate();
+    if (val?._seconds !== undefined) return new Date(val._seconds * 1000);
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const withinHours = (date, hours) => {
+    if (!date) return false;
+    const diffMs = date.getTime() - Date.now();
+    return diffMs >= 0 && diffMs <= hours * 60 * 60 * 1000;
+  };
+
+  const timeUntilLabel = (date) => {
+    const diffMs = date.getTime() - Date.now();
+    if (diffMs <= 0) return "due now";
+    const totalMin = Math.round(diffMs / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    if (h === 0) return `in ${m}m`;
+    if (m === 0) return `in ${h}h`;
+    return `in ${h}h ${m}m`;
+  };
+
+  // Raw license rows (ONE per Driver/Supervisor — their latest expiry). Whether
+  // a row is a Warning (expiring soon) or an Alert (already expired) is worked
+  // out below from the current time, so an open dashboard moves a license from
+  // Warning to Alerts on its own without re-reading Firestore.
+  const [licenseRows, setLicenseRows] = useState([]);
+  const [licenseNow, setLicenseNow] = useState(() => Date.now());
+
+  // Driver's-license expiry — the join against `user`/`userDetails` for
+  // role + name isn't cheap to do inside a raw onSnapshot, so instead of a
+  // true live listener this stays a REST-shaped join, but re-triggered by
+  // a lightweight listener on `userDocument` (see the effect below) so a
+  // license correction made mid-shift clears the Alert without a reload,
+  // instead of only updating on the next full page load.
+  //
+  // Expired goes to Alerts (already happened, needs action now — same
+  // tier as a cancellation request or a stolen part), close-to-expiry
+  // stays in Warning (a countdown, not yet urgent).
+  const fetchLicenseWarnings = useCallback(async (silent = false) => {
+    try {
+      const [docSnap, userSnap, detailsSnap] = await Promise.all([
+        getDocs(collection(db, "userDocument")),
+        getDocs(collection(db, "user")),
+        getDocs(collection(db, "userDetails")),
+      ]);
+      const userMap = Object.fromEntries(userSnap.docs.map(d => [d.id, d.data()]));
+      const detailsMap = Object.fromEntries(detailsSnap.docs.map(d => [d.data().userID || d.id, d.data()]));
+
+      const toJs = (val) => {
+        if (!val) return null;
+        if (typeof val === "string") { const d = new Date(val); return isNaN(d.getTime()) ? null : d; }
+        if (typeof val?.toDate === "function") return val.toDate();
+        if (val?._seconds !== undefined) return new Date(val._seconds * 1000);
+        return null;
+      };
+
+      // Firestore `user` docs store roleID (see backend/models/user/user.model.js),
+      // not a human-readable role name — these two IDs are copied by hand from
+      // backend/utils/roles/role.util.js's ROLE_IDS. No shared config between
+      // the two codebases currently, same duplication risk already flagged
+      // elsewhere in this file (pagePermissions.js's own comment about this).
+      const DRIVER_ROLE_ID = "Na0Jpt86nldSO5SjfcLa";
+      const SUPERVISOR_ROLE_ID = "fFA8G2R2ANLbVsH00jlv";
+
+      // One row per person. A driver can end up with more than one
+      // `userDocument` record (old data, re-uploads) — reading every record
+      // separately could show the same driver as both expired AND expiring.
+      // Keep only the record with the LATEST expiry (the current license).
+      const latestByUser = new Map();
+      docSnap.docs.forEach((d) => {
+        const data = d.data();
+        const expiry = toJs(data.driverLicenseExpiry);
+        const u = userMap[data.userID];
+        if (!expiry || !u) return;
+        // Driver/Supervisor only — matches the cron job's scope.
+        if (u.roleID !== DRIVER_ROLE_ID && u.roleID !== SUPERVISOR_ROLE_ID) return;
+        const prev = latestByUser.get(data.userID);
+        if (!prev || expiry.getTime() > prev.expiry.getTime()) latestByUser.set(data.userID, { data, expiry, u });
+      });
+
+      const rows = [...latestByUser.values()].map(({ data, expiry, u }) => {
+        const det = detailsMap[data.userID] || {};
+        const name = `${det.firstName || ""} ${det.lastName || ""}`.trim() || u.username || u.email || data.userID;
+        return {
+          id: data.userID,
+          userID: data.userID,
+          name,
+          _due: expiry,
+          // Lowercase to match Users.jsx's ROLE_TABS key ("driver"/"supervisor"),
+          // not the capitalized ROLES.DRIVER/"Driver" string.
+          role: u.roleID === DRIVER_ROLE_ID ? "driver" : "supervisor",
+        };
+      });
+      setLicenseRows(rows);
+    } catch (e) {
+      console.error("License warning fetch error:", e);
+    }
+  }, []);
+
+  useEffect(() => { fetchLicenseWarnings(); }, [fetchLicenseWarnings]);
+
+  // Warning vs Alert, decided from the CURRENT time. Uses the exact expiry
+  // moment (same rule as the nightly job in admin-backend's
+  // midinghtFlush.job.js), not rounded whole days — rounding used to keep a
+  // license in Warning for up to 24h after it had already expired.
+  const LICENSE_WARNING_DAYS = 14; // kept in sync by hand with Profile.jsx / admin-backend's cron threshold
+  const { licenseWarnings, licenseAlerts } = useMemo(() => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const warningResults = [];
+    const alertResults = [];
+    licenseRows.forEach((r) => {
+      const msLeft = r._due.getTime() - licenseNow;
+      const isExpired = msLeft < 0;
+      const daysLeft = Math.ceil(msLeft / DAY);
+      if (!isExpired && daysLeft > LICENSE_WARNING_DAYS) return; // not close enough yet
+      const entry = { ...r, daysLeft, isExpired };
+      if (isExpired) alertResults.push(entry);
+      else warningResults.push(entry);
+    });
+    return {
+      licenseWarnings: warningResults.sort((a, b) => a._due - b._due),
+      licenseAlerts: alertResults.sort((a, b) => a._due - b._due),
+    };
+  }, [licenseRows, licenseNow]);
+
+  // Keep the clock moving while the dashboard is open (so a license flips
+  // from Warning to Alerts at its expiry time), and re-read the data when the
+  // tab comes back into view after being in the background.
+  useEffect(() => {
+    const tick = () => setLicenseNow(Date.now());
+    const timer = setInterval(tick, 60 * 1000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") { tick(); fetchLicenseWarnings(true); }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [fetchLicenseWarnings]);
+
+  // Re-run the license join whenever a userDocument changes (e.g. a driver's
+  // license expiry gets corrected, or a new document is uploaded), instead of
+  // only on initial page load. Debounced since this is a full re-join, not a
+  // cheap merge — one uploaded document shouldn't trigger the whole thing
+  // to re-run 5 times in a row if a form saves in multiple field writes.
+  // CHANGED: the onSnapshot(collection(db, "userDocument")) listener that used
+  // to live here read the entire collection on every dashboard open. The 60s
+  // visibility-aware timer above already refreshes the license join, so the
+  // listener is removed.
+
+  // Pending edit / ID-resubmit requests — surfaced in Warning as soon as
+  // submitted, same "needs admin attention" reasoning as an upcoming
+  // booking, just not time-bound. onSnapshot since these are quick, low-
+  // volume writes and benefit from showing up live without a page reload.
+  const [pendingRequestWarnings, setPendingRequestWarnings] = useState([]);
+  // Refunds that are no longer "waiting for review" but still aren't finished: a refund request that FAILED, or one that is
+  // Approved and not yet Refunded (online part still at PayMongo, or an in-store hand-back not recorded).
+  const [refundFollowups, setRefundFollowups] = useState([]);
+  // Security deposit / discount returns that PayMongo refused or hasn't confirmed (from the backend).
+  const [payoutAlerts, setPayoutAlerts] = useState([]);
+  const loadPayoutAlerts = async () => {
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/dashboard/return-alerts`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      const json = await res.json();
+      if (res.ok && json.success) setPayoutAlerts(json.data || []);
+    } catch { /* an alert list that can't load just stays as it was */ }
+  };
+  usePolling(loadPayoutAlerts, 2 * 60 * 1000);
+  // Scheduled (same-day payment) refunds: when each was scheduled, when it sends, and whether the automatic send failed.
+  const [scheduledRefunds, setScheduledRefunds] = useState([]);
+  const loadScheduledRefunds = async () => {
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/dashboard/scheduled-refunds`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      const json = await res.json();
+      if (res.ok && json.success) setScheduledRefunds(json.data || []);
+    } catch { /* keeps the last list */ }
+  };
+  usePolling(loadScheduledRefunds, 2 * 60 * 1000);
+  useEffect(() => {
+    const userMapRef = { current: {} };
+    // Same role IDs as backend/utils/roles/role.util.js (see the license check above).
+    const ROLE_ID = { driver: "Na0Jpt86nldSO5SjfcLa", supervisor: "fFA8G2R2ANLbVsH00jlv", admin: "5bhRYMrDkjrs9VlFFY4u", owner: "1BX4V7M43t6barbPd4BP" };
+    // Which Users tab a request belongs to. The request's own role is only a fallback: the account is the source of truth.
+    const roleOf = (u, data) =>
+      u.roleID === ROLE_ID.driver ? "driver"
+        : u.roleID === ROLE_ID.supervisor ? "supervisor"
+          : data?.role ? String(data.role).toLowerCase()
+            : "customer";
+    const usersLoaded = getDocs(collection(db, "user")).then((snap) => {
+      userMapRef.current = Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
+      // New accounts whose ID has not been verified yet: the same "Pending Verification" the Users page counts.
+      const rows = snap.docs
+        .filter((d) => { const u = d.data(); return u.isVerified !== true && u.idStatus !== "rejected" && u.roleID !== ROLE_ID.owner && u.roleID !== ROLE_ID.admin; })
+        .map((d) => {
+          const u = d.data();
+          return {
+            id: `verify-${d.id}`,
+            userID: d.id,
+            name: u.username || u.email || d.id,
+            kind: "verification",
+            role: roleOf(u, null),
+            _due: toJsDate(u.createdAt) || new Date(),
+          };
+        });
+      setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "verification"), ...rows]);
+    }).catch(() => { });
+
+    const unsubEdit = onSnapshot(
+      query(collection(db, "editRequests"), where("status", "==", "pending")),
+      (snap) => usersLoaded.then(() => {
+        const rows = snap.docs.map((d) => {
+          const data = d.data();
+          const u = userMapRef.current[data.userID] || {};
+          return {
+            id: d.id,
+            userID: data.userID,
+            name: u.username || u.email || data.userID,
+            kind: "editRequest",
+            role: roleOf(u, data),
+            _due: toJsDate(data.createdAt) || new Date(),
+          };
+        });
+        setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "editRequest"), ...rows]);
+      })
+    );
+    const unsubId = onSnapshot(
+      query(collection(db, "idResubmitRequests"), where("status", "==", "pending")),
+      (snap) => usersLoaded.then(() => {
+        const rows = snap.docs.map((d) => {
+          const data = d.data();
+          const u = userMapRef.current[data.userID] || {};
+          return {
+            id: d.id,
+            userID: data.userID,
+            name: u.username || u.email || data.userID,
+            kind: "idResubmit",
+            role: roleOf(u, data),
+            _due: toJsDate(data.createdAt) || new Date(),
+          };
+        });
+        setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "idResubmit"), ...rows]);
+      })
+    );
+    // Pending refund requests — same "awaiting review" reasoning as the two
+    // above. Previously missing entirely from the Dashboard despite being
+    // the same shape of "something's waiting on an admin" item.
+    const unsubRefund = onSnapshot(
+      query(collection(db, "refundRequests"), where("status", "==", "Pending")),
+      (snap) => {
+        // A staff-created refund sits in Pending only while staff's own cancellation is being processed -- nobody
+        // is waiting to review it, and it no longer carries userID (that lives on its cancellation row).
+        const rows = snap.docs.filter((d) => d.data().source !== "staff").map((d) => {
+          const data = d.data();
+          const u = userMapRef.current[data.userID] || {};
+          return {
+            id: d.id,
+            userID: data.userID,
+            name: u.username || u.email || data.userID,
+            kind: "refundRequest",
+            amount: data.toRefundAmount ?? data.amount ?? 0,   // amount was renamed toRefundAmount
+            bookingID: data.bookingID || null,
+            _due: toJsDate(data.createdAt) || new Date(),
+          };
+        });
+        setPendingRequestWarnings((prev) => [...prev.filter((r) => r.kind !== "refundRequest"), ...rows]);
+      }
+    );
+    const unsubFollow = onSnapshot(
+      query(collection(db, "refundRequests"), where("status", "in", ["Failed", "Approved"])),
+      (snap) => {
+        setRefundFollowups(snap.docs.map((d) => {
+          const data = d.data();
+          const u = userMapRef.current[data.userID] || {};
+          return {
+            id: d.id,
+            status: data.status,
+            name: u.username || u.email || data.userID || "—",
+            amount: data.toRefundAmount ?? data.amount ?? 0,
+            bookingID: data.bookingID || null,
+            _due: toJsDate(data.processedAt) || toJsDate(data.updatedAt) || toJsDate(data.createdAt) || new Date(),
+          };
+        }));
+      }
+    );
+    return () => { unsubEdit(); unsubId(); unsubRefund(); unsubFollow(); };
+  }, []);
+
+  // How long a pending edit/ID-resubmit/refund request can sit untouched
+  // before it escalates from a yellow Warning into a red Alert — same
+  // "close-to-expiry vs already-expired" tiering as the license checks
+  // above, applied to requests instead of dates.
+  const REQUEST_STALE_DAYS = 5;
+  const requestAgeDays = (r) => (Date.now() - r._due.getTime()) / (24 * 60 * 60 * 1000);
+  const staleRequests = pendingRequestWarnings.filter((r) => requestAgeDays(r) > REQUEST_STALE_DAYS);
+  // Edit / ID-resubmit / new-ID-verification requests that are still within the normal wait: listed under Warning.
+  // (Refund requests have their own card; the ones that wait too long move up to Alerts.)
+  const freshProfileRequests = pendingRequestWarnings
+    .filter((r) => r.kind !== "refundRequest" && requestAgeDays(r) <= REQUEST_STALE_DAYS)
+    .map((r) => ({ ...r, _type: "request", daysWaiting: Math.floor(requestAgeDays(r)) }));
+  // Where a request is reviewed: ID resubmits and new IDs live under Document Request, profile changes under Edit Request.
+  const requestLink = (r) =>
+    `/users?role=${r.role}&tab=${r.kind === "idResubmit" || r.kind === "verification" ? "documents" : "editRequests"}&open=${r.userID}`;
+  const requestTitle = (r) =>
+    r.kind === "refundRequest" ? "Refund Request" : r.kind === "verification" ? "ID Verification" : r.kind === "idResubmit" ? "ID Resubmit Request" : "Profile Edit Request";
+  const roleLabel = (role) => (role ? role.charAt(0).toUpperCase() + role.slice(1) : "");
+  
+  const submittedAgoLabel = (r) => {
+    const mins = Math.floor((Date.now() - r._due.getTime()) / 60000);
+    if (mins < 1) return "Submitted just now";
+    if (mins < 60) return `Submitted ${mins} minute${mins === 1 ? "" : "s"} ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `Submitted ${hours} hour${hours === 1 ? "" : "s"} ago`;
+    const days = Math.floor(hours / 24);
+    return `Submitted ${days} day${days === 1 ? "" : "s"} ago`;
+  };
+  // Maintenance still not done, past its own due date — mirrors the
+  // booking pickup_overdue/return_overdue pattern: no separate "Overdue"
+  // status to remember to set, just a date that's slipped by while the
+  // record is still open. No decay either — stays in Alert indefinitely
+  // until someone actually marks it Completed or Cancelled.
+  const overdueMaintenance = upcomingMaintenance
+    .map((m) => ({ ...m, _type: "maintenance_overdue", _due: toJsDate(m.maintenanceDate) }))
+    .filter((m) => m._due && m._due.getTime() < Date.now());
+
+  // Refund follow-ups, one shape for both sources (refund requests + deposit/discount returns).
+  //   Alert  : failed (the customer has NOT received the money), or still not finished after a while.
+  //   Warning: in progress and still within the normal time (PayMongo can take up to 24 hours).
+  const APPROVED_REFUND_STALE_DAYS = 2;
+  const PAYOUT_PROCESSING_STALE_HOURS = 24;
+  const peso0 = (n) => `₱${Number(n || 0).toLocaleString()}`;
+  const fmtWhen = (v) => { const d = toJsDate(v); return d ? d.toLocaleString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"; };
+  const fmtDayOnly = (v) => { const d = toJsDate(v); return d ? d.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric" }) : "—"; };
+  const SCHEDULED_NOT_SENT_STALE_HOURS = 12;   // the nightly job runs at 00:10 Manila; still unsent long after that = something is wrong
+  const scheduledIds = new Set(scheduledRefunds.map((x) => x.refundRequestID));
+  const followups = [
+    // Same-day-payment refunds: scheduled / due / needs retry / failed (the backend works out which).
+    ...scheduledRefunds.map((x) => {
+      const link = `/refund-requests?search=${encodeURIComponent(x.bookingID || "")}`;
+      const sendAfter = toJsDate(x.sendAfter);
+      const hoursLate = sendAfter ? (Date.now() - sendAfter.getTime()) / (60 * 60 * 1000) : 0;
+      const when = `scheduled ${fmtWhen(x.scheduledAt)}`;
+      if (x.state === "failed") return {
+        _type: "refund_followup", id: `sr-${x.refundRequestID}`, _due: toJsDate(x.scheduledAt) || new Date(), urgent: true,
+        title: "Scheduled Refund Failed", line1: `Booking ${x.bookingID || "—"}`,
+        line2: `${peso0(x.amount)} — customer has NOT received it${x.errorNote ? ` (${x.errorNote})` : ""}. Hand it back manually.`, link,
+      };
+      if (x.state === "retry") return {
+        _type: "refund_followup", id: `sr-${x.refundRequestID}`, _due: toJsDate(x.scheduledAt) || new Date(), urgent: true,
+        title: "Scheduled Refund Needs Retry", line1: `Booking ${x.bookingID || "—"}`,
+        line2: `${peso0(x.amount)} — ${when}. Automatic send failed${x.errorNote ? `: ${x.errorNote}` : ""}. Press Retry now.`, link,
+      };
+      if (x.state === "due") return {
+        _type: "refund_followup", id: `sr-${x.refundRequestID}`, _due: toJsDate(x.scheduledAt) || new Date(),
+        urgent: hoursLate > SCHEDULED_NOT_SENT_STALE_HOURS,
+        title: hoursLate > SCHEDULED_NOT_SENT_STALE_HOURS ? "Scheduled Refund Not Sent" : "Scheduled Refund Sending",
+        line1: `Booking ${x.bookingID || "—"}`,
+        line2: `${peso0(x.amount)} — ${when}, due ${fmtDayOnly(x.sendAfter)}${hoursLate > SCHEDULED_NOT_SENT_STALE_HOURS ? " — still not sent, check Refund Requests" : " — waiting for the nightly send"}`, link,
+      };
+      return {
+        _type: "refund_followup", id: `sr-${x.refundRequestID}`, _due: toJsDate(x.scheduledAt) || new Date(), urgent: false,
+        title: "Refund Scheduled", line1: `Booking ${x.bookingID || "—"}`,
+        line2: `${peso0(x.amount)} — ${when}, sends ${fmtDayOnly(x.sendAfter)}`, link,
+      };
+    }),
+    ...refundFollowups.filter((r) => !scheduledIds.has(r.id)).map((r) => {
+      const ageDays = (Date.now() - r._due.getTime()) / (24 * 60 * 60 * 1000);
+      const failed = r.status === "Failed";
+      return {
+        _type: "refund_followup", id: `rr-${r.id}`, _due: r._due,
+        urgent: failed || ageDays > APPROVED_REFUND_STALE_DAYS,
+        title: failed ? "Refund Failed" : ageDays > APPROVED_REFUND_STALE_DAYS ? "Refund Not Completed" : "Refund In Progress",
+        line1: r.bookingID ? `Booking ${r.bookingID}` : r.name,
+        line2: failed ? `${peso0(r.amount)} — customer has NOT received it` : `${peso0(r.amount)} — ${Math.floor(ageDays)} day${Math.floor(ageDays) === 1 ? "" : "s"} since approved`,
+        link: `/refund-requests?search=${encodeURIComponent(r.bookingID || "")}`,
+      };
+    }),
+    ...payoutAlerts.map((p) => {
+      const at = toJsDate(p.at) || new Date();
+      const ageHours = (Date.now() - at.getTime()) / (60 * 60 * 1000);
+      const failed = p.state === "failed";
+      const what = p.kind === "discount" ? "Discount" : "Deposit";
+      return {
+        _type: "refund_followup", id: `po-${p.paymentID}-${p.kind}`, _due: at,
+        urgent: failed || ageHours > PAYOUT_PROCESSING_STALE_HOURS,
+        title: failed ? `${what} Return Failed` : ageHours > PAYOUT_PROCESSING_STALE_HOURS ? `${what} Return Still Processing` : `${what} Return Processing`,
+        line1: `Booking ${p.bookingID || "—"}`,
+        line2: failed ? `${peso0(p.amount)} — customer has NOT received it${p.errorNote ? ` (${p.errorNote})` : ""}` : `${peso0(p.amount)} — waiting for PayMongo`,
+        link: `/refund-requests?search=${encodeURIComponent(p.bookingID || "")}`,
+      };
+    }),
+  ];
+  const followupAlerts = followups.filter((f) => f.urgent);
+  const followupWarnings = followups.filter((f) => !f.urgent).sort((a, b) => a._due - b._due);
+
+  const alerts = [
+    ...followupAlerts,
+    ...cancelBookings,
+    ...damagedParts,
+    ...licenseAlerts.map((l) => ({ ...l, _type: "license" })),
+    ...staleRequests.map((r) => ({ ...r, _type: "request", overdue: true, daysWaiting: Math.floor(requestAgeDays(r)) })),
+    ...overdueMaintenance,
+  ].sort((a, b) => {
+    const ta = a._due?.getTime?.() ?? a.createdAt?._seconds * 1000 ?? a.updatedAt?._seconds * 1000 ?? 0;
+    const tb = b._due?.getTime?.() ?? b.createdAt?._seconds * 1000 ?? b.updatedAt?._seconds * 1000 ?? 0;
+    return tb - ta;
+  });
+
+  // Pending requests and refunds in progress are NOT listed here: they are counted in the cards above the Alerts / Warning boxes.
+  // (The ones that sit too long, or fail, are listed under Alerts.)
+
+  const warnings = [
+    ...upcomingBookings
+      .map((b) => ({ ...b, _type: "booking", _due: toJsDate(b.startDateTime) }))
+      .filter((b) => withinHours(b._due, BOOKING_WARNING_HOURS)),
+    ...upcomingMaintenance
+      .map((m) => ({ ...m, _type: "maintenance", _due: toJsDate(m.maintenanceDate) }))
+      .filter((m) => withinHours(m._due, MAINTENANCE_WARNING_HOURS)),
+    ...licenseWarnings.map((l) => ({ ...l, _type: "license" })),
+    ...freshProfileRequests,
+  ].sort((a, b) => a._due - b._due); // soonest first — this list is a countdown, not a feed
+
+  const fetchMetrics = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const token = getToken();
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/dashboard/metrics`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to load metrics");
+      setMetrics(json.data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    fetchMetrics();
+  }, [fetchMetrics]);
+
+  const fmtDate = (val) => {
+    if (!val) return "—";
+    try {
+      let d;
+      if (typeof val?.toDate === "function") d = val.toDate();
+      else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+      else d = new Date(val);
+      if (isNaN(d.getTime())) return "—";
+      return d.toLocaleDateString("en-PH");
+    } catch { return "—"; }
+  };
+
+  return (
+    <div className="p-4 space-y-6">
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <IconWarning className="w-4 h-4 shrink-0" />
+            {error}
+          </span>
+          <button onClick={fetchMetrics} className="text-red-600 font-semibold underline text-xs ml-4">Retry</button>
+        </div>
+      )}
+
+      {/* STATS ROW */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <StatCard title="Total Vehicles" value={metrics?.totalVehicles ?? "—"} icon={<IconCar className="w-6 h-6" />} color="bg-blue-50 text-blue-600" loading={loading}
+          onClick={() => navigate("/fleet")} />
+        <StatCard title="Upcoming Bookings" value={metrics?.activeBookings ?? "—"} icon={<IconCheck className="w-6 h-6" />} color="bg-green-50 text-green-600" loading={loading}
+          onClick={() => navigate("/bookings?tab=Upcoming")} />
+        <StatCard title="Vehicles In Use" value={metrics?.vehiclesInUse ?? "—"} icon={<IconKey className="w-6 h-6" />} color="bg-purple-50 text-purple-600" loading={loading}
+          onClick={() => navigate("/car-tracking")} />
+      </div>
+
+      {/* WAITING ON STAFF — counts only. The ones that failed or are late are listed under Alerts. */}
+      {(() => {
+        const refundReqs = pendingRequestWarnings.filter((r) => r.kind === "refundRequest");
+        const lateRefundReqs = refundReqs.filter((r) => requestAgeDays(r) > REQUEST_STALE_DAYS).length;
+        const profileReqs = pendingRequestWarnings.filter((r) => r.kind !== "refundRequest").length;
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <StatCard title={lateRefundReqs > 0 ? `Refund Requests (${lateRefundReqs} overdue)` : "Refund Requests"} value={refundReqs.length}
+              icon={<IconBell className="w-6 h-6" />} color="bg-blue-50 text-blue-600" loading={false}
+              onClick={() => navigate("/refund-requests")} />
+            <StatCard title={scheduledRefunds.filter((x) => x.state === "scheduled").length > 0 ? `Refunds In Progress (${scheduledRefunds.filter((x) => x.state === "scheduled").length} scheduled)` : "Refunds In Progress"} value={followupWarnings.length}
+              icon={<IconClock className="w-6 h-6" />} color="bg-amber-50 text-amber-600" loading={false}
+              onClick={() => navigate("/refund-requests")} />
+            <StatCard title="Profile / ID Requests" value={profileReqs}
+              icon={<IconFileText className="w-6 h-6" />} color="bg-gray-100 text-gray-600" loading={false}
+              onClick={() => {
+                const first = pendingRequestWarnings.filter((r) => r.kind !== "refundRequest").sort((a, b) => a._due - b._due)[0];
+                navigate(first ? requestLink(first) : "/users?role=customer&tab=documents");
+              }} />
+          </div>
+        );
+      })()}
+
+      {/* BOTTOM: ALERTS + WARNING */}
+      <div className="grid lg:grid-cols-2 gap-4">
+
+        {/* ALERTS */}
+        <div className="bg-white p-5 rounded-2xl border shadow-sm">
+          <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <IconBell className="w-4 h-4 text-gray-600" />
+            Alerts
+            {alerts.length > 0 && (
+              <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                {alerts.length}
+              </span>
+            )}
+            <HelpTip label="What counts as an alert" title="Alerts: something is wrong or overdue and needs action"
+              items={[
+                "A refund that failed, or an approved refund still not finished after " + APPROVED_REFUND_STALE_DAYS + " days",
+                "A security deposit or discount return that PayMongo refused, or is still processing after " + PAYOUT_PROCESSING_STALE_HOURS + " hours",
+                "A cancellation request waiting for review",
+                "A car part that is damaged, stolen or missing (until a maintenance job fixes it)",
+                "A driver's license that has already expired",
+                "A profile edit, ID resubmit, new ID verification or refund request waiting more than " + REQUEST_STALE_DAYS + " days",
+                "Maintenance past its due date and still not completed",
+              ]} />
+          </h2>
+          <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+            {alerts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-28 text-gray-400 text-sm gap-2">
+                <IconBellOff className="w-8 h-8 text-gray-300" />
+                No alerts at this time
+              </div>
+            ) : (
+              alerts.map((a) => {
+                const isDamaged = a._type === "damaged_part";
+                const isLicense = a._type === "license";
+                const isRequest = a._type === "request";
+                const isOverdueMaint = a._type === "maintenance_overdue";
+                const isRefund = isRequest && a.kind === "refundRequest";
+                const isCancel = a.status === "cancellation_request";
+                const goTo = () => {
+                  // Damaged part: Maintenance opens the latest Scheduled job that already covers this part,
+                  // or a new job with this part pre-selected when there isn't one.
+                  if (isDamaged && a.carID && a.carPartID) navigate(`/maintenance?carID=${a.carID}&carPartID=${a.carPartID}`);
+                  else if (isDamaged || isOverdueMaint) navigate(a.carID ? `/maintenance?carID=${a.carID}` : "/maintenance");
+                  else if (isLicense) navigate(`/users?role=${a.role}&tab=directory&open=${a.userID}`);
+                  else if (isRefund) navigate("/refund-requests");
+                  else if (isRequest) navigate(requestLink(a));
+                  else navigate(`/bookings?open=${a.bookingID || a.id}`);
+                };
+
+                if (a._type === "refund_followup") {
+                  return (
+                    <div
+                      key={a.id}
+                      onClick={() => navigate(a.link)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(a.link); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-red-50 border-red-100 hover:bg-red-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-red-500"><IconWarning className="w-5 h-5" /></span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">{a.title}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{a.line1}</p>
+                        <p className="text-xs text-gray-400">{a.line2}</p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (isOverdueMaint) {
+                  const daysOverdue = Math.max(0, Math.floor((Date.now() - a._due.getTime()) / (24 * 60 * 60 * 1000)));
+                  return (
+                    <div
+                      key={`maint-overdue-${a.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-red-50 border-red-100 hover:bg-red-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-red-500">
+                        <IconWrench className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">Maintenance Overdue</p>
+                        <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.carID || "—"}</p>
+                        <p className="text-xs text-gray-400">
+                          {daysOverdue === 0 ? "Due today" : `${daysOverdue} day${daysOverdue === 1 ? "" : "s"} past due`} — {a.description || "Scheduled service"}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (isRequest) {
+                  return (
+                    <div
+                      key={`overdue-request-${a.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-red-50 border-red-100 hover:bg-red-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-red-500">
+                        <IconWarning className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">
+                          {requestTitle(a)} · Overdue
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{a.name}{a.role ? ` · ${roleLabel(a.role)}` : ""}</p>
+                        <p className="text-xs text-gray-400">
+                          Waiting {a.daysWaiting} day{a.daysWaiting === 1 ? "" : "s"} — needs review
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (isLicense) {
+                  return (
+                    <div
+                      key={`license-alert-${a.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-red-50 border-red-100 hover:bg-red-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-red-500">
+                        <IconWarning className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">Driver's License Expired</p>
+                        <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.name}</p>
+                        <p className="text-xs text-gray-400">Expired — a warning shows when assigning a trip</p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={a.id}
+                    onClick={goTo}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${isDamaged
+                        ? "bg-red-50 border-red-100 hover:bg-red-100"
+                        : isCancel
+                          ? "bg-orange-50 border-orange-100 hover:bg-orange-100"
+                          : "bg-yellow-50 border-yellow-100 hover:bg-yellow-100"
+                      }`}
+                  >
+                    <span className={`shrink-0 mt-0.5 ${isDamaged ? "text-red-500" : isCancel ? "text-orange-500" : "text-yellow-500"}`}>
+                      {isDamaged
+                        ? <IconWrench className="w-5 h-5" />
+                        : isCancel
+                          ? <IconWarning className="w-5 h-5" />
+                          : <IconBell className="w-5 h-5" />
+                      }
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 leading-snug">
+                        {isDamaged
+                          ? `${a.status === "Stolen" ? "Stolen" : "Damaged"} Part Detected`
+                          : isCancel ? "Cancellation Request" : "New Booking Request"}
+                      </p>
+                      {isDamaged ? (
+                        <>
+                          <p className="text-xs text-gray-500 mt-0.5 font-medium">{a.carPartName || "Unknown Part"}</p>
+                          <p className="text-xs text-gray-400">{a.carName || a.carID || "—"}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-xs text-gray-500 mt-0.5">Booking ID: {a.bookingID || a.id}</p>
+                          <p className="text-xs text-gray-400">User ID: {a.userID || "—"}</p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* WARNING — things coming up soon, not wrong yet */}
+        <div className="bg-white p-5 rounded-2xl border shadow-sm">
+          <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <IconClock className="w-4 h-4 text-gray-600" />
+            Warning
+            {warnings.length > 0 && (
+              <span className="bg-yellow-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                {warnings.length}
+              </span>
+            )}
+            <HelpTip label="What counts as a warning" title="Warnings: coming up soon, or waiting but not late yet"
+              items={[
+                "A booking whose pickup is within " + BOOKING_WARNING_HOURS + " hours",
+                "Maintenance due within " + MAINTENANCE_WARNING_HOURS + " hours",
+                "A driver's license expiring within " + LICENSE_WARNING_DAYS + " days",
+                "A profile edit, ID resubmit or new ID verification waiting for review (moves to Alerts after " + REQUEST_STALE_DAYS + " days)",
+                "Refund requests and refunds in progress are counted in the cards above, not listed here (they move to Alerts when late or failed)",
+              ]} />
+          </h2>
+
+          {/* Time-based countdown — bookings/maintenance coming up, licenses
+              about to expire. Kept separate from the pending-requests list
+              below since "starts in 20 minutes" and "submitted 3 days ago"
+              aren't the same kind of "soon" and shouldn't be sorted together. */}
+          <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+            {warnings.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-20 text-gray-400 text-sm gap-1">
+                <IconClock className="w-6 h-6 text-gray-300" />
+                Nothing coming up soon
+              </div>
+            ) : (
+              warnings.map((w) => {
+                const isMaint = w._type === "maintenance";
+                const isLicense = w._type === "license";
+                const isRequestW = w._type === "request";
+                const goTo = () => {
+                  if (isMaint) navigate("/maintenance");
+                  else if (isLicense) navigate(`/users?role=${w.role}&tab=directory&open=${w.userID}`);
+                  else if (isRequestW) navigate(requestLink(w));
+                  else navigate(`/bookings?open=${w.bookingID || w.id}`);
+                };
+                if (isRequestW) {
+                  return (
+                    <div
+                      key={`request-${w.kind}-${w.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-amber-50 border-amber-100 hover:bg-amber-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-amber-600">
+                        <IconFileText className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">{requestTitle(w)} · Pending</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{w.name}{w.role ? ` · ${roleLabel(w.role)}` : ""}</p>
+                        <p className="text-xs text-gray-400">
+                          {submittedAgoLabel(w)} — needs review
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                if (isLicense) {
+                  return (
+                    <div
+                      key={`license-${w.id}`}
+                      onClick={goTo}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                      className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors bg-amber-50 border-amber-100 hover:bg-amber-100"
+                    >
+                      <span className="shrink-0 mt-0.5 text-amber-600">
+                        <IconWarning className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">Driver's License Expiring Soon</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{w.name}</p>
+                        <p className="text-xs text-gray-400">Expires in {w.daysLeft} day(s)</p>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={`${w._type}-${w.id}`}
+                    onClick={goTo}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(); } }}
+                    className="flex items-start gap-3 p-3 rounded-xl border bg-yellow-50 border-yellow-100 hover:bg-yellow-100 cursor-pointer transition-colors"
+                  >
+                    <span className="shrink-0 mt-0.5 text-yellow-600">
+                      {isMaint ? <IconWrench className="w-5 h-5" /> : <IconClock className="w-5 h-5" />}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 leading-snug">
+                        {isMaint ? "Pending Maintenance" : "Pending Booking"} · {timeUntilLabel(w._due)}
+                      </p>
+                      {isMaint ? (
+                        <>
+                          <p className="text-xs text-gray-500 mt-0.5 font-medium">{w.carID || "—"}</p>
+                          <p className="text-xs text-gray-400">{w.description || "Scheduled service"}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-xs text-gray-500 mt-0.5">Booking ID: {w.bookingID || w.id}</p>
+                          <p className="text-xs text-gray-400">
+                            Pickup: {w._due.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Pending requests — status-based, not time-based. Sorted oldest
+              first so the most-neglected one surfaces at the top; anything
+              older than REQUEST_STALE_DAYS has already moved up to Alerts. */}
+        </div>
+      </div>
+
+      {/* FULL BOOKINGS TABLE */}
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+            <IconFileText className="w-4 h-4 text-gray-600" />
+            Recent Bookings
+          </h2>
+          <button onClick={fetchMetrics} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1">
+            <IconRefresh className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wide">
+                <th className="px-4 py-3 font-medium">Booking ID</th>
+                <th className="px-4 py-3 font-medium">Customer</th>
+                <th className="px-4 py-3 font-medium">Vehicle</th>
+                <th className="px-4 py-3 font-medium">Rental Period</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading
+                ? Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} />)
+                : metrics?.recentBookings?.length === 0
+                  ? (
+                    <tr>
+                      <td colSpan={5} className="text-center text-gray-400 py-10">No bookings found</td>
+                    </tr>
+                  )
+                  : metrics?.recentBookings?.slice(0, 8).map((b) => (
+                    <tr key={b.id} onClick={() => navigate(`/bookings?open=${b.bookingID || b.id}`)}
+                      className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer">
+                      <td className="px-4 py-3 text-gray-600">{b.bookingID || b.id}</td>
+                      <td className="px-4 py-3 font-medium text-gray-800">{b.customerName || b.userName || b.name || "—"}</td>
+                      <td className="px-4 py-3 text-gray-600">{b.vehicleName || "—"}</td>
+                      <td className="px-4 py-3 text-gray-500">{fmtDate(b.startDateTime)} – {fmtDate(b.endDateTime)}</td>
+                      <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
+                    </tr>
+                  ))
+              }
+            </tbody>
+          </table>
+        </div>
+        {!loading && (metrics?.recentBookings?.length ?? 0) > 0 && (
+          <div className="flex justify-center py-4 border-t border-gray-100">
+            <button onClick={() => navigate("/bookings")}
+              className="px-5 py-2 rounded-xl text-sm font-medium border text-teal-700 border-teal-200 bg-teal-50 hover:bg-teal-100 transition-colors">
+              See More
+            </button>
+          </div>
+        )}
+      </div>
+
+    </div>
+  );
+}
