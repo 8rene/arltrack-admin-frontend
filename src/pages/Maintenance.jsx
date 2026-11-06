@@ -1,8 +1,8 @@
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
-import { db } from "../fireabase";
-import { buildFlaggedParts, toMs } from "../utils/damagedParts";
+import { db } from "../../fireabase";
+import { buildFlaggedParts, toMs } from "../../utils/damagedParts";
 
 const API_URL = process.env.REACT_APP_API_URL;
 const PAGE_SIZE = 15;

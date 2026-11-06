@@ -72,11 +72,6 @@ function fmtStamp(ms, withDate) {
   return withDate ? `${d.toLocaleDateString("en-PH", { month: "short", day: "numeric" })}, ${t}` : t;
 }
 
-function fmtTime(record) {
-  if (!record?.at) return "—";
-  return new Date(record.at).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" });
-}
-
 // YYYY-MM-DD, N days ago, computed in Philippine Time (UTC+8) — must match
 // the backend's phtDateFromInstant() so the requested date lines up with
 // which archive day-doc actually holds today's points.

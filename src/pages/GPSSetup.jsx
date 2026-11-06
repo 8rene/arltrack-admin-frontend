@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import usePolling from "../hooks/usePolling";
-import { getCarCatalog } from "../utils/carCatalog";
+import usePolling from "../../hooks/usePolling";
+import { getCarCatalog } from "../../utils/carCatalog";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 

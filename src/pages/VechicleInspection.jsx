@@ -6,9 +6,9 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { initializeApp, getApps } from "firebase/app";
-import { db } from "../fireabase";
-import { useAuth } from "../context/AuthContext";
-import { InspectionVideos, InspectionExtraPhotos, InspectionMediaGallery, hasInspectionMedia } from "../components/InspectionMedia";
+import { db } from "../../fireabase";
+import { useAuth } from "../../context/AuthContext";
+import { InspectionVideos, InspectionExtraPhotos, InspectionMediaGallery, hasInspectionMedia } from "../../components/InspectionMedia";
 
 const API_URL = process.env.REACT_APP_API_URL;
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
-import { db } from "../fireabase";
+import { db } from "../../fireabase";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
