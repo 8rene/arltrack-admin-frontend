@@ -318,10 +318,6 @@ export default function StoreLocationSettings() {
   const [notice,  setNotice]  = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const card = `rounded-2xl border p-6 ${
-    isDark ? "bg-[#1A5F7A] border-[#4FC3F7]/20 shadow-[0_4px_24px_rgba(79,195,247,0.08)]" : "bg-white border-gray-100 shadow-soft"
-  }`;
-
   const inputCls = `w-full rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
     isDark ? "bg-[#212121] border-[#4FC3F7]/20 text-[#F5F5F5] focus:ring-[#4FC3F7]/40" : "bg-white border-gray-200 text-arl-dark focus:ring-arl-dark/20"
   }`;
@@ -394,16 +390,11 @@ export default function StoreLocationSettings() {
   };
 
   return (
-    <div className={`${card} space-y-4`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
-            <IconPin className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Store Location &amp; Name
-          </h2>
-          <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-            Powers "Pick up in-store" on the customer booking page. Leave blank to hide that option entirely.
-          </p>
-        </div>
+    <section className={`rounded-2xl border overflow-hidden shadow-sm ${isDark ? "bg-[#1A5F7A] border-[#4FC3F7]/20" : "bg-white"}`}>
+      <div className={`flex items-center justify-between gap-3 px-4 py-2.5 border-b ${isDark ? "bg-[#212121]/40 border-[#4FC3F7]/20" : "bg-gray-50"}`}>
+        <h2 className={`text-xs font-semibold uppercase tracking-wide flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-600"}`}>
+          <IconPin className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Store Location &amp; Name
+        </h2>
 
         {/* Status badge — makes the live/hidden state visible without reading the fine print below */}
         {!loading && (
@@ -417,6 +408,11 @@ export default function StoreLocationSettings() {
           </span>
         )}
       </div>
+
+      <div className="p-4 space-y-4">
+      <p className={`text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
+        Powers "Pick up in-store" on the customer booking page. Leave blank to hide that option entirely.
+      </p>
 
       {notice && (
         <div className={`rounded-xl border px-4 py-2.5 text-sm ${
@@ -433,7 +429,7 @@ export default function StoreLocationSettings() {
       ) : (
         <>
           <div className="space-y-1">
-            <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>Store Name / Label</label>
+            <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>Store Name / Label</label>
             <input
               type="text"
               value={storeName}
@@ -448,7 +444,7 @@ export default function StoreLocationSettings() {
           </div>
 
           <div className="space-y-2">
-            <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>Location</label>
+            <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>Location</label>
 
             <div className={`rounded-xl border px-4 py-3 flex items-center justify-between gap-3 ${
               isDark ? "bg-[#212121] border-[#4FC3F7]/20" : "bg-gray-50 border-gray-200"
@@ -478,7 +474,7 @@ export default function StoreLocationSettings() {
                     type="button"
                     onClick={() => setPickerOpen(true)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                      isDark ? "bg-[#4FC3F7] text-[#212121] hover:bg-[#4FC3F7]/90" : "bg-arl-primary text-white hover:bg-arl-secondary"
+                      isDark ? "bg-[#4FC3F7] text-[#212121] hover:bg-[#4FC3F7]/90" : "bg-teal-600 text-white hover:bg-teal-700"
                     }`}
                   >
                     📍 {storeLat !== null ? "Change on Map" : "Pick on Map"}
@@ -524,7 +520,7 @@ export default function StoreLocationSettings() {
                   onClick={handleSave}
                   disabled={saving || !isDirty}
                   className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium disabled:opacity-50 transition-all ${
-                    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
+                    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-teal-600 hover:bg-teal-700 text-white"
                   }`}
                 >
                   {saving ? "Saving…" : "Save Changes"}
@@ -543,7 +539,7 @@ export default function StoreLocationSettings() {
               <button
                 onClick={() => setEditMode(true)}
                 className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium transition-all ${
-                  isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
+                  isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-teal-600 hover:bg-teal-700 text-white"
                 }`}
               >
                 Edit Location
@@ -560,6 +556,7 @@ export default function StoreLocationSettings() {
         initialLabel={storeName}
         initialCoords={storeLat !== null && storeLng !== null ? { lat: storeLat, lng: storeLng } : null}
       />
-    </div>
+      </div>
+    </section>
   );
 }

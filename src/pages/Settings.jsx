@@ -17,6 +17,23 @@ const IconMap = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+// ─── SECTION CARD ────────────────────────────────────────────────────────────
+// Same grouping as the Bookings details window: a white card with a grey title strip.
+function Section({ icon, title, desc, isDark, children }) {
+  return (
+    <section className={`rounded-2xl border overflow-hidden shadow-sm ${isDark ? "bg-[#1A5F7A] border-[#4FC3F7]/20" : "bg-white"}`}>
+      <div className={`flex items-center gap-2 px-4 py-2.5 border-b ${isDark ? "bg-[#212121]/40 border-[#4FC3F7]/20" : "bg-gray-50"}`}>
+        {icon}
+        <h2 className={`text-xs font-semibold uppercase tracking-wide ${isDark ? "text-[#F5F5F5]" : "text-gray-600"}`}>{title}</h2>
+      </div>
+      <div className="p-4 space-y-4">
+        {desc && <p className={`text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{desc}</p>}
+        {children}
+      </div>
+    </section>
+  );
+}
+
 // ─── FIELD DEFINITIONS ─────────────────────────────────────────────────────
 // Keep these in sync BY HAND with backend/models/systemSettings/systemSettings.model.js
 // Percentages (0-100), not flat pesos. Computed server-side on every booking:
@@ -231,19 +248,11 @@ export default function Settings() {
       ) : (
         <>
           {/* Booking Fees */}
-          <div className={`${card} space-y-4`}>
-            <div>
-              <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
-                <IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Booking Fees
-              </h2>
-              <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-                Percentage fees added to every booking, shown to the customer at checkout. Bookings already made keep the amounts they were charged.
-              </p>
-            </div>
+          <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Booking Fees" desc={"Percentage fees added to every booking, shown to the customer at checkout. Bookings already made keep the amounts they were charged."}>
             <div className="grid sm:grid-cols-3 gap-4">
               {FLAT_FEE_FIELDS.map(({ key, label, hint, unit = "%" }) => (
                 <div key={key} className="space-y-1">
-                  <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>{label}</label>
+                  <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
                   <div className="relative">
                     <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
                     <input
@@ -258,22 +267,14 @@ export default function Settings() {
                 </div>
               ))}
             </div>
-          </div>
+          </Section>
 
           {/* Area & Chauffeur Fees */}
-          <div className={`${card} space-y-4`}>
-            <div>
-              <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
-                <IconMap className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Area & Chauffeur Fees
-              </h2>
-              <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-                Conditional charges based on the drop-off destination and drive type.
-              </p>
-            </div>
+          <Section isDark={isDark} icon={<IconMap className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Area & Chauffeur Fees" desc={"Conditional charges based on the drop-off destination and drive type."}>
             <div className="grid sm:grid-cols-3 gap-4">
               {AREA_FEE_FIELDS.map(({ key, label, hint }) => (
                 <div key={key} className="space-y-1">
-                  <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>{label}</label>
+                  <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
                   <div className="relative">
                     <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>₱</span>
                     <input
@@ -290,7 +291,7 @@ export default function Settings() {
             </div>
 
             <div className="space-y-2 pt-2">
-              <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>Base Area Keywords</label>
+              <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>Base Area Keywords</label>
 
               {/* Existing keyword chips */}
               <div className="flex flex-wrap gap-2">
@@ -338,23 +339,14 @@ export default function Settings() {
                 only prevents typos, it doesn't remove that overlap.
               </p>
             </div>
-          </div>
+          </Section>
 
           {/* Security Deposit & Late Fees */}
-          <div className={`${card} space-y-4`}>
-            <div>
-              <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
-                <IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Security Deposit & Late Fees
-              </h2>
-              <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-                The real, refundable deposit collected at pickup, and the late-return penalty rate. Changing these
-                only affects bookings from this point forward — anything already collected keeps its original amount.
-              </p>
-            </div>
+          <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Security Deposit & Late Fees" desc={"The real, refundable deposit collected at pickup, and the late-return penalty rate. Changing these only affects bookings from this point forward — anything already collected keeps its original amount."}>
             <div className="grid sm:grid-cols-3 gap-4">
               {DEPOSIT_FIELDS.map(({ key, label, hint, unit = "₱" }) => (
                 <div key={key} className="space-y-1">
-                  <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>{label}</label>
+                  <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
                   <div className="relative">
                     <span className={`absolute ${unit === "₱" ? "left-3" : "right-3"} top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
                     <input
@@ -369,24 +361,14 @@ export default function Settings() {
                 </div>
               ))}
             </div>
-          </div>
+          </Section>
 
           {/* Penalty online fee */}
-          <div className={`${card} space-y-4`}>
-            <div>
-              <h2 className={`font-semibold text-sm flex items-center gap-2 ${isDark ? "text-[#F5F5F5]" : "text-gray-700"}`}>
-                <IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} /> Penalties
-              </h2>
-              <p className={`text-xs mt-0.5 ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>
-                When a customer pays a penalty online, the gateway fee is added only if the penalty is above this amount. It is judged
-                on the penalty's own amount, however it is paid. Changing it applies to penalties that are still unpaid; payments already made
-                and their receipts are not affected.
-              </p>
-            </div>
+          <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Penalties" desc={"When a customer pays a penalty online, the gateway fee is added only if the penalty is above this amount. It is judged on the penalty's own amount, however it is paid. Changing it applies to penalties that are still unpaid; payments already made and their receipts are not affected."}>
             <div className="grid sm:grid-cols-3 gap-4">
               {PENALTY_FIELDS.map(({ key, label, hint, unit = "₱" }) => (
                 <div key={key} className="space-y-1">
-                  <label className={`text-xs font-medium ${isDark ? "text-[#F5F5F5]/70" : "text-gray-600"}`}>{label}</label>
+                  <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
                   <div className="relative">
                     <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
                     <input
@@ -401,7 +383,7 @@ export default function Settings() {
                 </div>
               ))}
             </div>
-          </div>
+          </Section>
 
           {/* Actions */}
           <div className="flex items-center gap-3">
@@ -411,7 +393,7 @@ export default function Settings() {
                   onClick={handleSave}
                   disabled={saving || !isDirty}
                   className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium disabled:opacity-50 transition-all ${
-                    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
+                    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-teal-600 hover:bg-teal-700 text-white"
                   }`}
                 >
                   {saving ? "Saving…" : "Save Changes"}
@@ -430,7 +412,7 @@ export default function Settings() {
               <button
                 onClick={() => setEditMode(true)}
                 className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium transition-all ${
-                  isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
+                  isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-teal-600 hover:bg-teal-700 text-white"
                 }`}
               >
                 Edit Settings

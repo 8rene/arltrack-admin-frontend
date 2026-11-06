@@ -75,6 +75,27 @@ const fmtDateShort = (val) => {
   return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
 };
 
+// Bordered card + label-over-value cell — same as Bookings.jsx's InfoSection / InfoField.
+function InfoSection({ title, aside, children }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {aside}
+      </div>
+      <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">{children}</div>
+    </section>
+  );
+}
+function InfoField({ label, value }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</div>
+    </div>
+  );
+}
+
 const toSec = (val) => {
   if (val?._seconds !== undefined) return val._seconds;
   if (typeof val === "number") return val;
@@ -207,16 +228,33 @@ export default function VehicleDocs() {
   // too — see assertDriverAssignedForInspection in vehicleDocumentation.service.js). Counts an "assigned" OR "completed" assignment, same as the backend.
   // If the assignments can't be read from here, this stays false and the backend is the one that refuses.
   const [driverMissing, setDriverMissing] = useState(false);
+  const [bookingDriver, setBookingDriver] = useState(null); // { fullName } of the assigned driver, shown on the Booking card
   useEffect(() => {
     setDriverMissing(false);
+    setBookingDriver(null);
     const key = activeBooking?.bookingID || activeBooking?.id;
     const st  = activeBooking?.status?.toLowerCase();
     if (!key || st === "cancelled" || st === "stolen") return undefined;
     if (!(activeBooking?.modeOfDriving || "").toLowerCase().includes("chauffeur")) return undefined;
     let alive = true;
     getDocs(query(collection(db, "driverAssignments"), where("bookingID", "==", key)))
-      .then((snap) => {
-        if (alive) setDriverMissing(!snap.docs.some((d) => ["assigned", "completed"].includes(d.data().status)));
+      .then(async (snap) => {
+        if (!alive) return;
+        const rows = snap.docs.map((d) => d.data());
+        // The current driver is the "assigned" row; a "completed" row still counts (the trip is done).
+        const row = rows.find((r) => r.status === "assigned") || rows.find((r) => r.status === "completed");
+        setDriverMissing(!row);
+        if (!row?.driverID) return;
+        try {
+          const [detailDoc, userDoc] = await Promise.all([
+            getDoc(doc(db, "userDetails", row.driverID)),
+            getDoc(doc(db, "user", row.driverID)),
+          ]);
+          const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
+          const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+          const { email = "" } = userDoc.exists() ? userDoc.data() : {};
+          if (alive) setBookingDriver({ fullName: fullName || email || "—" });
+        } catch { /* name is display-only; the card just shows "—" */ }
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -258,9 +296,6 @@ export default function VehicleDocs() {
   // toggleHistoryRow) — batch-fetched once up front instead so the list
   // reads as names, not gibberish IDs.
   const [pastBookingNames, setPastBookingNames] = useState({});
-  // { [bookingID]: { before: seconds|null, after: seconds|null } } — when each
-  // trip's Before / After inspection was done. null = still loading.
-  const [inspectionDates, setInspectionDates]   = useState(null);
   const [expandedHistoryID, setExpandedHistoryID] = useState(null);
   const [historyRecords, setHistoryRecords]     = useState({});
   // Set when a deep link points at an already-closed booking — consumed
@@ -525,7 +560,6 @@ export default function VehicleDocs() {
     setTripType("before");
     setPastBookings([]);
     setPastBookingNames({});
-    setInspectionDates(null);
     setExpandedHistoryID(null);
     setHistoryRecords({});
     setHistoryFocusID(null);
@@ -629,45 +663,6 @@ export default function VehicleDocs() {
         })
         .sort((a, b) => toSec(b.startDateTime) - toSec(a.startDateTime));
       setPastBookings(past);
-
-      // Inspection date per past trip (Before / After). Uses the moment the
-      // inspection was confirmed; if it was never confirmed, falls back to
-      // when the latest photo record was saved. Queried in chunks of 30
-      // booking IDs (Firestore's "in" limit) — non-blocking, the table
-      // shows "…" in those columns until it lands.
-      (async () => {
-        const ids = past.map(b => b.bookingID || b.id).filter(Boolean);
-        const dates = Object.fromEntries(ids.map(id => [id, { before: null, after: null }]));
-        const pickDate = (d) => {
-          const c = toSec(d.inspectionConfirmed?.at);
-          if (isFinite(c)) return c;
-          const r = toSec(d.recordedAt || d.updatedAt || d.createdAt);
-          return isFinite(r) ? r : null;
-        };
-        try {
-          for (let i = 0; i < ids.length; i += 30) {
-            const chunk = ids.slice(i, i + 30);
-            const [bSnap, aSnap] = await Promise.all([
-              getDocs(query(collection(db, "vehicleDocumentationBeforeTrip"), where("bookingID", "in", chunk))),
-              getDocs(query(collection(db, "vehicleDocumentationAfterTrip"),  where("bookingID", "in", chunk))),
-            ]);
-            [["before", bSnap], ["after", aSnap]].forEach(([phase, snap]) => {
-              snap.docs.forEach(d => {
-                const data = d.data();
-                const t = pickDate(data);
-                const cur = dates[data.bookingID]?.[phase];
-                // confirmed time wins over save time; otherwise keep the latest
-                if (t !== null && (cur === null || cur === undefined || data.inspectionConfirmed || t > cur)) {
-                  if (dates[data.bookingID]) dates[data.bookingID][phase] = t;
-                }
-              });
-            });
-          }
-        } catch (e) {
-          console.error("[VD] Failed to load inspection dates:", e);
-        }
-        setInspectionDates(dates);
-      })();
 
       // Batch-resolve one name per unique customer up front (instead of
       // per-row on expand) so the collapsed list can show "Customer" —
@@ -1468,15 +1463,10 @@ export default function VehicleDocs() {
             ) : (
               <div className="space-y-4">
 
-                {/* Booking info card — mirrors Inventory's booking card */}
-                <div className="bg-white rounded-2xl border-2 border-teal-300 ring-1 ring-teal-100 shadow-soft p-5">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">🚗</span>
-                      <h3 className="font-bold text-gray-800 text-sm">
-                        {activeBooking.status?.toLowerCase() === "ongoing" ? "Active Booking" : "Upcoming Booking"}
-                      </h3>
-                    </div>
+                {/* Booking card — same bordered card as Booking Information in Bookings */}
+                <InfoSection
+                  title="Booking"
+                  aside={(
                     <div className="flex items-center gap-2">
                       {/* Prev / Next — only shown once this car actually has more
                           than one open booking to browse between. Segmented
@@ -1516,37 +1506,33 @@ export default function VehicleDocs() {
                           </div>
                         );
                       })()}
+                    </div>
+                  )}
+                >
+                  {/* Only these fields dim/pulse while switchingBooking — everything else on the page
+                      (Before/After Trip, Past Trips) stays as it was until the new booking's data lands. */}
+                  <div className="col-span-2 flex items-center gap-2 flex-wrap">
                       <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()] || "bg-gray-50 border border-gray-200"}`}><span className={`w-2 h-2 rounded-full shrink-0 ${BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("green") ? "bg-green-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("yellow") ? "bg-yellow-400" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("blue") ? "bg-blue-500" : BOOKING_STATUS_STYLE[activeBooking.status?.toLowerCase()]?.includes("red") ? "bg-red-500" : "bg-gray-400"}`} />
                         {activeBooking.status?.replace("_", " ") || "—"}
                       </span>
-                    </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
+                        title="Open this booking in Bookings"
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                      >
+                        View Booking →
+                      </button>
                   </div>
-                  {/* Only this fields grid dims/pulses while switchingBooking —
-                      everything else on the page (Before/After Trip, Past
-                      Trips) stays exactly as it was until the new booking's
-                      own data actually lands. */}
-                  <div className={`grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs text-gray-600 transition-opacity ${switchingBooking ? "opacity-40 animate-pulse" : ""}`}>
-                    <div className="flex justify-between col-span-2 sm:col-span-1">
-                      <span className="text-gray-400 font-medium">Booking ID</span>
-                      <span className="font-mono text-teal-700 font-semibold truncate max-w-[55%] text-right">{bID}</span>
-                    </div>
-                    <div className="flex justify-between col-span-2 sm:col-span-1">
-                      <span className="text-gray-400 font-medium">Customer</span>
-                      <span className="text-gray-700 truncate max-w-[55%] text-right">{switchingBooking ? "—" : (bookingUser?.fullName || "—")}</span>
-                    </div>
-                    <div className="flex justify-between col-span-2 sm:col-span-1">
-                      <span className="text-gray-400 font-medium">Start Date</span>
-                      <span className="text-gray-700">{fmtDateShort(activeBooking.startDateTime)}</span>
-                    </div>
-                    <div className="flex justify-between col-span-2 sm:col-span-1">
-                      <span className="text-gray-400 font-medium">End Date</span>
-                      <span className="text-gray-700">{fmtDateShort(activeBooking.endDateTime)}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-3 border-t border-gray-100 pt-2">
-                    📌 Photos will be linked to Booking ID: <span className="font-mono text-gray-600">{bID}</span>
-                  </p>
-                </div>
+                  <InfoField label="Customer"   value={switchingBooking ? "—" : bookingUser?.fullName} />
+                  <InfoField label="Driver"     value={switchingBooking ? "—" : (
+                    (activeBooking.modeOfDriving || "").toLowerCase().includes("chauffeur")
+                      ? (bookingDriver?.fullName || (driverMissing ? <span className="italic font-normal text-gray-400">No driver assigned</span> : "—"))
+                      : null
+                  )} />
+                  <InfoField label="Start Date" value={fmtDateShort(activeBooking.startDateTime)} />
+                  <InfoField label="End Date"   value={fmtDateShort(activeBooking.endDateTime)} />
+                </InfoSection>
 
                 {/* Before / After Tabs — same as Inventory */}
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
@@ -1589,17 +1575,6 @@ export default function VehicleDocs() {
 
                   {/* Tab content */}
                   <div className="p-5 space-y-5">
-
-                    {/* Instruction banner */}
-                    <div className={`px-3 py-2 rounded-xl text-xs font-medium ${
-                      tripType === "before"
-                        ? "bg-teal-50 text-teal-700 border border-teal-100"
-                        : "bg-blue-50 text-blue-700 border border-blue-100"
-                    }`}>
-                      {tripType === "before"
-                        ? "🚀 Before Trip — Take photos of the vehicle BEFORE the customer picks it up. Documents its condition at the start."
-                        : "🏁 After Trip — Take photos AFTER the customer returns the vehicle. Documents any new damage or changes."}
-                    </div>
 
                     {/* Chauffeur booking with no driver yet: inspection can't be saved */}
                     {driverMissing && (
@@ -1679,23 +1654,25 @@ export default function VehicleDocs() {
                             added; this saves the exterior photos and the parts condition. */}
                         <div className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${hasUnsavedChanges ? "bg-amber-50 border-amber-200" : "bg-white border-gray-100 shadow-sm"}`}>
                           <div className="min-w-0">
-                            <p className={`text-sm font-semibold ${hasUnsavedChanges ? "text-amber-800" : "text-gray-700"}`}>
+                            <p className={`text-base font-semibold ${hasUnsavedChanges ? "text-amber-800" : "text-gray-800"}`}>
                               {hasUnsavedChanges
                                 ? `${pendingChangeCount} unsaved change${pendingChangeCount !== 1 ? "s" : ""}${hasUnsavedUploads && hasUnsavedStatusEdits ? " (photos + status)" : hasUnsavedStatusEdits ? " (status)" : ""}`
                                 : hasPartsRecord ? "All changes saved" : "Nothing saved yet"}
                             </p>
-                            <p className="text-[11px] text-gray-400">
-                              {currentDoc?.inspectionConfirmed
-                                ? `\u2713 Confirmed${currentDoc.inspectionConfirmed.at ? ` ${fmtDate(currentDoc.inspectionConfirmed.at)}` : ""} \u00B7 `
-                                : currentDoc?.updatedAt ? `Last saved: ${fmtDate(currentDoc.updatedAt)} \u00B7 ` : ""}Videos and additional photos upload as soon as you add them.
-                            </p>
+                            {(currentDoc?.inspectionConfirmed || currentDoc?.updatedAt) && (
+                              <p className="text-xs text-gray-500">
+                                {currentDoc?.inspectionConfirmed
+                                  ? `\u2713 Confirmed${currentDoc.inspectionConfirmed.at ? ` ${fmtDate(currentDoc.inspectionConfirmed.at)}` : ""}`
+                                  : `Last saved ${fmtDate(currentDoc.updatedAt)}`}
+                              </p>
+                            )}
                             {!currentDoc?.inspectionConfirmed && (
-                              <p className="text-[11px] text-gray-400">
+                              <p className="text-xs text-gray-500">
                                 Saving also confirms the inspection and notifies the driver (or the customer if there is no driver).
                               </p>
                             )}
                             {hasUnsavedChanges && !canSaveInspection && (
-                              <p className="text-[11px] text-amber-700 mt-0.5">
+                              <p className="text-xs text-amber-700 mt-0.5">
                                 Save All is locked: {NEEDS_EVIDENCE_MSG} You can still save each photo with its own Save button.
                               </p>
                             )}
@@ -1808,7 +1785,6 @@ export default function VehicleDocs() {
                 <PastTripsSection
                   pastBookings={pastBookings}
                   pastBookingNames={pastBookingNames}
-                  inspectionDates={inspectionDates}
                   parts={carParts}
                   carID={selectedCar?.carID || selectedCar?.id}
                   expandedHistoryID={expandedHistoryID}
@@ -2003,7 +1979,7 @@ function PhotoSlot({ fieldKey, label, sub, icon, image, uploading, isPending, on
 
 // --- PAGINATION (same pattern as Bookings.jsx / Payments.jsx / Users.jsx) -----
 function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null;
 
   const nums = [];
   const add = (n) => nums.push(n);
@@ -2056,8 +2032,6 @@ const SEARCH_BY = [
   { key: "customer", label: "Customer",          type: "text" },
   { key: "start",    label: "Trip Start",        type: "date" },
   { key: "end",      label: "Trip End",          type: "date" },
-  { key: "before",   label: "Before Inspection", type: "date" },
-  { key: "after",    label: "After Inspection",  type: "date" },
 ];
 
 const tripDays = (b) => {
@@ -2071,12 +2045,12 @@ const tripDays = (b) => {
  * each row's before/after status + photo docs only when expanded. ── */
 // Same clickable-header sort as Bookings/Users/Refund Requests, adapted to
 // this section's CSS-grid rows (there's no <table> here).
-const IconChevronsUpDown = ({ className = "w-3 h-3" }) => (
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
-const IconSortArrow = ({ dir, className = "w-3 h-3" }) => (
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
   <svg className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
@@ -2086,8 +2060,8 @@ function SortableHeader({ label, sortKey: key, sortKeyState, sortDir, onSort, cl
   return (
     <button
       onClick={() => onSort(key)}
-      className={`flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 -mx-1 rounded transition-colors ${className} ${
-        active ? "text-teal-700" : "text-gray-400 hover:text-gray-600"
+      className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${className} ${
+        active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
       }`}
     >
       {label}
@@ -2096,7 +2070,7 @@ function SortableHeader({ label, sortKey: key, sortKeyState, sortDir, onSort, cl
   );
 }
 
-function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, parts, carID, expandedHistoryID, historyRecords, onToggleRow, onCloseRow, getPartFieldKey, onViewPhoto, lightboxOpen, canEditHistory, onEditPart, onReplacePhoto }) {
+function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expandedHistoryID, historyRecords, onToggleRow, onCloseRow, getPartFieldKey, onViewPhoto, lightboxOpen, canEditHistory, onEditPart, onReplacePhoto }) {
   const [page, setPage] = useState(1);
   const [jumpedFor, setJumpedFor] = useState(null);
   const [sortKey, setSortKey] = useState(null); // null = default (API order)
@@ -2115,11 +2089,10 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
   const clearFilters = () => { setSearch(""); setDateValue(""); setStatusFilter("all"); setPage(1); };
 
   // Search: "Search by" mirrors the table columns. Customer is a text match
-  // (every space-separated word must match); Trip Start, Trip End, Before and
-  // After Inspection are exact-day date picks. Status has its own dropdown.
+  // (every space-separated word must match); Trip Start and Trip End are
+  // exact-day date picks. Status has its own dropdown.
   const terms  = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const searchType = SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
-  const inspSec = (id, phase) => inspectionDates?.[id]?.[phase] ?? NaN;
 
   const filteredBookings = pastBookings.filter((b) => {
     const id = b.bookingID || b.id;
@@ -2127,9 +2100,7 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
     if (searchType === "date") {
       if (!dateValue) return true;
       if (searchBy === "start") return dayKey(b.startDateTime) === dateValue;
-      if (searchBy === "end")   return dayKey(b.endDateTime) === dateValue;
-      const sec = inspSec(id, searchBy);
-      return isFinite(sec) && dayKey(sec * 1000) === dateValue;
+      return dayKey(b.endDateTime) === dateValue;
     }
     if (!terms.length) return true;
     const hay = (pastBookingNames[id] || "").toLowerCase();
@@ -2138,14 +2109,6 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
 
   const sortedBookings = !sortKey ? filteredBookings : [...filteredBookings].sort((a, b) => {
     const aID = a.bookingID || a.id, bID = b.bookingID || b.id;
-    if (sortKey === "before" || sortKey === "after") {
-      const av = inspSec(aID, sortKey), bv = inspSec(bID, sortKey);
-      // trips with no inspection date always sink to the bottom
-      if (!isFinite(av) && !isFinite(bv)) return 0;
-      if (!isFinite(av)) return 1;
-      if (!isFinite(bv)) return -1;
-      return sortDir === "asc" ? av - bv : bv - av;
-    }
     if (sortKey === "status") {
       const c = (a.status || "").localeCompare(b.status || "");
       return sortDir === "asc" ? c : -c;
@@ -2186,8 +2149,6 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
   const openBooking = expandedHistoryID
     ? pastBookings.find((b) => (b.bookingID || b.id) === expandedHistoryID)
     : null;
-
-  const th = "text-[10px] font-semibold text-gray-400 uppercase tracking-wide";
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
@@ -2241,31 +2202,23 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
         )}
       </div>
 
-      <div className="px-5 py-2 text-[11px] text-gray-400 border-b border-gray-100 bg-gray-50/50">
-        {hasFilters
-          ? `${sortedBookings.length} of ${pastBookings.length} past trips match`
-          : `${pastBookings.length} past trip${pastBookings.length === 1 ? "" : "s"} · click View to open its inspection record`}
-      </div>
-
-      {/* Table — every row opens that trip's record in a modal */}
+      {/* Table — same layout as Bookings. Every row opens that trip's record in a modal */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left">
-          <thead className="border-b border-gray-100 bg-gray-50/50">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
             <tr>
-              <th className="px-5 py-2"><SortableHeader label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-3 py-2"><SortableHeader label="Trip Start" sortKey="start" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-3 py-2"><SortableHeader label="Trip End" sortKey="end" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-3 py-2"><SortableHeader label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-3 py-2"><SortableHeader label="Before Inspection" sortKey="before" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-3 py-2"><SortableHeader label="After Inspection" sortKey="after" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="px-3 py-2 w-[120px]"><SortableHeader label="Status" sortKey="status" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
-              <th className="pl-3 pr-7 py-2 w-[110px] text-right"><span className={th}>Action</span></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Customer" sortKey="customer" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Trip Start" sortKey="start" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Trip End" sortKey="end" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="px-4 py-3 text-left"><SortableHeader label="Status" sortKey="status" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} /></th>
+              <th className="pl-4 pr-8 py-3 text-right">Action</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-50">
+          <tbody>
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-5 py-10 text-center text-xs text-gray-400">
+                <td colSpan={6} className="text-center text-gray-400 py-12">
                   {pastBookings.length === 0
                     ? "No past trips for this vehicle yet."
                     : "No trips match your search."}
@@ -2275,34 +2228,23 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
               const bID    = booking.bookingID || booking.id;
               const status = booking.status?.toLowerCase();
               return (
-                <tr
-                  key={bID}
-                  className="hover:bg-teal-50/40 transition-colors"
-                >
-                  <td className="px-5 py-2.5 max-w-[220px]">
-                    <span className="block text-xs font-semibold text-gray-700 truncate">{pastBookingNames[bID] || bID}</span>
+                <tr key={bID} className="border-t hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3 max-w-[260px]">
+                    <span className="block font-medium text-gray-800 truncate">{pastBookingNames[bID] || bID}</span>
                   </td>
-                  <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums whitespace-nowrap">{fmtDateShort(booking.startDateTime)}</td>
-                  <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums whitespace-nowrap">{fmtDateShort(booking.endDateTime)}</td>
-                  <td className="px-3 py-2.5 text-xs text-gray-400 tabular-nums whitespace-nowrap">{tripDays(booking)}</td>
-                  {["before", "after"].map((phase) => {
-                    const sec = inspSec(bID, phase);
-                    return (
-                      <td key={phase} className="px-3 py-2.5 text-xs text-gray-500 tabular-nums whitespace-nowrap">
-                        {!inspectionDates ? "…" : isFinite(sec) ? fmtDateShort(sec * 1000) : <span className="text-gray-300">—</span>}
-                      </td>
-                    );
-                  })}
-                  <td className="px-3 py-2.5">
-                    <span className={`inline-flex items-center justify-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDateShort(booking.startDateTime)}</td>
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDateShort(booking.endDateTime)}</td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{tripDays(booking)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center justify-center text-xs font-semibold px-2.5 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
                       {status?.replace("_", " ") || "—"}
                     </span>
                   </td>
-                  <td className="pl-3 pr-7 py-2.5 text-right">
+                  <td className="pl-4 pr-8 py-3 text-right">
                     <button
                       type="button"
                       onClick={() => onToggleRow(booking)}
-                      className="text-xs px-3.5 py-1 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition-colors font-semibold"
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
                     >
                       View
                     </button>
@@ -2310,6 +2252,12 @@ function PastTripsSection({ pastBookings, pastBookingNames, inspectionDates, par
                 </tr>
               );
             })}
+            {/* Pad a short page with empty rows so the table always keeps its 10-row height (same as Bookings). */}
+            {visible.length > 0 && Array.from({ length: Math.max(0, PAST_TRIPS_PAGE_SIZE - visible.length) }).map((_, i) => (
+              <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                <td colSpan={6} className="h-[53px]">&nbsp;</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -2366,53 +2314,36 @@ function TripHistoryModal({ booking, customerName, record, parts, carID, getPart
         className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-full flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-6 px-7 pt-6 pb-5 border-b border-gray-100">
-          <div className="min-w-0 flex-1">
-            <h3 className="font-bold text-gray-800 text-base mb-4">Trip Inspection Record</h3>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3 text-xs">
-              <div className="flex gap-2 min-w-0">
-                <dt className="w-24 shrink-0 text-gray-400">Customer</dt>
-                <dd className="font-semibold text-gray-700 truncate">{customerName || record?.userFullName || "—"}</dd>
-              </div>
-              <div className="flex gap-2 items-center min-w-0">
-                <dt className="w-24 shrink-0 text-gray-400">Status</dt>
-                <dd>
-                  <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
-                    {status?.replace("_", " ") || "—"}
-                  </span>
-                </dd>
-              </div>
-              <div className="flex gap-2 min-w-0">
-                <dt className="w-24 shrink-0 text-gray-400">Booking ID</dt>
-                <dd className="font-mono text-gray-600 truncate" title={bID}>{bID}</dd>
-              </div>
-              <div className="flex gap-2 min-w-0">
-                <dt className="w-24 shrink-0 text-gray-400">Duration</dt>
-                <dd className="text-gray-700">{tripDays(booking)}</dd>
-              </div>
-              <div className="flex gap-2 min-w-0">
-                <dt className="w-24 shrink-0 text-gray-400">Start Date</dt>
-                <dd className="text-gray-700">{fmtDate(booking.startDateTime)}</dd>
-              </div>
-              <div className="flex gap-2 min-w-0">
-                <dt className="w-24 shrink-0 text-gray-400">End Date</dt>
-                <dd className="text-gray-700">{fmtDate(booking.endDateTime)}</dd>
-              </div>
-            </dl>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
-              className="text-xs px-3 py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition-colors font-semibold"
-            >
-              View Booking
-            </button>
+        <div className="flex items-center justify-between gap-6 px-7 py-4 border-b border-gray-100">
+          <h3 className="font-bold text-gray-800 text-base">Trip Inspection Record</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none shrink-0" aria-label="Close">✕</button>
-          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-7 py-5">
+        <div className="flex-1 overflow-y-auto px-7 py-5 space-y-4">
+          <InfoSection
+            title="Booking Information"
+            aside={(
+              <button
+                type="button"
+                onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+              >
+                View Booking →
+              </button>
+            )}
+          >
+            <InfoField label="Customer" value={customerName || record?.userFullName} />
+            <InfoField label="Status" value={(
+              <span className={`inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full capitalize text-black ${BOOKING_STATUS_STYLE[status] || "bg-gray-50 border border-gray-200"}`}>
+                {status?.replace("_", " ") || "—"}
+              </span>
+            )} />
+            <InfoField label="Booking ID" value={bID} />
+            <InfoField label="Duration"   value={tripDays(booking)} />
+            <InfoField label="Start Date" value={fmtDate(booking.startDateTime)} />
+            <InfoField label="End Date"   value={fmtDate(booking.endDateTime)} />
+          </InfoSection>
+
           {!record || record.loading ? (
             <div className="h-32 flex items-center justify-center text-gray-400 text-xs">Loading trip record…</div>
           ) : (
@@ -2428,6 +2359,11 @@ function TripHistoryModal({ booking, customerName, record, parts, carID, getPart
               carID={carID}
             />
           )}
+        </div>
+
+        {/* Sticky footer — stays visible while the record scrolls (same as Bookings) */}
+        <div className="px-7 py-4 border-t border-gray-100 shrink-0">
+          <button onClick={onClose} className="w-full py-1.5 border rounded-xl text-sm">Close</button>
         </div>
       </div>
     </div>,
@@ -2447,10 +2383,6 @@ function PastTripDetail({ record, parts, getPartFieldKey, onViewPhoto, canEditHi
 
   return (
     <div className="space-y-3">
-      {record.userFullName && record.userFullName !== "—" && (
-        <p className="text-xs text-gray-500">Customer: <span className="text-gray-700 font-medium">{record.userFullName}</span></p>
-      )}
-
       {/* Boxed tabs: tab bar and content share one bordered card */}
       <div className="rounded-2xl border border-gray-200 overflow-hidden bg-white">
         <div className="flex bg-gray-50 border-b border-gray-200" role="tablist">

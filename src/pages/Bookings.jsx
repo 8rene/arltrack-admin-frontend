@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import usePolling from "../hooks/usePolling";
 import { useCurrency } from "../context/CurrencyContext";
@@ -7,9 +7,6 @@ import DeleteBundleModal from "../components/shared/DeleteBundleModal";
 import { ROLES } from "../config/pagePermissions";
 import TripMapModal from "../components/TripMapModal";
 import { readCodingWarnings, warningsByCity } from "../utils/codingWarnings";
-import StoreLocationMapPicker from "../components/shared/StoreLocationMapPicker";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 
 // Same shape MyTrips.jsx's tripStops() builds for TripMapModal — pickup,
 // dropoff, and any extra stops the customer selected at booking time
@@ -49,13 +46,6 @@ const IconWarning = ({ className = "w-5 h-5" }) => (
 const IconCheck = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-const IconBlock = ({ className = "w-5 h-5" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
-    <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
   </svg>
 );
 
@@ -271,7 +261,6 @@ function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, classN
 
 // Admin refund/cancel only applies before the trip starts — an ongoing trip goes through the customer's cancellation request instead.
 const canRefundCancel = (status) => ["to pay", "upcoming"].includes(status?.toLowerCase());
-const canEdit  = (status) => ["upcoming", "ongoing"].includes(status?.toLowerCase());
 
 const PAGE_SIZE = 10;
 
@@ -329,163 +318,23 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
 }
 
 
-// ─── INLINE LOCATION MAP ──────────────────────────────────────────────────────
-// Small read-only Leaflet map used inside the Edit modal: plots pickup, dropoff
-// and every extra stop. "Expand" opens the full TripMapModal. It's a preview —
-// the coordinates come from the booking's trip session; moving a stop with its
-// Map button shifts that stop's pin here right away.
-const MAP_PIN_COLOR = { pickup: "#4f46e5", dropoff: "#f59e0b", stop: "#0d9488" };
-
-function LocationMapPreview({ stops, title }) {
-  const elRef  = useRef(null);
-  const mapRef = useRef(null);
-  const [expanded, setExpanded] = useState(false);
-  const valid = stops.filter((s) => typeof s.lat === "number" && typeof s.lng === "number");
-
-  useEffect(() => {
-    if (!elRef.current || valid.length === 0) return;
-    const map = L.map(elRef.current, { zoomControl: true, attributionControl: false, scrollWheelZoom: false });
-    mapRef.current = map;
-    map.setView([valid[0].lat, valid[0].lng], 14);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
-    valid.forEach((st) => {
-      const color = MAP_PIN_COLOR[st.type] || MAP_PIN_COLOR.pickup;
-      L.marker([st.lat, st.lng], {
-        icon: L.divIcon({
-          className: "",
-          html: `<div style="width:22px;height:22px;border-radius:50% 50% 50% 0;background:${color};transform:rotate(-45deg);border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>`,
-          iconSize: [22, 22], iconAnchor: [11, 22],
-        }),
-      }).addTo(map).bindTooltip(st.type === "stop" ? (st.address || "Stop") : `${st.type === "pickup" ? "Pickup" : "Dropoff"}${st.address ? `: ${st.address}` : ""}`);
-    });
-    // The modal has only just mounted — let it lay out before measuring. The
-    // frame is cancelled on cleanup: under React StrictMode (and on any re-run)
-    // the effect's map is removed before this fires, and calling fitBounds on a
-    // removed map is what threw "_leaflet_pos".
-    let disposed = false;
-    const frame = requestAnimationFrame(() => {
-      if (disposed) return;
-      map.invalidateSize();
-      if (valid.length > 1) map.fitBounds(L.latLngBounds(valid.map((v) => [v.lat, v.lng])), { padding: [24, 24], maxZoom: 16, animate: false });
-    });
-    return () => {
-      disposed = true;
-      cancelAnimationFrame(frame);
-      map.remove();
-      mapRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(valid.map((v) => [v.lat, v.lng]))]);
-
-  if (valid.length === 0) {
-    return <div className="mt-2 text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-xl p-3">No map data for this booking.</div>;
-  }
-  return (
-    <div className="mt-2">
-      <div ref={elRef} className="h-44 w-full rounded-xl border border-gray-200 overflow-hidden z-0" />
-      <div className="flex items-center justify-between mt-1.5 text-xs text-gray-500">
-        <span className="flex items-center gap-3">
-          <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: MAP_PIN_COLOR.pickup }} />Pickup</span>
-          <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: MAP_PIN_COLOR.dropoff }} />Dropoff</span>
-          {valid.some((v) => v.type === "stop") && <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: MAP_PIN_COLOR.stop }} />Stop</span>}
-        </span>
-        <button type="button" onClick={() => setExpanded(true)} className="font-semibold text-teal-700 hover:underline">Expand →</button>
-      </div>
-      <TripMapModal open={expanded} onClose={() => setExpanded(false)} title={title} stops={stops} />
-    </div>
-  );
-}
-
-// ─── EDIT MODAL ───────────────────────────────────────────────────────────────
+// ─── ADD NOTE MODAL ───────────────────────────────────────────────────────────
+// Staff can only add / update the admin note here. Status changes and moving locations
+// are handled elsewhere (Payments, Car Tracking, Refund / Cancel).
 
 function EditModal({ booking, onClose, onSave }) {
-  const currentStatus     = booking.status?.toLowerCase() || "";
-  const [form, setForm] = useState({
-    notesAdmin: booking.notesAdmin || "",
-    status:     "", // "" = no status change; staff must pick a transition on purpose
-  });
-  // Stop names are never typed — a stop's name only ever comes from a map pick, so the
-  // text and its pin can't drift apart. edits = { [stopKey]: { address, lat, lng } }
-  // for every stop moved this session; pickingKey is the stop the picker is open for.
-  const [edits, setEdits]                 = useState({});
-  const [pickingKey, setPickingKey]       = useState(null);
-  const [saving, setSaving]                 = useState(false);
-  const [error, setError]                   = useState(null);
-  const [paymentStatus, setPaymentStatus]   = useState(null);
-  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [notesAdmin, setNotesAdmin] = useState(booking.notesAdmin || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState(null);
   const { getToken } = useAuth();
-
-  useEffect(() => {
-    const bID = booking.bookingID || booking.id;
-    if (!bID || currentStatus !== "upcoming") return;
-    setPaymentLoading(true);
-    fetch(`${process.env.REACT_APP_API_URL}/api/payments?bookingID=${encodeURIComponent(bID)}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    })
-      .then(r => r.json())
-      .then(json => {
-        const list  = json.data || json.payments || [];
-        const match = list.find(p => p.bookingID === bID);
-        setPaymentStatus(match?.status ?? null);
-      })
-      .catch(() => setPaymentStatus(null))
-      .finally(() => setPaymentLoading(false));
-  }, [booking, currentStatus, getToken]);
-
-  // Every editable location on the booking. A booking can carry several (the destination
-  // plus any extra stops); pickup/dropoff are fixed and not listed. zoneIndex is the stop's
-  // slot in the session's geofenceZones — what the backend uses to move the right one.
-  const stopRows = useMemo(() => {
-    const norm = (t) => (t || "").trim().toLowerCase();
-    const dest = norm(booking.location);
-    const rows = tripStops(booking)
-      .filter((st) => st.type === "stop")
-      .map((st) => ({
-        key: st.key, zoneIndex: Number(st.key.split("-")[1]), label: st.address,
-        lat: st.lat, lng: st.lng, isDestination: !!dest && norm(st.address) === dest,
-      }));
-    // Older bookings: a destination text with no zone of its own.
-    if (booking.location && !rows.some((r) => r.isDestination)) {
-      rows.unshift({ key: "destination", zoneIndex: null, label: booking.location, lat: null, lng: null, isDestination: true });
-    }
-    return rows;
-  }, [booking]);
-
-  // Preview pins: every stop, with the ones moved this session shown at their new spot.
-  const previewStops = useMemo(() => {
-    const moved = (st) => (edits[st.key] ? { ...st, ...edits[st.key] } : st);
-    const base = tripStops(booking).map(moved);
-    if (edits.destination) base.push({ key: "destination", type: "stop", ...edits.destination });
-    return base;
-  }, [booking, edits]);
-
-  const pickingRow    = stopRows.find((r) => r.key === pickingKey) || null;
-  const pickerCoords  = pickingRow
-    ? (edits[pickingRow.key] || (pickingRow.lat != null ? pickingRow : null))
-    : null;
-  const editedCount   = Object.keys(edits).length;
-
-  const approvedStatuses = ["approved", "paid"];
-  const isApprovingWithUnpaidPayment =
-    form.status === "ongoing" &&
-    currentStatus === "upcoming" &&
-    !paymentLoading &&
-    (paymentStatus === null || !approvedStatuses.includes(paymentStatus?.toLowerCase()));
 
   const handleSave = async () => {
     setSaving(true); setError(null);
     try {
-      const payload = { ...form };
-      if (!payload.status) delete payload.status; // no status change
-      if (editedCount) {
-        payload.stopEdits = stopRows
-          .filter((r) => edits[r.key])
-          .map((r) => ({ zoneIndex: r.zoneIndex, oldLabel: r.label, ...edits[r.key] }));
-      }
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ notesAdmin }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to save");
@@ -497,112 +346,15 @@ function EditModal({ booking, onClose, onSave }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <h2 className="font-bold text-lg text-gray-800">Edit Booking</h2>
-        <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
+        <h2 className="font-bold text-lg text-gray-800">Add Note</h2>
         {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
-        {form.status === "ongoing" && currentStatus === "upcoming" && (
-          paymentLoading ? (
-            <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 border border-gray-200 p-3 rounded-xl">
-              <IconClock className="w-4 h-4 shrink-0" />
-              Checking payment status…
-            </div>
-          ) : paymentStatus === null ? (
-            <div className="flex items-start gap-2 bg-red-50 border border-red-200 p-3 rounded-xl">
-              <IconBlock className="w-5 h-5 shrink-0 text-red-500 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-red-700">No payment record found</p>
-                <p className="text-xs text-red-600 mt-0.5">Cannot mark as picked up / ongoing — no payment has been submitted for this booking yet.</p>
-              </div>
-            </div>
-          ) : approvedStatuses.includes(paymentStatus?.toLowerCase()) ? (
-            <div className="flex items-center gap-2 bg-green-50 border border-green-200 p-3 rounded-xl">
-              <IconCheck className="w-5 h-5 text-green-600 shrink-0" />
-              <p className="text-sm text-green-700 font-medium">Payment is <span className="font-bold">{paymentStatus}</span> — booking can be marked as picked up (ongoing).</p>
-            </div>
-          ) : (
-            <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 p-3 rounded-xl">
-              <IconWarning className="w-5 h-5 shrink-0 text-amber-500 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-amber-800">Payment not yet approved</p>
-                <p className="text-xs text-amber-700 mt-0.5">Payment status is currently <span className="font-bold">"{paymentStatus}"</span>. Go to the <span className="font-semibold">Payments page</span> and approve the payment first.</p>
-              </div>
-            </div>
-          )
-        )}
-        <div className="space-y-3">
-          <div>
-            <p className="block text-sm font-medium text-gray-700">
-              Locations{stopRows.length > 1 && <span className="ml-1 text-xs font-normal text-gray-400">({stopRows.length} stops)</span>}
-            </p>
-            {stopRows.length === 0 ? (
-              <p className="mt-1 text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-xl p-3">
-                This booking has no destination or extra stops to edit. Pickup and dropoff can't be changed here.
-              </p>
-            ) : (
-              <ul className="mt-1 space-y-2">
-                {stopRows.map((r) => {
-                  const e = edits[r.key];
-                  return (
-                    <li key={r.key} className={`flex items-start gap-2 border rounded-xl px-3 py-2 ${e ? "border-teal-300 bg-teal-50/50" : "border-gray-200 bg-gray-50"}`}>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                          {r.isDestination ? "Destination" : "Stop"}
-                        </p>
-                        <p className="text-sm text-gray-800 break-words">{e ? e.address : (r.label || "—")}</p>
-                        {e && <p className="text-xs text-gray-400 break-words">was: {r.label || "—"}</p>}
-                      </div>
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        <button type="button" onClick={() => setPickingKey(r.key)}
-                          className="px-3 py-1.5 rounded-xl border border-teal-500 text-teal-700 hover:bg-teal-50 transition-colors text-xs font-semibold whitespace-nowrap">
-                          📍 {e ? "Change" : "Move on map"}
-                        </button>
-                        {e && (
-                          <button type="button" onClick={() => setEdits(({ [r.key]: _, ...rest }) => rest)}
-                            className="text-xs text-gray-500 hover:underline">Undo</button>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {editedCount > 0 && (
-              <p className="mt-1 text-xs text-teal-700">
-                {editedCount === 1 ? "1 stop" : `${editedCount} stops`} moved — the trip's geofence zone{editedCount === 1 ? "" : "s"} update when you save.
-              </p>
-            )}
-          </div>
-          <StoreLocationMapPicker
-            isOpen={!!pickingRow}
-            onClose={() => setPickingKey(null)}
-            onConfirm={({ address, lat, lng }) => {
-              setEdits((prev) => ({ ...prev, [pickingKey]: { address, lat, lng } }));
-              setPickingKey(null);
-            }}
-            initialLabel={pickingRow ? (edits[pickingRow.key]?.address || pickingRow.label || "") : ""}
-            initialCoords={pickerCoords ? { lat: pickerCoords.lat, lng: pickerCoords.lng } : null}
-            title={pickingRow?.isDestination ? "📍 Move Destination" : "📍 Move Stop"}
-            subtitle="Search, click the map, or drag the pin"
-          />
-          <LocationMapPreview stops={previewStops} title={`${booking.customerName || "Booking"} — ${booking.vehicleName || ""}`} />
-          <label className="block text-sm font-medium text-gray-700">Admin Notes
-            <textarea rows={3} className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" value={form.notesAdmin} onChange={(e) => setForm({ ...form, notesAdmin: e.target.value })} />
-          </label>
-          <label className="block text-sm font-medium text-gray-700">Status
-            <select className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-              <option value="">No change ({booking.status})</option>
-              {booking.status?.toLowerCase() === "upcoming" ? (
-                <><option value="ongoing">Ongoing (Picked Up)</option><option value="cancelled">Cancelled</option></>
-              ) : (
-                <><option value="completed">Completed</option>{booking.status?.toLowerCase() === "to pay" && <option value="cancelled">Cancelled</option>}</>
-              )}
-            </select>
-          </label>
-        </div>
+        <label className="block text-sm font-medium text-gray-700">Admin Note
+          <textarea rows={4} autoFocus className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none focus:border-teal-500" value={notesAdmin} onChange={(e) => setNotesAdmin(e.target.value)} placeholder="Write a note for this booking…" />
+        </label>
         <div className="flex gap-3 justify-end pt-2">
           <button onClick={onClose} className="px-4 py-2 border rounded-xl text-sm">Cancel</button>
-          <button onClick={handleSave} disabled={saving || isApprovingWithUnpaidPayment} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-            {saving ? "Saving…" : "Save Changes"}
+          <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+            {saving ? "Saving…" : "Save Note"}
           </button>
         </div>
       </div>
@@ -1153,7 +905,7 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
             <button
               type="button"
               onClick={() => navigate(`/users?open=${encodeURIComponent(subID || userID)}`)}
-              className="w-full mt-3 py-2 border border-teal-200 text-teal-700 rounded-xl text-sm font-semibold hover:bg-teal-50"
+              className="w-full mt-3 py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
             >
               View More →
             </button>
@@ -1284,11 +1036,17 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     });
   };
 
-  // Vehicle name -> Car Tracking (Live tab) with this car already selected.
+  // Car Tracking (Live tab) with this car already selected.
   // CarTracking already reads location.state.selectCarId (same deep link
   // Header notifications and GPS Setup use) and selects that car.
   const goToCarTracking = () => {
     navigate("/car-tracking", { state: { selectCarId: booking.carID } });
+  };
+
+  // Vehicle name -> Fleet, with this car's Details window already open.
+  // Fleet reads location.state.openCarId.
+  const goToFleet = () => {
+    navigate("/fleet", { state: { openCarId: booking.carID } });
   };
 
   const goToPayments = () => {
@@ -1358,10 +1116,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   // this booking (see booking.service.js's resolveHistoryInfo).
   const [mapOpen, setMapOpen] = useState(false);
   const locationStops = tripStops(booking);
-  // The Details row shows where the car is picked up (booking.location is the destination). The map is unchanged.
-  const pk = booking.pickupLocation;
-  const pickupText = (typeof pk === "string" ? pk : pk?.address || pk?.label || pk?.name) || booking.location || "—";
-  // Booking-time Number Coding restrictions the customer app saved (booking.codingWarnings) —
+    // Booking-time Number Coding restrictions the customer app saved (booking.codingWarnings) —
   // the list the customer was warned about; empty for bookings made before that existed.
   const codingByCity = warningsByCity(readCodingWarnings(booking.codingWarnings));
 
@@ -1455,7 +1210,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     { key: "booked", title: "Booked", done: true, sub: fmtDateTime(booking.createdAt) },
     {
       // Payment AND the one-time discount. Orange while only part of the fee has come in.
-      key: "paid", title: "Paid | Give discount", done: paid && !partial, partial,
+      key: "paid", title: "Paid", done: paid && !partial, partial,
       sub: !paid ? "Awaiting payment"
         : [
             partial ? `Partial · ${fmt(booking.balance)} still to pay` : (booking.paymentMethod || "Paid"),
@@ -1477,13 +1232,11 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
         { key: "pickup", label: "Pickup", done: started, text: booking.startedAt ? fmtDateTime(booking.startedAt) : started ? "Trip started" : "Not picked up yet" },
         {
           key: "monitor", label: "Monitor", done: droppedOff || isStolen, text: monitorText,
-          actions: [
-            { label: "Car Tracking", onClick: goToCarTracking },
-            ...(booking.hasHistory ? [{ label: "Trip History", onClick: goToHistory }] : []),
-          ],
+          actions: [{ label: "Car Tracking", onClick: goToCarTracking }],
         },
         { key: "dropoff", label: "Drop-off", done: droppedOff, bad: isStolen && !droppedOff,
-          text: booking.droppedOffTime ? fmtDateTime(booking.droppedOffTime) : droppedOff ? "Dropped off" : isStolen ? "Never dropped off — flagged stolen" : "Not dropped off yet" },
+          text: booking.droppedOffTime ? fmtDateTime(booking.droppedOffTime) : droppedOff ? "Dropped off" : isStolen ? "Never dropped off — flagged stolen" : "Not dropped off yet",
+          actions: booking.hasHistory ? [{ label: "Trip History", onClick: goToHistory }] : [] },
       ],
     },
     {
@@ -1537,28 +1290,21 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   });
   const stepActions = {
     booked:      [{ label: "Details", onClick: () => setTab("details") }],
-    paid:        [
-      { label: "Payments", onClick: goToPayments },
-      // One discount per booking, given on the Payments page.
-      ...(paid && !discountGiven && !dead && status !== "completed" ? [{ label: "Give discount", onClick: goToPayments }] : []),
-    ],
+    paid:        [{ label: "Payments", onClick: goToPayments }],
     driver:      isChauffeur ? [{ label: "Driver Dispatch", onClick: goToDispatch }] : [],
     before:      [{ label: "Vehicle Inspections", onClick: goToInventory }],
     after:       [{ label: "Vehicle Inspections", onClick: goToInventory }],
     // Already filed: open it. Nothing filed (or still loading): the add form, as before.
     maintenance: maint.length > 0
-      ? [
-          { label: maint.length > 1 ? `View maintenance (${maint.length})` : "View maintenance", onClick: viewMaintenance },
-          { label: "Add another", onClick: goToMaintenance },
-        ]
+      ? [{ label: maint.length > 1 ? `View maintenance (${maint.length})` : "View maintenance", onClick: viewMaintenance }]
       : [{ label: "Maintenance", onClick: goToMaintenance }],
     penalties:   [{ label: "Penalties", onClick: goToNotePenalty }],
     // The deposit is handed back from the Payments page ("Return deposit"), so name the button for it while one is waiting.
     deposit:     [{ label: status === "ongoing" && depStatus === "Held" ? "Return deposit (Payments)" : "Payments", onClick: goToPayments }],
   };
 
-  const stepBtn = "px-3.5 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition whitespace-nowrap";
-  const partBtn = "px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition whitespace-nowrap";
+  const stepBtn = "px-3 py-1.5 text-sm font-medium rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors whitespace-nowrap";
+  const partBtn = "px-2.5 py-1 text-xs font-medium rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors whitespace-nowrap";
 
   const tabBtn = (key, label) => (
     <button
@@ -1730,7 +1476,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                 <InfoField label="Booking ID" value={booking.bookingID || booking.id} />
                 <InfoField label="Created"    value={fmtDateTime(booking.createdAt)} />
                 <InfoField label="Vehicle" value={booking.carID && booking.vehicleName ? (
-                  <button onClick={goToCarTracking} title="Open in Car Tracking" className="text-indigo-600 hover:underline font-medium text-left">
+                  <button onClick={goToFleet} title="Open vehicle details in Fleet" className="text-indigo-600 hover:underline font-medium text-left">
                     {booking.vehicleName}
                   </button>
                 ) : booking.vehicleName} />
@@ -1744,12 +1490,11 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                 ) : (
                   <span className="text-gray-400 italic font-normal">{isChauffeur ? "No driver assigned" : "Not needed"}</span>
                 )} />
-                {/* Label, address and map button on one line. */}
-                <div className="col-span-2 flex items-center gap-4 pt-3 border-t border-gray-100 min-w-0">
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400 shrink-0">Pickup Location</p>
-                  <p className="text-sm font-medium text-gray-800 min-w-0 flex-1 break-words">{pickupText}</p>
+                {/* Pickup and destination live on the map. */}
+                <div className="col-span-2 flex items-center justify-between gap-4 pt-3 border-t border-gray-100 min-w-0">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Pickup, Destination/s and Drop-off</p>
                   {locationStops.length > 0 ? (
-                    <button onClick={() => setMapOpen(true)} className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0">
+                    <button onClick={() => setMapOpen(true)} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0">
                       View Map →
                     </button>
                   ) : (
@@ -1766,9 +1511,9 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                     type="button"
                     onClick={goToPayments}
                     title="Open this booking's payment on the Payments page"
-                    className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors"
+                    className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
                   >
-                    Payments →
+                    View payments →
                   </button>
                 )}
               >
@@ -1818,7 +1563,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                         <button
                           type="button"
                           onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(booking.refundSummary.refundRequestID)}`)}
-                          className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors shrink-0"
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0"
                         >
                           View refund →
                         </button>
@@ -1859,22 +1604,22 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
         {/* Actions — only the ones that apply to this booking / this role. */}
         <div className="px-6 py-4 border-t border-gray-100 shrink-0">
         {(onEdit || onRefund || onDelete) && (
-          <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">
-            {onEdit && canEdit(booking.status) && (
-              <button onClick={() => onEdit(booking)} className="flex-1 px-3 py-2 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Edit</button>
+          <div className="flex flex-col gap-1.5">
+            {onEdit && (
+              <button onClick={() => onEdit(booking)} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Add Note</button>
             )}
             {onRefund && canRefundCancel(booking.status) && (
-              <button onClick={() => onRefund(booking)} className="flex-1 px-3 py-2 border border-orange-300 text-orange-600 rounded-xl text-sm hover:bg-orange-50 transition-colors whitespace-nowrap">Refund / Cancel</button>
+              <button onClick={() => onRefund(booking)} className="w-full px-3 py-1.5 border border-orange-200 bg-orange-50 text-orange-700 font-semibold rounded-xl text-sm hover:bg-orange-100 transition-colors whitespace-nowrap">Refund / Cancel</button>
             )}
             {onRefund && status === "cancelled" && !booking.refundSummary && (refundNote === "No refund" || refundNote === "Deposit kept") && (
-              <button onClick={() => onRefund(booking)} className="flex-1 px-3 py-2 border border-orange-300 text-orange-600 rounded-xl text-sm hover:bg-orange-50 transition-colors whitespace-nowrap">Refund (cancelled)</button>
+              <button onClick={() => onRefund(booking)} className="w-full px-3 py-1.5 border border-orange-200 bg-orange-50 text-orange-700 font-semibold rounded-xl text-sm hover:bg-orange-100 transition-colors whitespace-nowrap">Refund (cancelled)</button>
             )}
             {onDelete && (
-              <button onClick={() => onDelete(booking)} className="flex-1 px-3 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 transition-colors">Delete</button>
+              <button onClick={() => onDelete(booking)} className="w-full px-3 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors">Delete</button>
             )}
           </div>
         )}
-          <button onClick={onClose} className="w-full mt-2 py-2 border rounded-xl text-sm">Close</button>
+          <button onClick={onClose} className="w-full mt-1.5 py-1.5 border rounded-xl text-sm">Close</button>
         </div>
       </div>
 

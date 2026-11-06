@@ -635,10 +635,10 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
               <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
             )}
 
-            <div className="flex justify-end gap-3">
-              <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Close</button>
+            <div className="flex flex-col-reverse gap-2">
+              <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Close</button>
               <button onClick={handleCancelRequest} disabled={cancelling}
-                className="px-5 py-2 border border-red-200 text-red-600 rounded-xl text-sm font-medium hover:bg-red-50 disabled:opacity-60">
+                className="w-full py-2 border border-red-200 text-red-600 rounded-xl text-sm font-medium hover:bg-red-50 disabled:opacity-60">
                 {cancelling ? "Cancelling..." : "Cancel Request"}
               </button>
             </div>
@@ -698,14 +698,14 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
               )}
             </div>
 
-            <div className="flex justify-end gap-3 p-5 border-t sticky bottom-0 bg-white">
-              <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+            <div className="flex flex-col-reverse gap-2 p-5 border-t sticky bottom-0 bg-white">
+              <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
                 Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+                className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
               >
                 {saving ? "Saving..." : canEditDirectly ? "Save Changes" : "Send Request Edit"}
               </button>
@@ -919,15 +919,15 @@ function ChangePasswordModal({ onClose, onChanged }) {
         </div>
 
         {step !== "success" && (
-          <div className="flex justify-end gap-3 p-5 border-t">
-            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+          <div className="flex flex-col-reverse gap-2 p-5 border-t">
+            <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
               Cancel
             </button>
             {step === "request" ? (
               <button
                 onClick={handleSendCode}
                 disabled={sending}
-                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+                className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
               >
                 {sending ? "Sending..." : "Send Code"}
               </button>
@@ -935,7 +935,7 @@ function ChangePasswordModal({ onClose, onChanged }) {
               <button
                 onClick={handleVerifyCode}
                 disabled={verifying}
-                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+                className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
               >
                 {verifying ? "Verifying..." : "Verify Code"}
               </button>
@@ -943,7 +943,7 @@ function ChangePasswordModal({ onClose, onChanged }) {
               <button
                 onClick={handleChangePassword}
                 disabled={saving}
-                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+                className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
               >
                 {saving ? "Changing..." : "Change Password"}
               </button>
@@ -1182,10 +1182,10 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
 
           {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
 
-          <div className="flex justify-end gap-3">
-            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+          <div className="flex flex-col-reverse gap-2">
+            <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
             <button onClick={handleSubmit} disabled={saving}
-              className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60">
+              className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60">
               {saving ? "Uploading..." : canEditDirectly ? "Save" : "Submit for Review"}
             </button>
           </div>

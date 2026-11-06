@@ -211,7 +211,7 @@ function ViewModal({ log, user, onClose, onArchive }) {
   const { user: viewer } = useAuth();
   const go = (path) => { onClose(); navigate(path); };
   const link = (label, path) => (
-    <button type="button" onClick={() => go(path)} className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap">{label}</button>
+    <button type="button" onClick={() => go(path)} className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline whitespace-nowrap">{label}</button>
   );
   const hasRelated = !!(log.bookingID || log.paymentID || log.refundRequestID);
   const userName = !log.userID ? "SYSTEM" : user === undefined || user === null ? "Loading…" : user.name;
@@ -225,7 +225,7 @@ function ViewModal({ log, user, onClose, onArchive }) {
   const viewUserBtn = (
     <button type="button" disabled={!canOpenUser} title={userBtnTitle}
       onClick={() => go(`/users?role=${userTab.key}&tab=directory&open=${encodeURIComponent(log.userID)}`)}
-      className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">
+      className="px-3 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
       View user →
     </button>
   );
@@ -257,9 +257,12 @@ function ViewModal({ log, user, onClose, onArchive }) {
           </InfoSection>
 
           {hasRelated && (
-            <InfoSection title="Related records">
+            <InfoSection title="Related records" action={log.bookingID && (
+              <button type="button" onClick={() => go(`/bookings?open=${encodeURIComponent(log.bookingID)}`)}
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">View booking →</button>
+            )}>
               {log.bookingID && (
-                <InfoField label="Booking" value={<span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{log.bookingID}</span>{link("View booking →", `/bookings?open=${encodeURIComponent(log.bookingID)}`)}</span>} />
+                <InfoField label="Booking" value={<span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{log.bookingID}</span></span>} />
               )}
               {log.paymentID && (
                 <InfoField label="Payment" value={<span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{log.paymentID}</span>{link("View payment →", `/payments?paymentID=${encodeURIComponent(log.paymentID)}`)}</span>} />
@@ -277,9 +280,9 @@ function ViewModal({ log, user, onClose, onArchive }) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex items-center gap-2">
-          <button onClick={onArchive} className="px-4 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 transition-colors">Archive</button>
-          <button onClick={onClose} className="ml-auto px-4 py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-2">
+          <button onClick={onArchive} className="w-full py-2.5 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 transition-colors">Archive</button>
+          <button onClick={onClose} className="w-full py-2.5 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 transition-colors">Close</button>
         </div>
       </div>
     </div>

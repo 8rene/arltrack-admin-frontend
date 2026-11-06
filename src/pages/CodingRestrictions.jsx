@@ -345,6 +345,55 @@ const DigitPicker = ({ value, onChange, size = "md" }) => {
   );
 };
 
+const PAGE_SIZE = 10;
+
+// ─── Pagination (same pattern as Bookings.jsx) ───────────────────────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((x, y) => x - y);
+  const rangeEnd = Math.min(start + pageSize, count);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function CodingRestrictions() {
   const { effectiveRole } = useAuth();
   const canDelete = effectiveRole === "Owner" || effectiveRole === "Admin";
@@ -414,6 +463,10 @@ export default function CodingRestrictions() {
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, search]);
+
+  // Paginated like Bookings; back to page 1 when the search changes.
+  const { page, setPage, totalPages, pageItems: pagedRows, start, count } = usePagination(cityRows, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Everything restricted today (skipped entirely on a holiday).
   const todayAll = useMemo(
@@ -496,7 +549,8 @@ export default function CodingRestrictions() {
       <ErrorBanner onRetry={load}>{error}</ErrorBanner>
 
       {/* ── City list: one row per city, Monday–Sunday at a glance ── */}
-      <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
+      <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-hidden">
+       <div className="overflow-x-auto">
         <table className="w-full table-fixed text-sm font-sans min-w-[900px]">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
@@ -517,7 +571,7 @@ export default function CodingRestrictions() {
                 {data.cities.length === 0 ? "No coding schedules yet. Add a city to get started." : "No city matches your search."}
               </EmptyRow>
             ) : (
-              cityRows.map((r) => (
+              pagedRows.map((r) => (
                 <tr key={r.city} className="border-b border-gray-50 hover:bg-gray-50/50">
                   <td className="px-5 py-3">
                     <p className="font-semibold text-gray-800">{r.city}</p>
@@ -544,6 +598,8 @@ export default function CodingRestrictions() {
             )}
           </tbody>
         </table>
+       </div>
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
       {/* ── One city's rules (modal) ── */}

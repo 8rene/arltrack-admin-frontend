@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../fireabase";
@@ -270,7 +270,6 @@ export default function Maintenance() {
   const [viewing, setViewing]             = useState(false); // the open modal is read-only until "Edit" is clicked
   const [toast, setToast]                 = useState(null);
   const [showAllParts, setShowAllParts]   = useState(false); // attention strip: collapsed shows the first few flagged parts
-  const [selectedDay, setSelectedDay]     = useState(null); // "YYYY-MM-DD" picked on the calendar; filters the table below
   const [calMonth, setCalMonth]           = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [damagedParts, setDamagedParts]   = useState([]);
   const [partNames, setPartNames]         = useState({}); // carPartID -> name, fallback for parts missing from the catalog
@@ -284,16 +283,15 @@ export default function Maintenance() {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("asc"); }
   };
-  // Predicate + highlight color for each stat card, keyed the same as the
-  // card labels. Only one card can be "active" at a time (clicking a second
-  // one swaps to it, clicking the active one again clears it). Matching
-  // rows get pushed to the top of the default sort and get a tinted
-  // highlight — nothing is filtered out of the table.
+  // Predicate for each stat card, keyed the same as the card labels. Only one
+  // card can be "active" at a time (clicking a second one swaps to it,
+  // clicking the active one again clears it). The active card filters the
+  // table to its records, same as the stat cards in Bookings / Users.
   const STAT_FILTERS = {
-    overdue:   { predicate: isOverdueJob, rowClass: "bg-red-50/60 ring-1 ring-inset ring-red-200" },
-    dueSoon:   { predicate: (r) => r.status === "Scheduled" && isSoon(r.maintenanceDate), rowClass: "bg-yellow-50/60 ring-1 ring-inset ring-yellow-200" },
-    scheduled: { predicate: (r) => r.status === "Scheduled", rowClass: "bg-blue-50/60 ring-1 ring-inset ring-blue-200" },
-    completed: { predicate: (r) => r.status === "Completed", rowClass: "bg-green-50/60 ring-1 ring-inset ring-green-200" },
+    overdue:   { predicate: isOverdueJob },
+    dueSoon:   { predicate: (r) => r.status === "Scheduled" && isSoon(r.maintenanceDate) },
+    scheduled: { predicate: (r) => r.status === "Scheduled" },
+    completed: { predicate: (r) => r.status === "Completed" },
   };
   const [activeStatFilter, setActiveStatFilter] = useState(null); // null | "overdue" | "dueSoon" | "scheduled" | "completed"
   const toggleStatFilter = (key) => {
@@ -610,14 +608,6 @@ export default function Maintenance() {
     setShowAdd(true);
   };
 
-  // "Confirm" on a Scheduled row: the same edit modal, with the status already set to Completed.
-  // Nothing is saved until "Update" is clicked, so the date, the parts' After conditions, prices and
-  // the total can be checked (and changed) first.
-  const openConfirm = (r) => {
-    openEdit(r);
-    setForm(f => ({ ...f, status: "Completed" }));
-  };
-
   // A flagged part as a row for the modal. The price stays undefined until the
   // car's catalog has loaded (see the effect above), then becomes its catalog price.
   const entryFromFlagged = (p) => ({
@@ -718,11 +708,6 @@ export default function Maintenance() {
     else if (sortKey === "cost")   { av = a.totalCost || 0; bv = b.totalCost || 0; }
     return sortDir === "asc" ? av - bv : bv - av;
   }) : [...records].sort((a, b) => {
-    if (activeStatFilter) {
-      const pred = STAT_FILTERS[activeStatFilter].predicate;
-      const aM = pred(a), bM = pred(b);
-      if (aM !== bM) return aM ? -1 : 1;
-    }
     const aOD = isOverdueJob(a), bOD = isOverdueJob(b);
     if (aOD !== bOD) return aOD ? -1 : 1;
     const aOpen = !["Completed", "Cancelled"].includes(a.status);
@@ -743,11 +728,17 @@ export default function Maintenance() {
   ].filter(l => l && l !== "—"))].sort((x, y) => x.localeCompare(y));
 
   const searchType = SEARCH_BY.find(o => o.key === searchBy)?.type || "text";
+  // Clicking a calendar day = "Search by Date" with that day (shown in the date box above the table); clicking it again clears it.
+  const selectedDay = searchBy === "date" && dateValue ? dateValue : null;
+  const setSelectedDay = (iso) => {
+    if (!iso || iso === selectedDay) { setDateValue(""); return; }
+    setSearchBy("date"); setSearch(""); setDateValue(iso);
+  };
   const searchText = search.trim().toLowerCase();
   const filtered = sortedRecords.filter(r => {
     const matchC = carFilter === "All" || r.carLabel === carFilter;
     const matchS = statusFilter === "All" || r.status === statusFilter;
-    const matchD = !selectedDay || (toDate(r.maintenanceDate) && localISODate(toDate(r.maintenanceDate)) === selectedDay);
+    const matchT = !activeStatFilter || STAT_FILTERS[activeStatFilter].predicate(r);
     let matchQ = true;
     if (searchType === "date") {
       if (dateValue) {
@@ -758,12 +749,12 @@ export default function Maintenance() {
       const hay = { plate: r.plateNumber, basis: r.basis }[searchBy];
       matchQ = String(hay || "").toLowerCase().includes(searchText);
     }
-    return matchC && matchS && matchD && matchQ;
+    return matchC && matchS && matchT && matchQ;
   });
 
   // The table is paginated and day-filtered; the calendar and stat cards keep reading all records.
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(filtered, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [carFilter, statusFilter, search, searchBy, dateValue, sortKey, sortDir, activeStatFilter, selectedDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [carFilter, statusFilter, search, searchBy, dateValue, sortKey, sortDir, activeStatFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="w-full px-4 space-y-5">
@@ -848,40 +839,40 @@ export default function Maintenance() {
         );
       })()}
 
-      {/* CALENDAR — always visible; clicking a day filters the table below */}
+      {/* CALENDAR — always visible; clicking a day sets "Search by: Date" to that day.
+          The legend (left) and Refresh / Schedule (right) sit in the card's top bar. */}
       <MaintenanceCalendar
         records={records}
         calMonth={calMonth}
         setCalMonth={setCalMonth}
         selectedDay={selectedDay}
         onSelectDay={setSelectedDay}
-      />
-
-      {/* Under the calendar: day filter chip (left) + Refresh and Schedule (right) */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          {selectedDay && (
-            <span className="inline-flex items-center gap-2 bg-teal-50 text-teal-700 border border-teal-200 rounded-full pl-3 pr-1.5 py-1 text-xs font-semibold">
-              Showing {fmtDate(selectedDay + "T00:00:00")} · {count} record{count === 1 ? "" : "s"}
-              <button onClick={() => setSelectedDay(null)} title="Show all records"
-                className="w-5 h-5 rounded-full hover:bg-teal-100 flex items-center justify-center">
-                <IconX className="w-3 h-3" />
+        toolbar={(
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="font-bold text-gray-800 text-base">Calendar Legend</h3>
+              <div className="flex flex-wrap items-center gap-4 mt-1">
+                {Object.entries(CAL_DOT).map(([label, cls]) => (
+                  <span key={label} className="flex items-center gap-1.5 text-sm text-gray-500">
+                    <span className={`w-2.5 h-2.5 rounded-full ${cls}`} />{label}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={fetchAll} disabled={loading}
+                className="px-4 py-2 rounded-xl text-sm font-medium border border-teal-300 text-teal-700 bg-white hover:bg-teal-50 disabled:opacity-50 flex items-center gap-1.5">
+                <IconRefresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
               </button>
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={fetchAll} disabled={loading}
-            className="px-4 py-2 rounded-xl text-sm font-medium border border-teal-300 text-teal-700 bg-white hover:bg-teal-50 disabled:opacity-50 flex items-center gap-1.5">
-            <IconRefresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
-          <button onClick={openAdd}
-            className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold">
-            + Schedule
-          </button>
-        </div>
-      </div>
+              <button onClick={openAdd}
+                className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold">
+                + Schedule
+              </button>
+            </div>
+          </div>
+        )}
+      />
 
       {/* TABLE */}
       <div className="flex gap-5 items-start">
@@ -942,11 +933,8 @@ export default function Maintenance() {
                 <tr><td colSpan={9} className="text-center py-16 text-gray-400 text-sm">{selectedDay ? "No maintenance records on this day." : "No maintenance records found."}</td></tr>
               ) : paginated.map((r, i) => {
                 const isEditing = editRecord?.id === r.id;
-                const statMatch = activeStatFilter && STAT_FILTERS[activeStatFilter].predicate(r);
                 const rowClass = isEditing
                   ? "bg-teal-50/50 ring-1 ring-inset ring-teal-200"
-                  : statMatch
-                  ? STAT_FILTERS[activeStatFilter].rowClass
                   : i % 2 === 1 ? "bg-gray-50/20" : "";
                 return (
                 <tr key={r.id} onClick={() => openView(r)}
@@ -987,12 +975,6 @@ export default function Maintenance() {
                   </td>
                   <td className="px-4 py-3 text-left whitespace-nowrap">
                     <div className="inline-flex items-center gap-2">
-                      {r.status === "Scheduled" && (
-                        <button onClick={e => { e.stopPropagation(); openConfirm(r); }}
-                          className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-teal-300 text-teal-700 hover:bg-teal-50 transition-colors">
-                          Confirm
-                        </button>
-                      )}
                       <button onClick={e => { e.stopPropagation(); openView(r); }}
                         className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
                         View
@@ -1102,13 +1084,11 @@ const IconLock = ({ className = "w-3 h-3" }) => (
 );
 
 // Bordered card with a gray header — same look as the Bookings view window.
-function ModalSection({ n, title, hint, children }) {
+function ModalSection({ title, children }) {
   return (
     <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
       <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b">
-        <span className="w-5 h-5 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">{n}</span>
         <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
-        {hint && <span className="text-xs text-gray-400 font-normal normal-case tracking-normal">{hint}</span>}
       </div>
       <div className="p-4 space-y-3">{children}</div>
     </section>
@@ -1157,32 +1137,7 @@ function MaintenanceModal({
               <h2 className="font-bold text-gray-800 text-lg">{viewing ? "Maintenance Details" : editRecord ? "Edit Maintenance" : "Schedule Maintenance"}</h2>
               {viewing && form.status && <MainStatusBadge status={form.status} />}
             </div>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {car ? `${car.label}${car.plateNumber ? ` · ${car.plateNumber}` : ""}` : "Choose a vehicle to begin"}
-            </p>
-            {editRecord && (
-              <div className="flex flex-wrap gap-x-8 gap-y-1 mt-2.5">
-                {[
-                  { label: "Created by", name: editRecord.createdByName, at: editRecord.createdAt },
-                  { label: "Last updated by", name: editRecord.updatedByName, at: editRecord.updatedAt },
-                ].map(x => (
-                  <div key={x.label} className="min-w-0">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{x.label}</div>
-                    {x.name ? (
-                      <div className="text-xs text-gray-700">
-                        <span className="font-semibold">{x.name}</span>
-                        {x.at ? <span className="text-gray-400"> · {fmtDate(x.at)}, {fmtTime(x.at)}</span> : null}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-gray-400" title="This record was saved before staff tracking was added.">
-                        Not recorded
-                        <span className="text-gray-300"> · saved before tracking{x.at ? ` · ${fmtDate(x.at)}` : ""}</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            {!car && <p className="text-xs text-gray-400 mt-0.5">Choose a vehicle to begin</p>}
           </div>
           <button onClick={onClose} disabled={saving} aria-label="Close" className="w-8 h-8 disabled:opacity-40 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100">
             <IconX className="w-4 h-4" />
@@ -1190,12 +1145,58 @@ function MaintenanceModal({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          {/* Who created / last updated the record — label-over-value, same look as Booking Information in Bookings */}
+          {(editRecord || form.bookingID) && (
+            <ModalSection title="Record Information">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                {editRecord && [
+                  { label: "Created By",      name: editRecord.createdByName, at: editRecord.createdAt,  atLabel: "Created" },
+                  { label: "Last Updated By", name: editRecord.updatedByName, at: editRecord.updatedAt,  atLabel: "Last Updated" },
+                ].map(x => (
+                  <Fragment key={x.label}>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{x.label}</p>
+                      {x.name
+                        ? <p className="text-sm font-medium text-gray-800 mt-0.5 break-words">{x.name}</p>
+                        : <p className="text-sm italic text-gray-400 mt-0.5" title="This record was saved before staff tracking was added.">Not recorded</p>}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{x.atLabel}</p>
+                      <p className="text-sm font-medium text-gray-800 mt-0.5">{x.at ? `${fmtDate(x.at)}, ${fmtTime(x.at)}` : "—"}</p>
+                    </div>
+                  </Fragment>
+                ))}
+                {/* Booking this job is tied to — same row design as "View Map" in the Bookings window */}
+                <div className={`sm:col-span-2 flex items-center justify-between gap-4 min-w-0 ${editRecord ? "pt-3 border-t border-gray-100" : ""}`}>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Booking</p>
+                    {form.bookingID && <p className="text-sm font-medium text-gray-800 mt-0.5 break-all">{form.bookingID}</p>}
+                  </div>
+                  {form.bookingID ? (
+                    <div className="flex items-center gap-3 shrink-0">
+                      {!viewing && (
+                        <button type="button" onClick={() => setForm(f => ({ ...f, bookingID: "" }))}
+                          className="text-xs text-teal-600 hover:text-teal-800 underline">Unlink</button>
+                      )}
+                      <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(form.bookingID)}`)}
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                        View Booking →
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-300 shrink-0">Not connected</span>
+                  )}
+                </div>
+              </div>
+            </ModalSection>
+          )}
+
           {/* View mode: the whole form is a disabled fieldset, so nothing can be changed until "Edit". */}
           <fieldset disabled={viewing} className="space-y-4 min-w-0 border-0 p-0 m-0">
 
-          {/* 1 · JOB */}
-          <ModalSection n="1" title="Job">
+          {/* JOB */}
+          <ModalSection title="Job">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Vehicle *">
                 <select value={form.carID} onChange={e => onCarChange(e.target.value)} className={inputCls}>
@@ -1253,14 +1254,6 @@ function MaintenanceModal({
                 )}
               </Field>
 
-              {form.bookingID ? (
-                <div className="rounded-xl bg-teal-50 border border-teal-200 px-3 py-2 text-xs text-teal-700 flex items-center justify-between gap-2 self-end">
-                  <span>Linked to booking <span className="font-semibold">{form.bookingID}</span></span>
-                  <button type="button" onClick={() => setForm(f => ({ ...f, bookingID: "" }))}
-                    className="text-teal-500 hover:text-teal-700 underline shrink-0">Unlink</button>
-                </div>
-              ) : <div className="hidden md:block" />}
-
               <div className="md:col-span-2">
                 <Field label="Job Notes">
                   <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
@@ -1271,8 +1264,8 @@ function MaintenanceModal({
             </div>
           </ModalSection>
 
-          {/* 2 · WORK */}
-          <ModalSection n="2" title="Work" hint="services done and parts handled">
+          {/* WORK */}
+          <ModalSection title="Work">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
 
               {/* Services */}
@@ -1337,7 +1330,7 @@ function MaintenanceModal({
                 </p>
 
                 {!form.carID ? (
-                  <p className="text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl px-3 py-4 text-center">
+                  <p className="text-sm text-gray-400 border border-dashed border-gray-200 rounded-xl px-3 py-4 text-center">
                     Select a vehicle to load its parts.
                   </p>
                 ) : (
@@ -1361,7 +1354,7 @@ function MaintenanceModal({
                     </select>
 
                     {form.partsAddressed.length === 0 ? (
-                      <p className="text-xs text-gray-400 px-1">No parts on this job yet.</p>
+                      <p className="text-sm text-gray-400 px-1">No parts on this job yet.</p>
                     ) : (
                       <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                         {form.partsAddressed.map(p => {
@@ -1373,7 +1366,7 @@ function MaintenanceModal({
                               <div className="flex items-center gap-2">
                                 <div className="relative flex-1 min-w-0">
                                   <input readOnly value={name} tabIndex={-1} title="Part names can't be edited here"
-                                    className="w-full bg-gray-100 border border-gray-200 rounded-lg pl-7 pr-2.5 py-1.5 text-xs font-semibold text-gray-700 cursor-not-allowed outline-none" />
+                                    className="w-full bg-gray-100 border border-gray-200 rounded-lg pl-7 pr-2.5 py-1.5 text-sm font-semibold text-gray-700 cursor-not-allowed outline-none" />
                                   <IconLock className="w-3 h-3 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                                 </div>
                                 <button type="button" onClick={() => removePart(p.carPartID)} aria-label={`Remove ${name}`}
@@ -1381,25 +1374,25 @@ function MaintenanceModal({
                               </div>
 
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[11px] text-gray-400">Before</span>
+                                <span className="text-xs text-gray-400">Before</span>
                                 <PartBadge label={p.conditionBefore} />
-                                <span className="text-gray-300 text-xs">→</span>
-                                <span className="text-[11px] text-gray-400">After</span>
+                                <span className="text-gray-300 text-sm">→</span>
+                                <span className="text-xs text-gray-400">After</span>
                                 <select value={p.conditionAfter === "Damaged" ? "Damaged" : "Good"} onChange={e => updatePart(p.carPartID, { conditionAfter: e.target.value })}
-                                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-arl-light outline-none">
+                                  className="border border-gray-200 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-arl-light outline-none">
                                                                     {afterOptions.map(o => <option key={o} value={o}>{o}</option>)}
                                 </select>
                               </div>
 
                               <div className="flex items-center gap-2">
                                 <div className="relative w-32 shrink-0">
-                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
+                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-gray-400">₱</span>
                                   <input type="number" min="0" value={p.price ?? ""} placeholder="0"
                                     onChange={e => updatePart(p.carPartID, { price: e.target.value })}
-                                    className="w-full border border-gray-200 rounded-lg pl-6 pr-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                                    className="w-full border border-gray-200 rounded-lg pl-6 pr-2 py-1.5 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
                                 </div>
                                 {cat && cat.price != null && (
-                                  <span className="text-[11px] text-gray-400 truncate">
+                                  <span className="text-xs text-gray-400 truncate">
                                     Catalog {peso(cat.price)}
                                     {differs && (
                                       <button type="button" onClick={() => updatePart(p.carPartID, { price: cat.price })}
@@ -1407,18 +1400,18 @@ function MaintenanceModal({
                                     )}
                                   </span>
                                 )}
-                                {cat && cat.price == null && <span className="text-[11px] text-gray-400">No catalog price</span>}
+                                {cat && cat.price == null && <span className="text-xs text-gray-400">No catalog price</span>}
                               </div>
 
                               <input type="text" value={p.description || ""} placeholder="What was done (e.g. repaired / replaced with new OEM unit)"
                                 onChange={e => updatePart(p.carPartID, { description: e.target.value })}
-                                className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                                className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
                             </div>
                           );
                         })}
                       </div>
                     )}
-                    <p className="text-[11px] text-gray-400 px-1">
+                    <p className="text-xs text-gray-400 px-1">
                       Prices here belong to this job only — they never change the catalog price.
                     </p>
                   </>
@@ -1462,27 +1455,21 @@ function MaintenanceModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
+        <div className="flex flex-col-reverse gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
           {viewing ? (
             <>
-              <span className="mr-auto text-xs text-gray-400">Read-only. Click Edit to make changes.</span>
-              {editRecord?.bookingID && (
-                <button onClick={() => navigate(`/bookings?open=${encodeURIComponent(editRecord.bookingID)}`)}
-                  className="px-5 py-2 rounded-xl border border-teal-300 text-sm font-semibold text-teal-700 hover:bg-teal-50">
-                  View booking
-                </button>
-              )}
               <button onClick={onClose}
-                className="px-5 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Close</button>
+                className="w-full py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Close</button>
               <button onClick={onEdit}
-                className="px-6 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700">Edit</button>
+                className="w-full py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700">Edit</button>
+              <span className="text-center text-xs text-gray-400">Read-only. Click Edit to make changes.</span>
             </>
           ) : (
             <>
               <button onClick={onClose}
-                className="px-5 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
+                className="w-full py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
               <button onClick={onSave} disabled={saving || catalog.loading}
-                className="px-6 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
+                className="w-full py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
                 {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
               </button>
             </>
@@ -1495,7 +1482,15 @@ function MaintenanceModal({
 
 // ─── MAINTENANCE CALENDAR ────────────────────────────────────────────────────
 
-function MaintenanceCalendar({ records, calMonth, setCalMonth, selectedDay, onSelectDay }) {
+// Calendar dot colors — shared by the calendar and the legend above it.
+const CAL_DOT = {
+  Completed: "bg-green-500",
+  Scheduled: "bg-blue-500",
+  Cancelled: "bg-gray-400",
+  Overdue:   "bg-red-500",
+};
+
+function MaintenanceCalendar({ records, calMonth, setCalMonth, selectedDay, onSelectDay, toolbar }) {
   const { y, m } = calMonth;
   const monthName = new Date(y, m, 1).toLocaleString("en-PH", { month: "long", year: "numeric" });
 
@@ -1514,12 +1509,7 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, selectedDay, onSe
     }
   });
 
-  const DOT = {
-    Completed:    "bg-green-500",
-    Scheduled:    "bg-blue-500",
-    Cancelled:    "bg-gray-400",
-    Overdue:      "bg-red-500",
-  };
+  const DOT = CAL_DOT;
   // A Scheduled job whose date has passed shows as Overdue (matches the table + stat card).
   const dotOf = (r) => (isOverdueJob(r) ? DOT.Overdue : DOT[r.status] || "bg-gray-300");
 
@@ -1531,7 +1521,9 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, selectedDay, onSe
 
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+        {toolbar && <div className="px-5 py-3 border-b border-gray-100">{toolbar}</div>}
+        <div className="p-5">
         <div className="flex items-center justify-between mb-4">
           <button onClick={prevMonth}
             className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50">‹</button>
@@ -1574,12 +1566,6 @@ function MaintenanceCalendar({ records, calMonth, setCalMonth, selectedDay, onSe
             );
           })}
         </div>
-        <div className="flex flex-wrap gap-4 mt-4 pt-3 border-t border-gray-100">
-          {Object.entries(DOT).map(([s, cls]) => (
-            <span key={s} className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className={`w-2.5 h-2.5 rounded-full ${cls}`}/>{s}
-            </span>
-          ))}
         </div>
       </div>
 

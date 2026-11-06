@@ -359,8 +359,8 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
   return createPortal(
     <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 space-y-3">
-        <div className="flex items-start justify-between gap-3">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b border-gray-100 shrink-0">
           <div className="min-w-0">
             <h3 className="font-bold text-arl-dark truncate">{booking.customerName || "Customer"}</h3>
             <p className="text-xs text-gray-500 mt-0.5">
@@ -374,6 +374,8 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
           </div>
         </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
 
         <CbSection title="Payment" aside={
           <span className={`text-[11px] font-semibold ${paid ? "text-green-700" : "text-amber-700"}`}>
@@ -472,12 +474,15 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
           </>
         )}
 
-        <div className="space-y-2 pt-1">
+        </div>
+
+        {/* Actions: fixed at the bottom, same layout as the booking details window. */}
+        <div className="px-5 py-4 border-t border-gray-100 shrink-0 space-y-1.5">
           <button onClick={act(onViewBooking)}
-            className="w-full py-2 rounded-xl text-sm font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50">View booking</button>
+            className="w-full py-2 rounded-xl text-sm font-semibold border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors">View booking</button>
           <div className="flex items-center gap-2">
             <button onClick={act(onViewPayments)}
-              className="flex-1 py-2 rounded-xl text-sm font-semibold border border-teal-300 text-teal-700 hover:bg-teal-50">View payments</button>
+              className="flex-1 py-2 rounded-xl text-sm font-semibold border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors">View payments</button>
             {!paid && (
               <span className="shrink-0 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
                 ⚠ {(booking.balance ?? 0) > 0 ? `${cbPeso(booking.balance)} unpaid` : "Payment not confirmed"}
@@ -485,8 +490,8 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
             )}
           </div>
           <button onClick={act(onViewPenalties)}
-            className="w-full py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-600 hover:bg-red-50">View / create penalties</button>
-          <button onClick={onClose} className="w-full py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Close</button>
+            className="w-full py-2 rounded-xl text-sm font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">View / create penalties</button>
+          <button onClick={onClose} className="w-full py-2 rounded-xl text-sm border text-gray-700 hover:bg-gray-50">Close</button>
         </div>
       </div>
     </div>,

@@ -520,6 +520,7 @@ export default function Users() {
 
 
   const [users, setUsers]     = useState([]);
+  const [usersRole, setUsersRole] = useState(null); // which role-tab `users` was loaded for — stops a deep link (?open=) being used up on a stale list from the previous tab
   const [loading, setLoading] = useState(true);
 
   // Lifted up (rather than local to DirectoryTab) so the stat cards above
@@ -531,7 +532,7 @@ export default function Users() {
   const [docStatus, setDocStatus]         = useState("all"); // Document Request: "all" | "pending" | "approved" | "rejected" | "cancelled"
   const [docRequestType, setDocRequestType] = useState("all"); // dropdown filter: "all" | "new" | "resubmit"
   const [viewMoreUserID, setViewMoreUserID] = useState(null); // "View more" in a review window: jump to List and open that user's details
-  const [docFocus, setDocFocus] = useState(null); // set by the stat cards: "new" | "resubmit" | null — that kind is sorted to the top, the other kind stays visible
+  const [docFocus, setDocFocus] = useState(null); // set by the stat cards: "new" | "resubmit" | null — the card also filters the table to that kind, so the list always matches the number on the card
   const [editStatus, setEditStatus]       = useState("all"); // Edit Request: same status values
 
   // Only Admin and Owner accounts get 200s from DELETE /api/users/:uid
@@ -540,7 +541,12 @@ export default function Users() {
   // real gate.
   const canDelete = viewerRole === ROLES.ADMIN || viewerRole === ROLES.OWNER;
 
+  // Each load gets a number; a response is only used if no newer load started meanwhile. Without this, switching
+  // role tabs fast (or arriving via a deep link) lets a slow Customers response land AFTER the Drivers one and
+  // overwrite it — Drivers tab highlighted, customer rows shown.
+  const fetchSeq = useRef(0);
   const fetchUsers = useCallback(async () => {
+    const seq = ++fetchSeq.current;
     if (!activeRole?.apiRole) { setUsers([]); setLoading(false); return; }
     setLoading(true);
     try {
@@ -588,12 +594,15 @@ export default function Users() {
         cancelledBookingCount: cancelledCount[u.id] || 0,
       }));
 
+      if (seq !== fetchSeq.current) return; // a newer load has started — drop this stale result
       setUsers(merged);
+      setUsersRole(activeRole.key);
     } catch (e) {
+      if (seq !== fetchSeq.current) return;
       console.error("Users fetch error:", e);
       setUsers([]);
     } finally {
-      setLoading(false);
+      if (seq === fetchSeq.current) setLoading(false);
     }
   }, [activeRole]);
 
@@ -696,16 +705,16 @@ export default function Users() {
           <StatCard flat title="Pending Verification" value={pendingDocs.length} Icon={Icons.IdCard} color="amber"
             selected={subTab === "documents" && docStatus === "pending" && docFocus === "new"}
             onClick={() => {
-              if (subTab === "documents" && docStatus === "pending" && docFocus === "new") { setDocFocus(null); setDocStatus("all"); return; } // click again = un-select
-              setDocRequestType("all"); setDocFocus("new"); setDocStatus("pending"); setSubTab("documents");
+              if (subTab === "documents" && docStatus === "pending" && docFocus === "new") { setDocFocus(null); setDocRequestType("all"); setDocStatus("all"); return; } // click again = un-select
+              setDocRequestType("new"); setDocFocus("new"); setDocStatus("pending"); setSubTab("documents");
             }} />
         )}
         {activeRole.hasDocsSubTab && (
           <StatCard flat title="Pending Document Request" value={pendingIdReqCount} Icon={Icons.Document} color="blue"
             selected={subTab === "documents" && docStatus === "pending" && docFocus === "resubmit"}
             onClick={() => {
-              if (subTab === "documents" && docStatus === "pending" && docFocus === "resubmit") { setDocFocus(null); setDocStatus("all"); return; } // click again = un-select
-              setDocRequestType("all"); setDocFocus("resubmit"); setDocStatus("pending"); setSubTab("documents");
+              if (subTab === "documents" && docStatus === "pending" && docFocus === "resubmit") { setDocFocus(null); setDocRequestType("all"); setDocStatus("all"); return; } // click again = un-select
+              setDocRequestType("resubmit"); setDocFocus("resubmit"); setDocStatus("pending"); setSubTab("documents");
             }} />
         )}
         {activeRole.hasEditRequestSubTab && (
@@ -752,7 +761,7 @@ export default function Users() {
         </div>
       ) : subTab === "directory" ? (
         <DirectoryTab users={users} onRefresh={fetchUsers} roleLabel={activeRole.label} roleLabelSingular={activeRole.labelSingular} canDelete={canDelete} showVerification={showVerification}
-          filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole}
+          filterStatus={directoryFilter} setFilterStatus={setDirectoryFilter} viewerRole={viewerRole} currentRoleName={activeRole.apiRole} ready={usersRole === activeRole.key}
           openUserID={viewMoreUserID} onOpenHandled={() => setViewMoreUserID(null)} />
       ) : subTab === "documents" ? (
         <DocumentsTab users={users} roleUserIDs={roleUserIDs} onRefresh={fetchUsers} roleLabel={activeRole.label} onCountChange={fetchEditReqCounts}
@@ -767,7 +776,7 @@ export default function Users() {
 }
 
 // ─── DIRECTORY TAB (used for Customers, Drivers, Supervisors, Admins) ─────────
-function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showVerification, filterStatus, setFilterStatus, viewerRole, currentRoleName, openUserID, onOpenHandled }) {
+function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelete, showVerification, filterStatus, setFilterStatus, viewerRole, currentRoleName, openUserID, onOpenHandled, ready = true }) {
   const [search, setSearch]       = useState("");
   const [searchBy, setSearchBy]   = useState("name");
   const [dateValue, setDateValue] = useState(""); // "YYYY-MM-DD" from the date picker
@@ -810,19 +819,19 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
   // tab already, since userWatcher.js only fires that type for customers.
   useEffect(() => {
     const openID = searchParams.get("open");
-    if (!openID || users.length === 0) return;
+    if (!ready || !openID || users.length === 0) return;
     const match = users.find((u) => u.id === openID);
     if (match) setDetailUser(match);
     setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
-  }, [searchParams, users, setSearchParams]);
+  }, [searchParams, users, ready, setSearchParams]);
 
   // "View more" from a Document Request review window.
   useEffect(() => {
-    if (!openUserID || users.length === 0) return;
+    if (!ready || !openUserID || users.length === 0) return;
     const match = users.find((u) => u.id === openUserID);
     if (match) setDetailUser(match);
     onOpenHandled?.();
-  }, [openUserID, users]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [openUserID, users, ready]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (user) => {
     setDeleteError(null);
@@ -836,7 +845,8 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
         throw new Error(err.message || "Delete failed");
       }
       setConfirmDelete(null);
-      setDetailUser(null); // the View window was open behind the confirm — the user is gone now
+      setDetailUser(null);
+      setEditUser(null); // the Edit window was open behind the confirm — the user is gone now
       onRefresh();
     } catch (e) {
       console.error("Delete/archive error:", e);
@@ -1044,8 +1054,9 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
-      {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} viewerRole={viewerRole} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} onDelete={canDelete ? () => setConfirmDelete(detailUser) : undefined} />}
+      {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} viewerRole={viewerRole} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
       {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }}
+        onDelete={canDelete ? () => setConfirmDelete(editUser) : undefined}
         viewerRole={viewerRole} currentRoleName={currentRoleName} onDocumentsChanged={onRefresh} />}
       {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} error={deleteError} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => { setConfirmDelete(null); setDeleteError(null); }} />}
     </>
@@ -1326,7 +1337,7 @@ function UserActivityTab({ user, kind, viewerRole, view = "activity" }) {
 }
 
 // ─── VIEW DETAILS MODAL (Information / Documents sub-tabs) ────────────────────
-function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose, onEdit, onDelete }) {
+function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose, onEdit }) {
   const [tab, setTab] = useState("information"); // "information" | "documents" | "trips" | "activity"
   // Activity exists for Customers (recent feed) and Drivers / Supervisors / Admins (their audit-log entries).
   // Drivers also get a separate Trips tab (current trips + history).
@@ -1378,9 +1389,9 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* HEADER */}
-        <div className="flex items-center gap-4 p-5 border-b sticky top-0 bg-white z-10">
+        <div className="flex items-center gap-4 p-5 border-b shrink-0 bg-white">
           <UserAvatar
             key={user.profileImage || "none"}
             src={user.profileImage}
@@ -1413,26 +1424,14 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
             </div>
           </div>
           <div className="flex gap-2 items-center self-start">
-            {onDelete && (
-              <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50">
-                <Icons.Trash className="w-4 h-4" />
-                Delete
-              </button>
-            )}
-            {onEdit && (
-              <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
-                <Icons.Edit className="w-4 h-4" />
-                Edit
-              </button>
-            )}
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
               <Icons.Close className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* TABS */}
-        <div className="px-5 pt-4">
+        {/* TABS — stay put while the details below scroll */}
+        <div className="px-5 pt-4 pb-1 shrink-0 bg-white">
           <div className="inline-flex p-1 bg-gray-100 rounded-xl gap-1">
             <button onClick={() => setTab("information")}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === "information" ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
@@ -1457,6 +1456,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
           </div>
         </div>
 
+        <div className="overflow-y-auto flex-1">
         {/* BODY — soft grey backdrop so the white cards stand apart */}
         <div className="p-5 space-y-4">
           {tab === "information" ? (
@@ -1593,6 +1593,15 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
               )}
             </>
           )}
+        </div>
+        </div>
+
+        {/* Actions — same layout as the booking details window. */}
+        <div className="px-5 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-1.5">
+          {onEdit && (
+            <button onClick={onEdit} className="w-full px-3 py-2 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Edit</button>
+          )}
+          <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm">Close</button>
         </div>
       </div>
       {nestedUser && (
@@ -2983,7 +2992,7 @@ const ASSIGNABLE_ROLES = [
 // One window for everything about a user. Admin sees all of it: name, phone, username, referral code, referred-by, address,
 // documents, plus status, flag and role (OTP). Owner sees status, flag and role only; Supervisors see status + flag only. Email is never editable. Saves in this order: profile,
 // documents, status/flag, role — an error stops the chain and is shown, and what was already saved stays saved.
-function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, currentRoleName, onDocumentsChanged }) {
+function EditUserModal({ user, roleLabelSingular, onClose, onSaved, onDelete, viewerRole, currentRoleName, onDocumentsChanged }) {
   const KNOWN_STATUSES = ["active", "inactive", "locked"];
   const [form, setForm] = useState({
     status:    KNOWN_STATUSES.includes((user.status || "").toLowerCase()) ? user.status : "active",
@@ -3323,12 +3332,18 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, viewerRole, 
 
           {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl p-3">{error}</p>}
         </div>
-        <div className="flex justify-end gap-3 p-5 border-t">
-          <button onClick={onClose} disabled={saving} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+        <div className="px-5 py-4 border-t flex flex-col gap-1.5">
           <button onClick={() => handleSave()} disabled={saving}
-            className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
+            className="w-full px-3 py-2 bg-teal-600 text-white rounded-xl text-sm font-semibold hover:bg-teal-700 transition-colors disabled:opacity-50">
             {saving ? "Saving..." : "Save Changes"}
           </button>
+          {onDelete && (
+            <button onClick={onDelete} disabled={saving}
+              className="w-full px-3 py-2 border border-red-200 bg-red-50 text-red-600 rounded-xl text-sm font-semibold hover:bg-red-100 transition-colors disabled:opacity-50">
+              Delete
+            </button>
+          )}
+          <button onClick={onClose} disabled={saving} className="w-full mt-0.5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
         </div>
       </div>
 

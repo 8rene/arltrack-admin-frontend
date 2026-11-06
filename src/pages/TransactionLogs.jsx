@@ -155,7 +155,8 @@ const USER_TAB_BY_ROLE = {
   [ROLES.ADMIN]:      { key: "admin",      visibleTo: [ROLES.OWNER] },
 };
 
-// Looks one account up by ID: undefined = loading, null = no ID / not found (e.g. deleted since), else { name, email, role }.
+// Looks one account up by ID: undefined = loading, null = no ID / not found (e.g. deleted since), { unavailable: true } = lookup failed
+// (no access / server error), else { name, email, role }.
 function useAccount(uid) {
   const [account, setAccount] = useState(undefined);
   useEffect(() => {
@@ -167,7 +168,8 @@ function useAccount(uid) {
     (async () => {
       try {
         const res = await fetch(`${base}/api/users/by-uid/${encodeURIComponent(uid)}`, { headers });
-        if (!res.ok) throw new Error("user not found");
+        if (res.status === 404) throw new Error("user not found");
+        if (!res.ok) { if (!cancelled) setAccount({ unavailable: true }); return; }   // 401/403/500: the account may well exist, we just couldn't read it
         const u = (await res.json())?.data || {};
         let fullName = "";
         try {
@@ -177,7 +179,7 @@ function useAccount(uid) {
             fullName = [firstName, lastName].filter(Boolean).join(" ");
           }
         } catch { /* the name is cosmetic */ }
-        if (!cancelled) setAccount({ name: fullName || u.username || uid, email: u.email || "", role: u.role || "" });
+        if (!cancelled) setAccount({ uid: u.uid || u.id || uid, name: fullName || u.username || uid, email: u.email || "", role: u.role || "" });
       } catch {
         if (!cancelled) setAccount(null);
       }
@@ -195,11 +197,12 @@ function ViewUserButton({ uid, account, viewerRole, onGo }) {
   const title = canOpen ? "" : !uid ? "No user recorded"
     : account === undefined ? "Loading…"
     : account === null ? "This account no longer exists"
+    : account.unavailable ? "Couldn't load this account (no access, or the lookup failed)"
     : "This account isn't listed on the Users page for your role";
   return (
     <button type="button" disabled={!canOpen} title={title}
       onClick={() => onGo(`/users?role=${tab.key}&tab=directory&open=${encodeURIComponent(uid)}`)}
-      className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">
+      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
       View user →
     </button>
   );
@@ -210,11 +213,16 @@ function ViewModal({ log, fmt, onClose, onArchive }) {
   const { user: viewer } = useAuth();
   const go = (path) => { onClose(); navigate(path); };
   const link = (label, path) => (
-    <button type="button" onClick={() => go(path)} className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap">{label}</button>
+    <button type="button" onClick={() => go(path)} className="px-3 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">{label}</button>
   );
   const customer = useAccount(log.userID);        // the customer the money event belongs to
-  const staff    = useAccount(log.performedBy);   // admin who triggered it (discount, reject, expense); null for customer/webhook events
-  const nameOf = (uid, acc) => !uid ? null : acc === undefined ? "Loading…" : acc ? acc.name : "Account no longer exists";
+  // What the backend stores in performedBy: a staff UID, "system" (scheduled job), "—" (PayMongo webhook, no actor), null,
+  // or a staff EMAIL (the booking controller passes req.user.email first). Only a UID can be looked up.
+  const pb = String(log.performedBy || "").trim();
+  const isSystem = !pb || /^(system|webhook|scheduler|cron|auto|automatic|paymongo|n\/a|none|[—–-])$/i.test(pb);
+  const staff    = useAccount(isSystem ? null : pb);   // pb may be a UID or (older logs) an email; the backend accepts both
+      // admin who triggered it (discount, reject, expense); null for customer/webhook events
+  const nameOf = (uid, acc) => !uid ? null : acc === undefined ? "Loading…" : acc === null ? "Account no longer exists" : acc.unavailable ? "Can't load this account" : acc.name;
   const idLine = (id, linkEl) => <span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{id}</span>{linkEl}</span>;
   const hasRelated = !!(log.bookingID || log.paymentID || log.refundReqID || log.penaltyID);
 
@@ -248,8 +256,13 @@ function ViewModal({ log, fmt, onClose, onArchive }) {
             <InfoField label="Email" value={customer && customer.email} />
           </InfoSection>
 
-          {log.performedBy && (
-            <InfoSection title="Done by (staff)" action={<ViewUserButton uid={log.performedBy} account={staff} viewerRole={viewer?.role} onGo={go} />}>
+          {isSystem ? (
+            <InfoSection title="Done by">
+              <InfoField label="Name" value="System (automatic)" />
+              <InfoField wide label="Note" value={<span className="font-normal text-gray-600">No staff account is recorded for this entry. It was made automatically (for example a scheduled deposit return or a payment webhook) or by the customer.</span>} />
+            </InfoSection>
+          ) : (
+            <InfoSection title="Done by (staff)" action={<ViewUserButton uid={staff?.uid} account={staff} viewerRole={viewer?.role} onGo={go} />}>
               <InfoField label="Name" value={nameOf(log.performedBy, staff)} />
               <InfoField label="Email" value={staff && staff.email} />
             </InfoSection>
@@ -272,9 +285,9 @@ function ViewModal({ log, fmt, onClose, onArchive }) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex items-center gap-2">
-          <button onClick={onArchive} className="px-4 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 transition-colors">Archive</button>
-          <button onClick={onClose} className="ml-auto px-4 py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-2">
+          <button onClick={onArchive} className="w-full py-2.5 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 transition-colors">Archive</button>
+          <button onClick={onClose} className="w-full py-2.5 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 transition-colors">Close</button>
         </div>
       </div>
     </div>

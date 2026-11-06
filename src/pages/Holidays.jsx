@@ -35,9 +35,6 @@ const btnGhost =
 const btnDanger =
   "px-4 py-2 text-sm font-semibold rounded-xl bg-red-500 text-white hover:bg-red-600 disabled:opacity-60 transition";
 
-const thCls =
-  "text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider";
-
 /**
  * Returns an `api(path, { method, body })` function that attaches the JWT,
  * sends JSON, and resolves with the parsed response body — or throws an
@@ -183,37 +180,6 @@ function Pill({ children, tone = "teal" }) {
   );
 }
 
-// Full-size buttons (not tiny text links) so the Actions column isn't mostly empty.
-const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
-const RowActions = ({ onView, onEdit, onDelete }) => (
-  <div className="flex items-center gap-2 justify-end">
-    {onView && (
-      <button onClick={onView} className={`${actionBtn} border-gray-200 text-gray-600 hover:bg-gray-50`}>View</button>
-    )}
-    <button onClick={onEdit} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
-    {onDelete && (
-      <button onClick={onDelete} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>Delete</button>
-    )}
-  </div>
-);
-
-const SkeletonRows = ({ rows = 6, cols = 4 }) =>
-  Array.from({ length: rows }).map((_, i) => (
-    <tr key={i} className="border-b border-gray-50">
-      {Array.from({ length: cols }).map((__, j) => (
-        <td key={j} className="px-5 py-4">
-          <div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />
-        </td>
-      ))}
-    </tr>
-  ));
-
-const EmptyRow = ({ cols, children }) => (
-  <tr>
-    <td colSpan={cols} className="px-5 py-12 text-center text-sm text-gray-400">{children}</td>
-  </tr>
-);
-
 // ─── Holidays ────────────────────────────────────────────────────────────────
 //
 // Public holidays that suspend number-coding (the GPS live check and the
@@ -250,6 +216,68 @@ const validYmd = (ymd) => {
   return probe.getUTCFullYear() === y && probe.getUTCMonth() === m - 1 && probe.getUTCDate() === d;
 };
 
+const PAGE_SIZE = 10;
+
+// "Search by" options — same idea as the Bookings / Maintenance pages.
+const SEARCH_BY = [
+  { key: "holiday", label: "Holiday", type: "text" },
+  { key: "date",    label: "Date",    type: "date" },
+];
+
+// ─── Pagination (same pattern as Bookings.jsx / Maintenance.jsx) ─────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((x, y) => x - y);
+  const rangeEnd = Math.min(start + pageSize, count);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export default function Holidays() {
   const { effectiveRole } = useAuth();
   const canDelete = effectiveRole === "Owner" || effectiveRole === "Admin";
@@ -262,8 +290,11 @@ export default function Holidays() {
   const [month, setMonth] = useState(""); // "" = all months
   const [sortDir, setSortDir] = useState("asc"); // Date column: asc = Jan → Dec
   const [calMonth, setCalMonth] = useState(null); // { y, m } shown on the calendar; null = default
+  const [searchBy, setSearchBy] = useState("holiday");
+  const [search, setSearch] = useState("");
+  const [dateValue, setDateValue] = useState("");
 
-  const [dialog, setDialog] = useState(null);       // { holiday, date } — holiday null = adding (date pre-fills it)
+  const [dialog, setDialog] = useState(null);       // { holiday } — holiday null = adding
   const [toDelete, setToDelete] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -279,12 +310,10 @@ export default function Holidays() {
     }
   }, [api]);
 
-  // Same data the original tab showed live — here refreshed every minute
-  // while the tab is visible (and immediately after any change).
+  // Refreshed every minute while the tab is visible (and immediately after any change).
   usePolling(load, 60000);
 
-  // The year the list currently sits in = the first holiday's year (same
-  // rule the original used), falling back to the current year when empty.
+  // The year the list currently sits in = the first holiday's year, falling back to the current year.
   const today = todayYmdPHT();
   const displayYear = holidays.find((h) => h.holidayDate)
     ? parseYmd(holidays.find((h) => h.holidayDate).holidayDate).y
@@ -295,15 +324,43 @@ export default function Holidays() {
     m: Number(today.slice(0, 4)) === displayYear ? Number(today.slice(5, 7)) - 1 : 0,
   };
 
+  // Month filter ⇄ calendar: picking a month jumps the calendar there; paging the
+  // calendar with its arrows moves the month filter along (when one is active).
+  const onMonthFilter = (v) => {
+    setMonth(v);
+    setDateValue("");
+    if (v) setCalMonth({ y: displayYear, m: Number(v) - 1 });
+  };
+  const onCalMonth = (next) => {
+    setCalMonth(next);
+    if (month) { setMonth(String(next.m + 1)); setDateValue(""); }
+  };
+
+  // Clicking a calendar day = "Search by Date" with that day; clicking it again clears it.
+  const searchType = SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
+  const selectedDay = searchBy === "date" && dateValue ? dateValue : null;
+  const onSelectDay = (ymd) => {
+    if (!ymd || ymd === selectedDay) { setDateValue(""); return; }
+    setSearchBy("date"); setSearch(""); setDateValue(ymd);
+  };
+
+  const searchText = search.trim().toLowerCase();
   const visible = useMemo(() => {
-    const list = holidays.filter((h) => !month || (h.holidayDate && parseYmd(h.holidayDate).m === Number(month)));
+    const list = holidays.filter((h) => {
+      if (month && !(h.holidayDate && parseYmd(h.holidayDate).m === Number(month))) return false;
+      if (searchType === "date") return !dateValue || h.holidayDate === dateValue;
+      return !searchText || String(h.holidayName || "").toLowerCase().includes(searchText);
+    });
     // YYYY-MM-DD strings sort correctly as text; holidays with no date go last.
     return [...list].sort((a, b) => {
       if (!a.holidayDate) return 1;
       if (!b.holidayDate) return -1;
       return sortDir === "asc" ? a.holidayDate.localeCompare(b.holidayDate) : b.holidayDate.localeCompare(a.holidayDate);
     });
-  }, [holidays, month, sortDir]);
+  }, [holidays, month, sortDir, searchType, dateValue, searchText]);
+
+  const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(visible, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [month, sortDir, search, searchBy, dateValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const confirmDelete = async () => {
     setBusy(true);
@@ -320,92 +377,145 @@ export default function Holidays() {
   };
 
   return (
-    <div className="w-full px-4">
+    <div className="w-full px-4 space-y-5">
       <Toast toast={toast} />
 
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-5">
-        <div>
-          <h1 className="text-2xl font-bold text-arl-dark">Holidays</h1>
-        </div>
-        <button onClick={() => setDialog({ holiday: null, date: null })} className={btnPrimary}>
-          + Add holiday
-        </button>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-arl-dark">Holidays</h1>
       </div>
 
       <ErrorBanner onRetry={load}>{error}</ErrorBanner>
 
+      {/* CALENDAR — clicking a day sets "Search by: Date" to that day.
+          Legend + month filter (left) and Refresh / Add holiday (right) sit in the card's top bar. */}
       <HolidayCalendar
         holidays={holidays}
         cal={cal}
-        setCalMonth={setCalMonth}
+        setCalMonth={onCalMonth}
         today={today}
         yearLocked={holidays.length > 0 ? displayYear : null}
-        onEdit={(h) => setDialog({ holiday: h, date: null })}
-        onAdd={(ymd) => setDialog({ holiday: null, date: ymd })}
+        selectedDay={selectedDay}
+        onSelectDay={onSelectDay}
+        toolbar={(
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="font-bold text-gray-800 text-base">Calendar Legend</h3>
+              <div className="flex flex-wrap items-center gap-4 mt-1">
+                {CAL_LEGEND.map(({ label, cls }) => (
+                  <span key={label} className="flex items-center gap-1.5 text-sm text-gray-500">
+                    <span className={`w-2.5 h-2.5 rounded-full ${cls}`} />{label}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select value={month} onChange={(e) => onMonthFilter(e.target.value)} title="Filter by month"
+                className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+                <option value="">All months</option>
+                {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              </select>
+              <button onClick={load} disabled={loading}
+                className="px-4 py-2 rounded-xl text-sm font-medium border border-teal-300 text-teal-700 bg-white hover:bg-teal-50 disabled:opacity-50 flex items-center gap-1.5">
+                <IconRefresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+              <button onClick={() => setDialog({ holiday: null })}
+                className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold">
+                + Add holiday
+              </button>
+            </div>
+          </div>
+        )}
       />
 
-      <div className="flex flex-wrap gap-3 items-end mb-3">
-        <div className="w-48">
-          <Field label="Filter by month">
-            <select className={inputCls} value={month} onChange={(e) => setMonth(e.target.value)}>
-              <option value="">All months</option>
-              {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+      {/* TABLE */}
+      <div className="bg-white rounded-2xl border overflow-hidden">
+        {/* SEARCH — same layout as the Bookings page */}
+        <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select value={searchBy}
+              onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+              {SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
             </select>
-          </Field>
+          </div>
+          {searchType === "date" ? (
+            <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          ) : (
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder={`Enter ${(SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          )}
         </div>
-        <button onClick={load} disabled={loading} className="px-3 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 ml-auto">
-          {loading ? "…" : "Refresh"}
-        </button>
-      </div>
 
-      <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-x-auto">
-        <table className="w-full text-sm font-sans min-w-[560px]">
-          <thead>
-            <tr className="border-b border-gray-100 bg-gray-50">
-              <SortableTh label="Date" active dir={sortDir} onSort={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))} />
-              <th className={thCls}>Holiday</th>
-              <th className={thCls}>Day</th>
-              <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <SkeletonRows rows={6} cols={4} />
-            ) : visible.length === 0 ? (
-              <EmptyRow cols={4}>
-                {holidays.length === 0 ? "No holidays yet. Add the first one." : "No holidays in that month."}
-              </EmptyRow>
-            ) : (
-              visible.map((h) => {
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+                <SortableTh label="Date" active dir={sortDir} onSort={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))} />
+                <th className="px-4 py-3 text-left font-semibold">Holiday</th>
+                <th className="px-4 py-3 text-left font-semibold">Day</th>
+                <th className="px-4 py-3 text-left font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="border-b border-gray-50">
+                    {Array.from({ length: 4 }).map((__, j) => (
+                      <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
+                    ))}
+                  </tr>
+                ))
+              ) : visible.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="text-center py-16 text-gray-400 text-sm">
+                    {holidays.length === 0
+                      ? "No holidays yet. Add the first one."
+                      : selectedDay ? "No holidays on this day." : "No holidays found."}
+                  </td>
+                </tr>
+              ) : paginated.map((h, i) => {
                 const isToday = h.holidayDate === today;
                 const isPast = h.holidayDate && h.holidayDate < today;
                 return (
-                  <tr key={h.id} className={`border-b border-gray-50 hover:bg-gray-50/50 ${isPast ? "opacity-60" : ""}`}>
-                    <td className="px-5 py-3 text-gray-500 whitespace-nowrap">{fmtDate(h.holidayDate)}</td>
-                    <td className="px-5 py-3 font-semibold text-gray-800">
+                  <tr key={h.id}
+                    className={`border-b border-gray-50 last:border-0 hover:bg-teal-50/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/20" : ""} ${isPast ? "opacity-60" : ""}`}>
+                    <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{fmtDate(h.holidayDate)}</td>
+                    <td className="px-4 py-3 font-semibold text-gray-800 text-sm">
                       {h.holidayName || "—"}
                       {isToday && <span className="ml-2 align-middle"><Pill tone="green">Today</Pill></span>}
                       {isWeekendYmd(h.holidayDate) && <span className="ml-2 align-middle"><Pill tone="gray">Weekend</Pill></span>}
                     </td>
-                    <td className="px-5 py-3 text-gray-600">{h.holidayDay || "—"}</td>
-                    <td className="px-5 py-3">
-                      <RowActions
-                        onEdit={() => setDialog({ holiday: h, date: null })}
-                        onDelete={canDelete ? () => setToDelete(h) : null}
-                      />
+                    <td className="px-4 py-3 text-sm text-gray-600">{h.holidayDay || "—"}</td>
+                    <td className="px-4 py-3 text-left whitespace-nowrap">
+                      <div className="inline-flex items-center gap-2">
+                        <button onClick={() => setDialog({ holiday: h })}
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                          Edit
+                        </button>
+                        {canDelete && (
+                          <button onClick={() => setToDelete(h)}
+                            className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
-              })
-            )}
-          </tbody>
-        </table>
+              })}
+            </tbody>
+          </table>
+        </div>
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
       {dialog && (
         <HolidayDialog
           existing={dialog.holiday}
-          defaultDate={dialog.date}
           api={api}
           onClose={() => setDialog(null)}
           onSaved={async (msg) => { setDialog(null); showToast(msg); await load(); }}
@@ -445,11 +555,11 @@ const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
 );
 function SortableTh({ label, active, dir, onSort }) {
   return (
-    <th className="px-5 py-3 text-left select-none">
+    <th className="px-4 py-3 text-left font-semibold select-none">
       <button
         onClick={onSort}
-        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
-          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs px-1.5 py-1 -mx-1.5 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
         }`}
       >
         {label}
@@ -463,11 +573,19 @@ const isWeekendYmd = (ymd) => validYmd(ymd) && ["Saturday", "Sunday"].includes(w
 const pad2 = (n) => String(n).padStart(2, "0");
 
 // ─── Holiday calendar ────────────────────────────────────────────────────────
-// Same look as the Maintenance calendar. A holiday shows as a teal chip with its
-// name (click it to edit); clicking an empty day adds a holiday on that date.
+// Same look as the Maintenance calendar. Holidays show as chips with their name;
+// clicking a day searches the table by that date (click again to clear).
 // Weekend holidays are grey — number coding doesn't run on weekends anyway.
 // With a list loaded, the month arrows stay inside the list's year.
-function HolidayCalendar({ holidays, cal, setCalMonth, today, yearLocked, onEdit, onAdd }) {
+
+// Legend dots — shared by the calendar toolbar.
+const CAL_LEGEND = [
+  { label: "Holiday (coding suspended)",         cls: "bg-teal-500" },
+  { label: "Weekend holiday (no coding anyway)", cls: "bg-gray-400" },
+  { label: "Today",                              cls: "bg-white border-2 border-teal-500" },
+];
+
+function HolidayCalendar({ holidays, cal, setCalMonth, today, yearLocked, selectedDay, onSelectDay, toolbar }) {
   const { y, m } = cal;
   const monthName = `${MONTH_NAMES[m]} ${y}`;
   const firstDay = new Date(Date.UTC(y, m, 1)).getUTCDay(); // Sunday-first, like Maintenance
@@ -487,77 +605,70 @@ function HolidayCalendar({ holidays, cal, setCalMonth, today, yearLocked, onEdit
   const navBtn = "w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:hover:bg-transparent";
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-5 mb-4">
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={prevMonth} disabled={!canPrev} className={navBtn} aria-label="Previous month">‹</button>
-        <h2 className="font-bold text-gray-800 text-base">{monthName}</h2>
-        <button onClick={nextMonth} disabled={!canNext} className={navBtn} aria-label="Next month">›</button>
-      </div>
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+      {toolbar && <div className="px-5 py-3 border-b border-gray-100">{toolbar}</div>}
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={prevMonth} disabled={!canPrev} className={navBtn} aria-label="Previous month">‹</button>
+          <h2 className="font-bold text-gray-800 text-base">{monthName}</h2>
+          <button onClick={nextMonth} disabled={!canNext} className={navBtn} aria-label="Next month">›</button>
+        </div>
 
-      <div className="grid grid-cols-7 mb-1">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} className="text-center text-xs font-semibold text-gray-400 py-1">{d}</div>
-        ))}
-      </div>
+        <div className="grid grid-cols-7 mb-1">
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            <div key={d} className="text-center text-xs font-semibold text-gray-400 py-1">{d}</div>
+          ))}
+        </div>
 
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((day, i) => {
-          if (!day) return <div key={i} />;
-          const ymd = `${y}-${pad2(m + 1)}-${pad2(day)}`;
-          const isToday = ymd === today;
-          const weekend = i % 7 === 0 || i % 7 === 6;
-          const hols = byDate[ymd] || [];
-          return (
-            <div
-              key={i}
-              role="button"
-              tabIndex={0}
-              title={hols.length ? undefined : `Add a holiday on ${MONTH_NAMES[m]} ${day}`}
-              onClick={() => onAdd(ymd)}
-              onKeyDown={(e) => e.key === "Enter" && onAdd(ymd)}
-              className={`min-h-[84px] p-1.5 rounded-xl border cursor-pointer transition-all ${
-                isToday ? "border-teal-500 bg-teal-50"
-                : hols.length ? "border-gray-200 hover:border-teal-300"
-                : weekend ? "border-transparent bg-gray-50/70 hover:bg-gray-100"
-                : "border-transparent hover:bg-gray-50"
-              }`}
-            >
-              <span className={`text-xs font-semibold ${isToday ? "text-teal-600" : weekend ? "text-gray-400" : "text-gray-700"}`}>{day}</span>
-              <div className="mt-1 space-y-1">
-                {hols.map((h) => (
-                  <button
-                    key={h.id}
-                    onClick={(e) => { e.stopPropagation(); onEdit(h); }}
-                    title={`${h.holidayName}${weekend ? " — weekend, no coding anyway" : ""} (click to edit)`}
-                    className={`block w-full truncate text-left px-1.5 py-0.5 rounded-md text-[11px] font-semibold border transition ${
-                      weekend
-                        ? "bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200"
-                        : "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100"
-                    }`}
-                  >
-                    {h.holidayName || "Holiday"}
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="flex flex-wrap gap-4 mt-4 pt-3 border-t border-gray-100 text-xs text-gray-500">
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-teal-100 border border-teal-200" />Holiday (coding suspended)</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-gray-100 border border-gray-200" />Weekend holiday (no coding anyway)</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border border-teal-500 bg-teal-50" />Today</span>
-        <span className="ml-auto text-gray-400">Click a holiday to edit · click an empty day to add one</span>
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((day, i) => {
+            if (!day) return <div key={i} />;
+            const ymd = `${y}-${pad2(m + 1)}-${pad2(day)}`;
+            const isToday = ymd === today;
+            const isSel = selectedDay === ymd;
+            const weekend = i % 7 === 0 || i % 7 === 6;
+            const hols = byDate[ymd] || [];
+            return (
+              <button
+                key={i}
+                onClick={() => onSelectDay(isSel ? null : ymd)}
+                title={hols.length ? hols.map((h) => h.holidayName).join(", ") : undefined}
+                className={`min-h-[84px] p-1.5 rounded-xl border text-left align-top transition-all ${
+                  isSel ? "border-teal-600 bg-teal-100 ring-2 ring-teal-300"
+                  : isToday ? "border-teal-500 bg-teal-50"
+                  : hols.length ? "border-gray-200 hover:border-teal-300 hover:bg-gray-50"
+                  : weekend ? "border-transparent bg-gray-50/70 hover:bg-gray-100"
+                  : "border-transparent hover:bg-gray-50"
+                }`}
+              >
+                <span className={`text-xs font-semibold ${isToday ? "text-teal-600" : weekend ? "text-gray-400" : "text-gray-700"}`}>{day}</span>
+                <div className="mt-1 space-y-1">
+                  {hols.map((h) => (
+                    <span
+                      key={h.id}
+                      className={`block w-full truncate px-1.5 py-0.5 rounded-md text-[11px] font-semibold border ${
+                        weekend
+                          ? "bg-gray-100 text-gray-500 border-gray-200"
+                          : "bg-teal-50 text-teal-700 border-teal-200"
+                      }`}
+                    >
+                      {h.holidayName || "Holiday"}
+                    </span>
+                  ))}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 }
 
-function HolidayDialog({ existing, defaultDate, api, onClose, onSaved }) {
+function HolidayDialog({ existing, api, onClose, onSaved }) {
   const isEditing = !!existing;
   const [name, setName] = useState(existing?.holidayName || "");
-  const [date, setDate] = useState(existing?.holidayDate || defaultDate || todayYmdPHT());
+  const [date, setDate] = useState(existing?.holidayDate || todayYmdPHT());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 

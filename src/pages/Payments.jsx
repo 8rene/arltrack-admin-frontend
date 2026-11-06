@@ -370,6 +370,28 @@ export default function Payments() {
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prevOverflow; };
   }, [modalOpen, confirmDiscount, returnDepositOpen]);
 
+  // Who / which car this payment belongs to, so the Customer and Vehicle rows can link out like Bookings does.
+  // Uses the ids on the payment when the API sends them; otherwise looks them up once from the booking.
+  const [bookingRef, setBookingRef] = useState(null);
+  useEffect(() => {
+    setBookingRef(null);
+    const bID = selected?.bookingID;
+    if (!bID || bID === "—" || (selected.userID && selected.carID)) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings?status=all`, { headers: { Authorization: `Bearer ${token}` } });
+        const json = await res.json();
+        if (!res.ok) return;
+        const b = (json.data || []).find((x) => (x.bookingID || x.id) === bID);
+        if (!cancelled && b) setBookingRef({ userID: b.userID || null, carID: b.carID || null });
+      } catch { /* links just stay plain text */ }
+    })();
+    return () => { cancelled = true; };
+  }, [selected?.bookingID, selected?.userID, selected?.carID, token]); // eslint-disable-line react-hooks/exhaustive-deps
+  const linkUserID = selected?.userID || bookingRef?.userID || null;
+  const linkCarID  = selected?.carID  || bookingRef?.carID  || null;
+
   const openDetail = async (id) => {
     setDetailLoading(true); setSelected(null); setEntriesSummary(null); setDetailTab("summary");
     try {
@@ -705,7 +727,8 @@ export default function Payments() {
                       <IconX className="w-5 h-5" />
                     </button>
                   </div>
-                  <div className="flex border-b border-gray-100 mt-3" role="tablist">
+                  {/* Pill tabs — same look as the Users details window */}
+                  <div className="inline-flex p-1 bg-gray-100 rounded-xl gap-1 mt-3" role="tablist">
                     {[
                       ["summary", "Summary"],
                       ["movements", `Money movements${entriesSummary?.count ? ` (${entriesSummary.count})` : ""}`],
@@ -715,8 +738,8 @@ export default function Payments() {
                         role="tab"
                         aria-selected={detailTab === key}
                         onClick={() => setDetailTab(key)}
-                        className={`px-5 py-2.5 text-sm font-semibold border-b-2 -mb-px transition ${
-                          detailTab === key ? "border-teal-600 text-teal-700" : "border-transparent text-gray-400 hover:text-gray-600"
+                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                          detailTab === key ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
                         }`}
                       >
                         {label}
@@ -770,31 +793,46 @@ export default function Payments() {
                     {/* The sections sit in their own wrapper so the first one has no hairline of its own
                         (the figures above already end in one). */}
                     <div>
-                      <Section
-                        title="Customer"
-                        action={selected.bookingID && selected.bookingID !== "—" ? (
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/bookings?search=${encodeURIComponent(selected.bookingID)}`)}
-                            className="text-xs font-semibold text-teal-700 hover:underline"
-                          >
-                            View booking →
-                          </button>
-                        ) : null}
-                      >
-                        <Row label="Name" value={selected.customerName} />
-                        <Row label="Booking ID" value={selected.bookingID} mono />
-                        <Row label="Vehicle" value={selected.vehicleName} />
-                        <Row label="Payment ID" value={selected.paymentID} mono />
-                        {selected.methodOfPayment && selected.methodOfPayment !== "—" && <Row label="Payment Type" value={selected.methodOfPayment} />}
-                        <Row label="Submitted" value={fmtDate(selected.createdAt)} />
-                        <Row
-                          label="Balance"
-                          hint="What the customer still has to pay. A discount on a partial payment comes off this amount."
-                          value={peso(selected.balance, fmtCurrency)}
-                          bold
-                          color={selected.balance > 0 ? "text-red-500" : "text-green-600"}
-                        />
+                      <InfoSection title="Payment Details" collapsible={false} flush>
+                        <div className="p-4 space-y-4">
+                        {/* Two columns, label over value — same look as the Bookings window. */}
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+                          <div className="space-y-4 min-w-0">
+                            <InfoField label="Customer" value={linkUserID && selected.customerName ? (
+                              <button type="button" onClick={() => navigate(`/users?role=customer&tab=directory&open=${encodeURIComponent(linkUserID)}`)}
+                                title="Open this customer on the Users page"
+                                className="text-indigo-600 hover:underline font-medium text-left">
+                                {selected.customerName}
+                              </button>
+                            ) : selected.customerName} />
+                            <InfoField label="Vehicle" value={linkCarID && selected.vehicleName ? (
+                              <button type="button" onClick={() => navigate("/fleet", { state: { openCarId: linkCarID } })}
+                                title="Open vehicle details in Fleet"
+                                className="text-indigo-600 hover:underline font-medium text-left">
+                                {selected.vehicleName}
+                              </button>
+                            ) : selected.vehicleName} />
+                            <InfoField label="Booking ID" value={(
+                              <span className="flex items-center gap-3 flex-wrap">
+                                <span className="font-mono">{selected.bookingID}</span>
+                                {selected.bookingID && selected.bookingID !== "—" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate(`/bookings?search=${encodeURIComponent(selected.bookingID)}`)}
+                                    className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                                  >
+                                    View Booking →
+                                  </button>
+                                )}
+                              </span>
+                            )} />
+                          </div>
+                          <div className="space-y-4 min-w-0">
+                            <InfoField label="Payment ID" value={<span className="font-mono break-all">{selected.paymentID}</span>} />
+                            {selected.methodOfPayment && selected.methodOfPayment !== "—" && <InfoField label="Payment Type" value={selected.methodOfPayment} />}
+                            <InfoField label="Submitted" value={fmtDate(selected.createdAt)} />
+                          </div>
+                        </div>
 
                         {/* Still owed: the customer pays it online; this nudges them. In store is the exception. */}
                         {selected.balance > 0 && selected.status === "Approved" && !selected.refundRequestID && selected.balanceStatus !== "pending" && (
@@ -832,7 +870,8 @@ export default function Payments() {
                         {selected.balanceStatus === "pending" && selected.balance > 0 && (
                           <p className="text-xs text-amber-600 pt-2">The customer has a balance payment in progress on PayMongo — it will show as paid once it clears.</p>
                         )}
-                      </Section>
+                        </div>
+                      </InfoSection>
 
                       {/* What the booking cost, what was paid, and what happened to the deposit / discount / refund. */}
                       <InfoSection title="Fee Breakdown" cols={3} defaultOpen={false}>

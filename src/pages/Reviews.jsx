@@ -148,13 +148,86 @@ function InfoField({ label, value, wide }) {
   );
 }
 
+// Small red pill for a flagged reviewer, plain dash when they are not.
+const FlagIcon = ({ className = "w-3 h-3" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4M4 4h13l-2 4 2 4H4" /></svg>
+);
+function FlaggedBadge({ flagged }) {
+  if (!flagged) return <span className="text-gray-300">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium bg-red-50 border-red-200 text-red-700">
+      <FlagIcon className="w-3 h-3 text-red-500" />Flagged
+    </span>
+  );
+}
+
+// Same confirmation as the Users page: flagging has consequences for the customer and they are notified in the app.
+function ConfirmFlagModal({ name, busy, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={busy ? undefined : onCancel}>
+      <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="text-center">
+          <div className="flex justify-center mb-3">
+            <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
+              <FlagIcon className="w-7 h-7 text-red-500" />
+            </div>
+          </div>
+          <h3 className="font-bold text-gray-800 text-lg">Flag this customer?</h3>
+          <p className="text-sm text-gray-500 mt-1">You're about to flag <strong>{name}</strong>.</p>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700 space-y-1">
+          <p className="font-semibold">While flagged, this customer will not be able to:</p>
+          <ul className="list-disc pl-5 text-xs space-y-0.5">
+            <li>Cancel their bookings</li>
+            <li>Leave reviews</li>
+          </ul>
+        </div>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">They will be notified in the app</p>
+          <div className="bg-gray-50 border rounded-xl p-3 text-xs text-gray-600 space-y-1">
+            <p className="font-semibold text-gray-700">Your account has been flagged</p>
+            <p>
+              We're sorry to let you know that your account has been flagged. For now, you won't be able to cancel bookings
+              or leave reviews. If you think this is a mistake, please contact us or visit us in store.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={onCancel} disabled={busy} className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+          <button onClick={onConfirm} disabled={busy} className="flex-1 px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-medium hover:bg-red-600 disabled:opacity-50">
+            {busy ? "Flagging…" : "Flag & Notify"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Reviewer name as a blue link to that customer on the Users page (plain text if the account is gone).
+function ReviewerLink({ review, onGo, className = "" }) {
+  if (!review.userID || review.reviewerFound === false) return <span className={className}>{review.reviewerName}</span>;
+  return (
+    <button
+      type="button"
+      onClick={() => onGo(review)}
+      title="Open this customer on the Users page"
+      className={`text-blue-600 hover:text-blue-800 hover:underline text-left ${className}`}
+    >
+      {review.reviewerName}
+    </button>
+  );
+}
+
 // "View" window: the full comment and the actions, kept out of the table so the rows stay light.
-function ReviewModal({ review, onClose, onViewBooking, onDelete, deleting }) {
+function ReviewModal({ review, onClose, onViewBooking, onViewReviewer, onDelete, deleting, onFlag }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h2 className="font-bold text-lg text-gray-800">Review</h2>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-3 shrink-0">
+          <h2 className="font-bold text-lg text-gray-800">Review</h2>
+        </div>
 
+        <div className="flex-1 overflow-y-auto px-6 pb-4 space-y-4">
         <InfoSection
           title="Review Information"
           aside={review.bookingID ? (
@@ -162,18 +235,24 @@ function ReviewModal({ review, onClose, onViewBooking, onDelete, deleting }) {
               type="button"
               onClick={onViewBooking}
               title="Open this booking on the Bookings page"
-              className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg px-2.5 py-1 transition-colors"
+              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
             >
-              View booking →
+              View Booking →
             </button>
           ) : null}
         >
-          <InfoField label="Reviewer" value={review.reviewerName} />
+          <InfoField label="Reviewer" value={<ReviewerLink review={review} onGo={onViewReviewer} />} />
           <InfoField
             label="Rating"
             value={<span className="inline-flex items-center gap-2"><StarRating value={review.rating} /><span className="text-gray-500 font-normal">{review.rating} / 5</span></span>}
           />
-          <InfoField wide label="Posted" value={<DateTime value={review.createdAt} />} />
+          <InfoField label="Posted" value={<DateTime value={review.createdAt} />} />
+          <InfoField
+            label="Flagged"
+            value={review.isFlagged
+              ? <FlaggedBadge flagged />
+              : <span className="text-gray-500 font-normal">No</span>}
+          />
         </InfoSection>
 
         <InfoSection title="Comment">
@@ -184,15 +263,29 @@ function ReviewModal({ review, onClose, onViewBooking, onDelete, deleting }) {
           </div>
         </InfoSection>
 
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors">Close</button>
-          <button
-            onClick={onDelete}
-            disabled={deleting}
-            className="px-4 py-2 rounded-lg text-xs font-semibold text-red-600 border border-red-300 hover:bg-red-50 transition-colors disabled:opacity-50"
-          >
-            {deleting ? "Deleting…" : "Delete"}
-          </button>
+        </div>
+
+        {/* Sticky footer — full-width stacked buttons, same as the Bookings window */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+          <div className="flex flex-col gap-1.5">
+            {/* Only offered while the reviewer is not flagged yet (and their account still exists). */}
+            {!review.isFlagged && review.userID && review.reviewerFound !== false && (
+              <button
+                onClick={onFlag}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 border border-amber-200 bg-amber-50 text-amber-700 font-semibold rounded-xl text-sm hover:bg-amber-100 transition-colors"
+              >
+                <FlagIcon className="w-3.5 h-3.5" />Flag customer
+              </button>
+            )}
+            <button
+              onClick={onDelete}
+              disabled={deleting}
+              className="w-full px-3 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors disabled:opacity-50"
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+          <button onClick={onClose} className="w-full mt-1.5 py-1.5 border rounded-xl text-sm">Close</button>
         </div>
       </div>
     </div>
@@ -215,6 +308,8 @@ export default function Reviews() {
   const [sortKey, setSortKey]         = useState("date");
   const [sortDir, setSortDir]         = useState("desc");   // newest first, like the API returns
   const [viewReview, setViewReview]   = useState(null);     // review whose "View" window is open
+  const [flagTarget, setFlagTarget]   = useState(null);     // review whose reviewer we are about to flag (confirm window)
+  const [flagging, setFlagging]       = useState(false);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -327,10 +422,36 @@ export default function Reviews() {
     }
   };
 
+  // Flag the reviewer's account (same endpoint the Users page uses; the server notifies the customer and writes the audit log).
+  // Every review by that person on this page flips to Flagged at once.
+  const flagReviewer = async () => {
+    if (!flagTarget) return;
+    setFlagging(true);
+    try {
+      const res = await authedFetch(`/api/users/${encodeURIComponent(flagTarget.userID)}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ isFlagged: true }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.message || "Failed to flag the customer.");
+      setReviews(prev => prev.map(r => (r.userID === flagTarget.userID ? { ...r, isFlagged: true } : r)));
+      showToast(`${flagTarget.reviewerName} flagged. They were notified.`);
+      setFlagTarget(null);
+    } catch (e) {
+      console.error(e);
+      showToast("Failed to flag: " + e.message, "error");
+    } finally {
+      setFlagging(false);
+    }
+  };
+
   // Same deep link Header.jsx's booking notifications use — lands on
   // Bookings.jsx, which auto-opens this exact booking's detail modal then
   // strips the param (see the `?open=` effect in Bookings.jsx).
   const goToBooking = (bookingID) => navigate(`/bookings?open=${encodeURIComponent(bookingID)}`);
+
+  // Reviews are written by customers — opens that customer's details window on Users (same deep link as Audit Log).
+  const goToReviewer = (review) => navigate(`/users?role=customer&tab=directory&open=${encodeURIComponent(review.userID)}`);
 
   const avgRating = (list) =>
     list.length ? (list.reduce((sum, r) => sum + r.rating, 0) / list.length).toFixed(1) : null;
@@ -344,6 +465,7 @@ export default function Reviews() {
     const val = (r) => {
       if (sortKey === "reviewer") return (r.reviewerName || "").toLowerCase();
       if (sortKey === "rating")   return r.rating || 0;
+      if (sortKey === "flagged")  return r.isFlagged ? 1 : 0;
       return toDateObj(r.createdAt)?.getTime() ?? 0;
     };
     const dir = sortDir === "asc" ? 1 : -1;
@@ -405,7 +527,6 @@ export default function Reviews() {
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
-                        <p className="text-xs text-gray-400 truncate">{car.plateNumber || "—"}</p>
                       </div>
                       {reviewCounts[car.id] > 0 && (
                         <span
@@ -440,21 +561,22 @@ export default function Reviews() {
             ) : (
               <div className="mx-4 mb-4 rounded-xl border border-gray-100 overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[860px] table-fixed text-sm">
+                  <table className="w-full min-w-[960px] table-fixed text-sm">
                     <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
                       <tr>
-                        <SortableTh label="Reviewer" sortKey="reviewer" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[19%]" />
-                        <SortableTh label="Rating" sortKey="rating" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[13%]" />
-                        <th className="px-4 py-3 text-left w-[28%]">Comment</th>
-                        <SortableTh label="Date" sortKey="date" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[26%]" />
-                        <th className="pl-4 pr-8 py-3 text-right w-[14%]">Action</th>
+                        <SortableTh label="Reviewer" sortKey="reviewer" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[17%]" />
+                        <SortableTh label="Rating" sortKey="rating" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[12%]" />
+                        <th className="px-4 py-3 text-left w-[22%]">Comment</th>
+                        <SortableTh label="Date" sortKey="date" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[23%]" />
+                        <SortableTh label="Flagged" sortKey="flagged" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[13%]" />
+                        <th className="pl-4 pr-8 py-3 text-right w-[13%]">Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {reviewsLoading ? (
                         Array.from({ length: 3 }).map((_, i) => (
                           <tr key={i} className="border-t">
-                            {Array.from({ length: 5 }).map((__, j) => (
+                            {Array.from({ length: 6 }).map((__, j) => (
                               <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
                             ))}
                           </tr>
@@ -470,6 +592,7 @@ export default function Reviews() {
                                 : <span className="text-gray-300">—</span>}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap"><DateTime value={review.createdAt} /></td>
+                            <td className="px-4 py-3 whitespace-nowrap"><FlaggedBadge flagged={review.isFlagged} /></td>
                             <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
                               <button
                                 onClick={() => setViewReview(review)}
@@ -484,7 +607,7 @@ export default function Reviews() {
                       {/* Same as Bookings: pad a short page with empty rows so the table always keeps its 10-row height. */}
                       {!reviewsLoading && pageItems.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
                         <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
-                          <td colSpan={5} className="h-[53px]">&nbsp;</td>
+                          <td colSpan={6} className="h-[53px]">&nbsp;</td>
                         </tr>
                       ))}
                     </tbody>
@@ -498,13 +621,28 @@ export default function Reviews() {
       </div>
 
       {/* Closes by itself once the review is gone from the list (deleted); cancelling the confirm keeps it open. */}
-      {viewReview && reviews.some(r => r.reviewID === viewReview.reviewID) && (
-        <ReviewModal
-          review={viewReview}
-          onClose={() => setViewReview(null)}
-          onViewBooking={() => goToBooking(viewReview.bookingID)}
-          onDelete={() => removeReview(viewReview)}
-          deleting={deletingID === viewReview.reviewID}
+      {/* Always read the live row, so the Flagged status updates in the window the moment the flag is saved. */}
+      {(() => {
+        const live = viewReview && reviews.find(r => r.reviewID === viewReview.reviewID);
+        return live ? (
+          <ReviewModal
+            review={live}
+            onClose={() => setViewReview(null)}
+            onViewBooking={() => goToBooking(live.bookingID)}
+            onViewReviewer={goToReviewer}
+            onDelete={() => removeReview(live)}
+            deleting={deletingID === live.reviewID}
+            onFlag={() => setFlagTarget(live)}
+          />
+        ) : null;
+      })()}
+
+      {flagTarget && (
+        <ConfirmFlagModal
+          name={flagTarget.reviewerName}
+          busy={flagging}
+          onConfirm={flagReviewer}
+          onCancel={() => setFlagTarget(null)}
         />
       )}
     </div>

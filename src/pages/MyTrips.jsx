@@ -269,7 +269,7 @@ function TripsGroupBox({ cards, tab, setTab, onRefresh, refreshing }) {
           {[["active", "Trips"], ["history", "History"]].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               className={`px-5 py-2 rounded-xl text-sm font-medium transition-all ${
-                tab === key ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"
+                tab === key ? "bg-arl-dark text-white shadow" : "text-gray-600 hover:bg-gray-50"
               }`}>
               {label}
             </button>

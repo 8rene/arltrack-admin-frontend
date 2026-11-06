@@ -259,7 +259,7 @@ export default function TermsPage() {
   const fieldLabel = `text-[11px] font-medium uppercase tracking-wide ${muted}`;
   const text = isDark ? "text-[#F5F5F5]" : "text-gray-700";
   const primaryBtn = `px-5 py-2.5 rounded-xl shadow text-sm font-medium transition-all disabled:opacity-50 ${
-    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-dark hover:opacity-90 text-white"
+    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-teal-600 hover:bg-teal-700 text-white"
   }`;
   const ghostBtn = `px-5 py-2.5 rounded-xl border text-sm font-medium disabled:opacity-50 transition-all ${
     isDark ? "border-[#4FC3F7]/20 text-[#F5F5F5]/70 hover:bg-[#212121]/40" : "border-gray-200 text-gray-600 hover:bg-gray-50"

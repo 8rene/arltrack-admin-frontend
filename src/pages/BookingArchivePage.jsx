@@ -167,7 +167,7 @@ function LogWindow({ title, badges, onClose, footer, children, tabs, wide }) {
         </div>
         {tabs}
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-3">{children}</div>
-        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex items-center gap-2">{footer}</div>
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-2">{footer}</div>
       </div>
     </div>
   );
@@ -178,17 +178,17 @@ function ArchiveFooter({ onRestore, onDelete, canDelete, busy, onClose, extra })
   return (
     <>
       <button onClick={onRestore} disabled={busy}
-        className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 transition-colors">
+        className="w-full py-2.5 rounded-xl text-sm font-medium bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 transition-colors">
         {busy ? "…" : "Restore"}
       </button>
       {extra}
       {canDelete && (
         <button onClick={onDelete} disabled={busy}
-          className="px-4 py-2 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 disabled:opacity-40 transition-colors">
+          className="w-full py-2.5 border border-red-200 text-red-500 rounded-xl text-sm hover:bg-red-50 disabled:opacity-40 transition-colors">
           Delete
         </button>
       )}
-      <button onClick={onClose} className="ml-auto px-4 py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
+      <button onClick={onClose} className="w-full py-2.5 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 transition-colors">Close</button>
     </>
   );
 }
@@ -250,7 +250,7 @@ function ViewUserButton({ uid, account, viewerRole, onGo }) {
   return (
     <button type="button" disabled={!canOpen} title={title}
       onClick={() => onGo(`/users?role=${tab.key}&tab=directory&open=${encodeURIComponent(uid)}`)}
-      className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed">
+      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
       View user →
     </button>
   );
@@ -1082,7 +1082,7 @@ function BookingTab({ record, details, detailsLoading, detailsError, peso, viewe
   const customerNote = cust?.state === "archived" ? " (account deleted — in Deleted Users)" : cust?.state === "removed" ? " (account removed)" : "";
   const customerAction = cust?.state === "archived"
     ? <button type="button" onClick={() => onGo(`/archives/users?open=${encodeURIComponent(record.userID)}`)}
-        className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap">View deleted user →</button>
+        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">View deleted user →</button>
     : <ViewUserButton uid={record.userID} account={liveAccount} viewerRole={viewerRole} onGo={onGo} />;
 
   const cancelledByText = !canc ? null
@@ -1103,7 +1103,7 @@ function BookingTab({ record, details, detailsLoading, detailsError, peso, viewe
   const termsAction = (
     <button type="button" disabled={!termsVersionID} onClick={() => setTermsOpen(true)}
       title={termsVersionID ? "" : "No terms version was recorded on this booking"}
-      className="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed">
+      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
       View terms →
     </button>
   );

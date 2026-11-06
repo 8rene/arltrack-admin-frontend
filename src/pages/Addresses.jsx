@@ -19,8 +19,6 @@ const btnGhost =
 const btnDanger =
   "px-4 py-2 text-sm font-semibold rounded-xl bg-red-500 text-white hover:bg-red-600 disabled:opacity-60 transition";
 
-const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
-
 /**
  * Returns an `api(path, { method, body })` function that attaches the JWT,
  * sends JSON, and resolves with the parsed response body — or throws an
@@ -157,21 +155,109 @@ function ErrorBanner({ children, onRetry }) {
 // Barangay. Everything is loaded in one request and searched client-side
 // (the full set is a few thousand tiny rows).
 //
-// Layout (same as Vehicle Inspections): a column of boxes on the left, the
-// selected one on the right.
-//   • Left  — one box per region. Typing in the search box swaps them for
-//             matches from every level, each with its parents shown.
-//   • Right — the selected region and everything under it as a tree (only
-//             opened rows are drawn). It opens read-only; Edit makes the same
-//             tree editable in place. Edits are collected and saved together
-//             with one Save changes (POST /api/addresses/batch).
+// Layout (same as Bookings / Maintenance): a searchable, paginated table with
+// one tab per level (Regions · Provinces · Municipalities · Barangays).
+//   • Table — one row per region (with how many provinces / municipalities /
+//             barangays are under it). Typing in the search box, or picking a
+//             level, swaps it for matches from that level, each with its
+//             parents shown. View opens the entry.
+//   • View  — the region and everything under it as a tree (only opened rows
+//             are drawn). It opens read-only; Edit makes the same tree
+//             editable in place. Edits are collected and saved together with
+//             one Save changes (POST /api/addresses/batch). Close goes back
+//             to the table.
 //
 // Backend: routes/addresses. View/add/edit — Owner, Admin, Supervisor.
 // Delete — Owner and Admin only (mirrored here by `canDelete`). Deleting an
 // entry also removes everything under it; the confirm dialog says how many.
 
-const PAGE = 50;   // search results drawn first
-const MORE = 100;  // added by "Show more"
+const PAGE_SIZE = 10;
+
+// ─── Pagination (same pattern as Bookings.jsx) ───────────────────────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((x, y) => x - y);
+  const rangeEnd = Math.min(start + pageSize, count);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count.toLocaleString()}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg
+    className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`}
+    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// Clickable <th> that toggles asc/desc (same as the Bookings table).
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort }) {
+  const active = sortKeyState === key;
+  return (
+    <th className="px-4 py-3 text-left select-none">
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
+}
+
 const collator = new Intl.Collator("en");
 const cmp = (a, b) => collator.compare(a || "", b || "");
 // Case- and accent-insensitive, so "penafrancia" finds "Peñafrancia".
@@ -187,7 +273,6 @@ const LEVELS = [
   { key: "barangays",      label: "Barangays",      singular: "Barangay",     idField: "barangayID",     nameField: "barangayName",     parent: { key: "municipalities", field: "municipalityID", singular: "Municipality" } },
 ];
 const LEVEL = Object.fromEntries(LEVELS.map((l) => [l.key, l]));
-const LEVEL_ORDER = Object.fromEntries(LEVELS.map((l, i) => [l.key, i]));
 const CHILD_OF = { regions: "provinces", provinces: "municipalities", municipalities: "barangays", barangays: null };
 
 const EMPTY = { regions: [], provinces: [], municipalities: [], barangays: [] };
@@ -206,19 +291,32 @@ function sortBundle(b) {
   };
 }
 
-const cardCls = "bg-white rounded-2xl border border-gray-100 shadow-soft";
-const boxCls = (selected) =>
-  `w-full text-left bg-white rounded-2xl border transition-all duration-200 shadow-soft hover:shadow-md ${
-    selected ? "border-teal-400 ring-2 ring-teal-100" : "border-gray-100 hover:border-teal-200"
-  }`;
-
-const CheckBadge = () => (
-  <div className="shrink-0 w-5 h-5 rounded-full bg-teal-500 flex items-center justify-center">
-    <svg className="w-3 h-3 text-white" viewBox="0 0 20 20" fill="currentColor">
-      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-    </svg>
-  </div>
+const IconX = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
 );
+
+// Card + label-over-value cell, same as the Bookings details window.
+function InfoSection({ title, aside, children, cols = 2 }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {aside}
+      </div>
+      <div className={`p-4 grid ${cols === 3 ? "grid-cols-3" : "grid-cols-2"} gap-x-6 gap-y-4`}>{children}</div>
+    </section>
+  );
+}
+function InfoField({ label, value }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</div>
+    </div>
+  );
+}
 
 // ─── The page ────────────────────────────────────────────────────────────────
 export default function Addresses() {
@@ -232,7 +330,10 @@ export default function Addresses() {
   const [error, setError] = useState("");
 
   const [query, setQuery] = useState("");
-  const [limit, setLimit] = useState(PAGE);
+  const [tab, setTab] = useState("regions");
+  const [sortKey, setSortKey] = useState(null); // null = the natural A–Z order by parent
+  const [sortDir, setSortDir] = useState("asc");
+  const [searchBy, setSearchBy] = useState("name"); // "name", or the level of one of the table's parent columns
 
   const [selected, setSelected] = useState(null); // { levelKey, id, focus } — the entry shown on the right
   const [creating, setCreating] = useState(false); // a brand-new region
@@ -340,6 +441,7 @@ export default function Addresses() {
           nameN: norm(name),
           pathN: norm(path.map((p) => p.name).join(" ")),
           path,
+          pathBy: Object.fromEntries(path.map((p) => [p.levelKey, norm(p.name)])),
           root: path[0] ? { levelKey: path[0].levelKey, id: path[0].id } : { levelKey: L.key, id },
         });
       });
@@ -349,20 +451,54 @@ export default function Addresses() {
 
   const tokens = useMemo(() => norm(query).split(/\s+/).filter(Boolean), [query]);
 
+  // The text a search looks at for an entry: its own name, or the name of one of its parents.
+  const fieldOf = useCallback(
+    (e) => (searchBy === "name" || searchBy === e.levelKey ? e.nameN : e.pathBy[searchBy] || ""),
+    [searchBy]
+  );
+
+  // Matches per level. The tabs show these counts, so a search tells you where the hits are.
+  const matches = useMemo(() => {
+    const by = { regions: [], provinces: [], municipalities: [], barangays: [] };
+    index.forEach((e) => {
+      const f = fieldOf(e);
+      if (tokens.every((t) => f.includes(t))) by[e.levelKey].push(e);
+    });
+    if (tokens.length) {
+      const rank = (e) => {
+        const f = fieldOf(e);
+        return f.startsWith(tokens[0]) ? 0 : 1;
+      };
+      Object.values(by).forEach((list) => list.sort((a, b) => rank(a) - rank(b) || cmp(a.name, b.name)));
+    }
+    return by;
+  }, [index, tokens, fieldOf]);
+
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  // Sort keys: "name", "p:<level>" for a parent column, "c:<level>" for a count column.
   const results = useMemo(() => {
-    if (!tokens.length) return [];
-    // Every word must appear in the name or in the parent path ("poblacion pampanga").
-    const list = index.filter((e) => tokens.every((t) => e.nameN.includes(t) || e.pathN.includes(t)));
-    const rank = (e) => (tokens.every((t) => e.nameN.includes(t)) ? (e.nameN.startsWith(tokens[0]) ? 0 : 1) : 2);
-    return list.sort(
-      (a, b) => rank(a) - rank(b) || LEVEL_ORDER[a.levelKey] - LEVEL_ORDER[b.levelKey] || cmp(a.name, b.name)
-    );
-  }, [index, tokens]);
+    const list = matches[tab];
+    if (!sortKey) return list;
+    const [kind, lvl] = sortKey.split(":");
+    const val = (e) => {
+      if (sortKey === "name") return e.name;
+      if (kind === "p") return e.path.find((p) => p.levelKey === lvl)?.name || "";
+      return lk.countsBelow(e.levelKey, e.id)[lvl] || 0;
+    };
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const av = val(a), bv = val(b);
+      const d = typeof av === "number" ? av - bv : cmp(av, bv);
+      return d * dir || cmp(a.name, b.name);
+    });
+  }, [matches, tab, sortKey, sortDir, lk]);
 
-  useEffect(() => { setLimit(PAGE); }, [query]);
-
-  const shown = results.slice(0, limit);
-  const left = results.length - shown.length;
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(results, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [query, tab, searchBy, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The selected row, if it still exists.
   const selectedRow = selected ? lk.rowOf[selected.levelKey][selected.id] : null;
@@ -377,18 +513,11 @@ export default function Addresses() {
     else fn();
   };
 
-  // Open a region (or, for a search hit, its region with that row highlighted).
+  // Open an entry on its own: just that entry and what is under it.
   const openEntry = (e) => guard(() => {
     dirtyRef.current = false;
     setCreating(false);
-    const isRoot = e.root.levelKey === e.levelKey && e.root.id === e.id;
-    setSelected({ levelKey: e.root.levelKey, id: e.root.id, focus: isRoot ? null : { levelKey: e.levelKey, id: e.id } });
-  });
-
-  const openRegion = (row) => guard(() => {
-    dirtyRef.current = false;
-    setCreating(false);
-    setSelected({ levelKey: "regions", id: row.regionID, focus: null });
+    setSelected({ levelKey: e.levelKey, id: e.id, focus: null });
   });
 
   const closePanel = () => guard(() => {
@@ -403,14 +532,14 @@ export default function Addresses() {
     setCreating(true);
   });
 
-  // Edits thrown away from inside the panel: a new region closes, an existing one goes back to read-only.
+  // Edits thrown away from inside the window: a new region closes, an existing one goes back to read-only.
   const discardEdit = () => {
     dirtyRef.current = false;
     if (creating) setCreating(false);
     else setVersion((v) => v + 1);
   };
 
-  // After a save: reload, go back to read-only, and open a newly added region.
+  // After a save: reload and go back to read-only; a newly added region is opened.
   const handleSaved = async ({ msg, created }) => {
     dirtyRef.current = false;
     await load({ silent: true });
@@ -464,6 +593,14 @@ export default function Addresses() {
   }), [bundle, lk]);
 
   const hasPanel = creating || !!selectedRow;
+
+  // Lock page scroll behind the modal.
+  useEffect(() => {
+    if (!hasPanel) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [hasPanel]);
   const panelProps = {
     bundle, lk, parentOptionsBy, canDelete, api,
     onClose: closePanel,
@@ -473,114 +610,148 @@ export default function Addresses() {
     onDelete: requestDelete,
   };
 
+  const thCls = "px-4 py-3 text-left font-semibold";
+  const skeleton = (cols) => Array.from({ length: 5 }).map((_, i) => (
+    <tr key={i} className="border-b border-gray-50">
+      {Array.from({ length: cols }).map((__, j) => (
+        <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
+      ))}
+    </tr>
+  ));
+  const viewBtn = (onClick) => (
+    <button onClick={onClick}
+      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+  );
+  // Columns per tab: the name, the parents it sits under, and what is under it.
+  const col = (label, kind, key) => ({ label, kind, key, sortKey: kind === "name" ? "name" : `${kind === "parent" ? "p" : "c"}:${key}` });
+  const COLS = {
+    regions: [col("Region", "name"), col("Provinces", "count", "provinces"), col("Municipalities", "count", "municipalities"), col("Barangays", "count", "barangays")],
+    provinces: [col("Province", "name"), col("Region", "parent", "regions"), col("Municipalities", "count", "municipalities"), col("Barangays", "count", "barangays")],
+    municipalities: [col("Municipality", "name"), col("Province", "parent", "provinces"), col("Region", "parent", "regions"), col("Barangays", "count", "barangays")],
+    barangays: [col("Barangay", "name"), col("Municipality", "parent", "municipalities"), col("Province", "parent", "provinces"), col("Region", "parent", "regions")],
+  };
+  const cols = COLS[tab].length + 1;
+  // "Search by" mirrors the table's text columns (the counts aren't searchable).
+  const searchOptions = COLS[tab]
+    .filter((c) => c.kind !== "count")
+    .map((c) => ({ key: c.kind === "name" ? "name" : c.key, label: c.label }));
+  const searchLabel = searchOptions.find((o) => o.key === searchBy)?.label || "";
+
   return (
-    <div className="w-full px-4">
+    <div className="w-full px-4 space-y-5">
       <Toast toast={toast} />
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-arl-dark">Addresses</h1>
-        </div>
-        <button onClick={startCreate} disabled={loading} className={btnPrimary}>
-          + Add region
-        </button>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-arl-dark">Addresses</h1>
       </div>
 
       <ErrorBanner onRetry={() => load()}>{error}</ErrorBanner>
 
-      <div className="flex flex-col lg:flex-row gap-4">
-        {/* Left: regions (or search results) */}
-        <div className={`${hasPanel ? "hidden lg:block" : ""} w-full lg:w-72 shrink-0`}>
-          <div className="relative mb-3">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+        <div className="bg-white rounded-2xl border overflow-hidden">
+          {/* TABS — one per level, with how many entries each holds (or matches) */}
+          <div className="flex gap-1 px-4 pt-2 border-b overflow-x-auto overflow-y-hidden" role="tablist">
+            {LEVELS.map((L) => {
+              const active = tab === L.key;
+              return (
+                <button key={L.key} role="tab" aria-selected={active} onClick={() => { setTab(L.key); setSearchBy("name"); setSortKey(null); setSortDir("asc"); }}
+                  className={`px-4 py-2.5 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                    active ? "border-teal-600 text-teal-700" : "border-transparent text-gray-500 hover:text-gray-700"
+                  }`}>
+                  {L.label}
+                  <span className={`ml-1.5 px-2 py-0.5 rounded-full text-xs ${active ? "bg-teal-50 text-teal-700" : "bg-gray-100 text-gray-500"}`}>
+                    {matches[L.key].length.toLocaleString()}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* SEARCH — same layout as the Bookings page */}
+          <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+              <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setQuery(""); }}
+                className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
+                {searchOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+            </div>
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
-              placeholder="Search region, province, barangay…"
+              placeholder={`Enter ${searchLabel.toLowerCase()}...`}
               aria-label="Search addresses"
-              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
             />
+            <div className="flex items-center gap-2">
+              <button onClick={() => load()} disabled={loading}
+                className="px-4 py-2 rounded-xl text-sm font-medium border border-teal-300 text-teal-700 bg-white hover:bg-teal-50 disabled:opacity-50 flex items-center gap-1.5">
+                <IconRefresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+              <button onClick={startCreate} disabled={loading}
+                className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold disabled:opacity-60">
+                + Add region
+              </button>
+            </div>
           </div>
 
-          {loading ? (
-            <div className="space-y-3">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="bg-white rounded-2xl border border-gray-100 p-4 h-16 animate-pulse" />
-              ))}
-            </div>
-          ) : tokens.length ? (
-            <div className="space-y-3">
-              <p className="text-xs text-gray-400">
-                {results.length === 0 ? "No matches." : `${results.length.toLocaleString()} ${results.length === 1 ? "match" : "matches"}`}
-              </p>
-              {shown.map((e) => {
-                const parents = [...e.path].reverse().map((p) => p.name).join(", ");
-                const isSel = selected?.focus
-                  ? selected.focus.levelKey === e.levelKey && selected.focus.id === e.id
-                  : selected?.levelKey === e.levelKey && selected?.id === e.id;
-                return (
-                  <button key={`${e.levelKey}:${e.id}`} onClick={() => openEntry(e)} className={`${boxCls(isSel)} p-3`}>
-                    <p className="font-semibold text-gray-800 text-sm truncate">{e.name || "—"}</p>
-                    <p className="text-xs text-gray-400 truncate">
-                      {LEVEL[e.levelKey].singular}{parents ? ` · ${parents}` : ""}
-                    </p>
-                  </button>
-                );
-              })}
-              {left > 0 && (
-                <button onClick={() => setLimit((v) => v + MORE)} className={`${btnGhost} w-full`}>
-                  Show more ({left.toLocaleString()} left)
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {bundle.regions.length === 0 && (
-                <p className="text-gray-400 text-sm text-center py-8">No regions yet.</p>
-              )}
-              {bundle.regions.map((r) => {
-                const isSel = selected?.levelKey === "regions" && selected.id === r.regionID;
-                return (
-                  <button key={r.regionID} onClick={() => openRegion(r)} className={`${boxCls(isSel)} p-4`}>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-gray-800 text-sm truncate">{r.regionName || "—"}</p>
-                        <p className="text-xs text-gray-400 truncate">
-                          {plural(lk.childrenOf("regions", r.regionID).length, "province", "provinces")}
-                        </p>
-                      </div>
-                      {isSel && <CheckBadge />}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+                  {COLS[tab].map((c) => (
+                    <SortableTh key={c.label} label={c.label} sortKey={c.sortKey} sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  ))}
+                  <th className={thCls}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? skeleton(cols) : count === 0 ? (
+                  <tr>
+                    <td colSpan={cols} className="text-center py-16 text-gray-400 text-sm">
+                      {tokens.length ? "No matches." : tab === "regions" ? "No regions yet. Add the first one." : `No ${LEVEL[tab].label.toLowerCase()} yet.`}
+                    </td>
+                  </tr>
+                ) : pageItems.map((e, i) => {
+                  const below = tab === "barangays" ? null : lk.countsBelow(e.levelKey, e.id);
+                  return (
+                    <tr key={`${e.levelKey}:${e.id}`}
+                      className={`border-b border-gray-50 last:border-0 hover:bg-teal-50/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/20" : ""}`}>
+                      {COLS[tab].map((c) => (
+                        c.kind === "name" ? (
+                          <td key={c.label} className="px-4 py-3 font-semibold text-gray-800 text-sm">{e.name || "—"}</td>
+                        ) : (
+                          <td key={c.label} className="px-4 py-3 text-sm text-gray-600">
+                            {c.kind === "parent"
+                              ? e.path.find((p) => p.levelKey === c.key)?.name || "—"
+                              : (below?.[c.key] || 0).toLocaleString()}
+                          </td>
+                        )
+                      ))}
+                      <td className="px-4 py-3 text-left whitespace-nowrap">{viewBtn(() => openEntry(e))}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
         </div>
 
-        {/* Right: the selected region */}
-        <div className={`${hasPanel ? "" : "hidden lg:block"} flex-1 min-w-0`}>
-          {creating ? (
-            <BranchPanel key={`new:${version}`} levelKey="regions" row={null} focus={null} {...panelProps} />
-          ) : selectedRow ? (
-            <BranchPanel
-              key={`${selected.levelKey}:${selected.id}:${selected.focus?.id || ""}:${version}`}
-              levelKey={selected.levelKey}
-              row={selectedRow}
-              focus={selected.focus}
-              {...panelProps}
-            />
-          ) : (
-            <div className={`${cardCls} p-10 text-center`}>
-              <p className="text-sm text-gray-400">
-                Pick a region on the left to see its provinces, municipalities and barangays, or search for any of them.
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
+      {/* View opens as a modal over the table (same shell as the Bookings details window). */}
+      {hasPanel && (creating ? (
+        <BranchPanel key={`new:${version}`} levelKey="regions" row={null} focus={null} {...panelProps} />
+      ) : (
+        <BranchPanel
+          key={`${selected.levelKey}:${selected.id}:${version}`}
+          levelKey={selected.levelKey}
+          row={selectedRow}
+          focus={selected.focus}
+          {...panelProps}
+        />
+      ))}
 
       {pendingNav && (
         <ConfirmDialog
@@ -688,7 +859,7 @@ function NameInput({ value, onCommit, invalid }) {
 }
 
 // "Add province…" box. Enter adds one; pasting several lines adds them all.
-function AddRow({ noun, onAdd }) {
+function AddRow({ noun, onAdd, indent = true }) {
   const [v, setV] = useState("");
   const commit = (text) => {
     const names = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -697,7 +868,7 @@ function AddRow({ noun, onAdd }) {
   };
   return (
     <div className="flex items-center gap-2 py-1.5">
-      <span className="w-6 shrink-0" />
+      {indent && <span className="w-6 shrink-0" />}
       <input
         value={v}
         onChange={(e) => setV(e.target.value)}
@@ -750,22 +921,20 @@ function TreeNode({ nodeKey, ctx }) {
 
   return (
     <div>
-      <div ref={rowRef} className={`flex items-center gap-2 py-0.5 rounded-lg ${isFocus ? "bg-teal-50 ring-1 ring-teal-100" : ""}`}>
+      <div ref={rowRef} className={`flex items-center gap-2 py-1 rounded-lg border-b border-gray-100 hover:bg-gray-50 ${isFocus ? "bg-teal-50 ring-1 ring-teal-100" : ""}`}>
         {childKey ? (
           <button
             onClick={() => ctx.toggleOpen(nodeKey)}
-            className="w-6 h-6 shrink-0 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600 text-sm leading-none"
+            className="w-6 h-6 shrink-0 rounded-md text-gray-600 hover:bg-teal-50 hover:text-teal-700 text-base leading-none"
             aria-label={isOpen ? "Collapse" : "Expand"}
             aria-expanded={isOpen}
           >
             {isOpen ? "▾" : "▸"}
           </button>
-        ) : (
-          <span className="w-6 shrink-0" />
-        )}
+        ) : null}
         <div className="flex-1 min-w-0">
           {readOnly ? (
-            <span className="block truncate px-2.5 py-1.5 text-sm font-medium text-gray-800">{n.name || "—"}</span>
+            <span className={`block truncate px-2.5 py-1.5 text-[15px] text-gray-900 ${childKey ? "font-semibold" : "font-medium"}`}>{n.name || "—"}</span>
           ) : (
             <NameInput value={n.name} invalid={!!problems[nodeKey]} onCommit={(v) => ctx.rename(nodeKey, v)} />
           )}
@@ -774,7 +943,7 @@ function TreeNode({ nodeKey, ctx }) {
           <span className="shrink-0 text-[10px] font-semibold text-teal-700 bg-teal-50 border border-teal-100 rounded-full px-2 py-0.5">NEW</span>
         )}
         {childL && (
-          <span className="shrink-0 text-xs text-gray-400 whitespace-nowrap w-28 text-right">
+          <span className="shrink-0 text-xs font-medium text-gray-500 whitespace-nowrap w-28 text-right">
             {live} {live === 1 ? childL.singular.toLowerCase() : childL.label.toLowerCase()}
           </span>
         )}
@@ -791,12 +960,12 @@ function TreeNode({ nodeKey, ctx }) {
       </div>
       {problems[nodeKey] && <p className="text-xs text-red-500 ml-8 mb-1">{problems[nodeKey]}</p>}
       {childKey && isOpen && (
-        <div className="ml-3 pl-3 border-l border-gray-100">
+        <div className="ml-3 pl-3 border-l-2 border-teal-100">
           {kidKeys.map((k) => <TreeNode key={k} nodeKey={k} ctx={ctx} />)}
           {readOnly && kidKeys.length === 0 && (
             <p className="text-xs text-gray-400 py-1.5 pl-8">No {childL.label.toLowerCase()} yet.</p>
           )}
-          {!readOnly && <AddRow noun={childL.singular.toLowerCase()} onAdd={(names) => ctx.addChildren(nodeKey, names)} />}
+          {!readOnly && <AddRow noun={childL.singular.toLowerCase()} indent={!!CHILD_OF[childKey]} onAdd={(names) => ctx.addChildren(nodeKey, names)} />}
         </div>
       )}
     </div>
@@ -848,7 +1017,18 @@ function BranchPanel({
   // ── edit actions ──
   const rename = (key, name) => setNodes((s) => ({ ...s, [key]: { ...s[key], name } }));
   const toggleDelete = (key) => setNodes((s) => ({ ...s, [key]: { ...s[key], deleted: !s[key].deleted } }));
-  const toggleOpen = (key) => setOpen((s) => { const t = new Set(s); t.has(key) ? t.delete(key) : t.add(key); return t; });
+  // Opening a row closes its siblings (and everything open under them), so only one is open at a time.
+  const toggleOpen = (key) => setOpen((s) => {
+    const t = new Set(s);
+    const closeBranch = (k) => { t.delete(k); (kids[k] || []).forEach(closeBranch); };
+    if (t.has(key)) {
+      closeBranch(key);
+    } else {
+      (kids[nodes[key].parentKey] || []).forEach((sib) => { if (sib !== key) closeBranch(sib); });
+      t.add(key);
+    }
+    return t;
+  });
   const addChildren = (parentKey, names) => {
     setNodes((s) => {
       const next = { ...s };
@@ -982,109 +1162,110 @@ function BranchPanel({
     rename, toggleDelete, toggleOpen, addChildren, countBelow,
   };
 
-  // "9 provinces · 130 municipalities · 3,200 barangays"
-  const below = row ? lk.countsBelow(levelKey, row[L.idField]) : null;
-  const counts = below
-    ? [
-        levelKey === "regions" && below.provinces > 0 && plural(below.provinces, "province", "provinces"),
-        (levelKey === "regions" || levelKey === "provinces") && below.municipalities > 0 && plural(below.municipalities, "municipality", "municipalities"),
-        levelKey !== "barangays" && below.barangays > 0 && plural(below.barangays, "barangay", "barangays"),
-      ].filter(Boolean)
-    : [];
   const path = row ? lk.pathOf(levelKey, row) : [];
 
-  const title = isNew ? root.name.trim() || "New region" : root.orig || "—";
+  const heading = isNew ? "Add Region" : editing ? `Edit ${L.singular}` : `${L.singular} Details`;
+  // Only while editing: what would be saved. Viewing shows nothing up here.
   const subtitle = editing
     ? (problemCount ? `Fix ${problemCount} ${problemCount === 1 ? "name" : "names"} to save` : summary || "No changes yet")
-    : counts.length
-      ? counts.join(" · ")
-      : childL ? "Nothing under it yet" : L.singular;
+    : "";
+  const below = row ? lk.countsBelow(levelKey, row[L.idField]) : null;
+  const deeper = LEVELS.slice(LEVELS.indexOf(L) + 1);
 
   return (
-    <div className="space-y-4">
-      {/* Header card — stays in view while the tree scrolls */}
-      <div className={`${cardCls} p-5 sticky top-2 z-10`}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="font-bold text-arl-dark text-base truncate">{title}</h2>
-            <p className={`text-xs ${editing && problemCount ? "text-red-500" : "text-gray-400"}`}>{subtitle}</p>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+        {/* Header */}
+        <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-bold text-lg text-gray-800">{heading}</h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0" aria-label="Close">
+              <IconX className="w-5 h-5" />
+            </button>
           </div>
-          <div className="flex items-center gap-2">
-            {editing ? (
-              <>
-                <button onClick={requestCancel} disabled={saving} className={btnGhost}>Cancel</button>
-                <button onClick={save} disabled={!canSave} className={btnPrimary}>
-                  {saving ? "Saving…" : isNew ? "Add region" : "Save changes"}
-                </button>
-              </>
-            ) : (
-              <>
-                {canDelete && (
-                  <button onClick={() => onDelete(levelKey, row)} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>
-                    Delete
-                  </button>
-                )}
-                <button onClick={() => setEditing(true)} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>
-                  Edit
-                </button>
-                <button onClick={onClose} className={btnGhost}>Close</button>
-              </>
-            )}
-          </div>
+          {subtitle && <p className={`text-sm mt-1 truncate ${problemCount ? "text-red-500" : "text-gray-500"}`}>{subtitle}</p>}
         </div>
-      </div>
 
-      {/* Content card */}
-      <div className={`${cardCls} p-5 space-y-4`}>
-        {editing && (
-          <>
-            <Field label={`${L.singular} name`} error={problems[rootKey]}>
-              <input
-                ref={nameRef}
-                value={root.name}
-                onChange={(e) => rename(rootKey, e.target.value)}
-                placeholder={`${L.singular} name`}
-                className={`${inputCls} ${problems[rootKey] ? "!border-red-300" : ""}`}
-              />
-            </Field>
-            {parent && (
-              <Field label={`Belongs to ${parent.singular.toLowerCase()}`}>
-                <select className={inputCls} value={parentID} onChange={(e) => setParentID(e.target.value)}>
-                  <option value="" disabled>Select {parent.singular.toLowerCase()}…</option>
-                  {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </Field>
-            )}
-          </>
-        )}
+        {/* Body */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-4">
+          {editing && (
+            <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-4 py-2.5 bg-gray-50 border-b">
+                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Details</h3>
+              </div>
+              <div className="p-4 space-y-4">
+                <Field label={`${L.singular} name`} error={problems[rootKey]}>
+                  <input
+                    ref={nameRef}
+                    value={root.name}
+                    onChange={(e) => rename(rootKey, e.target.value)}
+                    placeholder={`${L.singular} name`}
+                    className={`${inputCls} ${problems[rootKey] ? "!border-red-300" : ""}`}
+                  />
+                </Field>
+                {parent && (
+                  <Field label={`Belongs to ${parent.singular.toLowerCase()}`}>
+                    <select className={inputCls} value={parentID} onChange={(e) => setParentID(e.target.value)}>
+                      <option value="" disabled>Select {parent.singular.toLowerCase()}…</option>
+                      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </Field>
+                )}
+              </div>
+            </section>
+          )}
 
-        {!editing && path.length > 0 && (
-          <p className="text-xs text-gray-400">Under {[...path].reverse().map((p) => p.name).join(", ")}</p>
-        )}
+          {/* Everything about this entry in one card: where it sits, its own name, and what is under it. */}
+          {!editing && row && (
+            <InfoSection title="Location" cols={3}>
+              {path.map((p) => <InfoField key={p.levelKey} label={LEVEL[p.levelKey].singular} value={p.name} />)}
+              <InfoField label={L.singular} value={root.orig} />
+              {deeper.map((D) => <InfoField key={D.key} label={D.label} value={(below?.[D.key] || 0).toLocaleString()} />)}
+            </InfoSection>
+          )}
 
-        {childL ? (
-          <div>
-            <h3 className="text-sm font-semibold text-gray-700">{childL.label}</h3>
-            <p className="text-xs text-gray-400 leading-relaxed mt-0.5 mb-2">
-              {editing
-                ? "Click a name to rename it. Open a row with ▸ and use the box at the bottom to add more (paste a list, one per line, to add many). Nothing is saved until you press Save changes."
-                : "Open a row with ▸ to see what's under it."}
-            </p>
-            <div className="border border-gray-100 rounded-xl p-2">
-              {rootKids.map((k) => <TreeNode key={k} nodeKey={k} ctx={ctx} />)}
-              {!editing && rootKids.length === 0 && (
-                <p className="text-xs text-gray-400 py-2 px-2">No {childL.label.toLowerCase()} yet. Use Edit to add some.</p>
-              )}
-              {editing && <AddRow noun={childL.singular.toLowerCase()} onAdd={(names) => addChildren(rootKey, names)} />}
+          {/* What is under it. A barangay has nothing under it, so it shows no list. */}
+          {childL && (
+            <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+              <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{childL.label}</h3>
+              </div>
+              <div className="p-4">
+                <div className="border border-gray-200 rounded-xl p-2">
+                  {rootKids.map((k) => <TreeNode key={k} nodeKey={k} ctx={ctx} />)}
+                  {!editing && rootKids.length === 0 && (
+                    <p className="text-xs text-gray-400 py-2 px-2">No {childL.label.toLowerCase()} yet. Use Edit to add some.</p>
+                  )}
+                  {editing && <AddRow noun={childL.singular.toLowerCase()} indent={!!CHILD_OF[childKey]} onAdd={(names) => addChildren(rootKey, names)} />}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {error && <p className="text-sm text-red-500">{error}</p>}
+        </div>
+
+        {/* Actions */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+          {editing ? (
+            <div className="flex flex-col gap-1.5">
+              <button onClick={save} disabled={!canSave} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 disabled:opacity-60 transition-colors">
+                {saving ? "Saving…" : isNew ? "Add region" : "Save changes"}
+              </button>
+              <button onClick={requestCancel} disabled={saving} className="w-full py-1.5 border rounded-xl text-sm disabled:opacity-60">Cancel</button>
             </div>
-          </div>
-        ) : (
-          !editing && (
-            <p className="text-sm text-gray-400">Nothing is under a barangay. Use Edit to rename it or move it to another municipality.</p>
-          )
-        )}
-
-        {error && <p className="text-sm text-red-500">{error}</p>}
+          ) : (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <button onClick={() => setEditing(true)} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Edit</button>
+                {canDelete && (
+                  <button onClick={() => onDelete(levelKey, row)} className="w-full px-3 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors">Delete</button>
+                )}
+              </div>
+              <button onClick={onClose} className="w-full mt-1.5 py-1.5 border rounded-xl text-sm">Close</button>
+            </>
+          )}
+        </div>
       </div>
 
       {confirmDiscard && (

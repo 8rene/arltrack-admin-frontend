@@ -188,9 +188,12 @@ function TripDetailsModal({ item, onClose, onFlush, onReview, flushing, busy, no
   const stolen = item.status === "stolen";
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h2 className="font-bold text-lg text-gray-800">Trip Details</h2>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-6 pt-6 pb-3 shrink-0">
+          <h2 className="font-bold text-lg text-gray-800">Trip Details</h2>
+        </div>
 
+        <div className="px-6 pb-4 space-y-4 overflow-y-auto flex-1">
         <InfoSection title="Trip Information">
           <InfoField label="Start" value={<DateTime value={item.startedAt} />} />
           <InfoField
@@ -219,8 +222,17 @@ function TripDetailsModal({ item, onClose, onFlush, onReview, flushing, busy, no
           <p className={`text-xs font-medium ${note.ok ? "text-teal-600" : "text-red-500"}`}>{note.msg}</p>
         )}
 
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors">Close</button>
+        </div>
+
+        {/* Actions: fixed at the bottom, same layout as the booking details window. */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-1.5">
+          <button
+            onClick={onReview}
+            disabled={flushing || busy}
+            className="w-full px-3 py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-50"
+          >
+            {busy ? "…" : "Review"}
+          </button>
           {/* Only a trip that is still active can receive new GPS points. Completed and stolen trips were saved for the
               last time when they changed status, so a Flush there would only rewrite the same file. */}
           {item.status === "active" && (
@@ -228,18 +240,12 @@ function TripDetailsModal({ item, onClose, onFlush, onReview, flushing, busy, no
               onClick={onFlush}
               disabled={flushing || busy}
               title="Save this trip's latest GPS points to its archive now, instead of waiting for midnight"
-              className="px-4 py-2 rounded-lg text-xs font-semibold border text-teal-700 border-teal-300 hover:bg-teal-50 transition-colors disabled:opacity-50"
+              className="w-full px-3 py-2 rounded-xl text-sm font-semibold border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-50"
             >
               {flushing ? "Saving…" : "Flush now"}
             </button>
           )}
-          <button
-            onClick={onReview}
-            disabled={flushing || busy}
-            className="px-4 py-2 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-50"
-          >
-            {busy ? "…" : "Review"}
-          </button>
+          <button onClick={onClose} className="w-full py-2 rounded-xl text-sm border text-gray-700 hover:bg-gray-50">Close</button>
         </div>
       </div>
     </div>
@@ -289,6 +295,23 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
   const [flushNote, setFlushNote]   = useState(null); // { id, ok, msg } -- result of the last manual flush
   const [sortKey, setSortKey] = useState("start");
   const [sortDir, setSortDir] = useState("desc");   // newest first, like before
+  // { [carID]: number of past trips } — shown as a badge on each car card (same look as the Reviews car list).
+  const [tripCounts, setTripCounts] = useState({});
+  useEffect(() => {
+    if (!API || !token || !cars.length) return undefined;
+    let cancelled = false;
+    Promise.all(cars.map(async (c) => {
+      try {
+        const res = await fetch(`${API}/api/gps/${c.id}/history`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!(res.headers.get("content-type") || "").includes("application/json")) return null;
+        const json = await res.json();
+        return res.ok ? [c.id, (json.data || []).length] : null;
+      } catch { return null; }
+    })).then((entries) => {
+      if (!cancelled) setTripCounts(Object.fromEntries(entries.filter(Boolean)));
+    });
+    return () => { cancelled = true; };
+  }, [cars, token, refreshTick]);
 
   function handleSort(key) {
     if (key === sortKey) setSortDir(d => (d === "asc" ? "desc" : "asc"));
@@ -495,7 +518,19 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                   ) : null}
                   <CarGlyph style={car.imageURL ? { display: "none" } : undefined} />
                 </div>
-                <p className="font-bold text-gray-800 text-sm truncate min-w-0">{car.name}</p>
+                <p className="font-bold text-gray-800 text-sm truncate min-w-0 flex-1">{car.name}</p>
+                {(() => {
+                  // the open car's list is the freshest number; the rest come from the up-front count
+                  const n = loadedCarID === car.id ? history.length : tripCounts[car.id];
+                  return n > 0 ? (
+                    <span
+                      className="shrink-0 inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold"
+                      title={`${n} trip${n !== 1 ? "s" : ""}`}
+                    >
+                      {n}
+                    </span>
+                  ) : null;
+                })()}
               </div>
             </button>
           ))

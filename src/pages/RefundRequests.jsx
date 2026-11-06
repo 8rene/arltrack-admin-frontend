@@ -526,6 +526,25 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
   const handbackFailed = disc ? true : failedOwed > 0;
   const when = hours !== null && hours !== undefined ? `${Math.max(0, Math.round(hours * 10) / 10)} hours before pickup` : null;
 
+  // Customer name links to Users. Uses the id on the request when the API sends one; otherwise looks it up once from the booking.
+  const [bookingUserID, setBookingUserID] = useState(null);
+  useEffect(() => {
+    setBookingUserID(null);
+    if (!r.bookingID || r.userID) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings?status=all`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } });
+        const json = await res.json();
+        if (!res.ok) return;
+        const b = (json.data || []).find((x) => (x.bookingID || x.id) === r.bookingID);
+        if (!cancelled && b?.userID) setBookingUserID(b.userID);
+      } catch { /* the name just stays plain text */ }
+    })();
+    return () => { cancelled = true; };
+  }, [r.bookingID, r.userID]);
+  const linkUserID = r.userID || bookingUserID;
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
@@ -537,17 +556,24 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             </div>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0"><IconX className="w-5 h-5" /></button>
           </div>
-          <p className="text-sm text-gray-500 mt-1 truncate">{r.customerName || "—"}</p>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-3">
           <Block title="Booking Details">
             <Line label="Booking ID">{r.bookingID || "—"}</Line>
-            <Line label="Customer">{r.customerName || "—"}</Line>
+            <Line label="Customer">
+              {linkUserID && r.customerName ? (
+                <button onClick={() => navigate(`/users?role=customer&tab=directory&open=${encodeURIComponent(linkUserID)}`)}
+                  title="Open this customer on the Users page"
+                  className="text-indigo-600 hover:underline font-medium text-left">
+                  {r.customerName}
+                </button>
+              ) : (r.customerName || "—")}
+            </Line>
             {r.bookingID && (
               <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
                 title="Open this booking in Bookings"
-                className="px-3 py-1.5 rounded-xl border text-xs font-semibold text-teal-700 hover:bg-teal-50">
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
                 View Booking →
               </button>
             )}
@@ -628,7 +654,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             {r.paymentID && (
               <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
                 title="Open this payment — receipts, slips and every money movement are there"
-                className="px-3 py-1.5 rounded-xl border text-xs font-semibold text-teal-700 hover:bg-teal-50">
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
                 View in Payments →
               </button>
             )}
@@ -664,55 +690,55 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
           </div>
         )}
 
-        <div className="shrink-0 border-t border-gray-100 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
-          <button onClick={onClose} className="px-4 py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
-          <div className="flex items-center justify-end gap-2 flex-wrap">
+        <div className="shrink-0 border-t border-gray-100 px-6 py-4 flex flex-col-reverse gap-2">
+          <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm hover:bg-gray-50">Close</button>
+          <div className="flex flex-col gap-2">
             {!disc && r.status === "Pending" && (
               <>
                 <button onClick={onApprove} disabled={busy || blocked}
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50">
+                  className="flex w-full items-center justify-center gap-1 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50">
                   <IconCheck /> {busy ? "…" : "Approve"}
                 </button>
                 <button onClick={onReject} disabled={busy}
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50">
+                  className="flex w-full items-center justify-center gap-1 py-2 rounded-xl text-sm font-semibold text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50">
                   <IconX /> Reject
                 </button>
-                {blocked && <span className="text-xs text-blue-700 max-w-[260px]">Approving is on hold until the discount refund is confirmed by PayMongo (or retried on Payments).</span>}
+                {blocked && <span className="text-xs text-blue-700 max-w-[260px] text-center">Approving is on hold until the discount refund is confirmed by PayMongo (or retried on Payments).</span>}
               </>
             )}
-            {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic">Waiting for PayMongo…</span>}
+            {!disc && r.status === "Approved" && stageOf(r) === "paymongo" && <span className="text-xs text-gray-400 italic text-center">Waiting for PayMongo…</span>}
             {/* If PayMongo already finished but this never updated (missed webhook), ask PayMongo directly. */}
             {((!disc && r.status === "Approved" && stageOf(r) === "paymongo") || (disc && r.refund?.state === "processing")) && r.bookingID && (
               <button onClick={onSync} disabled={busy || syncing} title="Ask PayMongo whether this refund already went through"
-                className="px-4 py-2 rounded-xl text-sm font-semibold text-blue-700 border border-blue-200 bg-blue-50 hover:bg-blue-100 disabled:opacity-50">
+                className="w-full py-2 rounded-xl text-sm font-semibold text-blue-700 border border-blue-200 bg-blue-50 hover:bg-blue-100 disabled:opacity-50">
                 {syncing ? "Checking…" : "Check with PayMongo"}
               </button>
             )}
             {!disc && isScheduled(r) && (
               <>
-                <span className="text-xs text-violet-700 italic">Scheduled for {stampText(toDate(r.sendAfter))}</span>
+                <span className="text-xs text-violet-700 italic text-center">Scheduled for {stampText(toDate(r.sendAfter))}</span>
                 {scheduleLastError(r) && new Date(toDate(r.sendAfter)).getTime() <= Date.now() && (
                   <button onClick={onRetryScheduled} disabled={busy}
-                    className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50">
+                    className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50">
                     {busy ? "…" : "Retry now"}
                   </button>
                 )}
               </>
             )}
-            {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic">{failedOwed > 0 ? "Needs manual follow-up — record the hand-back" : "Needs manual follow-up"}</span>}
+            {!disc && r.status === "Failed" && <span className="text-xs text-red-500 italic text-center">{failedOwed > 0 ? "Needs manual follow-up — record the hand-back" : "Needs manual follow-up"}</span>}
             {showHandback && (
               <button onClick={onHandback} disabled={busy || retrying} title="Confirm you handed this amount back to the customer"
-                className="inline-flex items-center justify-center gap-1 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
+                className="flex w-full items-center justify-center gap-1 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50">
                 <IconCheck /> {busy ? "..." : `Handed back ${fmt(handbackAmt)}`}
               </button>
             )}
             {disc && r.refund.state === "failed" && (!viaDepositRoutes(r) || canDepositReturn) && (
-              <button onClick={onRetry} disabled={retrying} className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
+              <button onClick={onRetry} disabled={retrying} className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
                 {retrying ? "…" : `Retry ${fmt(r.refund.amount)} refund`}
               </button>
             )}
             {disc && r.refund.state === "awaiting_handback" && (
-              <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)} className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600">
+              <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)} className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600">
                 Record hand-back →
               </button>
             )}
@@ -798,16 +824,18 @@ const reasonTextOf = (r) => isDeposit(r) ? "Security deposit return"
   : isDiscount(r) ? (r.ledger ? "Discount credit returned after the trip" : (r.discountReason || "Staff discount"))
   : ((r.customerReason !== undefined ? r.customerReason : r.reason) || "");
 // "Search by" options — mirror the table's columns. Status (and the Type buttons) have their own controls.
-// Booking ID, Payment ID, Request ID and Reason have no column (Reason is in the View window) but stay searchable.
+// `hidden` options are NOT offered in the dropdown (Updated by, Request ID and Reason), but the search itself still knows
+// them: a link from another page (?search=<requestID>, see below) needs Request ID to work. Such an option only shows in the
+// dropdown while a link has it selected, and disappears again once the person picks something else.
 const REFUND_SEARCH_BY = [
   { key: "requested", label: "Requested",  type: "date" },
   { key: "updated",   label: "Updated",    type: "date" },
-  { key: "updatedBy", label: "Updated by", type: "text" },
+  { key: "updatedBy", label: "Updated by", type: "text", hidden: true },
   { key: "customer",  label: "Customer",   type: "text" },
   { key: "bookingID", label: "Booking ID", type: "text" },
   { key: "paymentID", label: "Payment ID", type: "text" },
-  { key: "requestID", label: "Request ID", type: "text" },
-  { key: "reason",    label: "Reason",     type: "text" },
+  { key: "requestID", label: "Request ID", type: "text", hidden: true },
+  { key: "reason",    label: "Reason",     type: "text", hidden: true },
 ];
 
 export default function RefundRequests() {
@@ -1242,12 +1270,12 @@ export default function RefundRequests() {
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
                 />
               )}
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setApproveTarget(null)} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Cancel</button>
+              <div className="flex flex-col-reverse gap-2">
+                <button onClick={() => setApproveTarget(null)} className="w-full py-2 rounded-xl text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
                 <button
                   onClick={() => approve(approveTarget.refundRequestID, { waiveForfeit, waiveReason })}
                   disabled={busyId === approveTarget.refundRequestID || (waiveForfeit && !waiveReason.trim())}
-                  className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                  className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
                 >
                   {busyId === approveTarget.refundRequestID ? "Approving..." : (willSchedule ? "Confirm & Schedule" : "Confirm Approve")}
                 </button>
@@ -1282,12 +1310,12 @@ export default function RefundRequests() {
               rows={2}
               className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
             />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setQuoteChange(null)} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">Cancel</button>
+            <div className="flex flex-col-reverse gap-2">
+              <button onClick={() => setQuoteChange(null)} className="w-full py-2 rounded-xl text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
               <button
                 onClick={() => approve(quoteChange.id, { expectedAmount: quoteChange.current, confirmQuoteChange: true, reason: quoteReason.trim() })}
                 disabled={busyId === quoteChange.id || !quoteReason.trim()}
-                className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
               >
                 {busyId === quoteChange.id ? "Approving..." : `Approve ${fmt(quoteChange.current)}`}
               </button>
@@ -1317,14 +1345,14 @@ export default function RefundRequests() {
               rows={3}
               className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20"
             />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setRejectTarget(null)} className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100">
+            <div className="flex flex-col-reverse gap-2">
+              <button onClick={() => setRejectTarget(null)} className="w-full py-2 rounded-xl text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">
                 Cancel
               </button>
               <button
                 onClick={submitReject}
                 disabled={busyId === rejectTarget.refundRequestID}
-                className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50"
+                className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50"
               >
                 {busyId === rejectTarget.refundRequestID ? "Rejecting…" : "Confirm Reject"}
               </button>
@@ -1379,7 +1407,7 @@ export default function RefundRequests() {
               onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
               className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
             >
-              {REFUND_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+              {REFUND_SEARCH_BY.filter((o) => !o.hidden || o.key === searchByKey).map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
             </select>
           </div>
           {searchOpt.type === "date" ? (

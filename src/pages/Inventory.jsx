@@ -10,9 +10,54 @@ const EMPTY_FORM = { carPartName: "", carPartTypeID: "", serialNumber: "", price
 const formatPeso = (n) =>
   `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-// Table header cell + full-size row buttons — same look as Holidays / Addresses.
-const thCls = "text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider";
-const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition";
+const PAGE_SIZE = 10;
+
+// ─── Pagination (same pattern as Bookings.jsx / Maintenance.jsx) ─────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
+}
+
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (totalPages <= 1) return null;
+  const nums = [1];
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
+  nums.push(totalPages);
+  const dedup = [...new Set(nums)].sort((x, y) => x - y);
+  const rangeEnd = Math.min(start + pageSize, count);
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // A part's live condition (carParts.status). Set by the backend from inspections + Completed
 // maintenance jobs (services/carParts/carPartConditions.service.js) — read-only here.
@@ -162,6 +207,7 @@ export default function Inventory() {
   };
 
   const startAdd = () => {
+    setPage(1); // the add row sits at the top of the table
     setEditingID(null);
     setIsAdding(true);
     setFormState({ ...EMPTY_FORM, carPartTypeID: partTypes[0]?.id || "" });
@@ -222,6 +268,7 @@ export default function Inventory() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Failed to add part.");
       setParts(prev => [...prev, json.data]);
+      setPage(Math.ceil((parts.length + 1) / PAGE_SIZE));
       setIsAdding(false);
       showToast("Part added.");
     } catch (e) {
@@ -245,6 +292,10 @@ export default function Inventory() {
       showToast("Failed to remove part: " + e.message, "error");
     }
   };
+
+  // Paginated like Bookings. Back to page 1 when the car changes; after adding, jump to the last page so the new part is visible.
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(parts, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [selectedCar?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inputCls = "w-full text-xs rounded-lg border px-2.5 py-1.5 bg-white border-gray-200 text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-300";
 
@@ -298,93 +349,99 @@ export default function Inventory() {
 
         {/* Parts panel */}
         {selectedCar && (
-          <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft p-5">
-            <div className="flex items-center justify-between mb-4">
+          <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b">
               <div>
                 <h3 className="font-bold text-gray-800 text-sm">{selectedCar.label}</h3>
                 <p className="text-xs text-gray-400">{parts.length} part{parts.length !== 1 ? "s" : ""}</p>
               </div>
               <button
                 onClick={startAdd}
-                className="text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700"
+                className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold"
               >
                 + Add Part
               </button>
             </div>
 
-            {partsLoading ? (
-              <div className="h-32 rounded-xl bg-gray-100 animate-pulse" />
-            ) : (
-              <div className="border border-gray-100 rounded-xl overflow-x-auto">
-                <table className="w-full text-sm font-sans min-w-[720px]">
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50">
-                      <th className={thCls}>Part</th>
-                      <th className={thCls}>Type</th>
-                      <th className={thCls}>Serial No.</th>
-                      <th className={thCls}>Price</th>
-                      <th className={thCls}>Status</th>
-                      <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+                    <th className="px-4 py-3 text-left font-semibold">Part</th>
+                    <th className="px-4 py-3 text-left font-semibold">Type</th>
+                    <th className="px-4 py-3 text-left font-semibold">Serial No.</th>
+                    <th className="px-4 py-3 text-left font-semibold">Price</th>
+                    <th className="px-4 py-3 text-left font-semibold">Status</th>
+                    <th className="px-4 py-3 text-left font-semibold">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {isAdding && (
+                    <tr className="border-b border-gray-50">
+                      <td colSpan={6} className="p-3">
+                        <PartFormRow
+                          formState={formState} setFormState={setFormState} partTypes={partTypes}
+                          onSave={saveNew} onCancel={cancelForm} saving={saving} inputCls={inputCls}
+                        />
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {isAdding && (
-                      <tr className="border-b border-gray-50">
+                  )}
+
+                  {partsLoading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i} className="border-b border-gray-50">
+                        {Array.from({ length: 6 }).map((__, j) => (
+                          <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : parts.length === 0 && !isAdding ? (
+                    <tr>
+                      <td colSpan={6} className="text-center py-16 text-gray-400 text-sm">
+                        No parts in the catalog for this vehicle yet.
+                      </td>
+                    </tr>
+                  ) : pageItems.map((part, i) => (
+                    editingID === part.id ? (
+                      <tr key={part.id} className="border-b border-gray-50">
                         <td colSpan={6} className="p-3">
                           <PartFormRow
                             formState={formState} setFormState={setFormState} partTypes={partTypes}
-                            onSave={saveNew} onCancel={cancelForm} saving={saving} inputCls={inputCls}
+                            onSave={saveEdit} onCancel={cancelForm} saving={saving} inputCls={inputCls}
                           />
                         </td>
                       </tr>
-                    )}
-
-                    {parts.length === 0 && !isAdding && (
-                      <tr>
-                        <td colSpan={6} className="px-5 py-10 text-center text-sm text-gray-400">
-                          No parts in the catalog for this vehicle yet.
+                    ) : (
+                      <tr key={part.id}
+                        className={`border-b border-gray-50 last:border-0 hover:bg-teal-50/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/20" : ""}`}>
+                        <td className="px-4 py-3 font-semibold text-gray-800 text-sm">{part.carPartName || "—"}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {partTypes.find(t => t.id === part.carPartTypeID)?.carPartName || <span className="text-gray-400">No type</span>}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{part.serialNumber || "—"}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {part.price != null ? (
+                            <span className="text-sm font-semibold text-gray-700">{formatPeso(part.price)}</span>
+                          ) : (
+                            <span className="text-xs text-gray-300 italic">No price</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap"><PartStatusBadge status={part.status} /></td>
+                        <td className="px-4 py-3 text-left whitespace-nowrap">
+                          <div className="inline-flex items-center gap-2">
+                            <button onClick={() => startEdit(part)}
+                              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">Edit</button>
+                            <button onClick={() => removePart(part)}
+                              className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">Remove</button>
+                          </div>
                         </td>
                       </tr>
-                    )}
-
-                    {parts.map(part => (
-                      editingID === part.id ? (
-                        <tr key={part.id} className="border-b border-gray-50">
-                          <td colSpan={6} className="p-3">
-                            <PartFormRow
-                              formState={formState} setFormState={setFormState} partTypes={partTypes}
-                              onSave={saveEdit} onCancel={cancelForm} saving={saving} inputCls={inputCls}
-                            />
-                          </td>
-                        </tr>
-                      ) : (
-                        <tr key={part.id} className="border-b border-gray-50 hover:bg-gray-50/50">
-                          <td className="px-5 py-3 font-semibold text-gray-800">{part.carPartName || "—"}</td>
-                          <td className="px-5 py-3 text-gray-600">
-                            {partTypes.find(t => t.id === part.carPartTypeID)?.carPartName || <span className="text-gray-400">No type</span>}
-                          </td>
-                          <td className="px-5 py-3 text-gray-500 whitespace-nowrap">{part.serialNumber || "—"}</td>
-                          <td className="px-5 py-3 whitespace-nowrap">
-                            {part.price != null ? (
-                              <span className="font-semibold text-gray-700">{formatPeso(part.price)}</span>
-                            ) : (
-                              <span className="text-xs text-gray-300 italic">No price</span>
-                            )}
-                          </td>
-                          <td className="px-5 py-3 whitespace-nowrap"><PartStatusBadge status={part.status} /></td>
-                          <td className="px-5 py-3">
-                            <div className="flex items-center gap-2 justify-end">
-                              <button onClick={() => startEdit(part)} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
-                              <button onClick={() => removePart(part)} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>Remove</button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    )
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
           </div>
         )}
       </div>

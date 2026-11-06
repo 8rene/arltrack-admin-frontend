@@ -59,6 +59,12 @@ const IconInfo = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconFileText = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5zM14 3v5h5M9 13h6M9 17h6" />
+  </svg>
+);
+
 const fmtDateTime = (val) => {
   if (!val) return "—";
   const d = new Date(val);
@@ -69,6 +75,10 @@ const fmtDateTime = (val) => {
 const fmtDay = (val) => {
   const d = new Date(val);
   return isNaN(d) ? "—" : d.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric" });
+};
+const fmtDayOnly = (val) => {
+  const d = new Date(val);
+  return isNaN(d) ? "—" : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
 };
 const fmtClock = (val) => {
   const d = new Date(val);
@@ -88,6 +98,22 @@ const fmtDuration = (start, end) => {
   const h = hrs  ? `${hrs} ${hrs === 1 ? "hr" : "hrs"}`     : "";
   return [d, h].filter(Boolean).join(" ");
 };
+
+const STATUS_PILL = {
+  upcoming:  { dot: "bg-yellow-500", bg: "bg-yellow-50 border border-yellow-200", label: "Upcoming" },
+  ongoing:   { dot: "bg-green-500",  bg: "bg-green-50 border border-green-200",   label: "Ongoing" },
+  completed: { dot: "bg-blue-500",   bg: "bg-blue-50 border border-blue-200",     label: "Completed" },
+  cancelled: { dot: "bg-red-500",    bg: "bg-red-50 border border-red-200",       label: "Cancelled" },
+  stolen:    { dot: "bg-red-900",    bg: "bg-red-100 border border-red-300",      label: "Stolen" },
+};
+function StatusPill({ status }) {
+  const b = STATUS_PILL[status] || { dot: "bg-gray-400", bg: "bg-gray-50 border border-gray-200", label: (status || "—").replace("_", " ") };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-black ${b.bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${b.dot}`} />{b.label}
+    </span>
+  );
+}
 
 // Stat card — same design as the admin Dashboard.jsx cards (p-5, border, uppercase label, 2xl value).
 function StatCard({ icon, label, value, tint }) {
@@ -168,6 +194,11 @@ export default function DriverDashboard() {
   const upcoming        = liveTrips.filter(t => t.status === "upcoming")
     .sort((a, b) => new Date(a.startDateTime) - new Date(b.startDateTime));
   const completedCount = pastTrips.filter(t => t.status === "completed").length;
+
+  // Latest finished trips (completed/cancelled/stolen), newest first — shown as a table at the bottom.
+  const recentTrips = [...pastTrips]
+    .sort((a, b) => new Date(b.startDateTime) - new Date(a.startDateTime))
+    .slice(0, 5);
 
   // "Next up" = the ongoing trip if there is one (needs attention now),
   // otherwise the soonest upcoming booking.
@@ -285,14 +316,61 @@ export default function DriverDashboard() {
         </div>
       )}
 
-      {/* QUICK LINKS — Vehicle Inspections is staff-only now (a supervisor
-          completes it; the driver's pickup/return waits on it in My Trips). */}
-      <div className="grid grid-cols-1 gap-3">
-        <button onClick={() => navigate("/my-trips")}
-          className="bg-white rounded-2xl border shadow-sm p-4 flex flex-col items-center gap-2 hover:bg-gray-50 transition-colors">
-          <IconSteering className="w-5 h-5 text-arl-primary" />
-          <span className="text-xs font-semibold text-arl-dark">My Trips</span>
-        </button>
+      {/* MOST RECENT TRIPS — same card layout as "Recent Bookings" on the staff Dashboard */}
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+            <IconFileText className="w-4 h-4 text-gray-600" />
+            Most Recent Trips
+          </h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wide">
+                <th className="px-4 py-3 font-medium">Trip Start</th>
+                <th className="px-4 py-3 font-medium">Trip End</th>
+                <th className="px-4 py-3 font-medium">Customer</th>
+                <th className="px-4 py-3 font-medium">Vehicle</th>
+                <th className="px-4 py-3 font-medium">Location</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <tr key={i} className="border-b border-gray-50">
+                    {Array.from({ length: 6 }).map((__, j) => (
+                      <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
+                    ))}
+                  </tr>
+                ))
+              ) : recentTrips.length === 0 ? (
+                <tr><td colSpan={6} className="text-center text-gray-400 py-10">No recent trips yet</td></tr>
+              ) : (
+                recentTrips.map((trip) => (
+                  <tr key={trip.id} onClick={() => navigate("/my-trips?tab=history")}
+                    className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer">
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDayOnly(trip.startDateTime)} | {fmtClock(trip.startDateTime)}</td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDayOnly(trip.endDateTime)} | {fmtClock(trip.endDateTime)}</td>
+                    <td className="px-4 py-3 font-medium text-gray-800">{trip.customerName || "—"}</td>
+                    <td className="px-4 py-3 text-gray-600">{trip.vehicleName || "—"}</td>
+                    <td className="px-4 py-3 text-gray-600 max-w-[14rem] truncate" title={trip.location}>{trip.location || "—"}</td>
+                    <td className="px-4 py-3"><StatusPill status={trip.status} /></td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        {!loading && recentTrips.length > 0 && (
+          <div className="flex justify-center py-4 border-t border-gray-100">
+            <button onClick={() => navigate("/my-trips?tab=history")}
+              className="px-5 py-2 rounded-xl text-sm font-medium border text-teal-700 border-teal-200 bg-teal-50 hover:bg-teal-100 transition-colors">
+              See More
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

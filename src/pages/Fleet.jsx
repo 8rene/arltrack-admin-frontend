@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useCurrency } from "../context/CurrencyContext";
 import {
   collection, getDocs, getDoc, doc, query, where,
@@ -275,6 +275,8 @@ export default function Fleet() {
   const [showAddCar, setShowAddCar] = useState(false);
   const [showManageBrands, setShowManageBrands] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const handleDeleteCar = async (car) => {
     try {
@@ -282,6 +284,7 @@ export default function Fleet() {
       // docs in one batch — matches what this used to do by hand.
       await apiFetch(`/api/fleet/cars/${car.id}`, { method: "DELETE" });
       setConfirmDelete(null);
+      setEditCar(null);
       fetchAll();
     } catch (e) { console.error("Delete car error:", e); }
   };
@@ -309,6 +312,16 @@ export default function Fleet() {
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Deep link from a booking (its vehicle name): open that car's Details window right away.
+  // The id is cleared from the history entry so a refresh or Back doesn't reopen it.
+  const openCarId = location.state?.openCarId;
+  useEffect(() => {
+    if (!openCarId || loading) return;
+    const car = cars.find((c) => c.id === openCarId || c.carID === openCarId);
+    if (car) setDetailCar(car);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [openCarId, loading, cars, navigate, location.pathname]);
 
   // Refreshes just the brand / model lists (no page spinner), so the Brands & Models window can stay open after each change.
   // Cars are refreshed too, so a rename shows on the vehicle cards and the "used by" counts stay right.
@@ -456,8 +469,6 @@ export default function Fleet() {
             <VehicleCard key={car.id} car={car}
               canEdit={canEdit}
               onViewDetails={() => setDetailCar(car)}
-              onEdit={() => setEditCar(car)}
-              onDelete={() => setConfirmDelete(car)}
               onStatusChange={(id, st, extra = {}) => setCars(prev => prev.map(c => c.id === id ? { ...c, status: st, ...extra } : c))} />
           ))}
         </div>
@@ -472,6 +483,7 @@ export default function Fleet() {
         <EditCarModal car={editCar} brands={brands} models={models} cars={cars}
           onCreateBrand={createBrandInline} onCreateModel={createModelInline}
           onClose={() => setEditCar(null)}
+          onDelete={() => setConfirmDelete(editCar)}
           onSaved={() => { setEditCar(null); fetchAll(); }} />
       )}
       {showAddCar && (
@@ -496,7 +508,7 @@ export default function Fleet() {
 }
 
 // ─── VEHICLE CARD ─────────────────────────────────────────────────────────────
-function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusChange }) {
+function VehicleCard({ car, canEdit, onViewDetails, onStatusChange }) {
   const { fmt } = useCurrency();
   const navigate = useNavigate();
   const [nearestBooking, setNearestBooking] = useState(null);
@@ -663,15 +675,6 @@ function VehicleCard({ car, canEdit, onViewDetails, onEdit, onDelete, onStatusCh
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={onDelete} className="p-1.5 border border-red-200 rounded-lg text-red-500 hover:bg-red-50">
-              <Icons.Trash className="w-4 h-4" />
-            </button>
-            {canEdit && (
-              <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">
-                <Icons.Edit className="w-3.5 h-3.5" />
-                Edit
-              </button>
-            )}
             <button onClick={onViewDetails} className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
               Details
               <Icons.ArrowRight className="w-3.5 h-3.5" />
@@ -1510,28 +1513,20 @@ function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto"
+      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
 
-        <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
+        <div className="flex justify-between items-center p-5 border-b shrink-0 bg-white">
           <div>
             <h2 className="font-bold text-xl text-gray-800">{car.brandName} {car.modelName}</h2>
             <p className="text-sm text-gray-400">{car.bodyType} · {car.plateNumber}</p>
           </div>
-          <div className="flex gap-2 items-center">
-            {canEdit && (
-              <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
-                <Icons.Edit className="w-4 h-4" />
-                Edit
-              </button>
-            )}
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-              <Icons.Close className="w-5 h-5" />
-            </button>
-          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+            <Icons.Close className="w-5 h-5" />
+          </button>
         </div>
 
-        <div className="p-5 space-y-5">
+        <div className="p-5 space-y-5 overflow-y-auto flex-1">
           {/* Image gallery */}
           <div>
             <div className="h-56 bg-gray-100 rounded-xl overflow-hidden">
@@ -1638,6 +1633,14 @@ function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Actions — same layout as the booking details window. */}
+        <div className="px-5 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-1.5">
+          {canEdit && (
+            <button onClick={onEdit} className="w-full px-3 py-2 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Edit</button>
+          )}
+          <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm">Close</button>
         </div>
       </div>
     </div>
@@ -2112,7 +2115,7 @@ function PricingForm({ pricing, setPricing, showRequired = false }) {
 }
 
 // ─── EDIT CAR MODAL ───────────────────────────────────────────────────────────
-function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel, onClose, onSaved }) {
+function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel, onClose, onDelete, onSaved }) {
   const [activeTab, setActiveTab] = useState("details");
   const [form, setForm]         = useState({
     shortDescription: car.shortDescription || "",
@@ -2295,17 +2298,21 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
         </div>
 
         {/* Footer */}
-        <div className="flex justify-between items-center gap-3 p-5 border-t bg-gray-50 rounded-b-2xl">
-          <div className="text-xs text-gray-400">
+        <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl shrink-0 flex flex-col gap-1.5">
+          <p className="text-xs text-gray-400 text-center mb-1">
             {activeTab === "details" ? "Edit vehicle info, then switch to Pricing tab" : `${pricingCount} pricing tier${pricingCount !== 1 ? "s" : ""} configured`}
-          </div>
-          <div className="flex gap-3">
-            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 bg-white">Cancel</button>
-            <button onClick={handleSave} disabled={saving || !!statusChangeTarget}
-              className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
-              {saving ? "Saving..." : "Save Changes"}
+          </p>
+          <button onClick={handleSave} disabled={saving || !!statusChangeTarget}
+            className="w-full px-3 py-2 bg-teal-600 text-white rounded-xl text-sm font-semibold hover:bg-teal-700 transition-colors disabled:opacity-50">
+            {saving ? "Saving..." : "Save Changes"}
+          </button>
+          {onDelete && (
+            <button onClick={onDelete} disabled={saving || !!statusChangeTarget}
+              className="w-full px-3 py-2 border border-red-200 bg-red-50 text-red-600 rounded-xl text-sm font-semibold hover:bg-red-100 transition-colors disabled:opacity-50">
+              Delete
             </button>
-          </div>
+          )}
+          <button onClick={onClose} className="w-full mt-0.5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 bg-white">Cancel</button>
         </div>
       </div>
       {statusChangeTarget && (
