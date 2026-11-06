@@ -245,6 +245,10 @@ export default function Payments() {
   const [detailLoading, setDetailLoading] = useState(false);
   // "Return deposit": the hand-back of the security deposit (after penalties) for the open payment's booking.
   const [returnDepositOpen, setReturnDepositOpen] = useState(false);
+  // The "Return deposit" button shows only while the deposit is still held on an ongoing / completed booking. When it does,
+  // Deposit Breakdown (which holds the button) opens by itself; otherwise it stays hidden until someone opens it.
+  const returnDepositAvailable = !!selected && canReturnDepositRole && selected.depositStatus === "Held" &&
+    ["ongoing", "completed"].includes(String(selected.bookingStatus || "").toLowerCase());
   const [toast, setToast]                 = useState(null);
   const [updating, setUpdating]           = useState(false);
   const [applyingDiscount, setApplyingDiscount] = useState(false);
@@ -322,7 +326,8 @@ export default function Payments() {
 
   // Deep-link from other pages (e.g. Car Tracking's payment modal linking
   // here with ?bookingID=...) — pre-fill the search box so the relevant
-  // payment is right there in the filtered table (the detail modal is not auto-opened).
+  // payment is right there in the filtered table, and jump straight into
+  // its detail panel if it's the only match.
   useEffect(() => {
     // ?paymentID= (e.g. from Refund Requests) is the precise link; ?bookingID=
     // is the looser one and can match more than one payment.
@@ -332,7 +337,10 @@ export default function Payments() {
     if (!key || payments.length === 0) return;
     setSearchBy(paymentID ? "paymentID" : "bookingID");
     setSearch(key);
-    // Modals stay hidden by default: the link only pre-fills the search and no longer auto-opens the detail modal.
+    const matches = paymentID
+      ? payments.filter((p) => p.paymentID === paymentID || p.id === paymentID)
+      : payments.filter((p) => p.bookingID === bookingID);
+    if (matches.length === 1) openDetail(matches[0].id);
     // The link has been used, so take it out of the URL (same as Bookings.jsx does with ?open=). Without this the
     // effect runs again every time `payments` changes -- the 45-second refresh, a status change, recording a payment
     // -- and re-opened the details no matter how the user closed them.
@@ -697,14 +705,6 @@ export default function Payments() {
                       <IconX className="w-5 h-5" />
                     </button>
                   </div>
-                  <p className="text-sm text-gray-500 mt-1 truncate">
-                    {selected.customerName || "—"}{selected.vehicleName ? ` · ${selected.vehicleName}` : ""}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-0.5 truncate">
-                    <span className="font-mono">{selected.paymentID}</span>
-                    {selected.methodOfPayment && selected.methodOfPayment !== "—" ? ` · ${selected.methodOfPayment}` : ""}
-                    {` · Submitted ${fmtDate(selected.createdAt)}`}
-                  </p>
                   <div className="flex border-b border-gray-100 mt-3" role="tablist">
                     {[
                       ["summary", "Summary"],
@@ -785,6 +785,9 @@ export default function Payments() {
                         <Row label="Name" value={selected.customerName} />
                         <Row label="Booking ID" value={selected.bookingID} mono />
                         <Row label="Vehicle" value={selected.vehicleName} />
+                        <Row label="Payment ID" value={selected.paymentID} mono />
+                        {selected.methodOfPayment && selected.methodOfPayment !== "—" && <Row label="Payment Type" value={selected.methodOfPayment} />}
+                        <Row label="Submitted" value={fmtDate(selected.createdAt)} />
                         <Row
                           label="Balance"
                           hint="What the customer still has to pay. A discount on a partial payment comes off this amount."
@@ -961,7 +964,7 @@ export default function Payments() {
                       {/* LAST on the summary: where the security deposit stands, and where it is handed back. Penalties are
                           deducted from it first (Deposit Settled), the rest goes back to the customer (Deposit Returned). */}
                       {selected.securityDeposit > 0 && (
-                        <InfoSection title="Deposit Breakdown" cols={3} defaultOpen={false}>
+                        <InfoSection title="Deposit Breakdown" cols={3} defaultOpen={returnDepositAvailable}>
                           <InfoField label="Security Deposit" value={peso(selected.securityDeposit, fmtCurrency)} />
                           {selected.depositStatus && <InfoField label="Deposit Status" value={selected.depositStatus} />}
                           <InfoField label="Deposit Settled (used for penalties)" value={peso(selected.depositSettled, fmtCurrency)} />
@@ -1010,17 +1013,14 @@ export default function Payments() {
                                   label={stillHeld ? "To Return (deposit + discount)" : "Total Returned"}
                                   value={peso(stillHeld ? depositLeft + held : Math.max(0, (selected.depositReturned || 0) - depNotYet) + back, fmtCurrency)}
                                 />
-                                {stillHeld && <p className="col-span-full text-[11px] text-gray-400 -mt-2">Any penalty still unpaid comes off this first. The exact amount is shown when you return it.</p>}
                               </>
                             );
                           })()}
-                          {canReturnDepositRole && selected.depositStatus === "Held" && ["ongoing", "completed"].includes(String(selected.bookingStatus || "").toLowerCase()) && (
+                          {returnDepositAvailable && (
                             <div className="col-span-full border-t border-gray-100 pt-3 space-y-1.5">
-                              <p className="text-xs text-gray-500">
-                                {String(selected.bookingStatus || "").toLowerCase() === "ongoing"
-                                  ? "The trip is still ongoing. Returning the deposit here also marks the booking completed."
-                                  : "The booking is completed and the deposit is still held. Return it here — penalties are deducted first."}
-                              </p>
+                              {String(selected.bookingStatus || "").toLowerCase() === "ongoing" && (
+                                <p className="text-xs text-gray-500">The trip is still ongoing. Returning the deposit here also marks the booking completed.</p>
+                              )}
                               <button onClick={() => setReturnDepositOpen(true)}
                                 className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700">
                                 Return deposit
@@ -1391,7 +1391,8 @@ function DiscountRefundCard({ payment, fmt, canAct, canEdit = false, onRetry, re
         </span>
       </div>
       {payment.discountReason && <p className="text-xs text-gray-600">{(d?.events || []).filter((e) => e.kind === "balance" || e.kind === "credit").length > 1 ? "Latest reason" : "Reason"}: {payment.discountReason}</p>}
-      <p className={`text-xs ${st.text}`}>{copy}</p>
+      {/* No description for the quiet states; processing / failed / hand-back keep theirs because they tell staff what to do. */}
+      {!["held", "deducted", "returned", "refunded"].includes(dr.state) && <p className={`text-xs ${st.text}`}>{copy}</p>}
       {ledger && parts.length > 1 && (
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-700">
           {parts.map(([label, v]) => <span key={label}>{label} <span className="font-semibold">{peso(v, fmt)}</span></span>)}
@@ -1493,12 +1494,33 @@ function InfoSection({ title, aside, children, cols = 2, flush = false, collapsi
     </section>
   );
 }
-function InfoField({ label, value, wide, full, color, bold, note }) {
+// `hint` is a description kept out of sight until the small "?" beside the label is clicked (same button as Row's).
+// `note` is the older always-visible line, still used where the text matters at a glance.
+function InfoField({ label, value, wide, full, color, bold, note, hint }) {
+  const [showHint, setShowHint] = useState(false);
+  const labelEl = <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>;
   return (
     <div className={full ? "col-span-full min-w-0" : wide ? "col-span-2 min-w-0" : "min-w-0"}>
-      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      {hint ? (
+        <div className="flex items-center gap-1.5">
+          {labelEl}
+          <button
+            type="button"
+            onClick={() => setShowHint((v) => !v)}
+            aria-expanded={showHint}
+            aria-label={`What is ${label}?`}
+            title={showHint ? "Hide description" : "What is this?"}
+            className={`w-4 h-4 shrink-0 rounded-full border text-[10px] leading-none font-semibold flex items-center justify-center transition-colors ${
+              showHint ? "border-teal-600 bg-teal-50 text-teal-700" : "border-gray-300 text-gray-400 hover:border-gray-500 hover:text-gray-600"
+            }`}
+          >
+            ?
+          </button>
+        </div>
+      ) : labelEl}
       <div className={`text-sm mt-0.5 break-words ${bold ? "font-semibold" : "font-medium"} ${color || "text-gray-800"}`}>{value || "—"}</div>
       {note && <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{note}</p>}
+      {hint && showHint && <p className="text-[11px] text-gray-400 mt-1 leading-snug">{hint}</p>}
     </div>
   );
 }
@@ -1650,9 +1672,9 @@ function GatewayBreakdown({ payment, fmt }) {
   return (
     <InfoSection title="Gateway Breakdown" cols={3} defaultOpen={false}>
       <InfoField label="Payment Gateway" color="text-green-600" value={peso(paymentReceived, fmt)}
-        note={g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid on the booking"} />
+        hint={g.rate > 0 ? `${g.rate}% of ${peso(g.base, fmt)}, paid by the customer` : "Gateway fee the customer paid on the booking"} />
       {pen
-        ? <InfoField label="Penalty Gateway" color="text-green-600" value={peso(penaltyReceived, fmt)} note="Online fee the customer paid on penalties over the threshold" />
+        ? <InfoField label="Penalty Gateway" color="text-green-600" value={peso(penaltyReceived, fmt)} hint="Online fee the customer paid on penalties over the threshold" />
         : <div />}
       <InfoField label="Total Gateway Received" bold color="text-green-600" value={peso(receivedTotal, fmt)} />
 
@@ -1661,11 +1683,11 @@ function GatewayBreakdown({ payment, fmt }) {
           <div className="col-span-full border-t border-gray-100" />
           {paymentFee !== null
             ? <InfoField label="Payment Transaction Fee" color="text-red-400" value={peso(paymentFee, fmt)}
-                note={g.fees.map((f, i) => `Payment ${i + 1} · ${PHASE_NAME[f.phase]}${f.inStore ? " (in store)" : ""}: ${peso(f.amount, fmt)}`).join(" · ") || "PayMongo's fee on the booking"} />
+                hint={g.fees.map((f, i) => `Payment ${i + 1} · ${PHASE_NAME[f.phase]}${f.inStore ? " (in store)" : ""}: ${peso(f.amount, fmt)}`).join(" · ") || "PayMongo's fee on the booking"} />
             : <div />}
           {penaltyFee !== null
             ? <InfoField label="Penalty Transaction Fee" color="text-red-400" value={peso(penaltyFee, fmt)}
-                note={penItems.map((it, i) => `Penalty ${i + 1} · ${it.description}: ${it.paymongoFee === null ? "not recorded" : peso(it.paymongoFee, fmt)}`).join(" · ") || "PayMongo's fee on penalties"} />
+                hint={penItems.map((it, i) => `Penalty ${i + 1} · ${it.description}: ${it.paymongoFee === null ? "not recorded" : peso(it.paymongoFee, fmt)}`).join(" · ") || "PayMongo's fee on penalties"} />
             : <div />}
           <InfoField label="Total Transaction Fee" bold color="text-red-600" value={peso(feeTotal, fmt)} />
         </>
@@ -1673,7 +1695,7 @@ function GatewayBreakdown({ payment, fmt }) {
 
       {Number(payment?.paymongoFee?.keptOnRefunds) > 0 && (
         <InfoField label="PayMongo Fee Kept on Refunds" color="text-red-400" value={peso(Number(payment.paymongoFee.keptOnRefunds), fmt)}
-          note="Fee PayMongo kept on charges that were refunded or returned" />
+          hint="Fee PayMongo kept on charges that were refunded or returned" />
       )}
 
       {hasFees ? (
@@ -1857,38 +1879,37 @@ function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null, onVie
                 <th className="text-left font-medium px-4 py-2 w-10">#</th>
                 <th className="text-left font-medium px-2 py-2">Description</th>
                 <th className="text-left font-medium px-2 py-2">Status</th>
-                <th className="text-right font-medium px-2 py-2">Paid</th>
-                <th className="text-right font-medium px-4 py-2">Amount</th>
+                <th className="text-right font-medium px-2 py-2">Amount</th>
+                <th className="text-right font-medium px-4 py-2">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {list.map((p, i) => {
                 const st = penaltyState(p);
                 const gone = p.status !== "Confirmed";
-                const note = gone
-                  ? p.status === "UnderReview"
-                    ? `Noted ${fmtDate(p.createdAt)} — waiting for a supervisor's review. The customer hasn't been notified. Not counted as owed yet.`
-                    : `${p.status} on ${fmtDate(p.createdAt)}${p.statusReason ? ` — ${p.statusReason}` : ""}. Not counted as owed.`
-                  : `Charged ${fmtDate(p.createdAt)}`;
+                // A charged penalty needs no extra line. Waived / voided / etc. keep their reason, since it says why they aren't owed.
+                const note = !gone ? null
+                  : p.status === "UnderReview"
+                    ? "Waiting for a supervisor's review. The customer hasn't been notified. Not counted as owed yet."
+                    : `${p.status}${p.statusReason ? ` — ${p.statusReason}` : ""}. Not counted as owed.`;
                 return (
                   <tr key={p.penaltyID || i} className="align-top">
                     <td className="px-4 py-2.5 text-gray-400">{i + 1}</td>
                     <td className="px-2 py-2.5 min-w-0">
                       <div className="font-medium text-gray-800 break-words">{p.description}</div>
-                      <div className="text-[11px] text-gray-400 mt-0.5">{note}</div>
-                      {onViewPenalty && p.penaltyID && (
-                        <button type="button" onClick={() => onViewPenalty(p.penaltyID)}
-                          className="text-[11px] font-semibold text-teal-700 hover:underline mt-0.5">
-                          View →
-                        </button>
-                      )}
+                      {note && <div className="text-[11px] text-gray-400 mt-0.5">{note}</div>}
                     </td>
                     <td className={`px-2 py-2.5 font-medium whitespace-nowrap ${st.color}`}>{st.label}</td>
-                    <td className="px-2 py-2.5 text-right text-gray-600 whitespace-nowrap">
-                      {gone ? "—" : peso(Math.min(p.paidAmount, p.amount), fmt)}
-                    </td>
-                    <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${gone ? "text-gray-400 line-through" : "text-gray-800"}`}>
+                    <td className={`px-2 py-2.5 text-right font-medium whitespace-nowrap ${gone ? "text-gray-400 line-through" : "text-gray-800"}`}>
                       {peso(p.amount, fmt)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                      {onViewPenalty && p.penaltyID && (
+                        <button type="button" onClick={() => onViewPenalty(p.penaltyID)}
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                          View
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -1898,19 +1919,19 @@ function PenaltyBreakdown({ penalties, payment, fmt, onNotePenalty = null, onVie
         </div>
       )}
       <div className="p-4 grid grid-cols-3 gap-x-6 gap-y-4 border-t border-gray-100">
-        <InfoField label="Total Charged" bold value={peso(charged, fmt)} note="Confirmed penalties only" />
-        <InfoField label="Paid" value={peso(paid, fmt)} note="Deposit, in store or online" />
-        <InfoField label="Outstanding" bold value={peso(outstanding, fmt)} color={outstanding > 0 ? "text-red-500" : "text-green-600"} note="Charged minus paid" />
-        <InfoField label="Penalties Waived" value={waived > 0 ? `−${peso(waived, fmt)}` : peso(0, fmt)} color={waived > 0 ? "text-amber-600" : "text-gray-400"} note="Forgiven by staff" />
-        {voided > 0 && <InfoField label="Penalties Voided" value={`−${peso(voided, fmt)}`} color="text-gray-400" note="Removed as a mistake" />}
-        {discarded > 0 && <InfoField label="Penalties Discarded" value={`−${peso(discarded, fmt)}`} color="text-gray-400" note="Rejected in review" />}
+        <InfoField label="Total Charged" bold value={peso(charged, fmt)} hint="Confirmed penalties only" />
+        <InfoField label="Paid" value={peso(paid, fmt)} hint="Deposit, in store or online" />
+        <InfoField label="Outstanding" bold value={peso(outstanding, fmt)} color={outstanding > 0 ? "text-red-500" : "text-green-600"} hint="Charged minus paid" />
+        <InfoField label="Penalties Waived" value={waived > 0 ? `−${peso(waived, fmt)}` : peso(0, fmt)} color={waived > 0 ? "text-amber-600" : "text-gray-400"} hint="Forgiven by staff" />
+        {voided > 0 && <InfoField label="Penalties Voided" value={`−${peso(voided, fmt)}`} color="text-gray-400" hint="Removed as a mistake" />}
+        {discarded > 0 && <InfoField label="Penalties Discarded" value={`−${peso(discarded, fmt)}`} color="text-gray-400" hint="Rejected in review" />}
         {hasDeposit && (
           <>
             <InfoField label="Deposit Settled" value={peso(Number(payment.depositSettled) || 0, fmt)}
               bold={Number(payment.depositSettled) > 0} color={Number(payment.depositSettled) > 0 ? undefined : "text-gray-400"}
-              note="Deposit used to pay penalties" />
+              hint="Deposit used to pay penalties" />
             {(Number(payment.depositReturned) > 0 || payment.depositStatus === "Settled") && (
-              <InfoField label="Deposit Returned" value={peso(Number(payment.depositReturned) || 0, fmt)} note="Left over and sent back" />
+              <InfoField label="Deposit Returned" value={peso(Number(payment.depositReturned) || 0, fmt)} hint="Left over and sent back" />
             )}
           </>
         )}

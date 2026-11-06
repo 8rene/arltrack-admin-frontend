@@ -52,15 +52,23 @@ function Section({ title, children }) {
   );
 }
 
-// one money movement: label + amount, with a small grey line (date · method · reference) under it
+// one money movement: the label, then its date, method and reference each on their own small indented line, with the
+// amount on the right. No separator dots, so nothing runs together or wraps mid-line.
 function Move({ n, l, fmt, bold = true }) {
-  const detail = [fmtDate(l.date), METHOD[l.method] || l.method, l.source === "in_person" ? "In person" : null, l.referenceNumber ? `Ref. ${l.referenceNumber}` : null]
-    .filter((v) => v && v !== "—").join(" · ");
+  const lines = [
+    fmtDate(l.date),
+    [METHOD[l.method] || l.method, l.source === "in_person" ? "In person" : null].filter(Boolean).join(" · "),
+  ].filter((v) => v && v !== "—");
   return (
-    <div className="flex justify-between gap-4 text-sm">
+    <div className="flex items-center justify-between gap-4 text-sm">
       <div className="min-w-0">
         <p className="text-gray-800">{n ? `${n}. ` : ""}{l.label}</p>
-        {detail && <p className="text-xs text-gray-500 break-words">{detail}</p>}
+        {(lines.length > 0 || l.referenceNumber) && (
+          <div className="pl-6 text-xs text-gray-500 space-y-0.5 break-words">
+            {lines.map((t, i) => <p key={i}>{t}</p>)}
+            {l.referenceNumber && <p className="break-all">Ref. {l.referenceNumber}</p>}
+          </div>
+        )}
       </div>
       <span className={`text-gray-900 whitespace-nowrap ${bold ? "font-medium" : ""}`}>{fmt(l.amount)}</span>
     </div>
@@ -154,6 +162,24 @@ export default function StatementModal({ bookingID, onClose }) {
               {s.booking.startDateTime && <Row label="Rental period">{fmtDay(s.booking.startDateTime)} – {fmtDay(s.booking.endDateTime)}</Row>}
               <Row label="Booking status"><span className="capitalize">{String(s.booking.status || "").replace(/_/g, " ")}</span></Row>
             </div>
+
+            {/* 0. booking fee: what the booking is made of, same figures as the Booking Fee card on the Bookings page. Zero fees are left out. */}
+            {s.charges?.fees && (() => {
+              const f = s.charges.fees;
+              return (
+                <Section title="Booking fee">
+                  <div>
+                    <Row label="Rental fee">{fmt(f.rental)}</Row>
+                    <Row label="Service fee">{f.service > 0 ? fmt(f.service) : null}</Row>
+                    <Row label="Gateway fee">{f.gateway > 0 ? fmt(f.gateway) : null}</Row>
+                    <Row label="Extra fee (outside base area)">{f.extra > 0 ? fmt(f.extra) : null}</Row>
+                    <Row label={`Driver's fee (${fmt(f.driver / f.days)} × ${f.days} day${f.days > 1 ? "s" : ""})`}>{f.driver > 0 ? fmt(f.driver) : null}</Row>
+                    <Row label="Security deposit (refundable)">{s.charges.securityDeposit > 0 ? fmt(s.charges.securityDeposit) : null}</Row>
+                    <div className="border-t border-gray-200 mt-1 pt-1"><Row label="Total fee" strong>{fmt(s.charges.gross)}</Row></div>
+                  </div>
+                </Section>
+              );
+            })()}
 
             {/* 1. payments */}
             <Section title="Payments">
