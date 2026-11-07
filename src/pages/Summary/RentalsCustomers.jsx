@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
+import { money, count, whenTime } from "../../utils/reportCells";
 import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
 
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
@@ -126,6 +128,8 @@ const STATUSES = [
   { key: "ongoing",   label: "Ongoing",   color: "#2563eb" },
   { key: "upcoming",  label: "Upcoming",  color: "#eab308" },
   { key: "cancelled", label: "Cancelled", color: "#ef4444" },
+  { key: "stolen",    label: "Stolen",    color: "#6b7280" },
+  { key: "notClosed", label: "Not closed", color: "#f97316" },   // still "upcoming" although its end time has passed (a no-show nobody closed)
 ];
 
 // The thin bar under each row (and the two columns before Total): the same bookings split by driving mode.
@@ -206,7 +210,7 @@ const MODAL_PAGE_SIZE = 10;      // same page size as the Bookings table
 
 // ── grouping + sorting ──────────────────────────────────────────────────────
 
-const zeroCounts = () => ({ completed: 0, ongoing: 0, upcoming: 0, cancelled: 0, total: 0, chauffeur: 0, selfDrive: 0, unrecorded: 0 });
+const zeroCounts = () => ({ completed: 0, ongoing: 0, upcoming: 0, cancelled: 0, stolen: 0, notClosed: 0, total: 0, chauffeur: 0, selfDrive: 0, unrecorded: 0 });
 
 function bumpMode(row, b) {
   if (b.modeOfDriving === "With Chauffeur") row.chauffeur += 1;
@@ -600,6 +604,7 @@ function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend, detai
 // ── the tab ─────────────────────────────────────────────────────────────────
 
 function RentalsCustomersView({ report, exportRef }) {
+  const { fmt, currency, convert } = useCurrency();
   const [drive, setDrive] = useState("all");               // all | chauffeur | self : filters the whole tab
   const [detailed, setDetailed] = useState(true);          // Simplified: one Total bookings bar + slim table. Detailed: status split, every status / driving column and the thin bar
   const bookings = useMemo(() => report.bookings || [], [report]);
@@ -612,8 +617,8 @@ function RentalsCustomersView({ report, exportRef }) {
   }, [bookings, drive]);
 
   const counts = useMemo(() => {
-    const c = { completed: 0, ongoing: 0, upcoming: 0, cancelled: 0 };
-    scoped.forEach((b) => { if (b.displayStatus) c[b.displayStatus] += 1; });
+    const c = { completed: 0, ongoing: 0, upcoming: 0, cancelled: 0, stolen: 0, notClosed: 0 };
+    scoped.forEach((b) => { if (b.displayStatus && b.displayStatus in c) c[b.displayStatus] += 1; });   // every booking falls in exactly one status, so they add up to Total Bookings
     return c;
   }, [scoped]);
   const totalBookings = STATUSES.reduce((sum, x) => sum + counts[x.key], 0);
@@ -638,37 +643,62 @@ function RentalsCustomersView({ report, exportRef }) {
   const showMode = detailed && drive === "all" && driving !== null;
   const legend = detailed ? [...STATUSES, ...(showMode ? MODES.filter((m) => m.key !== "unrecorded" || driving.other > 0) : [])] : [TOTAL_SERIES];
 
-  // ── the PDF: what is on screen, but every row (no paging) ──
-  const buildPdf = (kind) => {
-    const wide = kind === "xlsx" || detailed;   // a spreadsheet always gets every column
-    const statusCols = wide ? STATUSES : [];
-    const modeCols = wide && drive === "all" && driving !== null ? MODES.slice(0, 2) : [];
+  // ── the PDF and the Excel file: every row (no paging), every status and driving column, plus the bookings behind the totals and
+  //    the customer / vehicle / service-type pairs behind each "View" window. The file is always the full (Detailed) report;
+  //    the driving filter does apply. ──
+  const buildPdf = () => {
+    const modeOn = drive === "all" && driving !== null;
+    const modeCols = modeOn ? MODES.slice(0, 2) : [];
+    const pdfLegend = [...STATUSES, ...(modeOn ? MODES.filter((m) => m.key !== "unrecorded" || driving.other > 0) : [])];
+    const byTotal = (rows) => rows.slice().sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+    const countCells = (r) => [...STATUSES.map((s) => count(r[s.key], { dash: true })), ...modeCols.map((m) => count(r[m.key], { dash: true })), count(r.total)];
+    const countHead = [...STATUSES.map((s) => s.label), ...modeCols.map((m) => m.label), "Total"];
+    const countAlign = countHead.map(() => "right");
     const group = (title, nameLabel, rows) => {
-      const sorted = rows.slice().sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+      const sorted = byTotal(rows);
       return [
         { type: "title", text: title },
-        { type: "legend", items: legend },
-        { type: "bars", rows: barRows(sorted, detailed ? STATUSES : [TOTAL_SERIES], { text: (r) => String(r.total), sub: showMode ? MODES : undefined }) },
-        { type: "table",
-          head: [nameLabel, ...statusCols.map((s) => s.label), ...modeCols.map((m) => m.label), "Total"],
-          align: ["left", ...statusCols.map(() => "right"), ...modeCols.map(() => "right"), "right"],
-          body: sorted.map((r) => [r.name, ...statusCols.map((s) => r[s.key] || "-"), ...modeCols.map((m) => r[m.key] || "-"), r.total]) },
+        { type: "legend", items: pdfLegend },
+        { type: "bars", rows: barRows(sorted, STATUSES, { text: (r) => String(r.total), sub: modeOn ? MODES : undefined }) },
+        { type: "table", name: title, head: [nameLabel, ...countHead], align: ["left", ...countAlign], body: sorted.map((r) => [r.name, ...countCells(r)]) },
       ];
     };
+    // the "View" windows, flattened: one row per pair (customer + vehicle, vehicle + customer, service type + vehicle)
+    const pairs = (name, desc, aLabel, bLabel, rows) => ({
+      name, desc,
+      head: [aLabel, bLabel, ...countHead],
+      body: byTotal(rows).flatMap((r) => (r.children || []).map((c) => [r.name, c.name, ...countCells(c)])),
+    });
+    const text = (v) => (typeof v === "string" ? v : v && typeof v === "object" ? (v.address || v.name || v.label || "") : "");
+    const statusLabel = (k) => STATUSES.find((s) => s.key === k)?.label || k;
+    const bookingRows = scoped.filter((b) => b.displayStatus).map((b) => [
+      b.bookingID || "", b.customerName, b.carName, svcSupported ? (b.serviceTypeName || "") : "", b.modeOfDriving || "Not recorded",
+      statusLabel(b.displayStatus), text(b.location), whenTime(b.startDate), whenTime(b.endDate), count(b.totalDays), money(b.totalFee), whenTime(b.createdAt),
+    ]);
     return {
-      subtitle: `${report.label}${kind === "xlsx" ? "" : ` · ${detailed ? "Detailed" : "Simplified"}`}${drive !== "all" ? ` · ${drive === "chauffeur" ? "With chauffeur" : "Self-drive"} only` : ""}`,
+      subtitle: report.label,
+      filters: [["Driving", drive === "all" ? "All bookings" : drive === "chauffeur" ? "With chauffeur only" : "Self-drive only"]],
+      currency, fmt, convert,
       sections: [
         { type: "stats", items: [
-          { label: "Active Customers", value: String(activeCustomers) },
-          { label: "Total Bookings", value: String(totalBookings) },
-          { label: "Upcoming Bookings", value: String(counts.upcoming) },
-          { label: "Ongoing Bookings", value: String(counts.ongoing) },
+          { label: "Active Customers", value: String(activeCustomers), n: activeCustomers, t: "int", accent: "#0d9488" },
+          { label: "Total Bookings", value: String(totalBookings), n: totalBookings, t: "int", accent: "#16a34a" },
+          { label: "Upcoming Bookings", value: String(counts.upcoming), n: counts.upcoming, t: "int", accent: "#eab308" },
+          { label: "Ongoing Bookings", value: String(counts.ongoing), n: counts.ongoing, t: "int", accent: "#2563eb" },
         ] },
         ...(totalBookings === 0 ? [{ type: "empty", text: `No bookings started in ${report.label}.` }] : [
+          ...(counts.notClosed > 0 ? [{ type: "note", text: `${counts.notClosed} booking${counts.notClosed === 1 ? " is" : "s are"} still marked upcoming although the end time has passed (shown as Not closed).` }] : []),
           ...group("Customers", "Customer", custRows),
           ...group("Vehicles", "Vehicle", fleetRows),
           ...(svcSupported ? group("Service types", "Service type", svcRows) : []),
         ]),
+      ],
+      sheets: totalBookings === 0 ? [] : [
+        { name: "Bookings", desc: "Every booking started in the period (the records all the counts are made from)",
+          head: ["Booking ID", "Customer", "Vehicle", "Service type", "Driving", "Status", "Location", "Start", "End", "Days", "Total fee", "Created"], body: bookingRows },
+        pairs("Customer by vehicle", "Each customer's bookings split by vehicle: the Customers View window", "Customer", "Vehicle", custRows),
+        pairs("Vehicle by customer", "Each vehicle's bookings split by customer: the Vehicles View window", "Vehicle", "Customer", fleetRows),
+        ...(svcSupported ? [pairs("Service type by vehicle", "Each service type's bookings split by vehicle: the Service types View window", "Service type", "Vehicle", svcRows)] : []),
       ],
     };
   };
@@ -692,6 +722,11 @@ function RentalsCustomersView({ report, exportRef }) {
           <StatCard title="Upcoming Bookings" value={counts.upcoming} Icon={IconClock} color="bg-yellow-500 text-white" />
           <StatCard title="Ongoing Bookings" value={counts.ongoing} Icon={IconActivity} color="bg-blue-600 text-white" />
         </div>
+        {counts.notClosed > 0 && (
+          <p className="px-4 pb-3 -mt-1 text-xs text-orange-600">
+            {counts.notClosed} booking{counts.notClosed === 1 ? " is" : "s are"} still marked upcoming although the end time has passed (shown as "Not closed"). Complete or cancel {counts.notClosed === 1 ? "it" : "them"} so the counts are final.
+          </p>
+        )}
 
         {/* Left: Simplified | Detailed. Then Filter By: the driving dropdown. "All bookings" keeps both modes visible in Detailed
             (thin bar under each row + two columns); "With chauffeur" / "Self-drive" narrow everything on this tab to that mode. */}

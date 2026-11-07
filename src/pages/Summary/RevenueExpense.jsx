@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
+import { money, count } from "../../utils/reportCells";
 import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
 
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
@@ -31,8 +32,9 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // it only shows up here when it is kept (a penalty it covered, or a forfeited deposit) because what went back is
 // subtracted. Same request as Payments & Transactions (/api/reports/money), but this tab reads `report.revenueBasis`
 // (dated by the day the booking ended) while that tab reads the cards / series / cars dated by the day the money moved.
-// There is no "expected" revenue or expense: nothing is shown until it is final. PayMongo fees follow the same date as the
-// revenue they belong to, so Net compares matching things.
+// Expected amounts are drawn as white striped bars and are NEVER part of revenue, expenses or Net: unpaid balances (by the day their
+// booking is due to end) and maintenance that is still Scheduled. PayMongo fees follow the same date as the revenue they belong to,
+// so Net compares matching things. Each vehicle row shows how its revenue is made: Rentals + Penalties - Returned - Deposit held back.
 //
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,7 +211,9 @@ function Legend({ items }) {
     <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500 mb-3">
       {items.map((s) => (
         <span key={s.key} className="flex items-center gap-1.5">
-          {s.line ? <span className="w-3 h-0.5" style={{ background: s.color }} /> : <span className="w-3 h-3 rounded-sm" style={{ background: s.color }} />} {s.label}
+          {s.line ? <span className="w-3 h-0.5" style={{ background: s.color }} /> : s.hatched
+            ? <span className="w-3 h-3 rounded-sm" style={{ background: `repeating-linear-gradient(135deg, #ffffff 0 2px, ${s.color} 2px 4px)`, border: `1px solid ${s.color}` }} />
+            : <span className="w-3 h-3 rounded-sm" style={{ background: s.color }} />} {s.label}
         </span>
       ))}
     </div>
@@ -328,6 +332,10 @@ function VehicleTable({ rows, fmt, sort, onSort, onView, page, pageCount, count,
             <tr>
               {th("Vehicle", "name")}
               {th("Bookings", "bookings")}
+              {th("Rentals", "rentals")}
+              {th("Penalties", "penalties")}
+              {th("Returned", "returned")}
+              {th("Deposit held back", "depositsHeld")}
               {th("Revenue", "revenue")}
               {th("Maintenance", "maintenance")}
               {th("PayMongo fees", "fees")}
@@ -342,6 +350,10 @@ function VehicleTable({ rows, fmt, sort, onSort, onView, page, pageCount, count,
                 <tr key={r.id} className="border-t hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3 font-medium text-gray-800">{r.name}</td>
                   <td className="px-4 py-3 text-gray-600">{r.bookings || <span className="text-gray-300">—</span>}</td>
+                  <MoneyCell value={r.rentals} color={C_GREEN} fmt={fmt} />
+                  <MoneyCell value={r.penalties} color={C_GREEN} fmt={fmt} />
+                  <MoneyCell value={r.returned} color={C_RED} fmt={fmt} />
+                  <MoneyCell value={r.depositsHeld} color="#d97706" fmt={fmt} negRed={false} />
                   <MoneyCell value={r.revenue} color={C_GREEN} fmt={fmt} />
                   <MoneyCell value={r.maintenance} color={C_RED} fmt={fmt} />
                   <MoneyCell value={r.fees} color={C_PURPLE} fmt={fmt} />
@@ -406,12 +418,12 @@ function VehicleBookingsModal({ car, fmt, onClose }) {
                 <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
                   <tr>
                     {["Booking ID", "Customer"].map((h) => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}
-                    {["Revenue", "Maintenance", "PayMongo fees", "Net"].map((h) => <th key={h} className="px-4 py-3 text-left font-semibold whitespace-nowrap">{h}</th>)}
+                    {["Rentals", "Penalties", "Returned", "Deposit held back", "Revenue", "Maintenance", "PayMongo fees", "Net"].map((h) => <th key={h} className="px-4 py-3 text-left font-semibold whitespace-nowrap">{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {pageItems.length === 0 ? (
-                    <tr><td colSpan={6} className="text-center text-gray-400 py-12">No bookings or maintenance for this vehicle</td></tr>
+                    <tr><td colSpan={10} className="text-center text-gray-400 py-12">No bookings or maintenance for this vehicle</td></tr>
                   ) : pageItems.map((c) => {
                     const isJob = String(c.id).startsWith("m:") || String(c.id).startsWith("s:");
                     const [first, rest] = split(c.name);
@@ -423,6 +435,10 @@ function VehicleBookingsModal({ car, fmt, onClose }) {
                             : <span className="font-mono text-xs text-gray-600" title={first}>{first}</span>}
                         </td>
                         <td className="px-4 py-3 text-gray-700">{rest || <span className="text-gray-300">—</span>}</td>
+                        <MoneyCell value={c.rentals} color={C_GREEN} fmt={fmt} />
+                        <MoneyCell value={c.penalties} color={C_GREEN} fmt={fmt} />
+                        <MoneyCell value={c.returned} color={C_RED} fmt={fmt} />
+                        <MoneyCell value={c.depositsHeld} color="#d97706" fmt={fmt} negRed={false} />
                         <MoneyCell value={c.revenue} color={C_GREEN} fmt={fmt} />
                         <MoneyCell value={c.maintenance} color={C_RED} fmt={fmt} />
                         <MoneyCell value={c.fees} color={C_PURPLE} fmt={fmt} />
@@ -467,7 +483,17 @@ function IncomeExpenseChart({ series }) {
     const n = series.length;
     // amounts on the bars: all when there are 12 or fewer, otherwise only the 3 biggest of each colour
     const biggest = (get) => new Set(series.map((b, i) => [i, get(b)]).filter(([, v]) => v !== 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, n <= 12 ? n : 3).map(([i]) => i));
-    const show = [biggest((b) => b.revenue), biggest(exp)];
+    const show = [biggest((b) => b.revenue), biggest(exp)];   // only revenue and expenses are written on the bars; expected amounts are in the tooltip
+    // white-and-colour stripes: the bar of an amount that is expected, not real money yet
+    const hatch = (color) => {
+      const c = document.createElement("canvas");
+      c.width = 8; c.height = 8;
+      const x = c.getContext("2d");
+      x.fillStyle = "#ffffff"; x.fillRect(0, 0, 8, 8);
+      x.strokeStyle = color; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(-2, 10); x.lineTo(10, -2); x.moveTo(-2, 2); x.lineTo(2, -2); x.moveTo(6, 10); x.lineTo(10, 6); x.stroke();
+      return canvasRef.current.getContext("2d").createPattern(c, "repeat");
+    };
 
     const barLabels = {
       id: "barLabels",
@@ -477,6 +503,7 @@ function IncomeExpenseChart({ series }) {
         ctx.font = "600 10px sans-serif";
         ctx.textAlign = "center";
         chart.data.datasets.forEach((ds, di) => {
+          if (!show[di]) return;
           ctx.fillStyle = ds.labelColor || ds.backgroundColor;
           chart.getDatasetMeta(di).data.forEach((el, i) => {
             const v = ds.data[i];
@@ -495,6 +522,8 @@ function IncomeExpenseChart({ series }) {
         datasets: [
           { label: "Revenue",  data: series.map((b) => (b.revenue === 0 ? null : convert(b.revenue))), backgroundColor: C_GREEN, borderRadius: 3, minBarLength: 3, stack: "revenue" },
           { label: "Expenses", data: series.map((b) => (exp(b) === 0 ? null : convert(exp(b)))), backgroundColor: C_RED, borderRadius: 3, minBarLength: 3, stack: "expenses" },
+          { label: "Unpaid (expected)", data: series.map((b) => (b.expected ? convert(b.expected) : null)), backgroundColor: hatch(C_GREEN), borderColor: C_GREEN, borderWidth: 1, borderRadius: 3, minBarLength: 3, stack: "revenue" },
+          { label: "Scheduled maintenance (expected)", data: series.map((b) => (b.scheduled ? convert(b.scheduled) : null)), backgroundColor: hatch(C_RED), borderColor: C_RED, borderWidth: 1, borderRadius: 3, minBarLength: 3, stack: "expenses" },
         ],
       },
       options: {
@@ -515,6 +544,8 @@ function IncomeExpenseChart({ series }) {
               label: (item) => {
                 const b = series[item.dataIndex];
                 if (item.datasetIndex === 0) return `Revenue: ${fmt(b.revenue)}`;
+                if (item.datasetIndex === 2) return `Unpaid balances, expected: ${fmt(b.expected)} (not counted in revenue)`;
+                if (item.datasetIndex === 3) return `Scheduled maintenance, expected: ${fmt(b.scheduled)} (not counted in expenses)`;
                 const pct = b.revenue > 0 ? ` (${Math.round((exp(b) / b.revenue) * 100)}% of revenue)` : "";
                 return `Expenses: ${fmt(exp(b))}${pct}`;
               },
@@ -623,7 +654,7 @@ function PeriodTable({ series }) {
   const { fmt } = useCurrency();
   const [page, setPage] = useState(1);
   const PAGE = 10;
-  const rows = useMemo(() => series.filter((b) => b.rentals || b.penalties || b.returned || b.deposits || b.maintenance || b.fees), [series]);
+  const rows = useMemo(() => series.filter((b) => b.rentals || b.penalties || b.returned || b.deposits || b.maintenance || b.fees || b.expected || b.scheduled), [series]);
   useEffect(() => { setPage(1); }, [series]);
 
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
@@ -631,7 +662,7 @@ function PeriodTable({ series }) {
   const shown = rows.slice((pageNo - 1) * PAGE, pageNo * PAGE);
   const sum = (k) => rows.reduce((s, b) => s + (b[k] || 0), 0);
   if (rows.length === 0) return null;
-  const heads = ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net"];
+  const heads = ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net", "Unpaid (expected)", "Scheduled maint."];   // the last two are not in Net
   const totalNet = sum("net");
   return (
     <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
@@ -655,6 +686,8 @@ function PeriodTable({ series }) {
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-white text-xs font-bold whitespace-nowrap ${b.net < 0 ? "bg-red-500" : "bg-teal-700"}`}>{fmt(b.net)}</span>
                 </td>
+                <MoneyCell value={b.expected} color={C_GREEN} fmt={fmt} />
+                <MoneyCell value={b.scheduled} color={C_RED} fmt={fmt} />
               </tr>
             ))}
           </tbody>
@@ -665,6 +698,9 @@ function PeriodTable({ series }) {
                 <td key={k} className="px-4 py-3 whitespace-nowrap">{fmt(sum(k))}</td>
               ))}
               <td className={`px-4 py-3 whitespace-nowrap ${totalNet < 0 ? "text-red-500" : "text-gray-800"}`}>{fmt(totalNet)}</td>
+              {["expected", "scheduled"].map((k) => (
+                <td key={k} className="px-4 py-3 whitespace-nowrap text-gray-500">{fmt(sum(k))}</td>
+              ))}
             </tr>
           </tfoot>
         </table>
@@ -677,7 +713,7 @@ function PeriodTable({ series }) {
 // ── the tab ─────────────────────────────────────────────────────────────────
 
 function RevenueExpenseView({ report, exportRef }) {
-  const { fmt, currency } = useCurrency();
+  const { fmt, currency, convert } = useCurrency();
   const [sort, setSort] = useState({ key: "revenue", dir: "desc" });
   const [page, setPage] = useState(1);
   const [viewing, setViewing] = useState(null);   // the car whose bookings window is open
@@ -704,26 +740,42 @@ function RevenueExpenseView({ report, exportRef }) {
 
   useEffect(() => { setPage(1); }, [report]);
 
-  const nothing = !cards.moneyIn && !cards.returned && !cards.maintenance && !cards.gatewayFees;
+  const nothing = !cards.moneyIn && !cards.returned && !cards.maintenance && !cards.gatewayFees && !cards.expectedUnpaid && !cards.scheduledMaintenance;
+  const hasExpected = series.some((b) => b.expected);
+  const hasScheduled = series.some((b) => b.scheduled);
+  const chartLegend = [
+    { key: "r", label: "Revenue", color: C_GREEN },
+    { key: "m", label: "Expenses (maintenance + PayMongo fees)", color: C_RED },
+    ...(hasExpected ? [{ key: "e", label: "Unpaid balances (expected)", color: C_GREEN, hatched: true }] : []),
+    ...(hasScheduled ? [{ key: "s", label: "Scheduled maintenance (expected)", color: C_RED, hatched: true }] : []),
+  ];
   const net = cards.net ?? 0;
 
-  // ── the PDF: what is on screen, but every row (no paging) ──
+  // ── the PDF and the Excel file: what is on screen, but every row (no paging) and every day / month (zeros too),
+  //    plus a sheet with the bookings and maintenance jobs behind each vehicle (the "View" window) ──
   const buildPdf = () => {
-    const periodRows = series.filter((b) => b.rentals || b.penalties || b.returned || b.deposits || b.maintenance || b.fees);
-    const sumOf = (k) => periodRows.reduce((s2, b) => s2 + (b[k] || 0), 0);
+    const S = (label, n, accent, color) => ({ label, value: fmt(n), n, t: "money", accent, color });   // a key figure: text for the PDF, a number for Excel; accent = the card's colour
+    const sumOf = (k) => series.reduce((s2, b) => s2 + (b[k] || 0), 0);
     const exp = (b) => b.expenses ?? b.maintenance;
     const carRows = rows.slice().sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name));
+    // child names look like "<bookingID> · <customer>"
+    const splitName = (name) => { const i = String(name).indexOf(" · "); return i < 0 ? [String(name), ""] : [String(name).slice(0, i), String(name).slice(i + 3)]; };
+    const vehicleBookings = carRows.flatMap((c) => (c.children || []).map((k) => {
+      const isJob = String(k.id).startsWith("m:") || String(k.id).startsWith("s:");
+      const [first, rest] = splitName(k.name);
+      return [c.name, isJob ? "Maintenance" : "Booking", isJob ? "" : first, rest, money(k.rentals), money(k.penalties), money(k.returned), money(k.depositsHeld), money(k.revenue), money(k.maintenance), money(k.fees), money(k.net)];
+    }));
     return {
       subtitle: report.label,
-      currency,
+      currency, fmt, convert,
       sections: [
         { type: "stats", items: [
-          { label: "Rentals", value: fmt(cards.rentals ?? 0) },
-          { label: "Penalties", value: fmt(cards.penalties ?? 0) },
-          { label: "Returned", value: fmt(cards.returned ?? 0) },
-          { label: "Maintenance", value: fmt(cards.maintenance ?? 0) },
-          { label: "PayMongo fees", value: fmt(cards.gatewayFees ?? 0) },
-          { label: net < 0 ? "Net loss" : "Net", value: fmt(net), color: net < 0 ? C_RED : undefined },
+          S("Rentals", cards.rentals ?? 0, "#16a34a"),
+          S("Penalties", cards.penalties ?? 0, "#16a34a"),
+          S("Returned", cards.returned ?? 0, "#ef4444"),
+          S("Maintenance", cards.maintenance ?? 0, "#f97316"),
+          S("PayMongo fees", cards.gatewayFees ?? 0, "#a855f7"),
+          S(net < 0 ? "Net loss" : "Net", net, net < 0 ? "#ef4444" : "#0d9488", net < 0 ? C_RED : undefined),
         ] },
         ...(nothing ? [{ type: "empty", text: `No booking was finalized (completed, cancelled or stolen) and no maintenance was completed in ${report.label}.` }] : [
           { type: "title", text: "Revenue and Expense" },
@@ -733,22 +785,26 @@ function RevenueExpenseView({ report, exportRef }) {
             { value: exp(b), color: C_RED, text: fmt(exp(b)) },
           ] })) },
           ...(cards.gatewayFeesUnrecorded > 0 ? [{ type: "note", text: `${cards.gatewayFeesUnrecorded} online payment${cards.gatewayFeesUnrecorded === 1 ? "" : "s"} in this period ${cards.gatewayFeesUnrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so the fees and Net are slightly off until ${cards.gatewayFeesUnrecorded === 1 ? "it is" : "they are"} filled in.` }] : []),
-          ...(periodRows.length === 0 ? [] : [{ type: "table",
-            head: ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net"],
-            align: ["left", "right", "right", "right", "right", "right", "right", "right"],
-            body: periodRows.map((b) => [b.label, fmt(b.rentals), fmt(b.penalties), fmt(b.returned), fmt(b.deposits), fmt(b.maintenance), fmt(b.fees), fmt(b.net)]),
-            foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees"].map((k) => fmt(sumOf(k))), fmt(sumOf("net"))] }]),
+          ...(series.length === 0 ? [] : [{ type: "table", name: "Revenue and Expense",
+            head: ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net", "Unpaid (expected)", "Scheduled maint."],
+            align: ["left", "right", "right", "right", "right", "right", "right", "right", "right", "right"],
+            body: series.map((b) => [b.label, money(b.rentals), money(b.penalties), money(b.returned), money(b.deposits), money(b.maintenance), money(b.fees), money(b.net), money(b.expected || 0), money(b.scheduled || 0)]),
+            foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees", "net", "expected", "scheduled"].map((k) => money(sumOf(k)))] }]),
 
           { type: "title", text: "Vehicles" },
           ...(carRows.length === 0 ? [{ type: "empty", text: `No bookings or maintenance by vehicle in ${report.label}.` }] : [
             { type: "legend", items: carSeriesFor() },
             { type: "bars", rows: barRows(carRows, carSeriesFor(), { text: (r) => fmt(r.net) }) },
-            { type: "table",
-              head: ["Vehicle", "Bookings", "Revenue", "Maintenance", "PayMongo fees", "Net"],
-              align: ["left", "right", "right", "right", "right", "right"],
-              body: carRows.map((r) => [r.name, r.bookings ?? "-", fmt(r.revenue), fmt(r.maintenance), fmt(r.fees), fmt(r.net)]) },
+            { type: "table", name: "Vehicles",
+              head: ["Vehicle", "Bookings", "Rentals", "Penalties", "Returned", "Deposit held back", "Revenue", "Maintenance", "PayMongo fees", "Net"],
+              align: ["left", "right", "right", "right", "right", "right", "right", "right", "right", "right"],
+              body: carRows.map((r) => [r.name, count(r.bookings, { dash: true }), money(r.rentals || 0), money(r.penalties || 0), money(r.returned || 0), money(r.depositsHeld || 0), money(r.revenue), money(r.maintenance), money(r.fees), money(r.net)]) },
           ]),
         ]),
+      ],
+      sheets: [
+        { name: "Vehicle bookings", desc: "Every booking and maintenance job behind each vehicle: what the View window shows",
+          head: ["Vehicle", "Type", "Booking ID", "Customer / job", "Rentals", "Penalties", "Returned", "Deposit held back", "Revenue", "Maintenance", "PayMongo fees", "Net"], body: vehicleBookings },
       ],
     };
   };
@@ -770,7 +826,7 @@ function RevenueExpenseView({ report, exportRef }) {
           <StatCard title={net < 0 ? "Net loss" : "Net"} value={fmt(net)} Icon={IconTrend}
             color={net < 0 ? "bg-red-500 text-white" : "bg-teal-600 text-white"} valueClass={net < 0 ? "text-red-500" : "text-gray-800"} />
         </div>
-        <p className="px-4 pb-3 -mt-1 text-xs text-gray-500">Only bookings that are over are counted, on the day they ended: completed (even if the deposit is still held), cancelled or stolen. Upcoming and ongoing bookings are not included yet.</p>
+        <p className="px-4 pb-3 -mt-1 text-xs text-gray-500">Only bookings that are over are counted, on the day they ended: completed (even if the deposit is still held), cancelled or stolen. Upcoming and ongoing bookings are not included yet. Striped bars are expected amounts (unpaid balances due when their booking ends, and maintenance still scheduled): they are not in revenue, expenses or Net.</p>
       </Card>
 
       {nothing ? (
@@ -779,7 +835,7 @@ function RevenueExpenseView({ report, exportRef }) {
         <>
           <Card className="p-4">
             <SectionHead title="Revenue and Expense" />
-            <Legend items={[{ key: "r", label: "Revenue", color: C_GREEN }, { key: "m", label: "Expenses (maintenance + PayMongo fees)", color: C_RED }, ]} />
+            <Legend items={chartLegend} />
             <IncomeExpenseChart series={series} />
             {cards.gatewayFeesUnrecorded > 0 && (
               <p className="mt-2 text-xs text-amber-600">{cards.gatewayFeesUnrecorded} online payment{cards.gatewayFeesUnrecorded === 1 ? "" : "s"} in this period {cards.gatewayFeesUnrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so the fees and Net are slightly off until {cards.gatewayFeesUnrecorded === 1 ? "it is" : "they are"} filled in.</p>

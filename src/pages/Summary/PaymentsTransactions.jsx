@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
+import { money, count, when, whenTime } from "../../utils/reportCells";
 import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
 
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
@@ -14,7 +15,7 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 //                    A second card splits the same money by what it was FOR: rental, service fee, gateway fee,
 //                    the refundable deposit, penalties (a booking's fees are split in proportion when it is part-paid).
 //   Money out        refunds, security deposits handed back, discount returns, and the fees PayMongo kept
-//   Unpaid balances  payments made in the period that still owe money, biggest first
+//   Unpaid balances  every payment that still owes money, from ANY period (a balance left from last month is still owed), as of today, biggest first
 //
 // Money in / out are dated by the day the money MOVED (paymentEntries.settledAt), not the day the booking was made.
 // Deposits held is a snapshot of right now. Deposits kept = forfeited deposits + deposits used to cover penalties.
@@ -631,7 +632,7 @@ function SubGroup({ title, children }) {
 }
 
 function PaymentsTransactionsView({ report, exportRef }) {
-  const { fmt, currency } = useCurrency();
+  const { fmt, currency, convert } = useCurrency();
   const navigate = useNavigate();
   const cards = report.cards || {};
   const methods = useMemo(() => report.methods || [], [report.methods]);
@@ -732,57 +733,82 @@ function PaymentsTransactionsView({ report, exportRef }) {
   const inCols = inColumns.filter((c) => c.key !== "online" && c.key !== "inPerson" && !hide.has(c.key));
   const goBooking = (id) => navigate(`/bookings?open=${encodeURIComponent(id)}`);
 
-  // ── the PDF: what is on screen, but every row (no paging) ──
-  const buildPdf = (kind) => {
-    const wide = kind === "xlsx" || detailed;   // a spreadsheet always gets every column
-    const srcOk = detailed && !byChannel;
-    const cellOf = (r, c) => (c.key === "count" ? String(r.count || "-") : r[c.key] ? fmt(r[c.key]) : "-");
-    const methodTable = (rows, cols) => ({
-      type: "table",
+  // ── the PDF and the Excel file: every row (no paging) and every column, plus the records behind each "View" window and the
+  //    raw payment records. The file is always the full report (the Simplified / Detailed switch only changes the screen);
+  //    the channel filter does apply. ──
+  const buildPdf = () => {
+    const srcOk = !byChannel;
+    const S = (label, n, accent) => ({ label, value: fmt(n), n, t: "money", accent });   // a key figure: text for the PDF, a number for Excel; accent = the card's colour
+    const cellOf = (r, c) => (c.key === "count" ? count(r.count, { dash: true }) : money(r[c.key], { dash: true }));
+    const methodTable = (name, rows, cols) => ({
+      type: "table", name,
       head: ["Method", ...cols.map((c) => c.label), "Total"],
       align: ["left", ...cols.map(() => "right"), "right"],
-      body: rows.map((r) => [r.name, ...cols.map((c) => cellOf(r, c)), fmt(r.total || 0)]),
+      body: rows.map((r) => [r.name, ...cols.map((c) => cellOf(r, c)), money(r.total || 0)]),
     });
-    const group = (title, rows, empty, detail, total, cols) => [
+    const group = (title, tableName, rows, empty, detail, cols) => [
       { type: "title", text: title },
       ...(rows.length === 0 ? [{ type: "empty", text: empty }] : [
-        { type: "legend", items: detailed ? [...detail, ...SRC_SERIES].filter((x) => !hide.has(x.key)) : total },
-        { type: "bars", rows: barRows(rows, detailed ? detail.filter((x) => !hide.has(x.key)) : total, { text: (r) => fmt(r.total || 0), sub: srcOk ? SRC_SERIES : undefined }) },
-        methodTable(rows, wide ? cols.filter((c) => !hide.has(c.key)) : []),
+        { type: "legend", items: [...detail, ...SRC_SERIES].filter((x) => !hide.has(x.key)) },
+        { type: "bars", rows: barRows(rows, detail.filter((x) => !hide.has(x.key)), { text: (r) => fmt(r.total || 0), sub: srcOk ? SRC_SERIES : undefined }) },
+        methodTable(tableName, rows, cols.filter((c) => !hide.has(c.key))),
       ]),
     ];
+
+    // the windows, flattened: one row per method + channel (money in) and per transaction (money out)
+    const inFlat = inRows.flatMap((m) => (m.children || []).map((c) => [m.name, c.name, count(c.count), money(c.rental), money(c.service), money(c.gateway), money(c.deposit), money(c.penalties), money(c.unpaid), money(c.total)]));
+    const outFlat = outRows.flatMap((o) => (o.children || []).map((c) => {
+      const [id, who] = splitName(c.name);
+      return [o.name, id, who || "", when(c.date), c.kindLabel || "", c.pending ? "" : c.online > 0 ? "Online" : "In person", c.pending ? "Pending" : "Done", money(c.pending ? c.expected : c.total)];
+    }));
+    // the raw payment records of the period (not narrowed by the channel filter) and each step of them
+    const records = report.payments || [];
+    const recordRows = records.map((r) => [r.bookingID, r.customer, r.car, r.method, r.stage, money(r.total), money(r.paid), money(r.balance), money(r.refunded), r.reference, whenTime(r.createdAt), when(r.tripStart)]);
+    const stepRows = records.flatMap((r) => (r.steps || []).map((st) => [r.bookingID, r.customer, st.phase || "", st.direction || "", st.method, money(st.amount), st.status || "", st.reference, whenTime(st.date)]));
+
     return {
-      subtitle: `${report.label}${kind === "xlsx" ? "" : ` · ${detailed ? "Detailed" : "Simplified"}`}${byChannel ? ` · ${chName} only` : ""}`,
-      currency,
+      subtitle: report.label,
+      filters: [["Channel", byChannel ? `${chName} only` : "All (online + in person)"]],
+      currency, fmt, convert,
       sections: [
         { type: "stats", items: [
-          { label: byChannel ? `Money in · ${chName}` : "Money in", value: fmt(moneyInValue) },
-          { label: byChannel ? `Money out · ${chName}` : "Money out", value: fmt(moneyOutValue) },
-          { label: "Unpaid balances", value: fmt(cards.unpaid ?? 0) },
-          { label: "Deposits held", value: fmt(cards.depositsHeld ?? 0) },
-          { label: "Possible return", value: fmt(cards.possibleReturn ?? 0) },
+          S(byChannel ? `Money in · ${chName}` : "Money in", moneyInValue, "#16a34a"),
+          S(byChannel ? `Money out · ${chName}` : "Money out", moneyOutValue, "#ef4444"),
+          S("Unpaid (all periods)", cards.unpaid ?? 0, "#f59e0b"),
+          S("Deposits held", cards.depositsHeld ?? 0, "#2563eb"),
+          S("Possible return", cards.possibleReturn ?? 0, "#f59e0b"),
         ] },
 
-        ...group("Money in", inRows, `No money was received${chWord} in ${report.label}.`, IN_SERIES, IN_TOTAL, inColumns),
-        { type: "title", text: "Unpaid balances", level: 2 },
+        ...group("Money in", "Money in", inRows, `No money was received${chWord} in ${report.label}.`, IN_SERIES, inColumns),
+        { type: "title", text: "Unpaid balances (all periods)", level: 2 },
         unpaid.length === 0
-          ? { type: "empty", text: `Nothing is owed on payments made in ${report.label}.` }
-          : { type: "table",
+          ? { type: "empty", text: "Nothing is owed on any payment." }
+          : { type: "table", name: "Unpaid balances",
               head: ["Booking", "Customer", "Vehicle", "Status", "Trip date", "Total", "Paid", "Balance"],
               align: ["left", "left", "left", "left", "left", "right", "right", "right"],
-              body: unpaid.map((r) => [r.bookingID, r.customer, r.car, r.stage, fmtDate(r.tripStart), fmt(r.total), r.paid ? fmt(r.paid) : "-", fmt(r.balance)]) },
+              body: unpaid.map((r) => [r.bookingID, r.customer, r.car, r.stage, when(r.tripStart), money(r.total), money(r.paid, { dash: true }), money(r.balance)]) },
 
-        ...group("Money out", outRows, `No money went out${chWord} in ${report.label}.`, OUT_SERIES, OUT_TOTAL, outColumns),
+        ...group("Money out", "Money out", outRows, `No money went out${chWord} in ${report.label}.`, OUT_SERIES, outColumns),
         ...(byChannel ? [] : [
           { type: "title", text: "Possible return", level: 2 },
           ...(possible.items.length === 0 ? [{ type: "empty", text: "Nothing is waiting to be returned." }] : [
             { type: "note", text: POSS_KINDS.map((k) => `${k.label}: ${fmt(possible.byKind?.[k.key] || 0)}`).join("     ") },
-            { type: "table",
+            { type: "table", name: "Possible return",
               head: ["Booking", "Customer", "Type", "Method", "Amount"],
               align: ["left", "left", "left", "left", "right"],
-              body: possible.items.map((r) => { const [id, who] = splitName(r.name); return [id, who || "-", r.kindLabel, r.method, fmt(r.amount)]; }) },
+              body: possible.items.map((r) => { const [id, who] = splitName(r.name); return [id, who || "-", r.kindLabel, r.method, money(r.amount)]; }) },
           ]),
         ]),
+      ],
+      sheets: [
+        { name: "Money in by channel", desc: "Each money-in method split by channel: what the View window shows (includes the not-yet-paid line)",
+          head: ["Method", "Channel", "Payments", "Rental", "Service", "Gateway", "Deposit", "Penalties", "Unpaid", "Total"], body: inFlat },
+        { name: "Money out transactions", desc: "Every refund, deposit return and discount return behind each money-out method, plus what is still pending",
+          head: ["Method", "Booking ID", "Customer", "Date", "Type", "Channel", "Status", "Amount"], body: outFlat },
+        { name: "Payment records", desc: "Every payment created in the period, with its total, paid, balance and refunded amounts (not narrowed by the channel filter)",
+          head: ["Booking ID", "Customer", "Vehicle", "Method", "Stage", "Total", "Paid", "Balance", "Refunded", "Reference", "Created", "Trip start"], body: recordRows },
+        { name: "Payment steps", desc: "Each deposit, balance, refund and return transaction of those payments",
+          head: ["Booking ID", "Customer", "Phase", "Direction", "Method", "Amount", "Status", "Reference", "Date"], body: stepRows },
       ],
     };
   };
@@ -798,7 +824,7 @@ function PaymentsTransactionsView({ report, exportRef }) {
         <div className="grid gap-3 grid-cols-2 md:grid-cols-5 p-4">
           <StatCard title={byChannel ? `Money in · ${chName}` : "Money in"} value={fmt(moneyInValue)} Icon={IconArrowDown} color="bg-green-600 text-white" />
           <StatCard title={byChannel ? `Money out · ${chName}` : "Money out"} value={fmt(moneyOutValue)} Icon={IconArrowUp} color="bg-red-500 text-white" />
-          <StatCard title="Unpaid balances" value={fmt(cards.unpaid ?? 0)} Icon={IconWarning} color="bg-amber-500 text-white" />
+          <StatCard title="Unpaid (all periods)" value={fmt(cards.unpaid ?? 0)} Icon={IconWarning} color="bg-amber-500 text-white" />
           <StatCard title="Deposits held" value={fmt(cards.depositsHeld ?? 0)} Icon={IconLock} color="bg-blue-600 text-white" />
           <StatCard title="Possible return" value={fmt(cards.possibleReturn ?? 0)} Icon={IconClock} color="bg-amber-500 text-white" />
         </div>
@@ -845,9 +871,9 @@ function PaymentsTransactionsView({ report, exportRef }) {
           </>
         )}
 
-        <SubGroup title="Unpaid balances">
+        <SubGroup title="Unpaid balances (all periods)">
           {unpaid.length === 0 ? (
-            <Empty>Nothing is owed on payments made in {report.label}.</Empty>
+            <Empty>Nothing is owed on any payment.</Empty>
           ) : (
             <div className="rounded-xl border border-gray-100 overflow-hidden">
               <div className="overflow-x-auto">

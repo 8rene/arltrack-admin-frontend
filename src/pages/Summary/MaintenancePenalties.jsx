@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
+import { money, count } from "../../utils/reportCells";
 import { Chart as ChartJS, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
 
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
@@ -17,12 +18,15 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // "View" on a customer row (or a click on its bar) opens the cars they were penalized on; on a car row it opens who was
 // penalized on it.
 //
-// Only Confirmed penalties count. "Recovered" = penalties actually collected on that car in the period, capped at its
-// maintenance cost; it does not link a specific penalty to a specific repair.
+// Only Confirmed penalties count. The customer graph lists penalties CHARGED in the period (paid so far / unpaid).
+// "Recovered" = what was collected on penalties of the SAME BOOKING a repair is linked to, capped at the repair's cost; a repair that
+// is not linked to a booking (routine maintenance) recovers nothing.
+// "Collected" = penalty money received in the period (cash by the day it was paid, plus what the held deposit covered, dated by
+// the day the penalty was confirmed). "Unpaid now" = everything still owed on Confirmed penalties, from any period.
 //
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // Needs from /api/reports/maintenance-penalties:
-//   cards        { totalMaintenance, pendingCustomers }
+//   cards        { totalMaintenance, scheduledMaintenance, penaltiesCollected, penaltiesCollectedCash, penaltiesCoveredByDeposit, penaltiesPending, pendingCustomers }
 //   cars         [{ carID, name, jobs, total, recovered, absorbed, scheduled }]   scheduled = still-Scheduled jobs in the period, striped, never part of the cost
 //   penaltyRows  [{ userID, carID, customer, car, amount, paid, pending }]   one per Confirmed penalty
 // ─────────────────────────────────────────────────────────────────────────────
@@ -618,7 +622,7 @@ function GroupCard({ title, nameLabel, countLabel, childLabel, totalLabel, serie
 // ── the tab ─────────────────────────────────────────────────────────────────
 
 function MaintenancePenaltiesView({ report, exportRef }) {
-  const { fmt, currency } = useCurrency();
+  const { fmt, currency, convert } = useCurrency();
   const cars = useMemo(() => report.cars || [], [report]);
   const penaltyRows = useMemo(() => report.penaltyRows || [], [report]);
 
@@ -633,37 +637,59 @@ function MaintenancePenaltiesView({ report, exportRef }) {
   const nothing = cars.length === 0 && penaltyRows.length === 0;
   const carSeries = carSeriesFor(carRows);
   const scheduledTotal = report.cards?.scheduledMaintenance ?? 0;
+  const collected = report.cards?.penaltiesCollected;      // undefined on an older backend: the cards are simply left out
+  const pendingAll = report.cards?.penaltiesPending;
+  const deposit = report.cards?.penaltiesCoveredByDeposit ?? 0;
 
-  // ── the PDF: what is on screen, but every row (no paging) ──
+  // ── the PDF and the Excel file: every row (no paging), plus every penalty and maintenance record behind the totals and the
+  //    customer / vehicle pairs behind each "View" window ──
   const buildPdf = () => {
+    const S = (label, n, accent) => ({ label, value: fmt(n), n, t: "money", accent });   // a key figure: text for the PDF, a number for Excel; accent = the card's colour
+    const bySize = (rows) => rows.slice().sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
     const group = (title, nameLabel, countLabel, series, rows, empty) => {
-      const sorted = rows.slice().sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+      const sorted = bySize(rows);
       return [
         { type: "title", text: title },
         ...(sorted.length === 0 ? [{ type: "empty", text: empty }] : [
           { type: "legend", items: series },
           { type: "bars", rows: barRows(sorted, series, { text: (r) => fmt(r.total) }) },
-          { type: "table",
+          { type: "table", name: title,
             head: [nameLabel, countLabel, ...series.map((s) => s.label), "Total"],
             align: ["left", "right", ...series.map(() => "right"), "right"],
-            body: sorted.map((r) => [r.name, r.count || "-", ...series.map((s) => (r[s.key] ? fmt(r[s.key]) : "-")), fmt(r.total)]) },
+            body: sorted.map((r) => [r.name, count(r.count, { dash: true }), ...series.map((s) => money(r[s.key], { dash: true })), money(r.total)]) },
         ]),
       ];
     };
+    // the "View" windows, flattened: one row per customer + vehicle pair
+    const penaltyPairs = (rows) => bySize(rows).flatMap((r) => (r.children || []).map((c) => [r.name, c.name, count(c.count), money(c.paid), money(c.unpaid), money(c.total)]));
     return {
       subtitle: report.label,
-      currency,
+      currency, fmt, convert,
       sections: [
         { type: "stats", items: [
-          { label: "Total maintenance", value: fmt(report.cards?.totalMaintenance ?? 0) },
-          ...(scheduledTotal > 0 ? [{ label: "Scheduled maintenance", value: fmt(scheduledTotal) }] : []),
-          { label: "Total penalties", value: fmt(totals.paid + totals.unpaid) },
-          { label: "Penalties unpaid", value: fmt(totals.unpaid) },
+          S("Total maintenance", report.cards?.totalMaintenance ?? 0, "#f97316"),
+          ...(scheduledTotal > 0 ? [S("Scheduled maintenance", scheduledTotal, "#fdba74")] : []),
+          S("Total penalties", totals.paid + totals.unpaid, "#0d9488"),
+          S("Penalties unpaid", totals.unpaid, "#ef4444"),
+          ...(collected !== undefined ? [S("Collected in period", collected, "#16a34a")] : []),
+          ...(pendingAll !== undefined ? [S("Unpaid now (all periods)", pendingAll, "#f59e0b")] : []),
         ] },
         ...(nothing ? [{ type: "empty", text: `No completed maintenance or penalties in ${report.label}.` }] : [
           ...group("Customers' Penalties", "Customer", "Penalties", CUSTOMER_SERIES, custRows, `No penalties in ${report.label}.`),
           ...group("Vehicles Maintenance", "Vehicle", "Records", carSeries, carRows, cars.length === 0 ? `No completed maintenance in ${report.label}.` : "Nothing to show."),
         ]),
+      ],
+      sheets: nothing ? [] : [
+        { name: "Penalties", desc: "Every confirmed penalty in the period, with what was paid and what is still unpaid",
+          head: ["Customer", "Vehicle", "Amount", "Paid", "Unpaid"],
+          body: penaltyRows.map((p) => [p.customer, p.car, money(p.amount), money(p.paid), money(p.pending)]) },
+        { name: "Maintenance by vehicle", desc: "Completed maintenance per vehicle: what was recovered from penalties on the same booking, what was not, and routine maintenance with no booking",
+          head: ["Vehicle", "Records", "Total cost", "Recovered", "Not recovered", "Routine (no booking)", "Scheduled"],
+          body: bySize(carRows).map((c) => [c.name, count(c.count), money(c.total), money(c.recovered), money(c.absorbed), money(cars.find((x) => (x.carID || x.name) === c.id)?.unlinked || 0), money(c.scheduled)]) },
+        { name: "Penalties by customer", desc: "Each customer's penalties split by vehicle: the Customers View window",
+          head: ["Customer", "Vehicle", "Penalties", "Paid", "Unpaid", "Total"], body: penaltyPairs(custRows) },
+        { name: "Penalties by vehicle", desc: "Each vehicle's penalties split by customer: the Vehicles View window",
+          head: ["Vehicle", "Customer", "Penalties", "Paid", "Unpaid", "Total"], body: penaltyPairs(carRows) },
       ],
     };
   };
@@ -680,12 +706,18 @@ function MaintenancePenaltiesView({ report, exportRef }) {
     <div className="space-y-4">
 
       <Card>
-        <div className={`grid gap-3 grid-cols-1 p-4 ${scheduledTotal > 0 ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"}`}>
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 p-4">
           <StatCard title="Total maintenance" value={fmt(report.cards?.totalMaintenance ?? 0)} Icon={IconPackage} color="bg-orange-500 text-white" />
           {scheduledTotal > 0 && <StatCard title="Scheduled maintenance" value={fmt(scheduledTotal)} Icon={IconPackage} color="bg-orange-300 text-white" />}
           <StatCard title="Total penalties" value={fmt(totals.paid + totals.unpaid)} Icon={IconCreditCard} color="bg-teal-600 text-white" />
           <StatCard title="Penalties unpaid" value={fmt(totals.unpaid)} Icon={IconWarning} color="bg-red-500 text-white" />
+          {collected !== undefined && <StatCard title="Collected in period" value={fmt(collected)} Icon={IconCreditCard} color="bg-green-600 text-white" />}
+          {pendingAll !== undefined && <StatCard title="Unpaid now (all periods)" value={fmt(pendingAll)} Icon={IconWarning} color="bg-amber-500 text-white" />}
         </div>
+        <p className="px-4 pb-3 -mt-1 text-xs text-gray-500">
+          The graphs show penalties charged in this period. Collected is penalty money received in the period (cash by the day it was paid
+          {deposit > 0 ? `, plus ${fmt(deposit)} covered by the held deposit, dated by the day the penalty was confirmed` : ""}). Unpaid now is everything still owed, from any period.
+        </p>
       </Card>
 
       {nothing ? (
