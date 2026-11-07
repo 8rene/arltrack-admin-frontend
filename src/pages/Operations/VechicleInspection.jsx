@@ -210,6 +210,7 @@ export default function VehicleDocs() {
   const [carParts, setCarParts]       = useState([]);
   const [partTypes, setPartTypes]     = useState({});
   const [partsLoading, setPartsLoading] = useState(false);
+  const [partsPage, setPartsPage]       = useState(1); // Car parts table pagination
 
   // Same booking logic as Inventory
   const [activeBooking, setActiveBooking]   = useState(null);
@@ -548,6 +549,7 @@ export default function VehicleDocs() {
   const selectCar = useCallback(async (car, forcedBookingID) => {
     setSelectedCar(car);
     setCarParts([]);
+    setPartsPage(1);
     setActiveBooking(null);
     setBookingUser(null);
     setBeforeDoc(null);
@@ -1722,41 +1724,77 @@ export default function VehicleDocs() {
                             {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-48 rounded-2xl bg-gray-100 animate-pulse" />)}
                           </div>
                         ) : carParts.length > 0 ? (
-                          <>
-                                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                              {carParts.map(part => {
-                                const fieldKey = getPartFieldKey(part);
-                                const effectiveStatus = getEffectivePartStatus(part);
-                                return (
-                                  <div key={part.id} className="space-y-1.5">
-                                    <PhotoSlot fieldKey={fieldKey} label={part.carPartName || "Part"}
-                                      sub={partTypes[part.carPartTypeID] || ""} image={getSlotImage(fieldKey)}
-                                      uploading={uploading[fieldKey]} isPending={!!uploads[fieldKey]}
-                                      onFilePick={f => handleFilePick(fieldKey, f)} onUpload={() => uploadSlot(fieldKey)} />
-                                    {isDriver ? (
-                                      <StatusToggle
-                                        status={effectiveStatus}
-                                        isDirty={currentStatusEdits[part.id] !== undefined}
-                                        onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
-                                      />
-                                    ) : (
-                                      <div className="flex items-center justify-between gap-1.5">
-                                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                                          PART_STATUS_STYLE[effectiveStatus] || "bg-gray-100 text-gray-500"
-                                        }`}>
-                                          {effectiveStatus}
-                                        </span>
-                                        <PartEditDropdown
-                                          currentStatus={effectiveStatus}
-                                          onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </>
+                          (() => {
+                            const totalPages = Math.max(1, Math.ceil(carParts.length / PARTS_PAGE_SIZE));
+                            const safePage   = Math.min(partsPage, totalPages);
+                            const pStart     = (safePage - 1) * PARTS_PAGE_SIZE;
+                            const pageParts  = carParts.slice(pStart, pStart + PARTS_PAGE_SIZE);
+                            return (
+                              <div className="rounded-2xl border border-gray-100 overflow-hidden">
+                                <div className="overflow-x-auto">
+                                  <table className="w-full min-w-[640px] text-sm">
+                                    <thead>
+                                      <tr className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+                                        <th className="px-4 py-3 text-left font-semibold">Photo</th>
+                                        <th className="px-4 py-3 text-left font-semibold">Part</th>
+                                        <th className="px-4 py-3 text-left font-semibold">Type</th>
+                                        <th className="px-4 py-3 text-left font-semibold">Status</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {pageParts.map((part, i) => {
+                                        const fieldKey = getPartFieldKey(part);
+                                        const effectiveStatus = getEffectivePartStatus(part);
+                                        return (
+                                          <tr key={part.id}
+                                            className={`border-b border-gray-50 last:border-0 hover:bg-teal-50/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/20" : ""}`}>
+                                            <td className="px-4 py-3">
+                                              <PartPhotoCell fieldKey={fieldKey} label={part.carPartName || "Part"}
+                                                image={getSlotImage(fieldKey)} uploading={uploading[fieldKey]} isPending={!!uploads[fieldKey]}
+                                                onFilePick={f => handleFilePick(fieldKey, f)} onUpload={() => uploadSlot(fieldKey)}
+                                                onView={setViewingPhoto} />
+                                            </td>
+                                            <td className="px-4 py-3 font-semibold text-gray-800 text-sm">{part.carPartName || "—"}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-600">
+                                              {partTypes[part.carPartTypeID] || <span className="text-gray-400">No type</span>}
+                                            </td>
+                                            <td className="px-4 py-3 whitespace-nowrap">
+                                              {isDriver ? (
+                                                <div className="w-44">
+                                                  <StatusToggle
+                                                    status={effectiveStatus}
+                                                    isDirty={currentStatusEdits[part.id] !== undefined}
+                                                    onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
+                                                  />
+                                                </div>
+                                              ) : (
+                                                <div className="inline-flex items-center gap-2">
+                                                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                                    PART_STATUS_STYLE[effectiveStatus] || "bg-gray-100 text-gray-500"
+                                                  }`}>
+                                                    {effectiveStatus}
+                                                  </span>
+                                                  <PartEditDropdown
+                                                    currentStatus={effectiveStatus}
+                                                    onChange={(s) => setCurrentStatusEdits(prev => ({ ...prev, [part.id]: s }))}
+                                                  />
+                                                  {currentStatusEdits[part.id] !== undefined && (
+                                                    <span className="w-2 h-2 rounded-full bg-amber-400" title="Unsaved" />
+                                                  )}
+                                                </div>
+                                              )}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                <Pagination page={safePage} totalPages={totalPages} onChange={setPartsPage}
+                                  start={pStart} pageSize={PARTS_PAGE_SIZE} count={carParts.length} />
+                              </div>
+                            );
+                          })()
                         ) : (
                           <div className="p-6 text-center text-gray-400 text-sm">
                             🔧 No parts found in inventory for this vehicle.
@@ -1924,6 +1962,52 @@ function PartEditDropdown({ currentStatus, onChange }) {
         <option key={s} value={s}>{s}</option>
       ))}
     </select>
+  );
+}
+
+const PARTS_PAGE_SIZE = 10;
+
+/* Compact photo cell for the Car parts table: thumbnail you click to pick a
+ * photo, a small "Save" button once one is pending, and "View" to open the
+ * saved photo in the lightbox. Same upload flow as PhotoSlot. */
+function PartPhotoCell({ fieldKey, label, image, uploading, isPending, onFilePick, onUpload, onView }) {
+  const inputId = `slot_${fieldKey}`;
+  return (
+    <div className="flex items-center gap-3">
+      <label htmlFor={inputId} className={`relative block w-20 h-14 shrink-0 rounded-lg overflow-hidden cursor-pointer border-2 bg-gray-50 ${
+        isPending ? "border-teal-400" : "border-gray-100 hover:border-gray-200"
+      }`}>
+        <input id={inputId} type="file" accept="image/*" className="hidden"
+          onChange={e => e.target.files[0] && onFilePick(e.target.files[0])} />
+        {image ? (
+          <img src={image} alt={label} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center text-gray-300">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+            <span className="text-[10px]">Add</span>
+          </div>
+        )}
+        {isPending && image && (
+          <span className="absolute top-0.5 right-0.5 bg-teal-500 text-white text-[9px] px-1.5 rounded-full font-semibold">New</span>
+        )}
+      </label>
+      <div className="flex flex-col items-start gap-1">
+        {isPending && (
+          <button onClick={onUpload} disabled={uploading}
+            className="text-xs bg-teal-600 text-white px-2.5 py-1 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
+            {uploading ? "Uploading…" : "Save ↑"}
+          </button>
+        )}
+        {image && !isPending && onView && (
+          <button onClick={() => onView({ url: image, label })}
+            className="text-xs text-teal-600 font-semibold hover:underline">View</button>
+        )}
+      </div>
+    </div>
   );
 }
 

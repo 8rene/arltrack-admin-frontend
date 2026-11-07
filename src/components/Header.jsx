@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { db } from "../fireabase";
 import { useAuth } from "../context/AuthContext";
@@ -160,6 +161,55 @@ function NotifRow({ n, onOpen, onDelete }) {
   );
 }
 
+/* ── Clear-notifications confirmation modal (replaces window.confirm) ── */
+function ClearNotifsModal({ count, scope, busy, onConfirm, onCancel }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !busy) onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+
+  const what = scope === "read" ? "read notification" : "notification";
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4"
+      onClick={() => { if (!busy) onCancel(); }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 pt-6 pb-4 text-center">
+          <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-red-50 flex items-center justify-center text-xl">🗑️</div>
+          <h3 className="text-base font-bold text-gray-800">
+            Delete {count} {what}{count === 1 ? "" : "s"}?
+          </h3>
+          <p className="text-sm text-gray-500 mt-1.5">This can't be undone.</p>
+        </div>
+        <div className="flex gap-2 px-6 pb-6">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-50"
+          >
+            {busy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 /* ── Notification Dropdown ── */
 const EMPTY_TEXT = { all: "No notifications", unread: "No unread notifications" };
 
@@ -240,6 +290,8 @@ export default function Header({ title = "Dashboard" }) {
   const [notifications, setNotifications] = useState([]);
   const [notifTab, setNotifTab]             = useState("all"); // "all" | "unread"
   const [notifError, setNotifError]         = useState("");
+  const [clearConfirm, setClearConfirm]       = useState(null); // { scope, count } while the modal is open
+  const [clearing, setClearing]               = useState(false);
   // Sourced from AuthContext (backed by localStorage under the hood) rather
   // than reading localStorage directly here — that used to be a one-time
   // read on mount, so a username/profile edit never showed up until the
@@ -392,16 +444,25 @@ export default function Header({ title = "Dashboard" }) {
   };
 
   // scope "all" clears every notification of this account; "read" only the ones already read.
-  const handleClear = async (scope) => {
+  // handleClear only opens the confirmation modal; confirmClear does the deleting.
+  const handleClear = (scope) => {
     const targets = scope === "read" ? notifications.filter((n) => n.isRead) : notifications;
     if (targets.length === 0) return;
-    const what = scope === "read" ? "read notification" : "notification";
-    if (!window.confirm(`Delete ${targets.length} ${what}${targets.length === 1 ? "" : "s"}? This can't be undone.`)) return;
+    setClearConfirm({ scope, count: targets.length });
+  };
+
+  const confirmClear = async () => {
+    if (!clearConfirm) return;
+    const { scope } = clearConfirm;
+    const targets = scope === "read" ? notifications.filter((n) => n.isRead) : notifications;
+    setClearing(true);
     try { await notifApi("DELETE", `?scope=${scope}`, getToken()); }
     catch {
       try { await Promise.all(targets.map((n) => deleteDoc(doc(db, "notifications", n.id)))); }
       catch { showNotifError("Couldn't clear notifications. Try again."); }
     }
+    setClearing(false);
+    setClearConfirm(null);
   };
 
   return (
@@ -464,6 +525,16 @@ export default function Header({ title = "Dashboard" }) {
 
         </div>
       </div>
+
+      {clearConfirm && (
+        <ClearNotifsModal
+          count={clearConfirm.count}
+          scope={clearConfirm.scope}
+          busy={clearing}
+          onConfirm={confirmClear}
+          onCancel={() => setClearConfirm(null)}
+        />
+      )}
     </header>
   );
 }

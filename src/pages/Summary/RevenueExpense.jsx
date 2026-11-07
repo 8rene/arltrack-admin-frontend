@@ -8,27 +8,29 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // ─────────────────────────────────────────────────────────────────────────────
 // REVENUE & EXPENSE: "Did we make money?"
 //
-//   Rentals     money received for rentals (deposit + balance), counted ONLY for bookings that are finalized, on the day they are
-//               finalized (or the day it was paid, if that is later):
-//                 completed  the day it is completed AND its security deposit is no longer held (the later of the two)
+//   Rentals     money received for rentals (deposit + balance), counted ONLY for bookings that are over, on the day they ended
+//               (or the day it was paid, if that is later):
+//                 completed  the day the trip was completed, even while its security deposit is still held
 //                 cancelled  the cancellation day, so a refunded amount never becomes revenue and only what you keep
 //                            (a forfeited deposit, a gateway fee kept) does
 //                 stolen     the day it was flagged stolen
-//               Upcoming / ongoing bookings, and a completed booking whose deposit is still held, are not read at all yet.
-//               Example: paid Nov 3, deposit returned and booking completed Nov 5 -> it is recorded on Nov 5.
+//               Upcoming / ongoing bookings are not read at all yet.
+//               Example: paid Nov 1, trip completed Nov 7 -> it is recorded on Nov 7, next to that trip's maintenance.
 //   Penalties   Confirmed penalties that were paid in store or online
 //   Returned    refunds + security deposits handed back + discount returns
 //   Maintenance Completed maintenance only
 //   PayMongo fees  what PayMongo kept on the online payments received (only fees already recorded)
-//   Held deposits  security deposits that came in and are still held, minus deposits settled in the period: a held deposit is not
-//               revenue yet (a deposit only becomes revenue for the part you keep). Negative = more was settled than came in.
-//   Net         Rentals + Penalties - Returned - Held deposits - Maintenance - PayMongo fees
+//   To return   money that will go back to the customer but has not moved yet: security deposits still held (minus deposits settled
+//               in the period) plus refunds approved but not paid out yet (scheduled, or waiting for the customer in store). It is not
+//               revenue (a deposit only becomes revenue for the part you keep). When it is paid it moves to Returned on the same row.
+//               Negative = more was settled than came in.
+//   Net         Rentals + Penalties - Returned - To return - Maintenance - PayMongo fees
 //               (net of the expenses the system records: other costs such as fuel or driver pay are not tracked)
 //
 // The booking amount includes the refundable security deposit, so a deposit that is still held is not revenue yet:
 // it only shows up here when it is kept (a penalty it covered, or a forfeited deposit) because what went back is
 // subtracted. Same request as Payments & Transactions (/api/reports/money), but this tab reads `report.revenueBasis`
-// (dated by the booking's finalization) while that tab reads the cards / series / cars dated by the day the money moved.
+// (dated by the day the booking ended) while that tab reads the cards / series / cars dated by the day the money moved.
 // There is no "expected" revenue or expense: nothing is shown until it is final. PayMongo fees follow the same date as the
 // revenue they belong to, so Net compares matching things.
 //
@@ -629,7 +631,7 @@ function PeriodTable({ series }) {
   const shown = rows.slice((pageNo - 1) * PAGE, pageNo * PAGE);
   const sum = (k) => rows.reduce((s, b) => s + (b[k] || 0), 0);
   if (rows.length === 0) return null;
-  const heads = ["Period", "Rentals", "Penalties", "Returned", "Held deposits", "Maintenance", "PayMongo fees", "Net"];
+  const heads = ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net"];
   const totalNet = sum("net");
   return (
     <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
@@ -732,7 +734,7 @@ function RevenueExpenseView({ report, exportRef }) {
           ] })) },
           ...(cards.gatewayFeesUnrecorded > 0 ? [{ type: "note", text: `${cards.gatewayFeesUnrecorded} online payment${cards.gatewayFeesUnrecorded === 1 ? "" : "s"} in this period ${cards.gatewayFeesUnrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so the fees and Net are slightly off until ${cards.gatewayFeesUnrecorded === 1 ? "it is" : "they are"} filled in.` }] : []),
           ...(periodRows.length === 0 ? [] : [{ type: "table",
-            head: ["Period", "Rentals", "Penalties", "Returned", "Held deposits", "Maintenance", "PayMongo fees", "Net"],
+            head: ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net"],
             align: ["left", "right", "right", "right", "right", "right", "right", "right"],
             body: periodRows.map((b) => [b.label, fmt(b.rentals), fmt(b.penalties), fmt(b.returned), fmt(b.deposits), fmt(b.maintenance), fmt(b.fees), fmt(b.net)]),
             foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees"].map((k) => fmt(sumOf(k))), fmt(sumOf("net"))] }]),
@@ -768,7 +770,7 @@ function RevenueExpenseView({ report, exportRef }) {
           <StatCard title={net < 0 ? "Net loss" : "Net"} value={fmt(net)} Icon={IconTrend}
             color={net < 0 ? "bg-red-500 text-white" : "bg-teal-600 text-white"} valueClass={net < 0 ? "text-red-500" : "text-gray-800"} />
         </div>
-        <p className="px-4 pb-3 -mt-1 text-xs text-gray-500">Only finalized bookings are counted, on the day they are finalized: completed (once the deposit is settled), cancelled or stolen. Upcoming and ongoing bookings are not included yet.</p>
+        <p className="px-4 pb-3 -mt-1 text-xs text-gray-500">Only bookings that are over are counted, on the day they ended: completed (even if the deposit is still held), cancelled or stolen. Upcoming and ongoing bookings are not included yet.</p>
       </Card>
 
       {nothing ? (

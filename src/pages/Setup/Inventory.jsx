@@ -139,10 +139,15 @@ export default function Inventory() {
       getDocs(collection(db, "cars")),
       getDocs(collection(db, "brand")),
       getDocs(collection(db, "model")),
+      getDocs(collection(db, "carImages")),
     ])
-      .then(([carsSnap, brandsSnap, modelsSnap]) => {
+      .then(([carsSnap, brandsSnap, modelsSnap, imgsSnap]) => {
         const bMap = Object.fromEntries(brandsSnap.docs.map(d => [d.id, d.data()]));
         const mMap = Object.fromEntries(modelsSnap.docs.map(d => [d.id, d.data()]));
+        const iMap = {};
+        imgsSnap.docs.forEach(d => {
+          if (d.data().carID) iMap[d.data().carID] = d.data().imageURL;
+        });
         setCars(
           carsSnap.docs.map(d => {
             const c     = { id: d.id, ...d.data() };
@@ -151,6 +156,7 @@ export default function Inventory() {
             return {
               ...c,
               label: `${brand.brandName || ""} ${model.modelName || ""}`.trim() || d.id,
+              imageURL: iMap[d.id] || null,
             };
           })
         );
@@ -338,8 +344,17 @@ export default function Inventory() {
                       isSelected ? "border-teal-400 ring-2 ring-teal-100" : "border-gray-100 hover:border-teal-200"
                     }`}
                   >
-                    <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
-                    <p className="text-xs text-gray-400 truncate">{car.plateNumber || "—"}</p>
+                    <div className="flex items-center gap-3">
+                      {car.imageURL ? (
+                        <img src={car.imageURL} alt="car" className="rounded-xl object-cover w-10 h-10" />
+                      ) : (
+                        <div className="rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 w-10 h-10">🚗</div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-800 text-sm truncate">{car.label}</p>
+                        <p className="text-xs text-gray-400 truncate">{car.plateNumber || "—"}</p>
+                      </div>
+                    </div>
                   </button>
                 );
               })}

@@ -426,6 +426,21 @@ export default function Maintenance() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, records, damagedParts]);
 
+  // Arrived with just ?carID=... (e.g. "+ Post-Rental Maintenance" on a booking): the car is filled in
+  // above, so once the flagged parts have loaded put that car's still-damaged parts on the job too —
+  // the same thing choosing the car in the dropdown does (see onCarChange). Remove any you won't fix.
+  // Runs once, so parts removed afterwards don't come back.
+  const deepLinkPartsFilled = useRef(false);
+  useEffect(() => {
+    const carID = searchParams.get("carID");
+    if (!carID || searchParams.get("carPartID") || loading || deepLinkPartsFilled.current) return;
+    deepLinkPartsFilled.current = true;
+    const flagged = damagedParts.filter((p) => p.carID === carID);
+    if (flagged.length === 0) return;
+    setForm((f) => (f.carID !== carID || f.partsAddressed.length > 0 ? f : { ...f, partsAddressed: flagged.map(entryFromFlagged) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, damagedParts]);
+
   // Arrived from a notification-bell click ("Maintenance Created" / "Maintenance Overdue"): the bell sends
   // ?open=<maintenance doc id> (Header.jsx, same ?open= convention as Bookings / Users / Penalties), so open that
   // record in its read-only view. Runs once after the first load; the param is then dropped so a refresh or a

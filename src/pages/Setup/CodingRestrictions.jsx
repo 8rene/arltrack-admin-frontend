@@ -1150,8 +1150,8 @@ function RuleDialog({ city, existing, defaultDay, api, onClose, onSaved }) {
   );
 }
 
-// ─── Add a whole new city (needs a minimum number of rules) ──────────────────
-const MIN_RULES = 5;
+// ─── Add a whole new city (needs at least one rule — not every weekday) ──────
+const MIN_RULES = 1;
 const newRow = (dayName) => ({ dayName, startTime: "", endTime: "", bannedDigits: "" });
 
 function CityDialog({ existingCities, allRules, api, onClose, onSaved }) {
@@ -1223,7 +1223,7 @@ function CityDialog({ existingCities, allRules, api, onClose, onSaved }) {
     >
       <div className="space-y-4 pb-2">
         <p className="text-xs text-gray-400">
-          A new city needs at least {MIN_RULES} coding rules so its week is covered from day one.
+          Add a rule for each day this city has number coding. Days without a rule are treated as no coding.
         </p>
         <Field label="City">
           <CityMap

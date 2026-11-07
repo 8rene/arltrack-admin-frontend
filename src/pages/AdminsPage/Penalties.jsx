@@ -262,15 +262,11 @@ const fmtWhen = (iso) =>
  * noting the penalty types the amount themselves; this is just the system
  * remembering the end time and drop-off time so a late return isn't missed.
  */
-function LateFeeSuggestion({ info, loading = false }) {
-  if (!info) {
-    return loading ? <p className="text-xs text-gray-400">Checking end time and drop-off…</p> : null;
-  }
-
-  const { scheduledEndAt, actualReturnAt, lateMinutes, billableHours, graceMinutes, ratePerHour, computedAmount } = info;
-
+// What to tell staff about a booking's late fee: { suggestion, tone, detail } (detail = the rate breakdown, when there is a fee).
+function describeLateFee(info) {
+  const { actualReturnAt, lateMinutes, billableHours, graceMinutes, ratePerHour, computedAmount } = info;
   let suggestion;
-  let tone = "text-gray-600";
+  let tone = "text-gray-800";
   if (!actualReturnAt) {
     suggestion = "Not dropped off yet — nothing to suggest.";
   } else if (billableHours > 0) {
@@ -281,38 +277,10 @@ function LateFeeSuggestion({ info, loading = false }) {
   } else {
     suggestion = "Returned on time — no late fee.";
   }
-
-  return (
-    <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 text-xs space-y-1">
-      <div className="flex justify-between gap-3">
-        <span className="text-gray-400">Booking ends</span>
-        <span className="text-gray-700">{fmtWhen(scheduledEndAt)}</span>
-      </div>
-      <div className="flex justify-between gap-3">
-        <span className="text-gray-400">Dropped off</span>
-        <span className="text-gray-700">{fmtWhen(actualReturnAt)}</span>
-      </div>
-      <div className="flex justify-between gap-3 pt-1 border-t border-gray-100">
-        <span className="text-gray-400">Suggestion</span>
-        <span className={`text-right ${tone}`}>{suggestion}</span>
-      </div>
-      {billableHours > 0 && (
-        <p className="text-[11px] text-gray-400 text-right">
-          {lateMinutes} min past the end time · {graceMinutes}-min grace · {peso(ratePerHour)}/hr
-        </p>
-      )}
-    </div>
-  );
+  const detail = billableHours > 0 ? `${lateMinutes} min past the end time · ${graceMinutes}-min grace · ${peso(ratePerHour)}/hr` : "";
+  return { suggestion, tone, detail };
 }
 
-// ─── DEPOSIT NOTICE ────────────────────────────────────────────────────────
-// Tells staff how a penalty on this booking gets paid, from the `deposit` the late-fee preview returns:
-//   deposit already returned (settled / refunded / forfeited / waived, or none held)
-//       -> it can't be deducted; the customer will be asked to pay it online
-//   deposit still held
-//       -> it is deducted from the deposit when the deposit is settled (any part the deposit can't cover is paid online)
-// `acknowledged` / `onAcknowledge` add a required "confirm the deduction" tick (the New Penalty form); without them
-// it is information only (the confirm step on a penalty under review).
 function DepositNotice({ deposit, amount = 0, acknowledged = false, onAcknowledge = null }) {
   if (!deposit) return null;
   const amt = Number(amount) || 0;
@@ -372,9 +340,9 @@ function DepositNotice({ deposit, amount = 0, acknowledged = false, onAcknowledg
 // Submitting this confirms the penalty immediately and notifies the
 // customer — there's no Draft step to review it first anymore, so double-
 // check the amount before hitting Create.
-function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", existingPenalties = [], onReviewPenalty = null }) {
+function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", existingPenalties = [], onReviewPenalty = null, onViewBooking = null }) {
   const [bookingID, setBookingID] = useState(initialBookingID);
-  const [showPrevious, setShowPrevious] = useState(false); // the "Already on this booking" list is collapsed by default so staff can focus on the new charges
+  const [showPrevious, setShowPrevious] = useState(true); // the "Already on this booking" list is open by default (the toggle can still collapse it)
   const [showMaintenance, setShowMaintenance] = useState(true); // on by default: the panel appears by itself once the booking is found; the X / Hide button turns it off
   const { fmt } = useCurrency();
   // Opened via Bookings.jsx's "Note a Penalty" button (see goToNotePenalty
@@ -396,7 +364,9 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
   const penaltyAmount = overrideAmount.trim() !== "" ? (Number(overrideAmount) || 0) : computedTotal;
   const depositInfo = preview?.deposit || null;
   // Only a deposit that is still held can be deducted from; that needs a tick before the penalty is created.
-  const needsAck = !!depositInfo && !depositInfo.returned && Math.min(penaltyAmount, Number(depositInfo.availableForNew) || 0) > 0;
+  const depositLeft = Number(depositInfo?.availableForNew) || 0;
+  const deductedFromDeposit = Math.min(penaltyAmount, depositLeft);
+  const needsAck = !!depositInfo && !depositInfo.returned && deductedFromDeposit > 0;
 
   // The booking exists once its lookup came back (a typed ID is only trusted after that, so half-typed IDs show nothing).
   const bookingFound = !!bookingID.trim() && (linkedFromBooking || !!preview);
@@ -410,6 +380,8 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
   // A booking with a penalty still under review can't get another one: that one has to be confirmed or discarded first.
   const reviewPending = sameBooking.filter((x) => x.status === "UnderReview");
   const blockedByReview = reviewPending.length > 0;
+  // The other penalties on the booking (the ones under review get their own always-open block).
+  const otherPenalties = sameBooking.filter((x) => x.status !== "UnderReview");
   // A charge typed here that matches one already on a live (under review / confirmed) penalty of this booking.
   const typedCharges = lineItems.map((li) => li.description.trim().toLowerCase()).filter(Boolean);
   const duplicates = [];
@@ -502,83 +474,145 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
         {showMaintenance && bookingFound && (
           <MaintenanceSidePanel bookingID={bookingID.trim()} token={token} fmt={fmt} onClose={() => setShowMaintenance(false)} />
         )}
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 pb-0 space-y-4 md:max-h-[90vh] md:overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h3 className="font-bold text-arl-dark">New Penalty</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><IconX /></button>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="px-6 pt-5 pb-3 shrink-0 border-b border-gray-100 flex items-center justify-between gap-3">
+          <h3 className="font-bold text-lg text-gray-800">New Penalty</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0"><IconX className="w-5 h-5" /></button>
         </div>
 
-        <div>
-          <label className="text-xs font-semibold text-gray-500">Booking ID</label>
-          <div className="flex gap-2 mt-1">
-            <input type="text" value={bookingID} onChange={(e) => setBookingID(e.target.value)}
-              placeholder="e.g. BK123" readOnly={linkedFromBooking}
-              className={`flex-1 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light ${
-                linkedFromBooking ? "bg-gray-50 border-gray-200 text-gray-500" : "border-gray-200"
-              }`} />
-          </div>
-          {linkedFromBooking && (
-            <p className="text-xs text-teal-600 mt-1">Linked to the booking — this penalty will be tied to booking {bookingID}.</p>
-          )}
-          <div className="mt-2">
-            <LateFeeSuggestion info={preview} loading={previewLoading} />
-          </div>
-          {depositInfo && (
-            <div className="mt-2">
-              <DepositNotice deposit={depositInfo} amount={penaltyAmount} acknowledged={ackDeduction} onAcknowledge={setAckDeduction} />
-            </div>
-          )}
-          {blockedByReview && (
-            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 space-y-1.5">
-              <p className="text-xs font-semibold text-red-700">Can't add a new penalty yet</p>
-              <p className="text-xs text-red-600">
-                This booking has {reviewPending.length} penalt{reviewPending.length === 1 ? "y" : "ies"} still under review.
-                Confirm or discard {reviewPending.length === 1 ? "it" : "them"} first, then add the new one.
-              </p>
-              {onReviewPenalty && (
-                <button type="button" onClick={() => onReviewPenalty(reviewPending[0])}
-                  className="text-xs font-semibold text-red-700 hover:underline">
-                  Review {reviewPending.length === 1 ? "it" : "now"} →
-                </button>
-              )}
-            </div>
-          )}
-          {sameBooking.length > 0 ? (
-            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2">
-              <button type="button" onClick={() => setShowPrevious((v) => !v)}
-                className="w-full flex items-center justify-between gap-2 text-left">
-                <span className="text-xs font-semibold text-amber-800">
-                  Already on this booking ({sameBooking.length})
-                  {!showPrevious && <span className="font-normal text-amber-700"> — check before adding a new one</span>}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-4">
+
+        {/* Same "Details" card as the penalty details window (and Bookings' view window). */}
+        <Block title="Details">
+          <FieldGrid>
+            <Field wide label="Booking" value={
+              linkedFromBooking ? (
+                <span className="flex items-center gap-2 flex-wrap">
+                  {bookingID}
+                  {onViewBooking && (
+                    <button type="button" onClick={() => onViewBooking(bookingID.trim())}
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0">
+                      View booking →
+                    </button>
+                  )}
                 </span>
-                <span className="text-xs font-semibold text-amber-800 whitespace-nowrap">{showPrevious ? "Hide ▴" : "Show ▾"}</span>
-              </button>
-              {showPrevious && <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1 mt-2">
-                {sameBooking.map((x) => (
-                  <div key={x.id} className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-100 px-2.5 py-1.5">
+              ) : (
+                <span className="flex items-center gap-2">
+                  <input type="text" value={bookingID} onChange={(e) => setBookingID(e.target.value)}
+                    placeholder="e.g. BK123"
+                    className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm font-normal focus:outline-none focus:ring-2 focus:ring-arl-light" />
+                  {bookingFound && onViewBooking && (
+                    <button type="button" onClick={() => onViewBooking(bookingID.trim())}
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0">
+                      View booking →
+                    </button>
+                  )}
+                </span>
+              )
+            } />
+            {preview && (() => {
+              const lf = describeLateFee(preview);
+              return (
+                <>
+                  <Field label="Booking ends" value={fmtWhen(preview.scheduledEndAt)} />
+                  <Field label="Dropped off" value={preview.actualReturnAt ? fmtWhen(preview.actualReturnAt) : "Not yet"} />
+                  <Field wide label="Suggestion" value={
+                    <>
+                      <span className={lf.tone}>{lf.suggestion}</span>
+                      {lf.detail && <span className="block text-xs font-normal text-gray-400 mt-0.5">{lf.detail}</span>}
+                    </>
+                  } />
+                </>
+              );
+            })()}
+            {depositInfo && (depositInfo.returned ? (
+              <Field wide label="Deposit" value={
+                <>
+                  Returned
+                  <span className="block text-sm font-normal text-gray-600 mt-0.5">Adding a further penalty will make the customer pay online.</span>
+                </>
+              } />
+            ) : (
+              <>
+                <Field label="Deposit held" value={peso(depositInfo.amount)} />
+                {depositInfo.alreadyClaimed > 0 && <Field label="Left for this penalty" value={peso(depositLeft)} />}
+              </>
+            ))}
+          </FieldGrid>
+          {!preview && previewLoading && <p className="text-sm text-gray-400 mt-3">Checking end time and drop-off…</p>}
+          {depositInfo && !depositInfo.returned && deductedFromDeposit > 0 && (
+            <label className="flex items-start gap-2 mt-4 cursor-pointer text-sm text-gray-700">
+              <input type="checkbox" checked={ackDeduction} onChange={(e) => setAckDeduction(e.target.checked)} className="mt-1" />
+              <span>I confirm {peso(deductedFromDeposit)} is deducted from the customer's deposit.</span>
+            </label>
+          )}
+        </Block>
+
+        <div>
+          {blockedByReview && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2.5">
+              <p className="text-sm font-semibold text-amber-800 mb-2">Under review ({reviewPending.length})</p>
+              <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                {reviewPending.map((x) => (
+                  <div key={x.id} className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-100 px-3 py-2">
                     <div className="min-w-0">
-                      <div className="text-xs font-medium text-gray-800 truncate" title={(x.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>
+                      <div className="text-sm font-medium text-gray-800 truncate" title={(x.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>
                         {(x.lineItems || []).map((li) => li.description).join(", ") || "—"}
                       </div>
-                      <div className="text-[10px] text-gray-400">
+                      <div className="text-xs text-gray-400">
+                        {toDate(x.createdAt) ? toDate(x.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-sm font-semibold text-gray-700">{fmt(x.amount)}</span>
+                      {onReviewPenalty && (
+                        <button type="button" onClick={() => onReviewPenalty(x)}
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                          Review →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {otherPenalties.length > 0 ? (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2.5">
+              <button type="button" onClick={() => setShowPrevious((v) => !v)}
+                className="w-full flex items-center justify-between gap-2 text-left">
+                <span className="text-sm font-semibold text-amber-800">Already on this booking ({otherPenalties.length})</span>
+                <span className="text-sm font-semibold text-amber-800 whitespace-nowrap">{showPrevious ? "Hide ▴" : "Show ▾"}</span>
+              </button>
+              {showPrevious && <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1 mt-2">
+                {otherPenalties.map((x) => (
+                  <div key={x.id} className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-100 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-800 truncate" title={(x.lineItems || []).map((li) => `${li.description}: ${fmt(li.amount)}`).join(", ")}>
+                        {(x.lineItems || []).map((li) => li.description).join(", ") || "—"}
+                      </div>
+                      <div className="text-xs text-gray-400">
                         {toDate(x.createdAt) ? toDate(x.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—"}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs font-semibold text-gray-700">{fmt(x.amount)}</span>
+                      <span className="text-sm font-semibold text-gray-700">{fmt(x.amount)}</span>
                       <SettlementBadge status={x.settlementStatus} />
                     </div>
                   </div>
                 ))}
               </div>}
             </div>
-          ) : bookingFound && (
-            <p className="mt-2 text-[11px] text-gray-400">No penalties on this booking yet.</p>
+          ) : bookingFound && !blockedByReview && (
+            <p className="mt-3 text-xs text-gray-400">No penalties on this booking yet.</p>
           )}
         </div>
 
+        {/* A penalty still under review has to be confirmed or discarded first, so there is nothing to fill in yet. */}
+        {!blockedByReview && (
+          <>
         <div>
-          <label className="text-xs font-semibold text-gray-500">Charges</label>
+          <label className="text-sm font-semibold text-gray-500">Charges</label>
           <div className="space-y-2 mt-1">
             {lineItems.map((li, i) => (
               <div key={i} className="flex gap-2 items-center">
@@ -595,7 +629,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
               </div>
             ))}
           </div>
-          <button onClick={addLineItem} className="mt-2 text-xs font-semibold text-teal-600 hover:text-teal-700 flex items-center gap-1">
+          <button onClick={addLineItem} className="mt-2 text-sm font-semibold text-teal-600 hover:text-teal-700 flex items-center gap-1">
             <IconPlus className="w-3.5 h-3.5" /> Add line item
           </button>
         </div>
@@ -606,7 +640,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
         </div>
 
         <div>
-          <label className="text-xs font-semibold text-gray-500">Override amount (optional)</label>
+          <label className="text-sm font-semibold text-gray-500">Override amount (optional)</label>
           <input type="number" value={overrideAmount} onChange={(e) => setOverrideAmount(e.target.value)}
             placeholder={String(computedTotal)}
             className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-light" />
@@ -614,14 +648,14 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
 
         {overrideAmount.trim() !== "" && Number(overrideAmount) !== computedTotal && (
           <div>
-            <label className="text-xs font-semibold text-gray-500">Reason for override (required)</label>
+            <label className="text-sm font-semibold text-gray-500">Reason for override (required)</label>
             <textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} rows={2}
               className="w-full mt-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arl-dark/20" />
           </div>
         )}
 
         {duplicates.length > 0 && (
-          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 space-y-0.5">
+          <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 space-y-0.5">
             <p className="font-semibold">Possible duplicate</p>
             {duplicates.map((d) => (
               <p key={d.key}>“{d.description}” is already on this booking ({fmt(d.amount)} · {d.status}).</p>
@@ -629,16 +663,21 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
           </div>
         )}
 
-        {error && <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>}
+          </>
+        )}
 
-        <div className="sticky bottom-0 -mx-6 px-6 py-4 bg-white border-t border-gray-100 rounded-b-2xl z-10 flex flex-col-reverse gap-2">
+        {error && <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>}
+
+        </div>
+
+        <div className="shrink-0 px-6 py-4 border-t border-gray-100 flex flex-col-reverse gap-2">
           <button onClick={onClose} className="w-full py-2 rounded-xl text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">
             Cancel
           </button>
           {/* Same button, same place as in the penalty details window (footer, under the main action). */}
           {bookingFound && (
             <button type="button" onClick={() => setShowMaintenance((v) => !v)}
-              className="text-sm w-full py-2 rounded-xl border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-semibold">
+              className="text-sm w-full py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 font-semibold transition-colors">
               {showMaintenance ? "Hide maintenance" : "View maintenance"}
             </button>
           )}
@@ -647,6 +686,16 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
             className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? "Creating…" : "Create & Notify Customer"}
           </button>
+          {/* Last in the DOM = first on screen (the footer is flex-col-reverse): the reason the button is disabled sits right above it. */}
+          {blockedByReview && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 space-y-1">
+              <p className="text-sm font-semibold text-red-700">Can't add a new penalty yet</p>
+              <p className="text-sm text-red-600">
+                This booking has {reviewPending.length} penalt{reviewPending.length === 1 ? "y" : "ies"} still under review.
+                Confirm or discard {reviewPending.length === 1 ? "it" : "them"} first, then add the new one.
+              </p>
+            </div>
+          )}
         </div>
       </div>
       </div>
@@ -1088,12 +1137,13 @@ function Row({ label, value }) {
   );
 }
 
-function Block({ title, children }) {
+function Block({ title, children, tone = "default" }) {
+  const amber = tone === "amber";
   return (
-    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm mb-4">
+    <section className={`border rounded-2xl overflow-hidden shadow-sm mb-4 ${amber ? "bg-amber-50 border-amber-200" : "bg-white"}`}>
       {title && (
-        <div className="px-4 py-2.5 bg-gray-50 border-b">
-          <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h4>
+        <div className={`px-4 py-2.5 border-b ${amber ? "bg-amber-100/70 border-amber-200" : "bg-gray-50"}`}>
+          <h4 className={`text-xs font-semibold uppercase tracking-wide ${amber ? "text-amber-800" : "text-gray-600"}`}>{title}</h4>
         </div>
       )}
       <div className="p-4">{children}</div>
@@ -1136,7 +1186,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
   const editTotal = editItems.reduce((sum, li) => sum + (Number(li.amount) || 0), 0);
   const setEditItem = (i, patch) => setEditItems((items) => items.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
 
-  const saveEdit = async () => {
+  const saveEdit = async ({ thenConfirm = false } = {}) => {
     setEditError("");
     const clean = editItems
       .map((li) => ({ description: li.description.trim(), amount: Number(li.amount) || 0 }))
@@ -1151,6 +1201,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
     try {
       await onSaveEdit({ lineItems: clean, amount: finalAmount, overrideReason: editReason.trim() });
       setEditing(false);
+      if (thenConfirm) setArmConfirm(true);   // straight to the "confirm & notify" step, with the saved amount
     } catch (e) {
       setEditError(e.message || "Couldn't save the changes.");
     } finally {
@@ -1183,7 +1234,11 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
   const hasActions    = canPayInStore || canWaive || canVoid || canEdit || canConfirm;
 
   const statusLabel = isReview ? "Under review" : isConfirmed ? (p.settlementStatus || "Confirmed") : p.status;
+  // Button styles follow Bookings.jsx: solid teal = main action, light teal = secondary, light red = destructive.
   const outlineBtn = "text-sm w-full py-2 rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 font-medium";
+  const primaryBtn = "text-sm w-full py-2 rounded-xl bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 font-semibold transition-colors";
+  const tealBtn    = "text-sm w-full py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-40 font-semibold transition-colors";
+  const dangerBtn  = "text-sm w-full py-2 rounded-xl border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 font-semibold transition-colors";
   const inputBase = "border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light";
   const inputCls = `w-full ${inputBase}`;
 
@@ -1199,13 +1254,21 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             onClose={() => setShowMaintenance(false)}
           />
         )}
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl px-8 pt-8 pb-0 md:max-h-[90vh] md:overflow-y-auto">
-          <div className="flex items-start justify-between gap-4 pb-6">
-            <div>
-              <h3 className="text-lg font-bold text-arl-dark">Penalty details</h3>
+        {/* Same layout as Bookings' view window: fixed header, a body that scrolls on its own, fixed footer. */}
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col">
+          <div className="px-6 pt-5 pb-3 shrink-0 border-b border-gray-100">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-bold text-lg text-gray-800">{isReview ? "Review penalty" : "Penalty details"}</h3>
+              <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 shrink-0"><IconX className="w-5 h-5" /></button>
             </div>
-            <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 p-1"><IconX /></button>
+            {!isReview && p.customerName && p.customerName !== "—" && (
+              <p className="text-sm text-gray-500 mt-1 truncate">
+                {p.customerName}{p.plateNumber ? ` · ${p.brandName !== "—" || p.modelName !== "—" ? `${p.brandName} ${p.modelName} ` : ""}(${p.plateNumber})` : ""}
+              </p>
+            )}
           </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
 
           {/* Details first, with the booking this penalty belongs to */}
           <Block title="Details">
@@ -1236,8 +1299,8 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
           </Block>
 
           {isReview && (
-            <Block title="Waiting for review">
-              <p className="text-sm text-gray-600 leading-relaxed">
+            <Block title="Waiting for review" tone="amber">
+              <p className="text-sm text-amber-900 leading-relaxed">
                 {p.createdByName ? `${p.createdByName} noted this on the trip. ` : "A driver noted this on the trip. "}
                 The customer hasn't been notified, and it isn't counted against the deposit yet. You can still edit it.
                 Once you confirm it, the customer is notified and it can't be edited anymore.
@@ -1287,10 +1350,22 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                   className="text-sm w-full py-2 rounded-xl font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                   Cancel
                 </button>
-                <button onClick={saveEdit} disabled={saving}
-                  className="text-sm w-full py-2 rounded-xl font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50">
+                {canVoid && (
+                  <button onClick={onVoid} disabled={saving || busy} className={dangerBtn}>
+                    Discard penalty
+                  </button>
+                )}
+                <button onClick={() => saveEdit()} disabled={saving}
+                  className="text-sm w-full py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 font-semibold transition-colors disabled:opacity-50">
                   {saving ? "Saving…" : "Save changes"}
                 </button>
+                {/* Confirming is part of editing: a penalty can only be confirmed from here, after its charges were looked at. */}
+                {canConfirm && (
+                  <button onClick={() => saveEdit({ thenConfirm: true })} disabled={saving}
+                    className="text-sm w-full py-2 rounded-xl font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50">
+                    {saving ? "Saving…" : "Save & confirm penalty"}
+                  </button>
+                )}
               </div>
             </Block>
           ) : (
@@ -1346,9 +1421,11 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             </Block>
           )}
 
-          {/* Sticky footer: the actions and Close stay in view while the rest scrolls. Actions are hidden while editing,
+          {/* Footer: the actions and Close stay in view while the body scrolls. Actions are hidden while editing,
               so an unsaved edit can't be lost by a stray click. */}
-          <div className="sticky bottom-0 -mx-8 px-8 py-4 bg-white border-t border-gray-100 rounded-b-2xl z-10">
+          </div>
+
+          <div className="shrink-0 px-6 py-4 border-t border-gray-100">
             {hasActions && !editing && armConfirm ? (
               <div className="space-y-3">
                 <p className="text-sm text-gray-700">
@@ -1362,41 +1439,42 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                     Back
                   </button>
                   <button onClick={onConfirm} disabled={busy}
-                    className="text-sm w-full py-2 rounded-xl font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50">
+                    className="text-sm w-full py-2 rounded-xl font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50">
                     {busy ? "Confirming…" : "Yes, confirm & notify"}
                   </button>
                 </div>
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                {p.bookingID && canRecordInStore && (
+                {!isReview && p.bookingID && canRecordInStore && (
                   <button onClick={() => setShowMaintenance((v) => !v)}
-                    className="text-sm w-full py-2 rounded-xl border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-semibold">
+                    className={tealBtn}>
                     {showMaintenance ? "Hide maintenance" : "View maintenance"}
                   </button>
                 )}
                 {hasActions && !editing && (
                   <>
-                    {canConfirm && (
-                      <button onClick={() => setArmConfirm(true)} disabled={busy}
-                        className="text-sm w-full py-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 font-semibold">
-                        Confirm penalty
-                      </button>
-                    )}
                     {canPayInStore && (
-                      <button onClick={onMarkPaid} disabled={busy}
-                        className="text-sm w-full py-2 rounded-xl bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 font-semibold">
+                      <button onClick={onMarkPaid} disabled={busy} className={primaryBtn}>
                         In-store payment
                       </button>
                     )}
-                    {canEdit && <button onClick={startEdit} disabled={busy} className={outlineBtn}>Edit</button>}
+                    {/* A penalty under review is confirmed from inside Edit, so this is the one main action: solid teal. */}
+                    {canEdit && <button onClick={startEdit} disabled={busy} className={primaryBtn}>Edit / Confirm</button>}
                     {canWaive && <button onClick={onWaive} disabled={busy} className={outlineBtn}>Waive</button>}
-                    {canVoid && <button onClick={onVoid} disabled={busy} className={outlineBtn}>{isReview ? "Discard" : "Void"}</button>}
+                    {/* While a penalty is under review, Discard lives inside Edit; Void is for confirmed penalties. */}
+                    {canVoid && !isReview && <button onClick={onVoid} disabled={busy} className={dangerBtn}>Void</button>}
                     {/* Adding another penalty is hidden while this one is being reviewed or edited: finish that first. */}
                     {canRecordInStore && p.bookingID && onAddPenalty && !isReview && (
-                      <button onClick={onAddPenalty} className={outlineBtn}>+ New penalty</button>
+                      <button onClick={onAddPenalty} className={tealBtn}>+ New penalty</button>
                     )}
                   </>
+                )}
+                {/* While reviewing, View maintenance comes after the actions, and Close stays the very last button. */}
+                {isReview && p.bookingID && canRecordInStore && (
+                  <button onClick={() => setShowMaintenance((v) => !v)} className={tealBtn}>
+                    {showMaintenance ? "Hide maintenance" : "View maintenance"}
+                  </button>
                 )}
                 <div className="flex flex-col">
                   <button onClick={onClose} className="text-sm w-full py-2 rounded-xl font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">
@@ -1812,6 +1890,7 @@ export default function Penalties() {
           initialBookingID={prefillBookingID}
           existingPenalties={records}
           onReviewPenalty={(pen) => { setShowCreate(false); setPrefillBookingID(""); setDetailsModal(pen); }}
+          onViewBooking={(id) => { setShowCreate(false); setPrefillBookingID(""); viewBooking(id); }}
           onClose={() => { setShowCreate(false); setPrefillBookingID(""); }}
           onCreated={() => { setShowCreate(false); setPrefillBookingID(""); showToast("Penalty created — customer notified.", "success"); fetchAll(); }}
         />
@@ -1893,16 +1972,6 @@ export default function Penalties() {
         <StatCard icon={<IconBan className="w-5 h-5" />} value={voidedWaived} label="Voided / Waived / Discarded" color="purple"
           onClick={() => toggleStatFilter("voidedWaived")} active={activeStatFilter === "voidedWaived"} />
       </div>
-      {review > 0 && activeStatFilter !== "review" && (
-        <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 -mt-1">
-          <p className="text-xs text-amber-800">
-            <span className="font-semibold">{review} penalt{review === 1 ? "y" : "ies"} waiting for review.</span>{" "}
-            Drivers noted {review === 1 ? "it" : "them"} — the customer hasn't been told yet.
-          </p>
-          <button onClick={() => toggleStatFilter("review")}
-            className="text-xs font-semibold text-amber-800 hover:underline whitespace-nowrap">Show →</button>
-        </div>
-      )}
       {activeStatFilter === "review" && (
         <p className="text-xs text-gray-400 px-1 -mt-2">
           Penalties drivers noted that no one has confirmed yet. Open one to edit it and confirm it — that's when the customer is notified.
