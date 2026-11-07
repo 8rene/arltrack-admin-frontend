@@ -170,6 +170,10 @@ const BOOKING_STATUS_STYLE = {
    Main Component
 ═══════════════════════════════════════════════ */
 export default function VehicleDocs() {
+  // In-page confirm dialog (replaces the browser's confirm/alert popups). `await askConfirm({...})` gives true / false.
+  const [dlg, setDlg] = useState(null);
+  const askConfirm = (opts) => new Promise((resolve) => setDlg({ ...opts, resolve }));
+  const closeDlg = (value) => { dlg.resolve(value); setDlg(null); };
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, effectiveRole } = useAuth();
@@ -1185,9 +1189,13 @@ export default function VehicleDocs() {
     const nextBooking = upcomingBookings[idx];
     if (!nextBooking || idx === activeBookingIndex) return;
 
-    if (hasUnsavedChanges && !window.confirm(
-      "You have unsaved changes on this booking. Switch to the other booking anyway? Unsaved changes will be lost."
-    )) {
+    if (hasUnsavedChanges && !(await askConfirm({
+      title: "Unsaved changes",
+      message: "You have unsaved changes on this booking. Switch to the other booking anyway? Unsaved changes will be lost.",
+      confirmLabel: "Switch anyway",
+      cancelLabel: "Stay here",
+      tone: "warning",
+    }))) {
       return;
     }
 
@@ -1844,6 +1852,27 @@ export default function VehicleDocs() {
 
       {viewingPhoto && (
         <PhotoLightbox photo={viewingPhoto} onClose={() => setViewingPhoto(null)} />
+      )}
+      {dlg && (
+        <div className="fixed inset-0 bg-black/40 z-[2200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
+            <h2 className="font-bold text-lg text-gray-800">{dlg.title}</h2>
+            <p className="text-sm text-gray-600 whitespace-pre-line break-words">{dlg.message}</p>
+            <div className="flex gap-3 justify-end pt-1">
+              {!dlg.hideCancel && (
+                <button autoFocus={dlg.tone === "danger"} onClick={() => closeDlg(false)}
+                  className="px-4 py-2 border rounded-xl text-sm">{dlg.cancelLabel || "Cancel"}</button>
+              )}
+              <button autoFocus={dlg.tone !== "danger"} onClick={() => closeDlg(true)}
+                className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
+                  dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
+                  : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
+                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

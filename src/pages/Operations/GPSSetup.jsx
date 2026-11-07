@@ -108,6 +108,10 @@ const Icons = {
 const API = process.env.REACT_APP_API_URL;
 
 export default function DeviceTrack() {
+  // In-page confirm dialog (replaces the browser's confirm/alert popups). `await askConfirm({...})` gives true / false.
+  const [dlg, setDlg] = useState(null);
+  const askConfirm = (opts) => new Promise((resolve) => setDlg({ ...opts, resolve }));
+  const closeDlg = (value) => { dlg.resolve(value); setDlg(null); };
   const routerLocation = useLocation();
   const navigate       = useNavigate();
 
@@ -416,7 +420,7 @@ export default function DeviceTrack() {
 
   // ── Delete device ──────────────────────────────────────────────────────
   const handleDelete = async (deviceId, deviceName) => {
-    if (!window.confirm(`Permanently delete "${deviceName}"? This cannot be undone.`)) return;
+    if (!(await askConfirm({ title: "Delete device", message: `Permanently delete "${deviceName}"? This cannot be undone.`, confirmLabel: "Delete", tone: "danger" }))) return;
     setBusyId(deviceId);
     try {
       const res = await fetch(`${API}/api/gps/devices/${deviceId}`, {
@@ -734,6 +738,27 @@ export default function DeviceTrack() {
         )}
       </div>
       </div>
+      {dlg && (
+        <div className="fixed inset-0 bg-black/40 z-[2200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
+            <h2 className="font-bold text-lg text-gray-800">{dlg.title}</h2>
+            <p className="text-sm text-gray-600 whitespace-pre-line break-words">{dlg.message}</p>
+            <div className="flex gap-3 justify-end pt-1">
+              {!dlg.hideCancel && (
+                <button autoFocus={dlg.tone === "danger"} onClick={() => closeDlg(false)}
+                  className="px-4 py-2 border rounded-xl text-sm">{dlg.cancelLabel || "Cancel"}</button>
+              )}
+              <button autoFocus={dlg.tone !== "danger"} onClick={() => closeDlg(true)}
+                className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
+                  dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
+                  : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
+                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

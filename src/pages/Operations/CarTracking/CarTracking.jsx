@@ -500,6 +500,10 @@ function CustomerBookingModal({ booking, onClose, loadChecklist, onViewBooking, 
 }
 
 export default function CarTracking() {
+  // In-page confirm dialog (replaces the browser's confirm/alert popups). `await askConfirm({...})` gives true / false.
+  const [dlg, setDlg] = useState(null);
+  const askConfirm = (opts) => new Promise((resolve) => setDlg({ ...opts, resolve }));
+  const closeDlg = (value) => { dlg.resolve(value); setDlg(null); };
   const [allCars,      setAllCars]      = useState([]);
   const [brandMap,     setBrandMap]     = useState({});
   const [modelMap,     setModelMap]     = useState({});
@@ -1240,10 +1244,10 @@ export default function CarTracking() {
     }
   };
 
-  const handleStolen  = (b) => {
+  const handleStolen  = async (b) => {
     // Once the car is marked dropped off it is physically back — it can't be flagged stolen any more.
     if (b.droppedOffTime) return;
-    if (!window.confirm("Flag this car as stolen? This is logged permanently and the booking will be locked.")) return;
+    if (!(await askConfirm({ title: "Flag car as stolen", message: "Flag this car as stolen? This is logged permanently and the booking will be locked.", confirmLabel: "Flag as stolen", tone: "danger" }))) return;
     runBookingAction(b.id, "stolen", "Car flagged as stolen — trip history saved for documentation.");
   };
 
@@ -1887,6 +1891,27 @@ export default function CarTracking() {
       onViewPayments={goPayments}
       onViewPenalties={goPenalties}
     />
+    {dlg && (
+      <div className="fixed inset-0 bg-black/40 z-[2200] flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
+          <h2 className="font-bold text-lg text-gray-800">{dlg.title}</h2>
+          <p className="text-sm text-gray-600 whitespace-pre-line break-words">{dlg.message}</p>
+          <div className="flex gap-3 justify-end pt-1">
+            {!dlg.hideCancel && (
+              <button autoFocus={dlg.tone === "danger"} onClick={() => closeDlg(false)}
+                className="px-4 py-2 border rounded-xl text-sm">{dlg.cancelLabel || "Cancel"}</button>
+            )}
+            <button autoFocus={dlg.tone !== "danger"} onClick={() => closeDlg(true)}
+              className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
+                dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
+                : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
+                : "bg-teal-600 hover:bg-teal-700"}`}>
+              {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 }

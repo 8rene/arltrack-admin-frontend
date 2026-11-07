@@ -30,6 +30,10 @@ const msUntilExpiry = (token) => {
 };
 
 export function AuthProvider({ children }) {
+  // In-page confirm dialog (replaces the browser's confirm/alert popups). `await askConfirm({...})` gives true / false.
+  const [dlg, setDlg] = useState(null);
+  const askConfirm = useCallback((opts) => new Promise((resolve) => setDlg({ ...opts, resolve })), []);
+  const closeDlg = (value) => { dlg.resolve(value); setDlg(null); };
   const [user, setUser] = useState(() => {
     try {
       const stored = localStorage.getItem("user");
@@ -121,9 +125,9 @@ export function AuthProvider({ children }) {
     logoutTimerRef.current = setTimeout(() => {
       logout();
       // Small UX hint so the admin knows why they were logged out
-      alert("Your session has expired. Please log in again.");
+      askConfirm({ title: "Session expired", message: "Your session has expired. Please log in again.", hideCancel: true });
     }, ms);
-  }, [logout]);
+  }, [logout, askConfirm]);
 
   // ── On mount: check existing token and schedule auto-logout ─────
   useEffect(() => {
@@ -170,7 +174,7 @@ export function AuthProvider({ children }) {
             handled = true;
             if (unsubDoc) { unsubDoc(); unsubDoc = null; }
             logout("revoked");
-            alert("Your account no longer exists. Please contact your administrator.");
+            askConfirm({ title: "Account not found", message: "Your account no longer exists. Please contact your administrator.", hideCancel: true });
             return;
           }
           const data = snap.data();
@@ -178,14 +182,14 @@ export function AuthProvider({ children }) {
             handled = true;
             if (unsubDoc) { unsubDoc(); unsubDoc = null; }
             logout("revoked");
-            alert("Your account access has been revoked. Please contact your administrator.");
+            askConfirm({ title: "Access revoked", message: "Your account access has been revoked. Please contact your administrator.", hideCancel: true });
             return;
           }
           if (data.roleID && user.roleID && data.roleID !== user.roleID) {
             handled = true;
             if (unsubDoc) { unsubDoc(); unsubDoc = null; }
             logout("revoked");
-            alert("Your role has changed. Please log in again.");
+            askConfirm({ title: "Role changed", message: "Your role has changed. Please log in again.", hideCancel: true });
             return;
           }
 
@@ -228,7 +232,7 @@ export function AuthProvider({ children }) {
       unsubAuth();
       if (unsubDoc) unsubDoc();
     };
-  }, [user?.uid, user?.roleID, logout]);
+  }, [user?.uid, user?.roleID, logout, askConfirm]);
 
   // ── Login ────────────────────────────────────────────────────────
   const login = async (email, password) => {
@@ -323,6 +327,27 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{ user, login, logout, getToken, previewRole, setPreviewRole, effectiveRole, updateUser }}>
       {children}
+      {dlg && (
+        <div className="fixed inset-0 bg-black/40 z-[2200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
+            <h2 className="font-bold text-lg text-gray-800">{dlg.title}</h2>
+            <p className="text-sm text-gray-600 whitespace-pre-line break-words">{dlg.message}</p>
+            <div className="flex gap-3 justify-end pt-1">
+              {!dlg.hideCancel && (
+                <button autoFocus={dlg.tone === "danger"} onClick={() => closeDlg(false)}
+                  className="px-4 py-2 border rounded-xl text-sm">{dlg.cancelLabel || "Cancel"}</button>
+              )}
+              <button autoFocus={dlg.tone !== "danger"} onClick={() => closeDlg(true)}
+                className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
+                  dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
+                  : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
+                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AuthContext.Provider>
   );
 }

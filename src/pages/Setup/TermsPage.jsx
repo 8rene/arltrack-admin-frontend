@@ -218,6 +218,10 @@ const VersionFields = ({ v, isCurrent, isDark }) => (
 
 // ── Page ────────────────────────────────────────────────────────────────
 export default function TermsPage() {
+  // In-page confirm dialog (replaces the browser's confirm/alert popups). `await askConfirm({...})` gives true / false.
+  const [dlg, setDlg] = useState(null);
+  const askConfirm = (opts) => new Promise((resolve) => setDlg({ ...opts, resolve }));
+  const closeDlg = (value) => { dlg.resolve(value); setDlg(null); };
   const { isDark } = useTheme();
   const { effectiveRole } = useAuth();
   // Everyone can read; only Owner/Admin see edit controls (backend enforces it too).
@@ -334,8 +338,8 @@ export default function TermsPage() {
     setEditMode(true);
   };
 
-  const cancelEdit = () => {
-    if (isDirty && !window.confirm("Discard your unsaved changes?")) return;
+  const cancelEdit = async () => {
+    if (isDirty && !(await askConfirm({ title: "Discard changes", message: "Discard your unsaved changes?", confirmLabel: "Discard", cancelLabel: "Keep editing", tone: "warning" }))) return;
     setEditMode(false);
     setNotice(null);
   };
@@ -345,7 +349,7 @@ export default function TermsPage() {
     if (!isDirty) return setNotice({ type: "error", msg: "No changes to save." });
     if (bytes > MAX_BYTES) return setNotice({ type: "error", msg: "Terms are too long." });
     if (!versionOk) return setNotice({ type: "error", msg: versionError });
-    if (!window.confirm(`Publish this as version ${versionInput.trim()}?\n\nIt goes live immediately. Previous versions are kept in the history.`)) return;
+    if (!(await askConfirm({ title: "Publish Terms", message: `Publish this as version ${versionInput.trim()}?\n\nIt goes live immediately. Previous versions are kept in the history.`, confirmLabel: "Publish" }))) return;
 
     setSaving(true);
     setNotice(null);
@@ -692,6 +696,27 @@ export default function TermsPage() {
               {canEdit && viewing.version !== current?.version && (
                 <button className={primaryBtn} onClick={() => restoreVersion(viewing)}>Restore as new version</button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {dlg && (
+        <div className="fixed inset-0 bg-black/40 z-[2200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
+            <h2 className="font-bold text-lg text-gray-800">{dlg.title}</h2>
+            <p className="text-sm text-gray-600 whitespace-pre-line break-words">{dlg.message}</p>
+            <div className="flex gap-3 justify-end pt-1">
+              {!dlg.hideCancel && (
+                <button autoFocus={dlg.tone === "danger"} onClick={() => closeDlg(false)}
+                  className="px-4 py-2 border rounded-xl text-sm">{dlg.cancelLabel || "Cancel"}</button>
+              )}
+              <button autoFocus={dlg.tone !== "danger"} onClick={() => closeDlg(true)}
+                className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
+                  dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
+                  : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
+                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
+              </button>
             </div>
           </div>
         </div>

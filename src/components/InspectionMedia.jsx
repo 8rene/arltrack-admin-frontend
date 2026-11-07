@@ -168,6 +168,10 @@ function VideoTile({ item, onView, onRemove, removing }) {
  *   notify(msg, type)         toast
  * ───────────────────────────────────────────────────────────── */
 export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, items = [], onAdded, onRemoved, onView, notify = () => {}, disabled }) {
+  // In-page confirm dialog (replaces the browser's confirm/alert popups). `await askConfirm({...})` gives true / false.
+  const [dlg, setDlg] = useState(null);
+  const askConfirm = (opts) => new Promise((resolve) => setDlg({ ...opts, resolve }));
+  const closeDlg = (value) => { dlg.resolve(value); setDlg(null); };
   const [progress, setProgress] = useState(null); // null | 0-100 while one video is uploading
   const [removingID, setRemovingID] = useState(null);
   const inputID = `inspection-video-${phase}`;
@@ -206,7 +210,7 @@ export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, ite
   };
 
   const handleRemove = async (item) => {
-    if (!window.confirm("Remove this video? The file will be deleted.")) return;
+    if (!(await askConfirm({ title: "Remove video", message: "Remove this video? The file will be deleted.", confirmLabel: "Remove", tone: "danger" }))) return;
     setRemovingID(item.url);
     try {
       await removeMedia({ apiUrl, segment: "videos", phase, bookingID, url: item.url });
@@ -255,6 +259,27 @@ export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, ite
       <p className="text-[11px] text-gray-400">
         Optional · up to {MAX_VIDEOS} videos ({items.length}/{MAX_VIDEOS}) · max {MAX_VIDEO_SECONDS / 60} min and {MAX_VIDEO_MB} MB each — record at 1080p. One walkaround can cover the exterior and the parts.
       </p>
+      {dlg && (
+        <div className="fixed inset-0 bg-black/40 z-[2200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
+            <h2 className="font-bold text-lg text-gray-800">{dlg.title}</h2>
+            <p className="text-sm text-gray-600 whitespace-pre-line break-words">{dlg.message}</p>
+            <div className="flex gap-3 justify-end pt-1">
+              {!dlg.hideCancel && (
+                <button autoFocus={dlg.tone === "danger"} onClick={() => closeDlg(false)}
+                  className="px-4 py-2 border rounded-xl text-sm">{dlg.cancelLabel || "Cancel"}</button>
+              )}
+              <button autoFocus={dlg.tone !== "danger"} onClick={() => closeDlg(true)}
+                className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
+                  dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
+                  : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
+                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -266,6 +291,10 @@ export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, ite
 // labelOptions: optional suggestions for the label box (e.g. "Front view", a part name). The label is never required:
 // a photo added with the box empty is simply an additional photo.
 export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID, items = [], onAdded, onRemoved, onView, notify = () => {}, disabled, labelOptions = [] }) {
+  // In-page confirm dialog (replaces the browser's confirm/alert popups). `await askConfirm({...})` gives true / false.
+  const [dlg, setDlg] = useState(null);
+  const askConfirm = (opts) => new Promise((resolve) => setDlg({ ...opts, resolve }));
+  const closeDlg = (value) => { dlg.resolve(value); setDlg(null); };
   const [caption, setCaption] = useState("");
   const [uploadingCount, setUploadingCount] = useState(0);
   const [removingID, setRemovingID] = useState(null);
@@ -306,7 +335,7 @@ export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID
   };
 
   const handleRemove = async (item) => {
-    if (!window.confirm("Remove this photo? The file will be deleted.")) return;
+    if (!(await askConfirm({ title: "Remove photo", message: "Remove this photo? The file will be deleted.", confirmLabel: "Remove", tone: "danger" }))) return;
     setRemovingID(item.url);
     try {
       await removeMedia({ apiUrl, segment: "extra-photos", phase, bookingID, url: item.url });
@@ -379,6 +408,27 @@ export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID
       <p className="text-[11px] text-gray-400">
         Optional · anything else worth showing ({items.length}/{MAX_EXTRA_PHOTOS}) · photos are resized automatically.
       </p>
+      {dlg && (
+        <div className="fixed inset-0 bg-black/40 z-[2200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
+            <h2 className="font-bold text-lg text-gray-800">{dlg.title}</h2>
+            <p className="text-sm text-gray-600 whitespace-pre-line break-words">{dlg.message}</p>
+            <div className="flex gap-3 justify-end pt-1">
+              {!dlg.hideCancel && (
+                <button autoFocus={dlg.tone === "danger"} onClick={() => closeDlg(false)}
+                  className="px-4 py-2 border rounded-xl text-sm">{dlg.cancelLabel || "Cancel"}</button>
+              )}
+              <button autoFocus={dlg.tone !== "danger"} onClick={() => closeDlg(true)}
+                className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
+                  dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
+                  : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
+                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
