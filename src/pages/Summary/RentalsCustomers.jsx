@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
 import { money, count, whenTime } from "../../utils/reportCells";
@@ -12,9 +13,10 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // Question this tab answers:  "Who booked, and how many times?"
 //
 // A graph + a table for customers, vehicles and service types. Each bar / row is split by booking status
-// (Completed, Ongoing, Upcoming, Cancelled). "View" on a row (or a click on its bar) opens the cars a customer booked,
-// the customers who booked a car, or the cars booked under a service type. No booking details (fees, dates,
-// locations): those are on the Bookings page.
+// (Completed, Ongoing, Upcoming, Cancelled), and each table ends with a Total row. "View" on a row (or a click on its bar)
+// opens the bookings behind it, 10 per page: a customer's bookings, a vehicle's bookings or a service type's bookings, each
+// with a View button that opens the booking. The three tables are the same bookings sliced three ways, so each Total
+// row shows the same number.
 //
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // Each row of report.bookings needs:
@@ -255,6 +257,8 @@ function sortRows(rows, { key, dir }) {
   });
 }
 
+const sumKey = (rows, key) => rows.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+
 function paged(list, p, size = PAGE_SIZE) {
   const count = Math.max(1, Math.ceil(list.length / size));
   const no = Math.min(p, count);
@@ -469,12 +473,39 @@ const viewBtn = "px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-w
 const TH = "px-4 py-3 text-left font-semibold whitespace-nowrap";
 const THEAD = "bg-gray-50 text-gray-400 text-xs uppercase tracking-wide";
 
-/** A window with a title, a one-line summary and a paged table of the rows behind one bar / table row. */
-function BreakdownModal({ row, childLabel, showMode, onClose }) {
+const dayText = (iso) => (iso ? new Date(iso).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" }) : "—");
+
+/** The status of a booking as a coloured tag. */
+function StatusTag({ status }) {
+  const s = STATUSES.find((x) => x.key === status);
+  if (!s) return <span className="text-gray-300">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border whitespace-nowrap"
+      style={{ color: s.color, borderColor: `${s.color}55`, background: `${s.color}14` }}>
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />{s.label}
+    </span>
+  );
+}
+
+/**
+ * The window behind one bar / table row: the bookings themselves, 10 per page, each with a View button that opens it.
+ *   kind "customer"  the customer's bookings (vehicle column)
+ *   kind "vehicle"   the vehicle's bookings (customer column)
+ *   kind "service"   the service type's bookings (customer and vehicle columns)
+ * The counts in the tables are made from these same bookings, so the number of rows here is the row's Total.
+ */
+function BookingsModal({ row, kind, bookings, onClose }) {
+  const { fmt } = useCurrency();
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
-  const items = row.children || [];
+  const items = useMemo(() => {
+    const key = kind === "customer" ? "userID" : kind === "vehicle" ? "carID" : "serviceTypeName";
+    return bookings.filter((b) => b.displayStatus && (b[key] || "unknown") === row.id)
+      .sort((x, y) => new Date(y.startDate || 0) - new Date(x.startDate || 0));
+  }, [bookings, kind, row.id]);
   const p = paged(items, page, MODAL_PAGE_SIZE);
-  const modeCols = showMode ? MODES.slice(0, 2) : [];
+  const feeTotal = items.filter((b) => b.displayStatus !== "cancelled").reduce((s, b) => s + (Number(b.totalFee) || 0), 0);
+  const open = (id) => navigate(`/bookings?open=${encodeURIComponent(id)}`);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -482,36 +513,60 @@ function BreakdownModal({ row, childLabel, showMode, onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const heads = [childLabel, ...STATUSES.map((s) => s.label), ...modeCols.map((m) => m.label), "Total"];
+  const who = kind === "customer" ? [["Vehicle", (b) => b.carName]]
+    : kind === "vehicle" ? [["Customer", (b) => b.customerName]]
+    : [["Customer", (b) => b.customerName], ["Vehicle", (b) => b.carName]];
+  const heads = ["Booking ID", ...who.map((w) => w[0]), ...(kind === "service" ? [] : ["Service type"]), "Driving", "Status", "Start", "End", "Total fee"];
+  const driving = (b) => (b.modeOfDriving === "With Chauffeur" ? "With chauffeur" : b.modeOfDriving === "Self Drive" ? "Self-drive" : "");
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-bold text-lg text-gray-800 truncate">{row.name}</h2>
             <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 shrink-0"><IconClose /></button>
           </div>
-          <p className="text-sm text-gray-500 mt-1">{row.total} booking{row.total === 1 ? "" : "s"}</p>
+          <p className="text-sm text-gray-500 mt-1">{items.length} booking{items.length === 1 ? "" : "s"}</p>
         </div>
         <div className="overflow-auto flex-1 px-6 py-5">
           <div className="rounded-xl border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className={THEAD}>
-                  <tr>{heads.map((h) => <th key={h} className={TH}>{h}</th>)}</tr>
+                  <tr>
+                    {heads.map((h) => <th key={h} className={TH}>{h}</th>)}
+                    <th className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">Action</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {p.rows.length === 0 ? (
-                    <tr><td colSpan={heads.length} className="text-center text-gray-400 py-12">Nothing to show</td></tr>
-                  ) : p.rows.map((c) => (
-                    <tr key={c.id} className="border-t hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{c.name}</td>
-                      {STATUSES.map((s) => <CountCell key={s.key} value={c[s.key]} color={s.color} />)}
-                      {modeCols.map((m) => <CountCell key={m.key} value={c[m.key]} color={m.color} />)}
-                      <td className="px-4 py-3 font-semibold text-gray-700">{c.total}</td>
+                    <tr><td colSpan={heads.length + 1} className="text-center text-gray-400 py-12">Nothing to show</td></tr>
+                  ) : p.rows.map((b) => (
+                    <tr key={b.id || b.bookingID} className="border-t hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 whitespace-nowrap"><span className="font-mono text-xs text-gray-600">{b.bookingID || "—"}</span></td>
+                      {who.map((w) => <td key={w[0]} className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{w[1](b) || <span className="text-gray-300">—</span>}</td>)}
+                      {kind !== "service" && <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{b.serviceTypeName || <span className="text-gray-300">—</span>}</td>}
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{driving(b) || <span className="text-gray-300">—</span>}</td>
+                      <td className="px-4 py-3"><StatusTag status={b.displayStatus} /></td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{dayText(b.startDate)}</td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{dayText(b.endDate)}</td>
+                      <td className="px-4 py-3 text-gray-700 font-medium whitespace-nowrap">{b.totalFee ? fmt(b.totalFee) : <span className="text-gray-300">—</span>}</td>
+                      <td className="pl-4 pr-8 py-3 text-right w-px whitespace-nowrap">
+                        {b.bookingID && <button onClick={() => open(b.bookingID)} className={viewBtn}>View</button>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
+                {items.length > 0 && (
+                  <tfoot className="border-t border-gray-200 bg-gray-50/70">
+                    <tr className="font-bold text-gray-700">
+                      <td className="px-4 py-3 text-gray-800">Total</td>
+                      <td className="px-4 py-3 text-gray-500 font-medium whitespace-nowrap" colSpan={heads.length - 2}>{items.length} booking{items.length === 1 ? "" : "s"} · fee total leaves out cancelled</td>
+                      <td className="px-4 py-3 whitespace-nowrap">{fmt(feeTotal)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
             <TablePagination page={p.no} totalPages={p.count} onChange={setPage} pageSize={MODAL_PAGE_SIZE} count={items.length} />
@@ -543,7 +598,7 @@ function DetailToggle({ detailed, onChange }) {
  * One card: title, legend, graph and the table under it (same rows, paged together). Sorting, paging and the View window
  * belong to the card, so the three cards (customers, vehicles, service types) share this one piece.
  */
-function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend, detailed }) {
+function GroupCard({ title, nameLabel, kind, bookings, rows, showMode, legend, detailed }) {
   const [sort, setSort] = useState({ key: "total", dir: "desc" });
   const [page, setPage] = useState(1);
   const [view, setView] = useState(null);
@@ -591,12 +646,28 @@ function GroupCard({ title, nameLabel, childLabel, rows, showMode, legend, detai
                 </tr>
               ))}
             </tbody>
+            {rows.length > 0 && (
+              <tfoot className="border-t border-gray-200 bg-gray-50/70">
+                <tr className="font-bold text-gray-700">
+                  <td className="px-4 py-3 text-gray-800">Total</td>
+                  {statusCols.map((s) => <td key={s.key} className="px-4 py-3">{sumKey(rows, s.key)}</td>)}
+                  {modeCols.map((m) => <td key={m.key} className="px-4 py-3">{sumKey(rows, m.key)}</td>)}
+                  <td className="px-4 py-3">
+                    <span className="inline-block px-2 py-0.5 rounded-full bg-teal-700 text-white text-xs font-bold whitespace-nowrap">{sumKey(rows, "total")}</span>
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
         <TablePagination page={pg.no} totalPages={pg.count} onChange={setPage} pageSize={PAGE_SIZE} count={rows.length} />
       </div>
+      {modeCols.length > 0 && sumKey(rows, "unrecorded") > 0 && (
+        <p className="mt-2 text-xs text-gray-400">With chauffeur and Self-drive leave out {sumKey(rows, "unrecorded")} booking{sumKey(rows, "unrecorded") === 1 ? "" : "s"} with no driving mode recorded, so those two columns add up to less than Total.</p>
+      )}
 
-      {view && <BreakdownModal row={view} childLabel={childLabel} showMode={showMode} onClose={closeView} />}
+      {view && <BookingsModal row={view} kind={kind} bookings={bookings} onClose={closeView} />}
     </Card>
   );
 }
@@ -660,15 +731,10 @@ function RentalsCustomersView({ report, exportRef }) {
         { type: "title", text: title, graph: `${title} Graph`, table: `${title} Table` },
         { type: "legend", items: pdfLegend },
         { type: "bars", rows: barRows(sorted, STATUSES, { text: (r) => String(r.total), sub: modeOn ? MODES : undefined }) },
-        { type: "table", name: title, head: [nameLabel, ...countHead], align: ["left", ...countAlign], body: sorted.map((r) => [r.name, ...countCells(r)]) },
+        { type: "table", name: title, head: [nameLabel, ...countHead], align: ["left", ...countAlign], body: sorted.map((r) => [r.name, ...countCells(r)]),
+          foot: ["Total", ...STATUSES.map((s) => count(sumKey(sorted, s.key))), ...modeCols.map((m) => count(sumKey(sorted, m.key))), count(sumKey(sorted, "total"))] },
       ];
     };
-    // the "View" windows, flattened: one row per pair (customer + vehicle, vehicle + customer, service type + vehicle)
-    const pairs = (name, desc, aLabel, bLabel, rows) => ({
-      name, desc,
-      head: [aLabel, bLabel, ...countHead],
-      body: byTotal(rows).flatMap((r) => (r.children || []).map((c) => [r.name, c.name, ...countCells(c)])),
-    });
     const text = (v) => (typeof v === "string" ? v : v && typeof v === "object" ? (v.address || v.name || v.label || "") : "");
     const statusLabel = (k) => STATUSES.find((s) => s.key === k)?.label || k;
     const bookingRows = scoped.filter((b) => b.displayStatus).map((b) => [
@@ -694,11 +760,8 @@ function RentalsCustomersView({ report, exportRef }) {
         ]),
       ],
       sheets: totalBookings === 0 ? [] : [
-        { name: "Bookings", desc: "Every booking started in the period (the records all the counts are made from)",
+        { name: "Bookings", desc: "Every booking started in the period: the records all the counts, Total rows and View windows are made from",
           head: ["Booking ID", "Customer", "Vehicle", "Service type", "Driving", "Status", "Location", "Start", "End", "Days", "Total fee", "Created"], body: bookingRows },
-        pairs("Customer by vehicle", "Each customer's bookings split by vehicle: the Customers View window", "Customer", "Vehicle", custRows),
-        pairs("Vehicle by customer", "Each vehicle's bookings split by customer: the Vehicles View window", "Vehicle", "Customer", fleetRows),
-        ...(svcSupported ? [pairs("Service type by vehicle", "Each service type's bookings split by vehicle: the Service types View window", "Service type", "Vehicle", svcRows)] : []),
       ],
     };
   };
@@ -759,10 +822,10 @@ function RentalsCustomersView({ report, exportRef }) {
         <Card><Empty>{drive === "all" ? `No bookings started in ${report.label}. Try another period.` : `No ${drive === "chauffeur" ? "chauffeur" : "self-drive"} bookings in ${report.label}. Switch Driving to All bookings to see the rest.`}</Empty></Card>
       ) : (
         <>
-          <GroupCard title="Customers" nameLabel="Customer" childLabel="Vehicle" rows={custRows} showMode={showMode} legend={legend} detailed={detailed} />
-          <GroupCard title="Vehicles" nameLabel="Vehicle" childLabel="Customer" rows={fleetRows} showMode={showMode} legend={legend} detailed={detailed} />
+          <GroupCard title="Customers" nameLabel="Customer" kind="customer" bookings={scoped} rows={custRows} showMode={showMode} legend={legend} detailed={detailed} />
+          <GroupCard title="Vehicles" nameLabel="Vehicle" kind="vehicle" bookings={scoped} rows={fleetRows} showMode={showMode} legend={legend} detailed={detailed} />
           {svcSupported ? (
-            <GroupCard title="Service types" nameLabel="Service type" childLabel="Vehicle" rows={svcRows} showMode={showMode} legend={legend} detailed={detailed} />
+            <GroupCard title="Service types" nameLabel="Service type" kind="service" bookings={scoped} rows={svcRows} showMode={showMode} legend={legend} detailed={detailed} />
           ) : (
             <Card className="p-4">
               <SectionHead title="Service types" />
