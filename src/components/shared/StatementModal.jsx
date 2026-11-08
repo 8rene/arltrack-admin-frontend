@@ -25,11 +25,14 @@ const DEPOSIT_LABEL = { Held: "Still held", Settled: "Settled", Waived: "Waived"
 // Print only the statement: hide everything else on the page while the print dialog is open.
 const PRINT_CSS = `
 @media print {
+  /* The app locks html/body to the screen height with overflow hidden (index.css); in print that cut everything after the first page. */
+  html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; }
   body > *:not(#statement-print-root) { display: none !important; }
   #statement-print-root { position: static !important; background: #fff !important; padding: 0 !important; overflow: visible !important; }
   #statement-print-root .no-print { display: none !important; }
   #statement-print-root .statement-sheet { box-shadow: none !important; border: none !important; max-width: none !important; margin: 0 !important; }
   #statement-print-root .keep-together { break-inside: avoid; }
+  #statement-print-root, #statement-print-root .statement-sheet { height: auto !important; max-height: none !important; overflow: visible !important; }
   @page { margin: 14mm; }
 }`;
 

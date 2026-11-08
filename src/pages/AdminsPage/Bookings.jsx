@@ -923,6 +923,7 @@ const STEP_STYLE = {
   todo:    { dot: "bg-white text-gray-400 border-gray-300",                        text: "text-gray-500" },
   skipped: { dot: "bg-gray-100 text-gray-400 border-gray-200",                     text: "text-gray-400" },
   missing: { dot: "bg-amber-50 text-amber-600 border-amber-300",                   text: "text-gray-700" },
+  review:  { dot: "bg-amber-50 text-amber-600 border-amber-300",                   text: "text-gray-700" },   // penalties noted but still waiting for a supervisor to confirm
   partial: { dot: "bg-orange-100 text-orange-600 border-orange-400",               text: "text-orange-700" },
   stopped: { dot: "bg-red-500 text-white border-red-500",                          text: "text-red-700" },
 };
@@ -1204,7 +1205,9 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     : isStolen ? `Flagged stolen${booking.hasHistory ? " · GPS trail saved" : ""}`
     : !droppedOff ? "Trip in progress — track it live"
     : booking.hasHistory ? "GPS trail saved" : "No GPS trail saved";
-  const penaltiesDone = penaltyCount > 0;
+  // A penalty a driver noted stays "Under Review" until a supervisor confirms it. Until then the step is yellow, not green.
+  const penaltyReviewCount = (linkedPenalties || []).filter((x) => x.status === "UnderReview").length;
+  const penaltiesDone = penaltyCount > 0 && penaltyReviewCount === 0;
 
   const stepDefs = [
     { key: "booked", title: "Booked", done: true, sub: fmtDateTime(booking.createdAt) },
@@ -1253,9 +1256,10 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
         : maintAllDone ? "Completed" : `${pendingMaint} in progress`,
     },
     {
-      key: "penalties", title: "Penalties", done: penaltiesDone,
-      skipped: !penaltiesDone && linkedPenalties !== null && status === "completed",
+      key: "penalties", title: "Penalties", done: penaltiesDone, review: penaltyReviewCount > 0,
+      skipped: !penaltiesDone && penaltyReviewCount === 0 && linkedPenalties !== null && status === "completed",
       sub: linkedPenalties === null ? "Checking…"
+        : penaltyReviewCount ? `${penaltyCount} noted · ${penaltyReviewCount} to review`
         : penaltyCount ? `${penaltyCount} noted` : status === "completed" ? "None noted" : "None noted yet",
     },
     {
@@ -1275,6 +1279,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     if (d.done) state = "done";
     else if (dead) state = "stopped";        // cancelled / stolen: everything that didn't happen is red
     else if (d.partial) state = "partial";   // in the middle: orange, and it doesn't hold up the steps after it
+    else if (d.review) state = "review";     // penalties waiting for review: yellow, doesn't hold up the steps after it
     else if (d.skipped) state = "skipped";
     else if (status === "completed") state = "missing";
     else if (!currentSeen) { state = dead ? "stopped" : "current"; currentSeen = true; }
@@ -1410,7 +1415,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                           {st.state === "done" ? <IconCheck className="w-4 h-4" />
                             : st.state === "stopped" ? <IconX className="w-4 h-4" />
                             : st.state === "skipped" ? "–"
-                            : st.state === "missing" ? "!"
+                            : st.state === "missing" || st.state === "review" ? "!"
                             : st.n}
                         </span>
                         <div className="min-w-0 flex-1 basis-40">
