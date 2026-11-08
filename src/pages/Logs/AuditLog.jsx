@@ -211,8 +211,9 @@ function ViewModal({ log, user, onClose, onArchive }) {
   const { user: viewer } = useAuth();
   const go = (path) => { onClose(); navigate(path); };
   const link = (label, path) => (
-    <button type="button" onClick={() => go(path)} className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline whitespace-nowrap">{label}</button>
+    <button type="button" onClick={() => go(path)} className="px-3 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">{label}</button>
   );
+  const idLine = (id, linkEl) => <span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{id}</span>{linkEl}</span>;
   const hasRelated = !!(log.bookingID || log.paymentID || log.refundRequestID);
   const userName = !log.userID ? "SYSTEM" : user === undefined || user === null ? "Loading…" : user.name;
 
@@ -257,19 +258,10 @@ function ViewModal({ log, user, onClose, onArchive }) {
           </InfoSection>
 
           {hasRelated && (
-            <InfoSection title="Related records" action={log.bookingID && (
-              <button type="button" onClick={() => go(`/bookings?open=${encodeURIComponent(log.bookingID)}`)}
-                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">View booking →</button>
-            )}>
-              {log.bookingID && (
-                <InfoField label="Booking" value={<span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{log.bookingID}</span></span>} />
-              )}
-              {log.paymentID && (
-                <InfoField label="Payment" value={<span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{log.paymentID}</span>{link("View payment →", `/payments?paymentID=${encodeURIComponent(log.paymentID)}`)}</span>} />
-              )}
-              {log.refundRequestID && (
-                <InfoField label="Refund request" value={<span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{log.refundRequestID}</span>{link("View refund →", `/refund-requests?search=${encodeURIComponent(log.refundRequestID)}`)}</span>} />
-              )}
+            <InfoSection title="Related records">
+              {log.bookingID && <InfoField label="Booking" value={idLine(log.bookingID, link("View booking →", `/bookings?open=${encodeURIComponent(log.bookingID)}`))} />}
+              {log.paymentID && <InfoField label="Payment" value={idLine(log.paymentID, link("View payment →", `/payments?paymentID=${encodeURIComponent(log.paymentID)}`))} />}
+              {log.refundRequestID && <InfoField label="Refund request" value={idLine(log.refundRequestID, link("View refund →", `/refund-requests?search=${encodeURIComponent(log.refundRequestID)}`))} />}
             </InfoSection>
           )}
 
