@@ -747,7 +747,7 @@ function PaymentsTransactionsView({ report, exportRef }) {
       body: rows.map((r) => [r.name, ...cols.map((c) => cellOf(r, c)), money(r.total || 0)]),
     });
     const group = (title, tableName, rows, empty, detail, cols) => [
-      { type: "title", text: title },
+      { type: "title", text: title, graph: `${title} Graph`, table: `${title} Table` },
       ...(rows.length === 0 ? [{ type: "empty", text: empty }] : [
         { type: "legend", items: [...detail, ...SRC_SERIES].filter((x) => !hide.has(x.key)) },
         { type: "bars", rows: barRows(rows, detail.filter((x) => !hide.has(x.key)), { text: (r) => fmt(r.total || 0), sub: srcOk ? SRC_SERIES : undefined }) },
@@ -755,8 +755,7 @@ function PaymentsTransactionsView({ report, exportRef }) {
       ]),
     ];
 
-    // the windows, flattened: one row per method + channel (money in) and per transaction (money out)
-    const inFlat = inRows.flatMap((m) => (m.children || []).map((c) => [m.name, c.name, count(c.count), money(c.rental), money(c.service), money(c.gateway), money(c.deposit), money(c.penalties), money(c.unpaid), money(c.total)]));
+    // the windows, flattened: one row per transaction (money out)
     const outFlat = outRows.flatMap((o) => (o.children || []).map((c) => {
       const [id, who] = splitName(c.name);
       return [o.name, id, who || "", when(c.date), c.kindLabel || "", c.pending ? "" : c.online > 0 ? "Online" : "In person", c.pending ? "Pending" : "Done", money(c.pending ? c.expected : c.total)];
@@ -764,6 +763,18 @@ function PaymentsTransactionsView({ report, exportRef }) {
     // the raw payment records of the period (not narrowed by the channel filter) and each step of them
     const records = report.payments || [];
     const recordRows = records.map((r) => [r.bookingID, r.customer, r.car, r.method, r.stage, money(r.total), money(r.paid), money(r.balance), money(r.refunded), r.reference, whenTime(r.createdAt), when(r.tripStart)]);
+    // money in, one row per payment received (the same layout as Money out transactions). A step's channel is its `source`
+    // when the record carries one; otherwise cash is in person and anything else is left blank rather than guessed.
+    const METHOD_LABEL = { gcash: "GCash", maya: "Maya", paymaya: "Maya", qrph: "QR Ph", cash: "Cash", bank_transfer: "Bank transfer" };
+    const IN_TYPE = { deposit: "Deposit paid", balance: "Balance paid", penalty: "Penalty payment" };
+    const stepChannel = (st) => (st.source === "in_person" ? "In person" : st.source ? "Online" : String(st.method || "").toLowerCase() === "cash" ? "In person" : "");
+    const inFlat = records
+      .flatMap((r) => (r.steps || [])
+        .filter((st) => st.direction === "in" && (st.status === "success" || st.status === "pending"))
+        .map((st) => ({ r, st, method: METHOD_LABEL[String(st.method || "").toLowerCase()] || st.method || "-", channel: stepChannel(st) })))
+      .filter((x) => !byChannel || x.channel === chName)       // the channel filter applies, as it does to Money out
+      .sort((a, b) => a.method.localeCompare(b.method) || String(a.st.date || "").localeCompare(String(b.st.date || "")))
+      .map(({ r, st, method, channel }) => [method, r.bookingID, r.customer || "", whenTime(st.date), IN_TYPE[st.phase] || "Payment", channel, st.status === "pending" ? "Pending" : "Done", money(st.amount), st.reference || ""]);
     const stepRows = records.flatMap((r) => (r.steps || []).map((st) => [r.bookingID, r.customer, st.phase || "", st.direction || "", st.method, money(st.amount), st.status || "", st.reference, whenTime(st.date)]));
 
     return {
@@ -779,7 +790,7 @@ function PaymentsTransactionsView({ report, exportRef }) {
           S("Possible return", cards.possibleReturn ?? 0, "#f59e0b"),
         ] },
 
-        ...group("Money in", "Money in", inRows, `No money was received${chWord} in ${report.label}.`, IN_SERIES, inColumns),
+        ...group("Money In", "Money in", inRows, `No money was received${chWord} in ${report.label}.`, IN_SERIES, inColumns),
         { type: "title", text: "Unpaid balances (all periods)", level: 2 },
         unpaid.length === 0
           ? { type: "empty", text: "Nothing is owed on any payment." }
@@ -788,7 +799,7 @@ function PaymentsTransactionsView({ report, exportRef }) {
               align: ["left", "left", "left", "left", "left", "right", "right", "right"],
               body: unpaid.map((r) => [r.bookingID, r.customer, r.car, r.stage, when(r.tripStart), money(r.total), money(r.paid, { dash: true }), money(r.balance)]) },
 
-        ...group("Money out", "Money out", outRows, `No money went out${chWord} in ${report.label}.`, OUT_SERIES, outColumns),
+        ...group("Money Out", "Money out", outRows, `No money went out${chWord} in ${report.label}.`, OUT_SERIES, outColumns),
         ...(byChannel ? [] : [
           { type: "title", text: "Possible return", level: 2 },
           ...(possible.items.length === 0 ? [{ type: "empty", text: "Nothing is waiting to be returned." }] : [
@@ -801,8 +812,8 @@ function PaymentsTransactionsView({ report, exportRef }) {
         ]),
       ],
       sheets: [
-        { name: "Money in by channel", desc: "Each money-in method split by channel: what the View window shows (includes the not-yet-paid line)",
-          head: ["Method", "Channel", "Payments", "Rental", "Service", "Gateway", "Deposit", "Penalties", "Unpaid", "Total"], body: inFlat },
+        { name: "Money in transactions", desc: "Every payment received behind each money-in method (deposits, balances and penalties), with its booking, customer, date, channel and status",
+          head: ["Method", "Booking ID", "Customer", "Date", "Type", "Channel", "Status", "Amount", "Reference"], body: inFlat },
         { name: "Money out transactions", desc: "Every refund, deposit return and discount return behind each money-out method, plus what is still pending",
           head: ["Method", "Booking ID", "Customer", "Date", "Type", "Channel", "Status", "Amount"], body: outFlat },
         { name: "Payment records", desc: "Every payment created in the period, with its total, paid, balance and refunded amounts (not narrowed by the channel filter)",

@@ -778,7 +778,7 @@ function RevenueExpenseView({ report, exportRef }) {
           S(net < 0 ? "Net loss" : "Net", net, net < 0 ? "#ef4444" : "#0d9488", net < 0 ? C_RED : undefined),
         ] },
         ...(nothing ? [{ type: "empty", text: `No booking was finalized (completed, cancelled or stolen) and no maintenance was completed in ${report.label}.` }] : [
-          { type: "title", text: "Revenue and Expense" },
+          { type: "title", text: "Revenue & Expense", graph: "Revenue & Expense Graph", table: "Revenue & Expense Table" },
           { type: "legend", items: [{ label: "Revenue", color: C_GREEN }, { label: "Expenses (maintenance + PayMongo fees)", color: C_RED }] },
           { type: "grouped", rows: series.map((b) => ({ name: b.label, bars: [
             { value: b.revenue, color: C_GREEN, text: fmt(b.revenue) },
@@ -791,7 +791,7 @@ function RevenueExpenseView({ report, exportRef }) {
             body: series.map((b) => [b.label, money(b.rentals), money(b.penalties), money(b.returned), money(b.deposits), money(b.maintenance), money(b.fees), money(b.net), money(b.expected || 0), money(b.scheduled || 0)]),
             foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees", "net", "expected", "scheduled"].map((k) => money(sumOf(k)))] }]),
 
-          { type: "title", text: "Vehicles" },
+          { type: "title", text: "Vehicle Revenue", graph: "Vehicle Revenue Graph", table: "Vehicle Revenue Table" },
           ...(carRows.length === 0 ? [{ type: "empty", text: `No bookings or maintenance by vehicle in ${report.label}.` }] : [
             { type: "legend", items: carSeriesFor() },
             { type: "bars", rows: barRows(carRows, carSeriesFor(), { text: (r) => fmt(r.net) }) },

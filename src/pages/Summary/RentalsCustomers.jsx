@@ -657,7 +657,7 @@ function RentalsCustomersView({ report, exportRef }) {
     const group = (title, nameLabel, rows) => {
       const sorted = byTotal(rows);
       return [
-        { type: "title", text: title },
+        { type: "title", text: title, graph: `${title} Graph`, table: `${title} Table` },
         { type: "legend", items: pdfLegend },
         { type: "bars", rows: barRows(sorted, STATUSES, { text: (r) => String(r.total), sub: modeOn ? MODES : undefined }) },
         { type: "table", name: title, head: [nameLabel, ...countHead], align: ["left", ...countAlign], body: sorted.map((r) => [r.name, ...countCells(r)]) },

@@ -206,6 +206,52 @@ function RangeModal({ current, onApply, onClose }) {
   );
 }
 
+/** Asks before a download is made. Shows what will be downloaded; while the file is being made the buttons wait, and a failure is shown here instead of a browser pop-up. */
+function DownloadModal({ kind, tabLabel, range, fileName, notReady, exporting, error, onConfirm, onClose }) {
+  const label = kind === "xlsx" ? "Excel (.xlsx)" : "PDF (.pdf)";
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !exporting) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, exporting]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { if (!exporting) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-label="Download report" className="bg-white rounded-2xl shadow-xl w-full max-w-md flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4 border-b border-gray-100 flex items-center justify-between gap-3">
+          <h2 className="font-bold text-lg text-gray-800">Download report</h2>
+          <button onClick={onClose} disabled={exporting} aria-label="Close" className="text-gray-400 hover:text-gray-600 disabled:opacity-40"><IconClose /></button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          {notReady ? (
+            <p className="text-sm text-gray-600">The report is still loading. Please wait a moment, then try again.</p>
+          ) : (
+            <>
+              <p className="text-sm text-gray-600">Download this report as <span className="font-semibold text-gray-800">{label}</span>?</p>
+              <dl className="rounded-xl bg-gray-50 px-4 py-3 text-xs space-y-1.5">
+                <div className="flex justify-between gap-3"><dt className="font-semibold text-gray-400">Report</dt><dd className="font-semibold text-gray-700 text-right">{tabLabel}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="font-semibold text-gray-400">Period</dt><dd className="font-semibold text-gray-700 text-right">{range}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="font-semibold text-gray-400">File</dt><dd className="font-semibold text-gray-700 text-right break-all">{fileName}.{kind}</dd></div>
+              </dl>
+            </>
+          )}
+          {error && <p role="alert" className="text-xs font-semibold text-red-600 bg-red-50 rounded-xl px-4 py-3">{error}</p>}
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2 bg-gray-50/50">
+          <button type="button" onClick={onClose} disabled={exporting} className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-60">{notReady ? "Close" : "Cancel"}</button>
+          {!notReady && (
+            <button type="button" onClick={onConfirm} disabled={exporting} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 transition-colors disabled:opacity-60 disabled:cursor-wait">
+              {exporting ? "Creating…" : error ? "Try again" : "Download"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Reports() {
   const [tab, setTab]           = useState("revenue");
   const [period, setPeriod]     = useState("monthly");
@@ -237,18 +283,31 @@ export default function Reports() {
     return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
   }, [menuOpen]);
 
-  const download = async (kind) => {                      // kind: "pdf" | "xlsx"
+  const [confirm, setConfirm] = useState(null);           // { kind, notReady? } while the Download window is open
+  const [exportError, setExportError] = useState("");
+  const tabLabel = TABS.find((t) => t.key === tab)?.label || "Report";
+  const rangeText = rangeLabel({ period, year: selYear, month: selMonth, week: selWeek, day: selDay });
+  const fileName = `${slug(tabLabel)}-${slug(rangeText)}`;
+
+  // choosing a format in the menu only opens the confirm window; nothing is made until Download is pressed there
+  const askDownload = (kind) => {                         // kind: "pdf" | "xlsx"
     setMenuOpen(false);
-    const spec = exportRef.current?.(kind);
-    if (!spec) return;                                     // the report is still loading
-    const tabLabel = TABS.find((t) => t.key === tab)?.label || "Report";
-    const fileName = `${slug(tabLabel)}-${slug(rangeLabel({ period, year: selYear, month: selMonth, week: selWeek, day: selDay }))}`;
+    setExportError("");
+    setConfirm({ kind, notReady: !exportRef.current?.(kind) });   // not ready = the report is still loading
+  };
+  const closeConfirm = () => { if (!exporting) { setConfirm(null); setExportError(""); } };
+  const download = async () => {
+    const kind = confirm?.kind;
+    const spec = kind && exportRef.current?.(kind);
+    if (!spec) { setConfirm({ kind, notReady: true }); return; }
     setExporting(true);
+    setExportError("");
     try {
       await (kind === "xlsx" ? downloadTabXlsx : downloadTabPdf)({ title: tabLabel, ...spec, fileName });
+      setConfirm(null);
     } catch (err) {
       console.error(`${kind} export failed:`, err);
-      window.alert("Could not create the file. Please try again.");
+      setExportError("Could not create the file. Please try again.");
     } finally {
       setExporting(false);
     }
@@ -290,14 +349,17 @@ export default function Reports() {
               </button>
               {menuOpen && (
                 <div role="menu" className="absolute right-0 mt-2 w-44 rounded-xl border border-gray-100 bg-white shadow-card z-30 py-1">
-                  <button role="menuitem" type="button" onClick={() => download("pdf")} className="w-full text-left px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">PDF (.pdf)</button>
-                  <button role="menuitem" type="button" onClick={() => download("xlsx")} className="w-full text-left px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Excel (.xlsx)</button>
+                  <button role="menuitem" type="button" onClick={() => askDownload("pdf")} className="w-full text-left px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">PDF (.pdf)</button>
+                  <button role="menuitem" type="button" onClick={() => askDownload("xlsx")} className="w-full text-left px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Excel (.xlsx)</button>
                 </div>
               )}
             </div>
           </div>
         </div>
       </div>
+
+      {confirm && <DownloadModal kind={confirm.kind} tabLabel={tabLabel} range={rangeText} fileName={fileName} notReady={confirm.notReady}
+        exporting={exporting} error={exportError} onConfirm={download} onClose={closeConfirm} />}
 
       {rangeOpen && <RangeModal current={sel} onApply={applyRange} onClose={() => setRangeOpen(false)} />}
 

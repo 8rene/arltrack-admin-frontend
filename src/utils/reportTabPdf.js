@@ -13,8 +13,11 @@
 // The spec also takes  { title, subtitle, filters?: [[label, value], ...], currency, fmt, fileName }.
 // Excel-only extras (`sheets`, table `name`) are ignored here.
 //
-// The file is laid out as: page 1 = title, period, filters and the coloured key-figure cards; then every graph, one per page
-// (a graph with many rows is squeezed to fit its page); then the tables, each heading's tables starting on a new page. Unlike the
+// The file is laid out as: page 1 = title, period, filters and the coloured key-figure cards; then, for each main heading, its graph
+// on its own page followed by its table on its own page, each with its own name ("Revenue & Expense Graph", "Revenue & Expense Table").
+// A title may carry `graph` / `table` to set those names; otherwise " Graph" / " Table" is added to its text. A graph is squeezed to
+// fit its page, and if it still cannot fit it carries on over the next page under a "(continued)" heading, so a graph never runs
+// into the page where its table starts and a table never starts in the middle of a graph page. Unlike the
 // screen, the PDF has no paging: every row that has data is in it. Rows with nothing in them (every amount and count is zero) are
 // left out of the tables and graphs, with a line saying how many; zeros inside a row print as "-". Excel keeps every row. The graphs are drawn with plain shapes (no chart library),
 // so the file stays small and the text stays selectable.
@@ -86,6 +89,13 @@ export async function buildTabPdf({ title, subtitle = "", filters = [], sections
   const barRowEmpty = (r) => sum(r.parts) === 0 && sum(r.sub) === 0 && (r.parts || []).every((p) => !p.value);
   const groupedRowEmpty = (r) => r.bars.every((b) => !b.value);
   const hiddenNote = (n) => `${n} row${n === 1 ? "" : "s"} with no activity ${n === 1 ? "is" : "are"} not listed.`;
+  let contTitle = null;   // while a graph is drawn: its heading, repeated if the graph runs over to another page
+  // room for one more graph row; when there is none the graph carries on over a new page under a "(continued)" heading
+  const ensureRow = (h) => {
+    if (y + h <= BOTTOM) return;
+    doc.addPage(); y = M;
+    if (contTitle) drawTitle(`${contTitle} (continued)`, 2);
+  };
   let reserve = 0;   // room kept free at the bottom of a graph page for the note that goes under the graph
   const drawTitle = (label, level = 1) => {
     ensure(level === 1 ? 110 : 90);
@@ -133,7 +143,7 @@ export async function buildTabPdf({ title, subtitle = "", filters = [], sections
     const fs = Math.max(7.5, 9 * k);
     rows.forEach((r) => {
       const rowH = base * k;
-      ensure(rowH);
+      ensureRow(rowH);
       doc.setFont("helvetica", "normal").setFontSize(fs).setTextColor(...NAVY);
       doc.text(doc.splitTextToSize(clean(r.name), labelW)[0] || "", M, y + 11 * k);
       doc.setFillColor(...tint(RULE, 0.4)).rect(trackX, y + 1, trackW, 13 * k, "F");
@@ -169,7 +179,7 @@ export async function buildTabPdf({ title, subtitle = "", filters = [], sections
     const labelFs = Math.max(6.5, 8.5 * k), valueFs = Math.max(5.5, 7.5 * k);
     rows.forEach((r) => {
       const rowH = base * k;
-      ensure(rowH);
+      ensureRow(rowH);
       doc.setFont("helvetica", "normal").setFontSize(labelFs).setTextColor(...NAVY);
       doc.text(doc.splitTextToSize(clean(r.name), labelW)[0] || "", M, y + rowH / 2 + labelFs * 0.3);
       r.bars.forEach((b, i) => {
@@ -294,20 +304,31 @@ export async function buildTabPdf({ title, subtitle = "", filters = [], sections
     else if (s.type === "empty") drawText(s.text, { italic: true });
   });
 
-  // page 2, 3 ...: one graph per page
-  groups.filter((g) => g.chart.length).forEach((g) => {
+  // then, heading by heading: the graph on its own page, then the table on its own page (each main heading starts on a new page,
+  // its sub-headings follow on the same one). Both pages carry the heading's name plus "Graph" / "Table".
+  const mainHead = (g) => !g.head || (g.head.level || 1) === 1;
+  const nameOf = (g, kind) => {
+    if (!g.head) return null;
+    const custom = g.head[kind.toLowerCase()];
+    if (custom) return custom;
+    return g.chart.length && mainHead(g) ? `${g.head.text} ${kind}` : g.head.text;   // only a heading that has both gets the suffix
+  };
+  groups.forEach((g) => {
+    if (g.chart.length) {
     doc.addPage(); y = M;
-    if (g.head) drawTitle(g.head.text, g.head.level);
+    if (g.head) drawTitle(nameOf(g, "Graph"), g.head.level);
+    contTitle = g.head ? nameOf(g, "Graph") : null;
     reserve = g.chart.filter((c) => c.type === "note").length * 36
       + g.chart.filter((c) => (c.type === "bars" || c.type === "grouped") && c.rows.some((r) => (c.type === "bars" ? barRowEmpty(r) : groupedRowEmpty(r)))).length * 30;
     drawItems(g.chart);
     reserve = 0;
-  });
-  // then the tables: each main heading starts on a new page, its sub-headings follow on the same one
-  groups.filter((g) => g.rest.length).forEach((g) => {
-    if (!g.head || (g.head.level || 1) === 1) { doc.addPage(); y = M; }
-    if (g.head) drawTitle(g.head.text, g.head.level);
-    drawItems(g.rest);
+    contTitle = null;
+    }
+    if (g.rest.length) {
+      if (mainHead(g)) { doc.addPage(); y = M; }
+      if (g.head) drawTitle(nameOf(g, "Table"), g.head.level);
+      drawItems(g.rest);
+    }
   });
 
   // footer on every page

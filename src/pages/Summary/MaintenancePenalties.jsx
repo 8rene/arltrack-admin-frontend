@@ -649,7 +649,7 @@ function MaintenancePenaltiesView({ report, exportRef }) {
     const group = (title, nameLabel, countLabel, series, rows, empty) => {
       const sorted = bySize(rows);
       return [
-        { type: "title", text: title },
+        { type: "title", text: title, graph: `${title} Graph`, table: `${title} Table` },
         ...(sorted.length === 0 ? [{ type: "empty", text: empty }] : [
           { type: "legend", items: series },
           { type: "bars", rows: barRows(sorted, series, { text: (r) => fmt(r.total) }) },
