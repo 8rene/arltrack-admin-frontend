@@ -937,7 +937,24 @@ function MaintenanceSidePanel({ bookingID, token, fmt, onClose }) {
             </div>
             <DetailRow label="Date" value={fmtBookingDate(r.maintenanceDate)} />
             {services.length > 0 && <DetailRow label="Services" value={services.map((x) => x.serviceName).filter(Boolean).join(", ")} />}
-            {parts.length > 0 && <DetailRow label="Parts" value={parts.map((x) => x.partName || x.name).filter(Boolean).join(", ")} />}
+            {parts.length > 0 && (
+              <div className="pt-1.5 space-y-1.5">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Parts edited · {parts.length}</p>
+                {parts.map((x, i) => (
+                  <div key={x.carPartID || i} className="rounded-lg bg-gray-50 border border-gray-100 px-2.5 py-2 text-xs space-y-0.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-gray-800 break-words">{x.carPartName || x.partName || x.name || "Removed part"}</span>
+                      <span className="font-semibold text-gray-700 shrink-0">{fmt(x.price)}</span>
+                    </div>
+                    {x.serialNumber && <p className="text-[11px] text-gray-400 font-mono">S/N {x.serialNumber}</p>}
+                    <p className="text-gray-500">
+                      {x.conditionBefore || "—"} → {x.conditionAfter || (r.status === "Completed" ? "Good" : "Pending")}
+                    </p>
+                    {x.description && <p className="text-gray-500 break-words">{x.description}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
             {r.description && <DetailRow label="Notes" value={r.description} />}
             <DetailRow label="Cost" value={<span className="font-semibold">{fmt(r.totalCost)}</span>} />
           </div>

@@ -1110,6 +1110,117 @@ function ModalSection({ title, children }) {
   );
 }
 
+// ─── PENALTIES SIDE PANEL ────────────────────────────────────────────────────
+// Read-only list of the penalties on this job's booking, shown to the LEFT of the maintenance window (the mirror of
+// the "View maintenance" panel on the Penalties page). A penalty a driver noted is "Under Review" until a supervisor
+// confirms it ("given" = Confirmed, the customer has been told). Each row opens that penalty on the Penalties page.
+// Reads GET /api/penalties/booking/:bookingID.
+const PENALTY_STYLE = {
+  UnderReview: { label: "To review",  cls: "bg-blue-50 border border-blue-200 text-blue-700" },
+  Confirmed:   { label: "Given",      cls: "bg-amber-50 border border-amber-200 text-amber-800" },
+  Voided:      { label: "Voided",     cls: "bg-red-50 border border-red-200 text-red-700" },
+  Waived:      { label: "Waived",     cls: "bg-gray-50 border border-gray-200 text-gray-600" },
+  Discarded:   { label: "Discarded",  cls: "bg-gray-50 border border-gray-200 text-gray-500" },
+};
+
+function PenaltiesSidePanel({ bookingID, onClose }) {
+  const navigate = useNavigate();
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setError(""); setRows([]);
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/penalties/booking/${encodeURIComponent(bookingID)}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Failed to load penalties.");
+        const list = Array.isArray(json.data) ? json.data : [];
+        list.sort((a, b) => (toDate(b.createdAt)?.getTime() || 0) - (toDate(a.createdAt)?.getTime() || 0));
+        if (!cancelled) setRows(list);
+      } catch (e) {
+        if (!cancelled) setError(e.message || "Failed to load penalties.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bookingID]);
+
+  const toReview = rows.filter((x) => x.status === "UnderReview").length;
+  const given    = rows.filter((x) => x.status === "Confirmed");
+  const givenTotal = given.reduce((sum, x) => sum + (Number(x.amount) || 0), 0);
+
+  return (
+    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4 md:max-h-[92vh] md:overflow-y-auto">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-bold text-gray-800">Penalties</h3>
+          <p className="text-xs text-gray-400 font-mono break-all">{bookingID}</p>
+        </div>
+        <button onClick={onClose} aria-label="Hide penalties" className="text-gray-400 hover:text-gray-600"><IconX className="w-4 h-4" /></button>
+      </div>
+
+      {loading && (
+        <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />)}</div>
+      )}
+      {!loading && error && <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>}
+      {!loading && !error && rows.length === 0 && (
+        <p className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-xl px-3 py-3">No penalties have been noted on this booking.</p>
+      )}
+
+      {!loading && rows.length > 0 && (
+        <div className="flex gap-2 text-[11px] font-semibold">
+          <span className="px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">{toReview} to review</span>
+          <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800">{given.length} given</span>
+        </div>
+      )}
+
+      {rows.map((x) => {
+        const st = PENALTY_STYLE[x.status] || { label: x.status || "—", cls: "bg-gray-50 border border-gray-200 text-gray-600" };
+        const items = Array.isArray(x.lineItems) ? x.lineItems : [];
+        const id = x.penaltyID || x.id;
+        return (
+          <div key={id} className="rounded-xl border border-gray-100 p-3 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-gray-500">{fmtDate(x.createdAt)}</span>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span>
+            </div>
+            {items.map((li, i) => (
+              <div key={i} className="flex justify-between gap-2 text-xs">
+                <span className="text-gray-600 break-words">{li.description || "—"}</span>
+                <span className="text-gray-700 shrink-0">{peso(li.amount)}</span>
+              </div>
+            ))}
+            <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
+              <span className="text-gray-500">{x.status === "Confirmed" ? `Paid ${peso(x.paidAmount)} of` : "Amount"}</span>
+              <span className="font-semibold text-gray-800">{peso(x.amount)}</span>
+            </div>
+            {x.statusReason && <p className="text-[11px] text-gray-400 break-words">Reason: {x.statusReason}</p>}
+            <div className="flex justify-end">
+              <button type="button" onClick={() => navigate(`/penalties?open=${encodeURIComponent(id)}`)}
+                className="text-xs font-semibold text-teal-600 hover:text-teal-700">
+                {x.status === "UnderReview" ? "Review penalty →" : "View penalty →"}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+
+      {given.length > 0 && (
+        <div className="flex justify-between text-xs rounded-xl bg-gray-50 border border-gray-100 px-3 py-2">
+          <span className="text-gray-500">Total penalties given</span>
+          <span className="font-semibold text-gray-700">{peso(givenTotal)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MAINTENANCE MODAL ───────────────────────────────────────────────────────
 // Three sections — Job (what/when), Work (services + parts), Total.
 // Parts: pick from the vehicle's own parts (name · catalog price · condition).
@@ -1127,6 +1238,7 @@ function MaintenanceModal({
   addPart, updatePart, removePart,
 }) {
   const navigate = useNavigate();
+  const [showPenalties, setShowPenalties] = useState(false);
   const car = cars.find(c => c.id === form.carID);
   const afterOptions = PART_AFTER_OPTIONS;
 
@@ -1143,6 +1255,10 @@ function MaintenanceModal({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={viewing ? "Maintenance details" : editRecord ? "Edit maintenance record" : "Schedule maintenance"}>
       <div className="absolute inset-0 bg-black/40" />
+      <div className="relative flex flex-col md:flex-row items-stretch justify-center gap-3 w-full max-h-[92vh] overflow-y-auto md:overflow-visible">
+      {showPenalties && form.bookingID && (
+        <PenaltiesSidePanel bookingID={form.bookingID} onClose={() => setShowPenalties(false)} />
+      )}
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col">
 
         {/* Header */}
@@ -1194,6 +1310,10 @@ function MaintenanceModal({
                         <button type="button" onClick={() => setForm(f => ({ ...f, bookingID: "" }))}
                           className="text-xs text-teal-600 hover:text-teal-800 underline">Unlink</button>
                       )}
+                      <button type="button" onClick={() => setShowPenalties(v => !v)}
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors">
+                        {showPenalties ? "Hide Penalties" : "View Penalties"}
+                      </button>
                       <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(form.bookingID)}`)}
                         className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
                         View Booking →
@@ -1490,6 +1610,7 @@ function MaintenanceModal({
             </>
           )}
         </div>
+      </div>
       </div>
     </div>
   );
