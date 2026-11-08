@@ -124,11 +124,12 @@ function InfoSection({ title, action, children, cols = 2, block = false }) {
     </section>
   );
 }
-function InfoField({ label, value, wide, mono }) {
+function InfoField({ label, value, wide, mono, color, bold, note }) {
   return (
     <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
       <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
-      <div className={`text-sm font-medium text-gray-800 mt-0.5 break-words ${mono ? "font-mono text-xs" : ""}`}>{value || "—"}</div>
+      <div className={`text-sm mt-0.5 break-words ${bold ? "font-semibold" : "font-medium"} ${color || "text-gray-800"} ${mono ? "font-mono text-xs" : ""}`}>{value || "\u2014"}</div>
+      {note && <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{note}</p>}
     </div>
   );
 }
@@ -810,6 +811,329 @@ function MoneyMovements({ query, title = "Money movements" }) {
   );
 }
 
+// ─── PER-TAB LAYOUTS ─────────────────────────────────────────────────────────
+// Each linked tab copies the window of its live page (Payments, Penalties, Refund Requests, Reviews, Maintenance):
+// same cards, same label-over-value cells, same money lines. The raw archive fields sit in "Technical details".
+const numOr = (...vals) => {
+  for (const v of vals) if (v !== null && v !== undefined && v !== "" && !isNaN(Number(v))) return Number(v);
+  return null;
+};
+const dayOf = (v) => { const p = stampParts(toIso(v)); return p ? p.date : null; };
+
+function TechDetails({ record, labels, omit = [] }) {
+  return (
+    <details className="bg-white border rounded-2xl shadow-sm">
+      <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase tracking-wide">Technical details</summary>
+      <div className="p-4 border-t"><Fields record={record} labels={labels} omit={omit} /></div>
+    </details>
+  );
+}
+
+// The big figures at the top of the live Payment window.
+function KeyFigure({ label, value, note, color }) {
+  return (
+    <div className="px-4 first:pl-0 last:pr-0 border-l border-gray-100 first:border-l-0 min-w-0">
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className={`text-lg font-bold truncate ${color || "text-gray-800"}`}>{value}</p>
+      {note && <p className="text-xs text-gray-400 truncate">{note}</p>}
+    </div>
+  );
+}
+// Closing figure of a card, right-aligned under a hairline (Total Fee in the live windows).
+function TotalRow({ label, value, color }) {
+  return (
+    <div className="col-span-full flex items-baseline justify-end gap-4 pt-3 border-t border-gray-100">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</span>
+      <span className={`text-base font-bold ${color || "text-gray-800"}`}>{value}</span>
+    </div>
+  );
+}
+
+// ── Payment: Total fee / Amount paid / Balance, Payment Details, Fee Breakdown, money movements ──
+function PaymentTab({ rec, labels }) {
+  const { fmt } = useCurrency();
+  const total   = numOr(rec.totalFee, rec.amount);
+  const balance = numOr(rec.balance, rec.balanceAmount);
+  const paid    = numOr(rec.amountPaid, rec.paidAmount, total !== null && balance !== null ? total - balance : null);
+  const refunded = numOr(rec.refundIssued);
+  const discount = numOr(rec.discountAmount);
+  const deposit  = numOr(rec.securityDeposit);
+  const stage = rec.paymentStage || rec.status;
+  const p = (v) => (v === null ? "\u2014" : fmt(v));
+  const feeRows = [
+    ["Rental Fee", numOr(rec.rentalFee)], ["Extra Fee", numOr(rec.extraFee)], ["Driver's Fee", numOr(rec.driversFee)],
+    ["Service Fee", numOr(rec.serviceFee)], ["Gateway Fee", numOr(rec.gatewayFee)],
+  ].filter(([label, v]) => v !== null && (v > 0 || label === "Rental Fee" || label === "Service Fee"));
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 border-y border-gray-100 py-4">
+        <KeyFigure label="Total fee" value={p(total)} />
+        <KeyFigure label="Amount paid" value={p(paid)} note={refunded > 0 && paid === 0 ? "Refunded in full" : undefined} />
+        <KeyFigure label="Balance" value={p(balance)} color={balance > 0 ? "text-red-500" : "text-green-600"}
+          note={balance > 0 ? `Remaining${rec.balanceStatus === "pending" ? " \u00b7 payment in progress" : ""}` : ["cancelled", "refunded", "failed"].includes(String(stage).toLowerCase()) ? "No balance due" : "Fully paid"} />
+      </div>
+
+      <InfoSection title="Payment Details">
+        <InfoField label="Payment ID" mono value={rec.paymentID || rec.originalId} />
+        <InfoField label="Booking ID" mono value={rec.bookingID} />
+        <InfoField label="Status" value={stage ? <Chip text={stage} /> : null} />
+        <InfoField label="Payment Method" value={rec.paymentMethod} />
+        {present(rec.methodOfPayment) && rec.methodOfPayment !== "\u2014" && <InfoField label="Payment Type" value={rec.methodOfPayment} />}
+        {present(rec.depositStatus) && <InfoField label="Deposit Status" value={rec.depositStatus} />}
+        {present(rec.balanceStatus) && <InfoField label="Balance Status" value={rec.balanceStatus} />}
+        <InfoField label="Submitted" value={present(rec.createdAt) ? <Stamp iso={toIso(rec.createdAt)} /> : null} />
+      </InfoSection>
+
+      <InfoSection title="Fee Breakdown" cols={3}>
+        {feeRows.map(([label, v]) => <InfoField key={label} label={label} value={p(v)} />)}
+        {deposit > 0 && <InfoField label="Security Deposit (refundable)" value={p(deposit)} />}
+        <TotalRow label="Total Fee" value={p(total)} />
+        {discount > 0
+          ? <InfoField label="Discount Given" value={`\u2212${p(discount)}`} bold color="text-red-500" />
+          : <InfoField label="Discount Given" value={p(0)} color="text-gray-400" />}
+        <InfoField label="Amount Paid" value={p(paid)} bold />
+        {refunded > 0 ? <InfoField label="Refunded Amount" value={`\u2212${p(refunded)}`} bold color="text-purple-700" /> : <div />}
+      </InfoSection>
+
+      <MoneyMovements query={{ paymentID: rec.paymentID || rec.originalId }} title="All money movements on this payment" />
+      <TechDetails record={rec} labels={labels} />
+    </div>
+  );
+}
+
+// ── Penalties: Details, Charges (+ total and where it stands), Payment, Reason ──
+function PenaltyCard({ r, labels, index, total }) {
+  const { fmt } = useCurrency();
+  const isReview = r.status === "UnderReview";
+  const isConfirmed = r.status === "Confirmed";
+  const statusLabel = isReview ? "Under review" : isConfirmed ? (r.settlementStatus || "Confirmed") : r.status;
+  const amount = numOr(r.amount) ?? 0;
+  const paidAmt = numOr(r.paidAmount) ?? 0;
+  const owed = amount - paidAmt;
+  const items = Array.isArray(r.lineItems) && r.lineItems.length > 0 ? r.lineItems : null;
+  const overridden = numOr(r.computedAmount) !== null && numOr(r.computedAmount) !== amount;
+  const lateFee = r.lateMinutes !== null && r.lateMinutes !== undefined;
+  return (
+    <div className="space-y-3">
+      {total > 1 && (
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          Penalty {index + 1} of {total} <span className="ml-1 font-mono normal-case text-gray-400">{r.penaltyID || r.id}</span>
+        </p>
+      )}
+      <InfoSection title="Details" action={statusLabel ? <Chip text={statusLabel} /> : null}>
+        <InfoField label="Booking" mono value={r.bookingID} />
+        <InfoField label="Penalty ID" mono value={r.penaltyID || r.id} />
+        {present(r.createdByName) && <InfoField label="Noted by" value={r.createdByName} />}
+        <InfoField label="Created" value={whenOf(r.createdAt)} />
+        {present(r.editedAt) && <InfoField label="Last edited" value={whenOf(r.editedAt)} />}
+        <InfoField label="Confirmed" value={isReview ? "Not yet" : whenOf(r.confirmedAt)} />
+      </InfoSection>
+
+      <InfoSection title="Charges" block>
+        {items
+          ? items.map((li, i) => <FeeRow key={i} label={li.description || "Charge"} value={fmt(li.amount)} />)
+          : <FeeRow label="Charge" value={fmt(amount)} />}
+        {lateFee && (
+          <p className="text-xs text-gray-500">
+            Late fee: {r.lateMinutes} min late{present(r.graceMinutes) ? ` (after ${r.graceMinutes}-min grace)` : ""}{numOr(r.rateAtCreation) !== null ? ` at ${fmt(r.rateAtCreation)}/hr` : ""}.
+          </p>
+        )}
+        <div className="flex items-baseline justify-between gap-4 pt-3 mt-1 border-t border-gray-100">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Total</span>
+          <span className="text-lg font-bold text-gray-800 tabular-nums">{fmt(amount)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <span className="font-medium text-gray-700">{statusLabel}</span>
+          {owed > 0 && isConfirmed && <span className="font-semibold text-red-600">{fmt(owed)} still owed</span>}
+        </div>
+      </InfoSection>
+
+      <InfoSection title="Payment">
+        {overridden && <InfoField label="Computed total" value={fmt(r.computedAmount)} />}
+        <InfoField label="Amount charged" value={fmt(amount)} />
+        {overridden && <InfoField wide label="Override reason" value={r.overrideReason} />}
+        <InfoField label="Paid so far" value={fmt(paidAmt)} />
+        {numOr(r.gatewayFeePaid) > 0 && <InfoField label="Online fee paid" value={fmt(r.gatewayFeePaid)} />}
+        <InfoField label="Payment mode" value={r.paymentMethod} />
+        <InfoField label="Reference #" mono value={r.referenceNumber} />
+        <InfoField label="Paid at" value={whenOf(r.paidAt)} />
+      </InfoSection>
+
+      {["Voided", "Waived", "Discarded"].includes(r.status) && r.statusReason && (
+        <InfoSection title={`${r.status}: reason`} block><p className="text-sm text-gray-600">{r.statusReason}</p></InfoSection>
+      )}
+      <TechDetails record={r} labels={labels} />
+    </div>
+  );
+}
+
+// ── Refunds: Booking Details, Refund Details, and the money lines ──
+function RefundCard({ r, labels, booking, index, total }) {
+  const { fmt } = useCurrency();
+  const amount = numOr(r.toRefundAmount, r.amount);
+  const kept = numOr(r.depositForfeited);
+  const feeKept = numOr(r.gatewayFeeKept);
+  const paidIn = numOr(r.bookingPaid);
+  return (
+    <div className="space-y-3">
+      {total > 1 && (
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          Refund {index + 1} of {total} <span className="ml-1 font-mono normal-case text-gray-400">{r.refundRequestID || r.id}</span>
+        </p>
+      )}
+      <InfoSection title="Booking Details" action={r.status ? <Chip text={r.status} /> : null}>
+        <InfoField label="Booking ID" mono value={r.bookingID} />
+        <InfoField label="Customer" value={booking?.customerName} />
+        <InfoField label="Payment ID" mono value={r.paymentID} />
+        <InfoField label="Refund ID" mono value={r.refundRequestID || r.id} />
+      </InfoSection>
+
+      <InfoSection title="Refund Details">
+        <InfoField label="Amount" bold value={amount === null ? null : fmt(amount)} />
+        <InfoField label="Status" value={r.status ? <Chip text={r.status} /> : null} />
+        <InfoField label="Requested" value={whenOf(r.createdAt)} />
+        {present(r.updatedAt) && <InfoField label="Updated" value={whenOf(r.updatedAt)} />}
+        {present(r.refundedAt) && <InfoField label="Refunded" value={whenOf(r.refundedAt)} />}
+        {present(r.reason) && <InfoField wide label="Reason" value={r.reason} />}
+        {present(r.rejectReason) && <InfoField wide label="Rejected because" value={<span className="text-red-600">{r.rejectReason}</span>} />}
+        {r.forfeitWaived && <InfoField wide label="Deposit" value={<span className="text-green-700">Not kept{r.forfeitWaivedReason ? ` \u2014 ${r.forfeitWaivedReason}` : " \u2014 forfeit waived"}</span>} />}
+      </InfoSection>
+
+      {(paidIn !== null || kept > 0 || feeKept > 0) && (
+        <InfoSection title="Money" block>
+          {paidIn !== null && <FeeRow label="Booking paid" value={fmt(paidIn)} />}
+          {kept > 0 && <FeeRow label="Security deposit kept" value={`\u2212${fmt(kept)}`} />}
+          {feeKept > 0 && <FeeRow label="Payment fee kept" value={`\u2212${fmt(feeKept)}`} />}
+          <div className="flex items-baseline justify-between gap-4 pt-3 mt-1 border-t border-gray-100">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Refund</span>
+            <span className="text-lg font-bold text-purple-700 tabular-nums">{amount === null ? "\u2014" : fmt(amount)}</span>
+          </div>
+        </InfoSection>
+      )}
+      <TechDetails record={r} labels={labels} />
+    </div>
+  );
+}
+
+// ── Reviews: Review Information (reviewer, stars, posted) and a separate Comment card ──
+function ReviewCard({ r, labels, index, total }) {
+  const reviewer = useAccount(r.userID);
+  const rating = Math.max(0, Math.min(5, Math.round(Number(r.rating) || 0)));
+  return (
+    <div className="space-y-3">
+      {total > 1 && <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Review {index + 1} of {total}</p>}
+      <InfoSection title="Review Information">
+        <InfoField label="Reviewer" value={accountName(r.userID, reviewer, r.reviewerName)} />
+        <InfoField label="Rating" value={
+          <span className="inline-flex items-center gap-2">
+            <span className="text-amber-400 text-sm leading-none" aria-label={`${rating} out of 5 stars`}>
+              {"\u2605".repeat(rating)}<span className="text-gray-200">{"\u2605".repeat(5 - rating)}</span>
+            </span>
+            <span className="text-gray-500 font-normal">{r.rating ?? "\u2014"} / 5</span>
+          </span>
+        } />
+        <InfoField label="Posted" value={whenOf(r.createdAt)} />
+        <InfoField label="Flagged" value={r.isFlagged ? <span className="text-red-600">Flagged</span> : <span className="text-gray-500 font-normal">No</span>} />
+      </InfoSection>
+      <InfoSection title="Comment">
+        <div className="col-span-2 min-w-0 text-sm break-words whitespace-pre-wrap">
+          {r.comment ? <span className="text-gray-700">{r.comment}</span> : <span className="text-gray-400 italic">No comment left.</span>}
+        </div>
+      </InfoSection>
+      <TechDetails record={r} labels={labels} />
+    </div>
+  );
+}
+
+// ── Maintenance: Record Information, Job, Work (services + parts), Total ──
+function MaintenanceCard({ r, labels, index, total }) {
+  const { fmt } = useCurrency();
+  const services = Array.isArray(r.services) ? r.services : [];
+  const parts = Array.isArray(r.partsAddressed) ? r.partsAddressed : [];
+  const servicesTotal = services.reduce((n, s) => n + (Number(s.price) || 0), 0);
+  const partsTotal = parts.reduce((n, x) => n + (Number(x.price) || 0), 0);
+  const computed = servicesTotal + partsTotal;
+  const manual = numOr(r.overrideTotal);
+  const grand = numOr(r.totalCost) ?? (manual !== null ? manual : computed);
+  return (
+    <div className="space-y-3">
+      {total > 1 && <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Job {index + 1} of {total}</p>}
+      <InfoSection title="Record Information">
+        <InfoField label="Created By" value={r.createdByName || <span className="text-gray-400 italic font-normal">Not recorded</span>} />
+        <InfoField label="Created" value={whenOf(r.createdAt)} />
+        <InfoField label="Last Updated By" value={r.updatedByName || <span className="text-gray-400 italic font-normal">Not recorded</span>} />
+        <InfoField label="Last Updated" value={whenOf(r.updatedAt)} />
+        <InfoField wide label="Booking" mono value={r.bookingID} />
+      </InfoSection>
+
+      <InfoSection title="Job">
+        <InfoField label="Maintenance Date" value={dayOf(r.maintenanceDate)} />
+        <InfoField label="Status" value={r.status ? <Chip text={r.status} /> : null} />
+        <InfoField label="Maintenance Basis" value={r.basis} />
+        <InfoField label="Vehicle ID" mono value={r.carID} />
+        <InfoField wide label="Job Notes" value={r.description} />
+      </InfoSection>
+
+      {(services.length > 0 || parts.length > 0) && (
+        <InfoSection title="Work" block>
+          {services.length > 0 && (
+            <>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Services</p>
+              {services.map((s, i) => <FeeRow key={`s${i}`} label={s.serviceName || s.name || "Service"} value={fmt(s.price)} />)}
+            </>
+          )}
+          {parts.length > 0 && (
+            <>
+              <p className={`text-[11px] font-medium uppercase tracking-wide text-gray-400 ${services.length ? "pt-2" : ""}`}>Parts ({parts.length})</p>
+              {parts.map((x, i) => (
+                <div key={`p${i}`}>
+                  <FeeRow label={x.carPartName || x.carPartID || "Part"} value={fmt(x.price)} />
+                  <p className="text-[11px] text-gray-400">
+                    {[x.conditionBefore && `Before: ${x.conditionBefore}`, x.conditionAfter && `After: ${x.conditionAfter}`, x.description].filter(Boolean).join(" \u00b7 ")}
+                  </p>
+                </div>
+              ))}
+            </>
+          )}
+        </InfoSection>
+      )}
+
+      <InfoSection title="Total" block>
+        <FeeRow label="Services" value={fmt(servicesTotal)} />
+        <FeeRow label="Parts" value={fmt(partsTotal)} />
+        {manual !== null && <FeeRow muted label="Sum of the above" value={fmt(computed)} />}
+        <div className="flex items-baseline justify-between gap-4 pt-3 mt-1 border-t border-gray-100">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{manual !== null ? "Total (set by hand)" : "Total"}</span>
+          <span className="text-lg font-bold text-gray-800 tabular-nums">{fmt(grand)}</span>
+        </div>
+      </InfoSection>
+      <TechDetails record={r} labels={labels} />
+    </div>
+  );
+}
+
+// ── Session: status and times, GPS tracking, then the map ──
+function SessionTab({ rec, labels }) {
+  return (
+    <div className="space-y-3">
+      <InfoSection title="Session" action={rec.status ? <Chip text={rec.status} /> : null}>
+        <InfoField label="Booking ID" mono value={rec.bookingID} />
+        <InfoField label="Status" value={rec.status ? <Chip text={rec.status} /> : null} />
+        <InfoField label="Started" value={whenOf(rec.startedAt)} />
+        <InfoField label="Dropped off" value={whenOf(rec.droppedOffTime)} />
+        {present(rec.stolenAt) && <InfoField label="Marked stolen" value={whenOf(rec.stolenAt)} />}
+      </InfoSection>
+      <InfoSection title="Tracking">
+        <InfoField label="Last GPS ping" value={whenOf(rec.lastPingReceivedAt)} />
+        <InfoField label="GPS points" value={positive(rec.pointCount) ? Number(rec.pointCount).toLocaleString("en-PH") : "0"} />
+        <InfoField label="Geofence exits" value={positive(rec.geofenceFlipCount) ? String(rec.geofenceFlipCount) : "0"} />
+      </InfoSection>
+      <LocationMap record={rec} />
+      <TechDetails record={rec} labels={labels} />
+    </div>
+  );
+}
+
 function LinkedBody({ tab, state, record }) {
   const [photo, setPhoto] = useState(null);
   if (!state || state.loading) return <Skeleton />;
@@ -826,6 +1150,8 @@ function LinkedBody({ tab, state, record }) {
         </div>
       );
     }
+    if (tab.key === "payment") return <PaymentTab rec={state.data} labels={tab.labels} />;
+    if (tab.key === "session") return <SessionTab rec={state.data} labels={tab.labels} />;
     return (
       <div className="space-y-4">
         {tab.key === "session" && <LocationMap record={state.data} />}
@@ -843,18 +1169,15 @@ function LinkedBody({ tab, state, record }) {
     const groups = INSPECTION_GROUPS.filter(([key]) => (data[key] || []).length > 0);
     if (groups.length === 0) return <Empty text={state.message || tab.empty} />;
     return (
-      <div className="space-y-6">
+      <div className="space-y-3">
         {groups.map(([key, label]) => (
-          <section key={key}>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{label} <span className="text-gray-300">({data[key].length})</span></h4>
-            <div className="space-y-2">
-              {data[key].map((row, i) => (
-                key.startsWith("vehicleDocumentation")
-                  ? <PhotoRecord key={row.id ?? i} row={row} onOpen={setPhoto} />
-                  : <div key={row.id ?? i} className="border border-gray-100 rounded-xl bg-white p-3"><Fields record={row} /></div>
-              ))}
-            </div>
-          </section>
+          <InfoSection key={key} title={`${label} (${data[key].length})`} block>
+            {data[key].map((row, i) => (
+              key.startsWith("vehicleDocumentation")
+                ? <PhotoRecord key={row.id ?? i} row={row} onOpen={setPhoto} />
+                : <div key={row.id ?? i} className="border border-gray-100 rounded-xl bg-white p-3"><Fields record={row} /></div>
+            ))}
+          </InfoSection>
         ))}
         {photo && <PhotoLightbox photo={photo} onClose={() => setPhoto(null)} />}
       </div>
@@ -863,6 +1186,14 @@ function LinkedBody({ tab, state, record }) {
 
   const rows = Array.isArray(state.data) ? state.data : [];
   if (rows.length === 0) return <Empty text={state.message || tab.empty} />;
+  const Card = { penalties: PenaltyCard, refunds: RefundCard, reviews: ReviewCard, maintenance: MaintenanceCard }[tab.key];
+  if (Card) {
+    return (
+      <div className="space-y-8">
+        {rows.map((r, i) => <Card key={r.id ?? i} r={r} labels={tab.labels} booking={record} index={i} total={rows.length} />)}
+      </div>
+    );
+  }
   return <ListRows tab={tab} rows={rows} />;
 }
 
