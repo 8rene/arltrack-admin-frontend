@@ -44,10 +44,11 @@ const FLAT_FEE_FIELDS = [
   { key: "gatewayFeePercent", label: "Gateway Fee (%)", unit: "%", hint: "Percent of the whole booking: rental + extra fee + driver's fee + service fee + security deposit." },
 ];
 
+// The "Extra Fee — Outside Area" is not a field any more: it is shown read-only below as
+// (Driver's Fee — Outside Area) - (Driver's Fee — Base Area), and the outside fee must be higher than the base fee.
 const AREA_FEE_FIELDS = [
-  { key: "extraFeeOutsideArea", label: "Extra Fee — Outside Area", hint: "Charged when the drop-off destination is outside the base service area." },
-  { key: "driversFeeBaseArea", label: "Driver's Fee — Base Area", hint: "Chauffeur fee when destination is inside the base area." },
-  { key: "driversFeeOutsideArea", label: "Driver's Fee — Outside Area", hint: "Chauffeur fee when destination is outside the base area." },
+  { key: "driversFeeBaseArea", label: "Driver's Fee — Base Area", hint: "Chauffeur fee per day when the pickup and every destination are inside the base area." },
+  { key: "driversFeeOutsideArea", label: "Driver's Fee — Outside Area", hint: "Chauffeur fee per day when the pickup or any destination is outside the base area. Must be higher than the base-area fee." },
 ];
 
 // The real, refundable security deposit + late-return penalty settings.
@@ -155,6 +156,10 @@ export default function Settings() {
     setForm((prev) => ({ ...prev, baseAreaKeywords: (prev.baseAreaKeywords || []).filter((k) => k !== word) }));
   };
 
+  // Extra fee for being outside the base area = outside driver's fee - base driver's fee (read-only, never typed in).
+  const extraFeeOutside = (Number(form?.driversFeeOutsideArea) || 0) - (Number(form?.driversFeeBaseArea) || 0);
+  const extraFeeInvalid = !!form && !(extraFeeOutside > 0);
+
   const arraysEqual = (a = [], b = []) => a.length === b.length && a.every((v, i) => v === b[i]);
 
   const isDirty = !!(form && saved) && (
@@ -170,7 +175,6 @@ export default function Settings() {
       const payload = {
         serviceFeePercent: Number(form.serviceFeePercent),
         gatewayFeePercent: Number(form.gatewayFeePercent),
-        extraFeeOutsideArea: Number(form.extraFeeOutsideArea),
         driversFeeBaseArea: Number(form.driversFeeBaseArea),
         driversFeeOutsideArea: Number(form.driversFeeOutsideArea),
         securityDepositAmount: Number(form.securityDepositAmount),
@@ -187,6 +191,9 @@ export default function Settings() {
       }
       for (const key of ["serviceFeePercent", "gatewayFeePercent"]) {
         if (payload[key] > 100) throw new Error(`"${key}" must be a percentage between 0 and 100.`);
+      }
+      if (!(payload.driversFeeOutsideArea > payload.driversFeeBaseArea)) {
+        throw new Error("Driver's Fee — Outside Area must be higher than Driver's Fee — Base Area. The extra fee for being outside the base area is the difference, and it cannot be 0.");
       }
       if (payload.baseAreaKeywords.length === 0) {
         throw new Error("At least one base-area keyword is required.");
@@ -272,6 +279,19 @@ export default function Settings() {
           {/* Area & Chauffeur Fees */}
           <Section isDark={isDark} icon={<IconMap className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Area & Chauffeur Fees" desc={"Conditional charges based on the drop-off destination and drive type."}>
             <div className="grid sm:grid-cols-3 gap-4">
+              {/* Extra fee — read-only, always the difference of the two driver's fees below */}
+              <div className="space-y-1">
+                <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>Extra Fee — Outside Area (automatic)</label>
+                <div className="relative">
+                  <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>₱</span>
+                  <input type="text" readOnly disabled value={extraFeeInvalid ? "—" : extraFeeOutside.toLocaleString()} className={`${inputCls} pl-6`} />
+                </div>
+                <p className={`text-[11px] ${extraFeeInvalid ? "text-[#D32F2F]" : isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>
+                  {extraFeeInvalid
+                    ? "Driver's Fee — Outside Area must be higher than the Base Area fee, so this can't be 0."
+                    : "Driver's Fee — Outside Area minus Base Area, per day. Not editable: change the two driver's fees instead."}
+                </p>
+              </div>
               {AREA_FEE_FIELDS.map(({ key, label, hint }) => (
                 <div key={key} className="space-y-1">
                   <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
