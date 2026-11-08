@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
 import { money, count } from "../../utils/reportCells";
@@ -378,6 +379,7 @@ const MODAL_PAGE_SIZE = 10;   // same page size as the Bookings table
 
 /** A car's bookings (and maintenance jobs) in a window, 10 per page. Backend child names look like "<bookingID> · <customer>". */
 function VehicleBookingsModal({ car, fmt, onClose }) {
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const items = car.children || [];
   const totalPages = Math.max(1, Math.ceil(items.length / MODAL_PAGE_SIZE));
@@ -419,14 +421,19 @@ function VehicleBookingsModal({ car, fmt, onClose }) {
                   <tr>
                     {["Booking ID", "Customer"].map((h) => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}
                     {["Rentals", "Penalties", "Returned", "Deposit held back", "Revenue", "Maintenance", "PayMongo fees", "Net"].map((h) => <th key={h} className="px-4 py-3 text-left font-semibold whitespace-nowrap">{h}</th>)}
+                    <th className="pl-4 pr-6 py-3 text-right w-px whitespace-nowrap font-semibold">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pageItems.length === 0 ? (
-                    <tr><td colSpan={10} className="text-center text-gray-400 py-12">No bookings or maintenance for this vehicle</td></tr>
+                    <tr><td colSpan={11} className="text-center text-gray-400 py-12">No bookings or maintenance for this vehicle</td></tr>
                   ) : pageItems.map((c) => {
                     const isJob = String(c.id).startsWith("m:") || String(c.id).startsWith("s:");
                     const [first, rest] = split(c.name);
+                    // A booking opens on the Bookings page, a maintenance job on the Maintenance page (both read ?open=).
+                    const refID = String(c.id).slice(2);
+                    const hasRef = refID && !["null", "undefined", "unknown"].includes(refID);
+                    const target = !hasRef ? null : String(c.id).startsWith("b:") ? `/bookings?open=${encodeURIComponent(refID)}` : isJob ? `/maintenance?open=${encodeURIComponent(refID)}` : null;
                     return (
                       <tr key={c.id} className="border-t hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -443,6 +450,9 @@ function VehicleBookingsModal({ car, fmt, onClose }) {
                         <MoneyCell value={c.maintenance} color={C_RED} fmt={fmt} />
                         <MoneyCell value={c.fees} color={C_PURPLE} fmt={fmt} />
                         <MoneyCell value={c.net} color="#374151" fmt={fmt} />
+                        <td className="pl-4 pr-6 py-3 text-right w-px whitespace-nowrap">
+                          {target ? <button onClick={() => navigate(target)} className={viewBtn}>View</button> : <span className="text-gray-300">—</span>}
+                        </td>
                       </tr>
                     );
                   })}
