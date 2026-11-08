@@ -792,7 +792,7 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
   const cur  = subID ? sub : root;
   const { basic, details, loading, error } = cur;
 
-  // userID -> { total, completed } across every booking this page loaded.
+  // userID -> { total, completed } across every booking this page loaded. Only `completed` is shown in this window.
   const statsMap = useMemo(() => {
     const m = new Map();
     (bookings || []).forEach((b) => {
@@ -808,7 +808,7 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
 
   const shownID = subID || userID;
   const stats   = statsOf(shownID);
-  const bookingsText = `${stats.total} total · ${stats.completed} completed`;
+  const bookingsText = String(stats.completed);   // only completed bookings are counted here
 
   const refBy = basic?.referral?.referredBy;
   const refByText = refBy
@@ -857,7 +857,7 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
                 <p className="font-semibold text-gray-800 truncate">{profileFullName(details, basic)}</p>
                 <p className="text-xs text-gray-400 truncate">@{basic?.username || "—"}</p>
                 <p className="mt-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200">
-                  {stats.total} {stats.total === 1 ? "booking" : "bookings"}
+                  {stats.completed} completed {stats.completed === 1 ? "booking" : "bookings"}
                 </p>
               </div>
             </div>
@@ -868,7 +868,7 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
             {row("Status",    basic?.status)}
             {row("ID Status", basic?.isVerified ? "✓ Verified" : "Pending")}
             {row("Joined",    fmtDate(basic?.createdAt))}
-            {row("Bookings",  bookingsText)}
+            {row("Completed Bookings",  bookingsText)}
 
             {subID ? (
               // Brief view of an invited user: just the essentials.
@@ -881,14 +881,14 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
                 {basic?.referral?.invited?.length > 0 && (
                   <ul className="mt-1 mb-1 divide-y border rounded-xl">
                     {basic.referral.invited.map((p) => {
-                      const n = statsOf(p.id).total;
+                      const n = statsOf(p.id).completed;
                       return (
                         <li key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
                           <span className="min-w-0 truncate text-gray-700">
                             {p.name || "—"}{p.username && <span className="text-gray-400"> (@{p.username})</span>}
                           </span>
                           <span className="flex items-center gap-2 shrink-0">
-                            <span className="text-xs text-gray-500">{n} {n === 1 ? "booking" : "bookings"}</span>
+                            <span className="text-xs text-gray-500">{n} completed</span>
                             <button onClick={() => setSubID(p.id)}
                               className="px-2.5 py-1 border border-teal-200 text-teal-700 rounded-lg text-xs font-semibold hover:bg-teal-50">
                               View
