@@ -460,11 +460,12 @@ function RefundCancelModal({ booking, onClose, onDone }) {
     const toPayments = () => { finish(); navigate(notice.paymentID ? `/payments?paymentID=${encodeURIComponent(notice.paymentID)}` : "/payments"); };
     return (
       <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 space-y-4">
-          <div>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+          <div className="px-6 pt-5 pb-3 shrink-0">
             <h2 className="font-bold text-lg text-gray-800">{notice.onlineAmount > 0 ? "Partial refund sent" : "Booking cancelled"}</h2>
-            <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
+            <p className="text-xs text-gray-400 font-mono break-all mt-1">{booking.bookingID || booking.id}</p>
           </div>
+          <div className="px-6 pb-4 space-y-4 overflow-y-auto flex-1 min-h-0">
           <div className="text-sm bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-xl space-y-2">
             {notice.onlineAmount > 0 && (
               <div className="flex justify-between gap-4"><span>Going back through PayMongo</span><span className="font-semibold">{fmt(notice.onlineAmount)}</span></div>
@@ -481,9 +482,12 @@ function RefundCancelModal({ booking, onClose, onDone }) {
               ? "The booking is cancelled. Please settle the in-store amount with the customer, then record it on the payment."
               : "The booking is cancelled. Refund the remaining amount from the PayMongo dashboard."}
           </p>
-          <div className="flex gap-3 justify-end pt-1">
-            <button onClick={finish} className="px-4 py-2 border rounded-xl text-sm">Done</button>
-            <button onClick={toPayments} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700 transition-colors">Continue to Payments &rarr;</button>
+          </div>
+          <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+            <div className="flex flex-col gap-1.5">
+              <button onClick={toPayments} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Continue to Payments &rarr;</button>
+              <button onClick={finish} className="w-full py-1.5 border rounded-xl text-sm">Done</button>
+            </div>
           </div>
         </div>
       </div>
@@ -492,9 +496,20 @@ function RefundCancelModal({ booking, onClose, onDone }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <h2 className="font-bold text-lg text-gray-800">Cancel Booking</h2>
-        <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+        {/* Header */}
+        <div className="px-6 pt-5 pb-3 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-bold text-lg text-gray-800">Cancel Booking</h2>
+            <button onClick={onClose} disabled={submitting} className="text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
+              <IconX className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 font-mono break-all mt-1">{booking.bookingID || booking.id}</p>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 pb-4 space-y-4 overflow-y-auto flex-1 min-h-0">
         {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
 
         {loading ? (
@@ -573,15 +588,20 @@ function RefundCancelModal({ booking, onClose, onDone }) {
           </>
         )}
 
-        <div className="flex gap-3 justify-end pt-1">
-          <button onClick={onClose} disabled={submitting} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Back</button>
+        </div>
+
+        {/* Actions — stacked full-width, same as the Booking Details window */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+          <div className="flex flex-col gap-1.5">
           <button
             onClick={() => (mode === "cancel" && hasMoney && !confirming ? setConfirming(true) : submit())}
             disabled={submitting || loading || !preview || !reason.trim() || blocked}
-            className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
+            className="w-full px-3 py-1.5 bg-red-600 text-white font-semibold rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
           >
             {submitting ? "Processing…" : confirming ? "Yes, cancel without refund" : !hasMoney || mode === "cancel" ? "Cancel Booking" : mode === "no_show" ? "No Deposit Refund & Cancel" : mode === "normal" ? "Normal Refund & Cancel" : "Full Refund & Cancel"}
           </button>
+          <button onClick={onClose} disabled={submitting} className="w-full py-1.5 border rounded-xl text-sm disabled:opacity-50">Back</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1598,6 +1618,20 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                 } />
               </InfoSection>
 
+              {/* Admin / Owner only (onRefund is only passed to them). Opens the same Refund & Cancel window the footer button used to. */}
+              {onRefund && (canRefundCancel(booking.status) || status === "ongoing") && (
+                <InfoSection title="Cancel Booking">
+                  {canRefundCancel(booking.status) ? (
+                    <div className="sm:col-span-2 col-span-full flex items-center justify-between gap-4">
+                      <p className="text-sm text-gray-500">Cancel this booking and choose what goes back to the customer: full refund, normal refund, no deposit refund, or cancel only.</p>
+                      <button onClick={() => onRefund(booking)} className="shrink-0 px-3.5 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors whitespace-nowrap">Cancel Booking</button>
+                    </div>
+                  ) : (
+                    <p className="sm:col-span-2 col-span-full text-sm text-gray-400">A trip that is already ongoing can't be cancelled from here. It goes through the customer's cancellation request.</p>
+                  )}
+                </InfoSection>
+              )}
+
               <InfoSection title="Notes">
                 <InfoField wide label="Notes (User)"  value={booking.notesUser} />
                 <InfoField wide label="Notes (Admin)" value={booking.notesAdmin} />
@@ -1612,9 +1646,6 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
           <div className="flex flex-col gap-1.5">
             {onEdit && (
               <button onClick={() => onEdit(booking)} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Add Note</button>
-            )}
-            {onRefund && canRefundCancel(booking.status) && (
-              <button onClick={() => onRefund(booking)} className="w-full px-3 py-1.5 border border-orange-200 bg-orange-50 text-orange-700 font-semibold rounded-xl text-sm hover:bg-orange-100 transition-colors whitespace-nowrap">Refund / Cancel</button>
             )}
             {onRefund && status === "cancelled" && !booking.refundSummary && (refundNote === "No refund" || refundNote === "Deposit kept") && (
               <button onClick={() => onRefund(booking)} className="w-full px-3 py-1.5 border border-orange-200 bg-orange-50 text-orange-700 font-semibold rounded-xl text-sm hover:bg-orange-100 transition-colors whitespace-nowrap">Refund (cancelled)</button>
