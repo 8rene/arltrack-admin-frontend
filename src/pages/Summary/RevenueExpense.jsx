@@ -672,7 +672,7 @@ function PeriodTable({ series }) {
   const shown = rows.slice((pageNo - 1) * PAGE, pageNo * PAGE);
   const sum = (k) => rows.reduce((s, b) => s + (b[k] || 0), 0);
   if (rows.length === 0) return null;
-  const heads = ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net", "Unpaid (expected)", "Scheduled maint."];   // the last two are not in Net
+  const heads = ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Unpaid (expected)", "Scheduled maint.", "Net"];   // Net is the last column; the two "expected" ones before it are not in Net
   const totalNet = sum("net");
   return (
     <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
@@ -693,11 +693,11 @@ function PeriodTable({ series }) {
                 <MoneyCell value={b.deposits} color="#d97706" fmt={fmt} negRed={false} />
                 <MoneyCell value={b.maintenance} color={C_RED} fmt={fmt} />
                 <MoneyCell value={b.fees} color={C_PURPLE} fmt={fmt} />
+                <MoneyCell value={b.expected} color={C_GREEN} fmt={fmt} />
+                <MoneyCell value={b.scheduled} color={C_RED} fmt={fmt} />
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-white text-xs font-bold whitespace-nowrap ${b.net < 0 ? "bg-red-500" : "bg-teal-700"}`}>{fmt(b.net)}</span>
                 </td>
-                <MoneyCell value={b.expected} color={C_GREEN} fmt={fmt} />
-                <MoneyCell value={b.scheduled} color={C_RED} fmt={fmt} />
               </tr>
             ))}
           </tbody>
@@ -707,10 +707,10 @@ function PeriodTable({ series }) {
               {["rentals", "penalties", "returned", "deposits", "maintenance", "fees"].map((k) => (
                 <td key={k} className="px-4 py-3 whitespace-nowrap">{fmt(sum(k))}</td>
               ))}
-              <td className={`px-4 py-3 whitespace-nowrap ${totalNet < 0 ? "text-red-500" : "text-gray-800"}`}>{fmt(totalNet)}</td>
               {["expected", "scheduled"].map((k) => (
                 <td key={k} className="px-4 py-3 whitespace-nowrap text-gray-500">{fmt(sum(k))}</td>
               ))}
+              <td className={`px-4 py-3 whitespace-nowrap ${totalNet < 0 ? "text-red-500" : "text-gray-800"}`}>{fmt(totalNet)}</td>
             </tr>
           </tfoot>
         </table>
@@ -796,10 +796,10 @@ function RevenueExpenseView({ report, exportRef }) {
           ] })) },
           ...(cards.gatewayFeesUnrecorded > 0 ? [{ type: "note", text: `${cards.gatewayFeesUnrecorded} online payment${cards.gatewayFeesUnrecorded === 1 ? "" : "s"} in this period ${cards.gatewayFeesUnrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so the fees and Net are slightly off until ${cards.gatewayFeesUnrecorded === 1 ? "it is" : "they are"} filled in.` }] : []),
           ...(series.length === 0 ? [] : [{ type: "table", name: "Revenue and Expense",
-            head: ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net", "Unpaid (expected)", "Scheduled maint."],
+            head: ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Unpaid (expected)", "Scheduled maint.", "Net"],
             align: ["left", "right", "right", "right", "right", "right", "right", "right", "right", "right"],
-            body: series.map((b) => [b.label, money(b.rentals), money(b.penalties), money(b.returned), money(b.deposits), money(b.maintenance), money(b.fees), money(b.net), money(b.expected || 0), money(b.scheduled || 0)]),
-            foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees", "net", "expected", "scheduled"].map((k) => money(sumOf(k)))] }]),
+            body: series.map((b) => [b.label, money(b.rentals), money(b.penalties), money(b.returned), money(b.deposits), money(b.maintenance), money(b.fees), money(b.expected || 0), money(b.scheduled || 0), money(b.net)]),
+            foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees", "expected", "scheduled", "net"].map((k) => money(sumOf(k)))] }]),
 
           { type: "title", text: "Vehicle Revenue", graph: "Vehicle Revenue Graph", table: "Vehicle Revenue Table" },
           ...(carRows.length === 0 ? [{ type: "empty", text: `No bookings or maintenance by vehicle in ${report.label}.` }] : [
