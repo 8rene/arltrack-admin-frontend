@@ -33,9 +33,8 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // it only shows up here when it is kept (a penalty it covered, or a forfeited deposit) because what went back is
 // subtracted. Same request as Payments & Transactions (/api/reports/money), but this tab reads `report.revenueBasis`
 // (dated by the day the booking ended) while that tab reads the cards / series / cars dated by the day the money moved.
-// Expected amounts are drawn as white striped bars and are NEVER part of revenue, expenses or Net: unpaid balances (by the day their
-// booking is due to end) and maintenance that is still Scheduled. PayMongo fees follow the same date as the revenue they belong to,
-// so Net compares matching things. Each vehicle row shows how its revenue is made: Rentals + Penalties - Returned - Deposit held back.
+// Nothing "expected" is shown here: unpaid balances and scheduled maintenance are not part of revenue, expenses or Net, and this tab
+// does not read them. PayMongo fees follow the same date as the revenue they belong to, so Net compares matching things. Each vehicle row shows how its revenue is made: Rentals + Penalties - Returned - Deposit held back.
 //
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -493,18 +492,7 @@ function IncomeExpenseChart({ series }) {
     const n = series.length;
     // amounts on the bars: all when there are 12 or fewer, otherwise only the 3 biggest of each colour
     const biggest = (get) => new Set(series.map((b, i) => [i, get(b)]).filter(([, v]) => v !== 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, n <= 12 ? n : 3).map(([i]) => i));
-    const show = [biggest((b) => b.revenue), biggest(exp)];   // only revenue and expenses are written on the bars; expected amounts are in the tooltip
-    // white-and-colour stripes: the bar of an amount that is expected, not real money yet
-    const hatch = (color) => {
-      const c = document.createElement("canvas");
-      c.width = 8; c.height = 8;
-      const x = c.getContext("2d");
-      x.fillStyle = "#ffffff"; x.fillRect(0, 0, 8, 8);
-      x.strokeStyle = color; x.lineWidth = 2;
-      x.beginPath(); x.moveTo(-2, 10); x.lineTo(10, -2); x.moveTo(-2, 2); x.lineTo(2, -2); x.moveTo(6, 10); x.lineTo(10, 6); x.stroke();
-      return canvasRef.current.getContext("2d").createPattern(c, "repeat");
-    };
-
+    const show = [biggest((b) => b.revenue), biggest(exp)];   // amounts written on the revenue and expenses bars
     const barLabels = {
       id: "barLabels",
       afterDatasetsDraw(chart) {
@@ -532,8 +520,6 @@ function IncomeExpenseChart({ series }) {
         datasets: [
           { label: "Revenue",  data: series.map((b) => (b.revenue === 0 ? null : convert(b.revenue))), backgroundColor: C_GREEN, borderRadius: 3, minBarLength: 3, stack: "revenue" },
           { label: "Expenses", data: series.map((b) => (exp(b) === 0 ? null : convert(exp(b)))), backgroundColor: C_RED, borderRadius: 3, minBarLength: 3, stack: "expenses" },
-          { label: "Unpaid (expected)", data: series.map((b) => (b.expected ? convert(b.expected) : null)), backgroundColor: hatch(C_GREEN), borderColor: C_GREEN, borderWidth: 1, borderRadius: 3, minBarLength: 3, stack: "revenue" },
-          { label: "Scheduled maintenance (expected)", data: series.map((b) => (b.scheduled ? convert(b.scheduled) : null)), backgroundColor: hatch(C_RED), borderColor: C_RED, borderWidth: 1, borderRadius: 3, minBarLength: 3, stack: "expenses" },
         ],
       },
       options: {
@@ -554,8 +540,6 @@ function IncomeExpenseChart({ series }) {
               label: (item) => {
                 const b = series[item.dataIndex];
                 if (item.datasetIndex === 0) return `Revenue: ${fmt(b.revenue)}`;
-                if (item.datasetIndex === 2) return `Unpaid balances, expected: ${fmt(b.expected)} (not counted in revenue)`;
-                if (item.datasetIndex === 3) return `Scheduled maintenance, expected: ${fmt(b.scheduled)} (not counted in expenses)`;
                 const pct = b.revenue > 0 ? ` (${Math.round((exp(b) / b.revenue) * 100)}% of revenue)` : "";
                 return `Expenses: ${fmt(exp(b))}${pct}`;
               },
@@ -664,7 +648,7 @@ function PeriodTable({ series }) {
   const { fmt } = useCurrency();
   const [page, setPage] = useState(1);
   const PAGE = 10;
-  const rows = useMemo(() => series.filter((b) => b.rentals || b.penalties || b.returned || b.deposits || b.maintenance || b.fees || b.expected || b.scheduled), [series]);
+  const rows = useMemo(() => series.filter((b) => b.rentals || b.penalties || b.returned || b.deposits || b.maintenance || b.fees), [series]);
   useEffect(() => { setPage(1); }, [series]);
 
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
@@ -672,7 +656,7 @@ function PeriodTable({ series }) {
   const shown = rows.slice((pageNo - 1) * PAGE, pageNo * PAGE);
   const sum = (k) => rows.reduce((s, b) => s + (b[k] || 0), 0);
   if (rows.length === 0) return null;
-  const heads = ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Unpaid (expected)", "Scheduled maint.", "Net"];   // Net is the last column; the two "expected" ones before it are not in Net
+  const heads = ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net"];   // Net is the last column
   const totalNet = sum("net");
   return (
     <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
@@ -693,8 +677,6 @@ function PeriodTable({ series }) {
                 <MoneyCell value={b.deposits} color="#d97706" fmt={fmt} negRed={false} />
                 <MoneyCell value={b.maintenance} color={C_RED} fmt={fmt} />
                 <MoneyCell value={b.fees} color={C_PURPLE} fmt={fmt} />
-                <MoneyCell value={b.expected} color={C_GREEN} fmt={fmt} />
-                <MoneyCell value={b.scheduled} color={C_RED} fmt={fmt} />
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-white text-xs font-bold whitespace-nowrap ${b.net < 0 ? "bg-red-500" : "bg-teal-700"}`}>{fmt(b.net)}</span>
                 </td>
@@ -706,9 +688,6 @@ function PeriodTable({ series }) {
               <td className="px-4 py-3 text-gray-800">Total</td>
               {["rentals", "penalties", "returned", "deposits", "maintenance", "fees"].map((k) => (
                 <td key={k} className="px-4 py-3 whitespace-nowrap">{fmt(sum(k))}</td>
-              ))}
-              {["expected", "scheduled"].map((k) => (
-                <td key={k} className="px-4 py-3 whitespace-nowrap text-gray-500">{fmt(sum(k))}</td>
               ))}
               <td className={`px-4 py-3 whitespace-nowrap ${totalNet < 0 ? "text-red-500" : "text-gray-800"}`}>{fmt(totalNet)}</td>
             </tr>
@@ -750,14 +729,10 @@ function RevenueExpenseView({ report, exportRef }) {
 
   useEffect(() => { setPage(1); }, [report]);
 
-  const nothing = !cards.moneyIn && !cards.returned && !cards.maintenance && !cards.gatewayFees && !cards.expectedUnpaid && !cards.scheduledMaintenance;
-  const hasExpected = series.some((b) => b.expected);
-  const hasScheduled = series.some((b) => b.scheduled);
+  const nothing = !cards.moneyIn && !cards.returned && !cards.maintenance && !cards.gatewayFees;
   const chartLegend = [
     { key: "r", label: "Revenue", color: C_GREEN },
     { key: "m", label: "Expenses (maintenance + PayMongo fees)", color: C_RED },
-    ...(hasExpected ? [{ key: "e", label: "Unpaid balances (expected)", color: C_GREEN, hatched: true }] : []),
-    ...(hasScheduled ? [{ key: "s", label: "Scheduled maintenance (expected)", color: C_RED, hatched: true }] : []),
   ];
   const net = cards.net ?? 0;
 
@@ -796,10 +771,10 @@ function RevenueExpenseView({ report, exportRef }) {
           ] })) },
           ...(cards.gatewayFeesUnrecorded > 0 ? [{ type: "note", text: `${cards.gatewayFeesUnrecorded} online payment${cards.gatewayFeesUnrecorded === 1 ? "" : "s"} in this period ${cards.gatewayFeesUnrecorded === 1 ? "has" : "have"} no PayMongo fee recorded yet, so the fees and Net are slightly off until ${cards.gatewayFeesUnrecorded === 1 ? "it is" : "they are"} filled in.` }] : []),
           ...(series.length === 0 ? [] : [{ type: "table", name: "Revenue and Expense",
-            head: ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Unpaid (expected)", "Scheduled maint.", "Net"],
-            align: ["left", "right", "right", "right", "right", "right", "right", "right", "right", "right"],
-            body: series.map((b) => [b.label, money(b.rentals), money(b.penalties), money(b.returned), money(b.deposits), money(b.maintenance), money(b.fees), money(b.expected || 0), money(b.scheduled || 0), money(b.net)]),
-            foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees", "expected", "scheduled", "net"].map((k) => money(sumOf(k)))] }]),
+            head: ["Period", "Rentals", "Penalties", "Returned", "To return", "Maintenance", "PayMongo fees", "Net"],
+            align: ["left", "right", "right", "right", "right", "right", "right", "right"],
+            body: series.map((b) => [b.label, money(b.rentals), money(b.penalties), money(b.returned), money(b.deposits), money(b.maintenance), money(b.fees), money(b.net)]),
+            foot: ["Total", ...["rentals", "penalties", "returned", "deposits", "maintenance", "fees", "net"].map((k) => money(sumOf(k)))] }]),
 
           { type: "title", text: "Vehicle Revenue", graph: "Vehicle Revenue Graph", table: "Vehicle Revenue Table" },
           ...(carRows.length === 0 ? [{ type: "empty", text: `No bookings or maintenance by vehicle in ${report.label}.` }] : [
@@ -836,7 +811,7 @@ function RevenueExpenseView({ report, exportRef }) {
           <StatCard title={net < 0 ? "Net loss" : "Net"} value={fmt(net)} Icon={IconTrend}
             color={net < 0 ? "bg-red-500 text-white" : "bg-teal-600 text-white"} valueClass={net < 0 ? "text-red-500" : "text-gray-800"} />
         </div>
-        <p className="px-4 pb-3 -mt-1 text-xs text-gray-500">Only bookings that are over are counted, on the day they ended: completed (even if the deposit is still held), cancelled or stolen. Upcoming and ongoing bookings are not included yet. Striped bars are expected amounts (unpaid balances due when their booking ends, and maintenance still scheduled): they are not in revenue, expenses or Net.</p>
+        <p className="px-4 pb-3 -mt-1 text-xs text-gray-500">Only bookings that are over are counted, on the day they ended: completed (even if the deposit is still held), cancelled or stolen. Upcoming and ongoing bookings are not included yet.</p>
       </Card>
 
       {nothing ? (
