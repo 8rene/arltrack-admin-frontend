@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import GeofenceBanner from "../../../components/GeofenceBanner";
+import GeofenceBanner from "./GeofenceBanner";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 const CAR_IDS = ["car1", "car2", "car3", "car4", "car5", "car6"];

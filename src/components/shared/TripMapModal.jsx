@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { getAreaOutline, peekAreaOutline } from "../utils/cityBoundary";
+import { getAreaOutline, peekAreaOutline } from "../../utils/cityBoundary";
 
 // ─── ICONS ───────────────────────────────────────────────────────────────
 const IconX = ({ className = "w-5 h-5" }) => (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { reverseGeocode, roundKey } from "../utils/reverseGeocode";
+import { reverseGeocode, roundKey } from "../../../utils/reverseGeocode";
 
 /**
  * Shows raw coordinates right away (never waits on the network for that

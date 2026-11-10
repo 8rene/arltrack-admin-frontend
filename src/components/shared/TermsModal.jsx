@@ -70,7 +70,7 @@ export function Markdown({ source }) {
 /**
  * The accepted-terms text for ONE of the driver's own trips
  * (GET /api/driver-dispatch/my-trips/:id/terms). Shows the version on the booking, not the current Terms.
- * Used inside the History "View" modal and by TripTermsModal below. Fetches when it mounts.
+ * Used inside the History "View" modal and by TermsModal below. Fetches when it mounts.
  */
 export function TripTermsContent({ tripID, token }) {
   const [data, setData] = useState(null);
@@ -115,7 +115,7 @@ export function TripTermsContent({ tripID, token }) {
  * Read-only modal for a driver: the exact Terms & Conditions version the customer
  * accepted for ONE of the driver's own trips. Still used by the Trips (active) tab.
  */
-export default function TripTermsModal({ open, onClose, trip, token }) {
+export default function TermsModal({ open, onClose, trip, token }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import GeofenceBanner from "../../../components/GeofenceBanner";
+import GeofenceBanner from "./GeofenceBanner";
 import { isGeofenceBreachedAt, isCodingRestrictedAt, activeAlertAt } from "../../../utils/geofenceAlerts";
 import LogsPanel from "./LogsPanel";
 import TracebackBookingInfoPanel from "./TracebackBookingInfoPanel";

@@ -6,7 +6,7 @@ import { useCurrency } from "../../context/CurrencyContext";
 import { MapContainer, TileLayer, CircleMarker, Circle, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { TermsVersionModal } from "../../components/TripTermsModal";
+import { TermsVersionModal } from "../../components/shared/TermsModal";
 
 const PAGE_SIZE = 10;
 

@@ -5,7 +5,7 @@ import { useCurrency } from "../../context/CurrencyContext";
 import { useAuth } from "../../context/AuthContext";
 import DeleteBundleModal from "../../components/shared/DeleteBundleModal";
 import { ROLES } from "../../config/pagePermissions";
-import TripMapModal from "../../components/TripMapModal";
+import TripMapModal from "../../components/shared/TripMapModal";
 import { readCodingWarnings, warningsByCity } from "../../utils/codingWarnings";
 
 // Same shape MyTrips.jsx's tripStops() builds for TripMapModal — pickup,
