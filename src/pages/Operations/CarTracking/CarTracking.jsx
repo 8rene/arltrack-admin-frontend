@@ -1303,7 +1303,7 @@ export default function CarTracking() {
             {tab === "live" && (
               <button
                 onClick={() => { fetchLocations(); fetchGpsDevices(); fetchBookings(); }}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a]"
               >
                 <Icons.Refresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
                 Refresh
@@ -1312,7 +1312,7 @@ export default function CarTracking() {
             {tab !== "live" && tab !== "review" && (
               <button
                 onClick={() => setRefreshTick(t => t + 1)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a]"
               >
                 <Icons.Refresh className="w-3.5 h-3.5" />
                 Refresh
@@ -1565,7 +1565,7 @@ export default function CarTracking() {
               <button
                 onClick={() => { setShowBookingInfo(v => !v); setShowLogs(false); }}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
-                  showBookingInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                  showBookingInfo ? "bg-arl-primary text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                 }`}
               >
                 Booking Information
@@ -1573,7 +1573,7 @@ export default function CarTracking() {
               <button
                 onClick={() => { setShowLogs(v => !v); setShowBookingInfo(false); }}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
-                  showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                  showLogs ? "bg-arl-primary text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                 }`}
               >
                 Booking Logs
@@ -1676,7 +1676,7 @@ export default function CarTracking() {
                     <button
                       onClick={() => handleReturn(ongoing)}
                       disabled={actionBusyId === ongoing.id}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 active:scale-95 transition-all disabled:opacity-50"
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-arl-primary text-white rounded-xl text-xs font-semibold hover:bg-[#16526a] active:scale-95 transition-all disabled:opacity-50"
                     >
                       <Icons.Flag className="w-3.5 h-3.5" />
                       {actionBusyId === ongoing.id ? "…" : "Mark Complete"}
@@ -1905,7 +1905,7 @@ export default function CarTracking() {
               className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
                 dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
                 : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
-                : "bg-teal-600 hover:bg-teal-700"}`}>
+                : "bg-arl-primary hover:bg-[#16526a]"}`}>
               {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
             </button>
           </div>

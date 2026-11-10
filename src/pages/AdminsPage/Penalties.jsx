@@ -47,7 +47,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -491,7 +491,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
                   {bookingID}
                   {onViewBooking && (
                     <button type="button" onClick={() => onViewBooking(bookingID.trim())}
-                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0">
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors shrink-0">
                       View booking →
                     </button>
                   )}
@@ -503,7 +503,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
                     className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm font-normal focus:outline-none focus:ring-2 focus:ring-arl-light" />
                   {bookingFound && onViewBooking && (
                     <button type="button" onClick={() => onViewBooking(bookingID.trim())}
-                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0">
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors shrink-0">
                       View booking →
                     </button>
                   )}
@@ -567,7 +567,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
                       <span className="text-sm font-semibold text-gray-700">{fmt(x.amount)}</span>
                       {onReviewPenalty && (
                         <button type="button" onClick={() => onReviewPenalty(x)}
-                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                           Review →
                         </button>
                       )}
@@ -683,7 +683,7 @@ function CreatePenaltyModal({ token, onClose, onCreated, initialBookingID = "", 
           )}
           <button onClick={handleSubmit} disabled={submitting || blockedByReview}
             title={blockedByReview ? "Confirm or discard the penalty under review first" : undefined}
-            className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-arl-primary hover:bg-[#16526a] disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? "Creating…" : "Create & Notify Customer"}
           </button>
           {/* Last in the DOM = first on screen (the footer is flex-col-reverse): the reason the button is disabled sits right above it. */}
@@ -1103,7 +1103,7 @@ function BookingPenaltiesModal({ bookingID, token, penalties, canAdd, onClose, o
                     <td className="px-3 py-2.5"><SettlementBadge status={p.settlementStatus} /></td>
                     <td className="px-3 py-2.5 text-left whitespace-nowrap">
                       <button onClick={() => onViewPenalty(p)}
-                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
                     </td>
                   </tr>
                 );
@@ -1253,7 +1253,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
   const statusLabel = isReview ? "Under review" : isConfirmed ? (p.settlementStatus || "Confirmed") : p.status;
   // Button styles follow Bookings.jsx: solid teal = main action, light teal = secondary, light red = destructive.
   const outlineBtn = "text-sm w-full py-2 rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 font-medium";
-  const primaryBtn = "text-sm w-full py-2 rounded-xl bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 font-semibold transition-colors";
+  const primaryBtn = "text-sm w-full py-2 rounded-xl bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-40 font-semibold transition-colors";
   const tealBtn    = "text-sm w-full py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-40 font-semibold transition-colors";
   const dangerBtn  = "text-sm w-full py-2 rounded-xl border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 font-semibold transition-colors";
   const inputBase = "border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-arl-light";
@@ -1295,7 +1295,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                   {p.bookingID}
                   {onViewBookingPage && (
                     <button type="button" onClick={onViewBookingPage}
-                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0">
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors shrink-0">
                       View booking →
                     </button>
                   )}
@@ -1379,7 +1379,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                 {/* Confirming is part of editing: a penalty can only be confirmed from here, after its charges were looked at. */}
                 {canConfirm && (
                   <button onClick={() => saveEdit({ thenConfirm: true })} disabled={saving}
-                    className="text-sm w-full py-2 rounded-xl font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50">
+                    className="text-sm w-full py-2 rounded-xl font-semibold text-white bg-arl-primary hover:bg-[#16526a] disabled:opacity-50">
                     {saving ? "Saving…" : "Save & confirm penalty"}
                   </button>
                 )}
@@ -1426,7 +1426,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
             {/* Opens the Payments page for this penalty's payment. Nothing can be paid on a penalty still under review. */}
             {!isReview && onViewPayments && (
               <button type="button" onClick={onViewPayments}
-                className="mt-3 px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0">
+                className="mt-3 px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors shrink-0">
                 View payments →
               </button>
             )}
@@ -1456,7 +1456,7 @@ function PenaltyDetailsModal({ penalty: p, token, canRecordInStore, busy, onClos
                     Back
                   </button>
                   <button onClick={onConfirm} disabled={busy}
-                    className="text-sm w-full py-2 rounded-xl font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50">
+                    className="text-sm w-full py-2 rounded-xl font-semibold text-white bg-arl-primary hover:bg-[#16526a] disabled:opacity-50">
                     {busy ? "Confirming…" : "Yes, confirm & notify"}
                   </button>
                 </div>
@@ -1790,7 +1790,7 @@ export default function Penalties() {
           <td className="px-4 py-3"><SettlementBadge status={p.settlementStatus} /></td>
           <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
             <button onClick={() => setDetailsModal(p)}
-              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
           </td>
         </tr>
     );
@@ -1860,7 +1860,7 @@ export default function Penalties() {
         <td className="px-4 py-3"><SettlementBadge status={g.worst} /></td>
         <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
           <button onClick={() => setBookingModalID(g.first.bookingID)}
-            className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">View all ›</button>
+            className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors whitespace-nowrap">View all ›</button>
         </td>
       </tr>
     );
@@ -1973,7 +1973,7 @@ export default function Penalties() {
           <h1 className="text-2xl font-bold text-arl-dark">Penalties</h1>
         </div>
         <button onClick={() => setShowCreate(true)}
-          className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700 flex items-center gap-1.5 self-start sm:self-auto">
+          className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white font-semibold hover:bg-[#16526a] flex items-center gap-1.5 self-start sm:self-auto">
           <IconPlus className="w-4 h-4" /> New Penalty
         </button>
       </div>
@@ -2024,7 +2024,7 @@ export default function Penalties() {
             {PENALTY_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
           </select>
           <button onClick={fetchAll} disabled={loading}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-50 flex items-center gap-1.5">
             <IconRefresh className="w-3.5 h-3.5" />
             Refresh
           </button>
@@ -2032,7 +2032,7 @@ export default function Penalties() {
           <div className="inline-flex rounded-xl border border-gray-200 p-0.5 text-xs font-semibold ml-auto">
             {[[true, "By booking"], [false, "All penalties"]].map(([val, label]) => (
               <button key={label} onClick={() => setGroupByBooking(val)}
-                className={`px-3 py-1.5 rounded-[10px] transition-colors ${groupByBooking === val ? "bg-teal-600 text-white" : "text-gray-500 hover:text-gray-700"}`}>
+                className={`px-3 py-1.5 rounded-[10px] transition-colors ${groupByBooking === val ? "bg-arl-primary text-white" : "text-gray-500 hover:text-gray-700"}`}>
                 {label}
               </button>
             ))}

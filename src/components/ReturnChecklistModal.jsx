@@ -297,7 +297,7 @@ export default function ReturnChecklistModal({
                 )}
                 <button disabled={busy || !canConfirm}
                   onClick={settle}
-                  className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40">
+                  className="w-full py-2 rounded-xl text-sm font-semibold bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-40">
                   {busy ? "…" : goOnline ? `${completing ? "Complete booking & refund" : "Refund"} ${peso(data.amountToReturn)} online` : refundDue ? (completing ? "Complete booking & confirm deposit returned" : "Confirm deposit returned") : (completing ? "Complete booking & confirm settlement" : "Confirm settlement")}
                 </button>
               </div>

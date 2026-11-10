@@ -94,7 +94,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -179,7 +179,7 @@ function ArchiveFooter({ onRestore, onDelete, canDelete, busy, onClose, extra })
   return (
     <>
       <button onClick={onRestore} disabled={busy}
-        className="w-full py-2.5 rounded-xl text-sm font-medium bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 transition-colors">
+        className="w-full py-2.5 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-40 transition-colors">
         {busy ? "…" : "Restore"}
       </button>
       {extra}
@@ -251,7 +251,7 @@ function ViewUserButton({ uid, account, viewerRole, onGo }) {
   return (
     <button type="button" disabled={!canOpen} title={title}
       onClick={() => onGo(`/users?role=${tab.key}&tab=directory&open=${encodeURIComponent(uid)}`)}
-      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
       View user →
     </button>
   );
@@ -1413,7 +1413,7 @@ function BookingTab({ record, details, detailsLoading, detailsError, peso, viewe
   const customerNote = cust?.state === "archived" ? " (account deleted — in Deleted Users)" : cust?.state === "removed" ? " (account removed)" : "";
   const customerAction = cust?.state === "archived"
     ? <button type="button" onClick={() => onGo(`/archives/users?open=${encodeURIComponent(record.userID)}`)}
-        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">View deleted user →</button>
+        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors whitespace-nowrap">View deleted user →</button>
     : <ViewUserButton uid={record.userID} account={liveAccount} viewerRole={viewerRole} onGo={onGo} />;
 
   const cancelledByText = !canc ? null
@@ -1434,7 +1434,7 @@ function BookingTab({ record, details, detailsLoading, detailsError, peso, viewe
   const termsAction = (
     <button type="button" disabled={!termsVersionID} onClick={() => setTermsOpen(true)}
       title={termsVersionID ? "" : "No terms version was recorded on this booking"}
-      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
       View terms →
     </button>
   );
@@ -1855,7 +1855,7 @@ export default function BookingArchivePage() {
             </div>
             <div className="flex flex-wrap gap-2 justify-end">
               <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
-              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-arl-primary text-white text-sm hover:bg-[#16526a]">Yes, Restore</button>
             </div>
           </div>
         </div>
@@ -1943,7 +1943,7 @@ export default function BookingArchivePage() {
               className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
           )}
           <button onClick={fetchRecords} disabled={loading}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-50 flex items-center gap-1.5">
             <IconRefresh className="w-3.5 h-3.5" />
             Refresh
           </button>
@@ -1990,7 +1990,7 @@ export default function BookingArchivePage() {
                     <td className="px-4 py-3"><BookingStatusBadge status={r.status} /></td>
                     <td className="pl-4 pr-8 py-3 text-right">
                       <button onClick={() => setViewRecord(r)}
-                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
                     </td>
                   </tr>
                 ))

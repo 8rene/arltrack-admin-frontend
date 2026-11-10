@@ -27,7 +27,7 @@ const inputCls =
   "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300";
 
 const btnPrimary =
-  "px-4 py-2 text-sm font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-60 transition";
+  "px-4 py-2 text-sm font-semibold rounded-xl bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-60 transition";
 
 const btnGhost =
   "px-4 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition";
@@ -256,7 +256,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -420,7 +420,7 @@ export default function Holidays() {
                 Refresh
               </button>
               <button onClick={() => setDialog({ holiday: null })}
-                className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold">
+                className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold">
                 + Add holiday
               </button>
             </div>
@@ -493,7 +493,7 @@ export default function Holidays() {
                     <td className="px-4 py-3 text-left whitespace-nowrap">
                       <div className="inline-flex items-center gap-2">
                         <button onClick={() => setDialog({ holiday: h })}
-                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                           Edit
                         </button>
                         {canDelete && (

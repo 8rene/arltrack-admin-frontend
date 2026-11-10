@@ -199,7 +199,7 @@ function RangeModal({ current, onApply, onClose }) {
 
         <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2 bg-gray-50/50">
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:bg-gray-50">Cancel</button>
-          <button type="button" onClick={() => onApply(draft)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 transition-colors">Apply</button>
+          <button type="button" onClick={() => onApply(draft)} className="px-4 py-2 rounded-xl bg-arl-primary text-white text-xs font-semibold hover:bg-[#16526a] transition-colors">Apply</button>
         </div>
       </div>
     </div>
@@ -242,7 +242,7 @@ function DownloadModal({ kind, tabLabel, range, fileName, notReady, exporting, e
         <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2 bg-gray-50/50">
           <button type="button" onClick={onClose} disabled={exporting} className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-60">{notReady ? "Close" : "Cancel"}</button>
           {!notReady && (
-            <button type="button" onClick={onConfirm} disabled={exporting} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 transition-colors disabled:opacity-60 disabled:cursor-wait">
+            <button type="button" onClick={onConfirm} disabled={exporting} className="px-4 py-2 rounded-xl bg-arl-primary text-white text-xs font-semibold hover:bg-[#16526a] transition-colors disabled:opacity-60 disabled:cursor-wait">
               {exporting ? "Creating…" : error ? "Try again" : "Download"}
             </button>
           )}
@@ -342,7 +342,7 @@ export default function Reports() {
               onPrev={prev ? () => applyRange(prev) : undefined} onNext={next ? () => applyRange(next) : undefined} />
             <div className="relative" ref={menuRef}>
               <button type="button" onClick={() => setMenuOpen((o) => !o)} disabled={exporting} aria-haspopup="menu" aria-expanded={menuOpen}
-                className="flex items-center gap-2 h-9 px-3.5 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 transition-colors disabled:opacity-60 disabled:cursor-wait whitespace-nowrap">
+                className="flex items-center gap-2 h-9 px-3.5 rounded-xl bg-arl-primary text-white text-xs font-semibold hover:bg-[#16526a] transition-colors disabled:opacity-60 disabled:cursor-wait whitespace-nowrap">
                 <IconDownload />
                 {exporting ? "Creating…" : "Download"}
                 <IconChevronDown />

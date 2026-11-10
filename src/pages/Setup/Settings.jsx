@@ -413,7 +413,7 @@ export default function Settings() {
                   onClick={handleSave}
                   disabled={saving || !isDirty}
                   className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium disabled:opacity-50 transition-all ${
-                    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-teal-600 hover:bg-teal-700 text-white"
+                    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-primary hover:bg-[#16526a] text-white"
                   }`}
                 >
                   {saving ? "Saving…" : "Save Changes"}
@@ -432,7 +432,7 @@ export default function Settings() {
               <button
                 onClick={() => setEditMode(true)}
                 className={`px-6 py-2.5 rounded-xl shadow text-sm font-medium transition-all ${
-                  isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-teal-600 hover:bg-teal-700 text-white"
+                  isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-primary hover:bg-[#16526a] text-white"
                 }`}
               >
                 Edit Settings

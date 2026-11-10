@@ -461,7 +461,7 @@ function CityPicker({
               <button
                 type="button"
                 onClick={confirm}
-                className="px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700"
+                className="px-3 py-1.5 rounded-lg bg-arl-primary text-white text-xs font-semibold hover:bg-[#16526a]"
               >
                 Use {pick.name}
               </button>

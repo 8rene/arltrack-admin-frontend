@@ -126,7 +126,7 @@ export default function ReviewPanel({ cars, token, initialReview = null, onExitH
           Drop a JSON traceback export here, or browse — a file downloaded from the
           Traceback or History tab's Download button, or a raw geo-test/GPS-test export.
         </p>
-        <label className="inline-block px-4 py-2 rounded-xl bg-teal-600 text-white text-xs font-semibold cursor-pointer hover:bg-teal-700 active:scale-95 transition-all">
+        <label className="inline-block px-4 py-2 rounded-xl bg-arl-primary text-white text-xs font-semibold cursor-pointer hover:bg-[#16526a] active:scale-95 transition-all">
           {busy ? "Reading…" : "Browse file"}
           <input
             type="file"

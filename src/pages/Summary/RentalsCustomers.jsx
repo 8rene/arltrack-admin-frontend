@@ -459,7 +459,7 @@ function TablePagination({ page, totalPages, onChange, pageSize, count }) {
           <span key={n} className="flex items-center">
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
-              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>{n}</button>
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"}`}>{n}</button>
           </span>
         ))}
         <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
@@ -469,7 +469,7 @@ function TablePagination({ page, totalPages, onChange, pageSize, count }) {
   );
 }
 
-const viewBtn = "px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors";
+const viewBtn = "px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors";
 const TH = "px-4 py-3 text-left font-semibold whitespace-nowrap";
 const THEAD = "bg-gray-50 text-gray-400 text-xs uppercase tracking-wide";
 

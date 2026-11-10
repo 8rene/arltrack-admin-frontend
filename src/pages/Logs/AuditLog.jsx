@@ -101,7 +101,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -211,7 +211,7 @@ function ViewModal({ log, user, onClose, onArchive }) {
   const { user: viewer } = useAuth();
   const go = (path) => { onClose(); navigate(path); };
   const link = (label, path) => (
-    <button type="button" onClick={() => go(path)} className="px-3 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">{label}</button>
+    <button type="button" onClick={() => go(path)} className="px-3 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors whitespace-nowrap">{label}</button>
   );
   const idLine = (id, linkEl) => <span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{id}</span>{linkEl}</span>;
   const hasRelated = !!(log.bookingID || log.paymentID || log.refundRequestID);
@@ -226,7 +226,7 @@ function ViewModal({ log, user, onClose, onArchive }) {
   const viewUserBtn = (
     <button type="button" disabled={!canOpenUser} title={userBtnTitle}
       onClick={() => go(`/users?role=${userTab.key}&tab=directory&open=${encodeURIComponent(log.userID)}`)}
-      className="px-3 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+      className="px-3 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
       View user →
     </button>
   );
@@ -555,7 +555,7 @@ export default function AuditLog() {
               className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
           )}
           <button onClick={fetchLogs} disabled={loading}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-50 flex items-center gap-1.5">
             <IconRefresh className="w-3.5 h-3.5" />
             Refresh
           </button>
@@ -601,7 +601,7 @@ export default function AuditLog() {
                       </td>
                       <td className="pl-4 pr-8 py-3 text-right">
                         <button onClick={() => setViewLog(log)}
-                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
                       </td>
                     </tr>
                   );

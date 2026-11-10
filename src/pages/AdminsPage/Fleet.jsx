@@ -394,7 +394,7 @@ export default function Fleet() {
             Brands &amp; Models
           </button>
           <button onClick={() => setShowAddCar(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-semibold hover:bg-teal-700 shadow-sm">
+            className="flex items-center gap-2 px-4 py-2 bg-arl-primary text-white rounded-xl text-sm font-semibold hover:bg-[#16526a] shadow-sm">
             <Icons.Plus className="w-4 h-4" />
             Add Vehicle
           </button>
@@ -449,7 +449,7 @@ export default function Fleet() {
             {statuses.map(st => <option key={st} value={st}>{st === "All" ? "All statuses" : st}</option>)}
           </select>
           <button onClick={fetchAll}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5">
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] flex items-center gap-1.5">
             <Icons.Refresh className="w-3.5 h-3.5" />
             Refresh
           </button>
@@ -675,7 +675,7 @@ function VehicleCard({ car, canEdit, onViewDetails, onStatusChange }) {
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={onViewDetails} className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
+            <button onClick={onViewDetails} className="flex items-center gap-1.5 px-3 py-1.5 bg-arl-primary text-white rounded-lg text-xs hover:bg-[#16526a]">
               Details
               <Icons.ArrowRight className="w-3.5 h-3.5" />
             </button>
@@ -1638,7 +1638,7 @@ function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
         {/* Actions — same layout as the booking details window. */}
         <div className="px-5 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-1.5">
           {canEdit && (
-            <button onClick={onEdit} className="w-full px-3 py-2 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Edit</button>
+            <button onClick={onEdit} className="w-full px-3 py-2 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Edit</button>
           )}
           <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm">Close</button>
         </div>
@@ -1738,7 +1738,7 @@ function PickOrAddField({ label, noun, value, onChange, options, onCreate, input
                 if (e.key === "Escape") { e.preventDefault(); close(); }
               }} />
             <button type="button" onClick={submit} disabled={busy}
-              className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50 whitespace-nowrap">
+              className="px-4 rounded-lg bg-arl-primary text-white text-sm font-medium hover:bg-[#16526a] disabled:opacity-50 whitespace-nowrap">
               {busy ? "Adding…" : "Add"}
             </button>
             <button type="button" onClick={close} disabled={busy} aria-label={`Cancel adding ${noun}`}
@@ -2023,7 +2023,7 @@ function PricingForm({ pricing, setPricing, showRequired = false }) {
                   </div>
                   <div className="flex gap-2 pt-1">
                     <button onClick={() => saveEdit(i)} type="button"
-                      className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 transition-colors">
+                      className="flex items-center gap-1.5 px-4 py-2 bg-arl-primary text-white rounded-xl text-xs font-semibold hover:bg-[#16526a] transition-colors">
                       <Icons.Edit className="w-3.5 h-3.5" />
                       Save
                     </button>
@@ -2085,7 +2085,7 @@ function PricingForm({ pricing, setPricing, showRequired = false }) {
             <div className="flex gap-2 pt-1">
               <button onClick={saveNew} type="button"
                 disabled={!draft.durationType || draft.price === ""}
-                className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-semibold hover:bg-teal-700 disabled:opacity-40 transition-colors">
+                className="flex items-center gap-1.5 px-4 py-2 bg-arl-primary text-white rounded-xl text-xs font-semibold hover:bg-[#16526a] disabled:opacity-40 transition-colors">
                 <Icons.Edit className="w-3.5 h-3.5" />
                 Save
               </button>
@@ -2303,7 +2303,7 @@ function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel,
             {activeTab === "details" ? "Edit vehicle info, then switch to Pricing tab" : `${pricingCount} pricing tier${pricingCount !== 1 ? "s" : ""} configured`}
           </p>
           <button onClick={handleSave} disabled={saving || !!statusChangeTarget}
-            className="w-full px-3 py-2 bg-teal-600 text-white rounded-xl text-sm font-semibold hover:bg-teal-700 transition-colors disabled:opacity-50">
+            className="w-full px-3 py-2 bg-arl-primary text-white rounded-xl text-sm font-semibold hover:bg-[#16526a] transition-colors disabled:opacity-50">
             {saving ? "Saving..." : "Save Changes"}
           </button>
           {onDelete && (
@@ -2459,7 +2459,7 @@ function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClo
           <div className="flex gap-3">
             <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 bg-white">Cancel</button>
             <button onClick={handleSave} disabled={saving}
-              className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
+              className="px-5 py-2 bg-arl-primary text-white rounded-xl text-sm font-medium hover:bg-[#16526a] disabled:opacity-50">
               {saving ? "Adding..." : "Add Vehicle"}
             </button>
           </div>
@@ -2645,7 +2645,7 @@ function ManageBrandsModal({ brands, models, cars = [], onClose, onChanged }) {
               <input value={newBrand} onChange={e => { setNewBrand(e.target.value); clearMsgs(); }} onKeyDown={onEnter(addBrand)}
                 placeholder="New brand (e.g. Toyota)" disabled={saving} className={FIELD_CLS} />
               <button onClick={addBrand} disabled={saving}
-                className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50">Add</button>
+                className="px-4 rounded-lg bg-arl-primary text-white text-sm font-medium hover:bg-[#16526a] disabled:opacity-50">Add</button>
             </div>
             {brands.length > 6 && (
               <div className="relative">
@@ -2680,7 +2680,7 @@ function ManageBrandsModal({ brands, models, cars = [], onClose, onChanged }) {
                 placeholder={selectedBrand ? `New ${selectedBrand.brandName} model (e.g. Vios)` : "Select a brand first"}
                 disabled={saving || !selectedBrandID} className={FIELD_CLS} />
               <button onClick={addModel} disabled={saving || !selectedBrandID}
-                className="px-4 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50">Add</button>
+                className="px-4 rounded-lg bg-arl-primary text-white text-sm font-medium hover:bg-[#16526a] disabled:opacity-50">Add</button>
             </div>
             <div className="space-y-1 overflow-y-auto max-h-72 md:max-h-80 pr-1">
               {!selectedBrand ? (

@@ -190,7 +190,7 @@ export default function BookingArchiveLinkedTabs({ bookingArchivesId, token }) {
             onClick={() => select(tab)}
             className={`px-3 py-1.5 text-xs rounded-lg border whitespace-nowrap ${
               active === tab.key
-                ? "bg-teal-600 text-white border-teal-600"
+                ? "bg-arl-primary text-white border-arl-primary"
                 : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
             }`}
           >

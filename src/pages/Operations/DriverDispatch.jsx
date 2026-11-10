@@ -293,7 +293,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -308,9 +308,9 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
   );
 }
 
-const btnPrimary = "w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+const btnPrimary = "w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 const btnClose   = "w-full mt-1.5 py-1.5 border rounded-xl text-sm";
-const btnView    = "px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors";
+const btnView    = "px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors";
 
 // ─── ASSIGN DRIVER MODAL ─────────────────────────────────────────────────────
 // Owns the whole assigning flow (pick → availability → conflict / override reason → assign).
@@ -404,7 +404,7 @@ function AssignModal({ booking, drivers, authedFetch, onClose, onDone, navigate,
             title="Trip"
             aside={
               <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(booking.id)}`)}
-                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                 View Booking →
               </button>
             }
@@ -522,7 +522,7 @@ function AssignModal({ booking, drivers, authedFetch, onClose, onDone, navigate,
               <button onClick={() => submit(true)} disabled={busy || (needsReason && !reasonOk)}
                 title={needsReason && !reasonOk ? "Type a reason first" : undefined}
                 className={`w-full px-3 py-1.5 text-white font-semibold rounded-xl text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                  conflict.conflictType === "overlap" ? "bg-red-600 hover:bg-red-700" : "bg-teal-600 hover:bg-teal-700"
+                  conflict.conflictType === "overlap" ? "bg-red-600 hover:bg-red-700" : "bg-arl-primary hover:bg-[#16526a]"
                 }`}>
                 {busy ? "Assigning…" : "Assign Anyway"}
               </button>
@@ -951,7 +951,7 @@ export default function DriverDispatch() {
             {TABS.map(({ key, label, icon: TabIcon }) => (
               <button key={key} onClick={() => { setStatusFilter("all"); setNeedsDriverOnly(false); setView(key); }}
                 className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${
-                  view === key ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"
+                  view === key ? "bg-arl-primary text-white shadow" : "text-gray-600 hover:bg-gray-50"
                 }`}>
                 <TabIcon className="w-4 h-4" />
                 {label}
@@ -959,7 +959,7 @@ export default function DriverDispatch() {
             ))}
           </div>
           <button onClick={fetchBoard} disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 transition-colors disabled:opacity-50">
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] transition-colors disabled:opacity-50">
             <IconRefresh className="w-4 h-4" />
             Refresh
           </button>

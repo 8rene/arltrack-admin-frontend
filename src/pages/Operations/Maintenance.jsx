@@ -45,7 +45,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -837,7 +837,7 @@ export default function Maintenance() {
                     <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${badge}`}>{p.status}</span>
                     <span className="opacity-60 text-[10px]">({SOURCE_LABEL[p.source] || "before trip"})</span>
                     <button onClick={() => openScheduleForPart(p)}
-                      className="ml-1 px-2 py-0.5 rounded-lg bg-teal-600 text-white text-[10px] font-bold hover:bg-teal-700 transition-colors">
+                      className="ml-1 px-2 py-0.5 rounded-lg bg-arl-primary text-white text-[10px] font-bold hover:bg-[#16526a] transition-colors">
                       🔧 Schedule Fix
                     </button>
                   </div>
@@ -881,7 +881,7 @@ export default function Maintenance() {
                 Refresh
               </button>
               <button onClick={openAdd}
-                className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold">
+                className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold">
                 + Schedule
               </button>
             </div>
@@ -991,7 +991,7 @@ export default function Maintenance() {
                   <td className="px-4 py-3 text-left whitespace-nowrap">
                     <div className="inline-flex items-center gap-2">
                       <button onClick={e => { e.stopPropagation(); openView(r); }}
-                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                         View
                       </button>
                     </div>
@@ -1315,7 +1315,7 @@ function MaintenanceModal({
                         {showPenalties ? "Hide Penalties" : "View Penalties"}
                       </button>
                       <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(form.bookingID)}`)}
-                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                         View Booking →
                       </button>
                     </div>
@@ -1596,7 +1596,7 @@ function MaintenanceModal({
               <button onClick={onClose}
                 className="w-full py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Close</button>
               <button onClick={onEdit}
-                className="w-full py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700">Edit</button>
+                className="w-full py-2 rounded-xl bg-arl-primary text-white text-sm font-semibold hover:bg-[#16526a]">Edit</button>
               <span className="text-center text-xs text-gray-400">Read-only. Click Edit to make changes.</span>
             </>
           ) : (
@@ -1604,7 +1604,7 @@ function MaintenanceModal({
               <button onClick={onClose}
                 className="w-full py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
               <button onClick={onSave} disabled={saving || catalog.loading}
-                className="w-full py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-40">
+                className="w-full py-2 rounded-xl bg-arl-primary text-white text-sm font-semibold hover:bg-[#16526a] disabled:opacity-40">
                 {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}
               </button>
             </>

@@ -605,7 +605,7 @@ export default function SimulatePanel() {
             <button
               onClick={() => { setShowBookingInfo(v => !v); setShowLogs(false); }}
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
-                showBookingInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                showBookingInfo ? "bg-arl-primary text-white" : "bg-white/95 text-gray-700 hover:bg-white"
               }`}
             >
               ℹ Booking Information
@@ -613,7 +613,7 @@ export default function SimulatePanel() {
             <button
               onClick={() => { setShowLogs(v => !v); setShowBookingInfo(false); }}
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
-                showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                showLogs ? "bg-arl-primary text-white" : "bg-white/95 text-gray-700 hover:bg-white"
               }`}
             >
               🗒 Logs {occurredLogs.length ? `(${occurredLogs.length})` : ""}
@@ -734,7 +734,7 @@ export default function SimulatePanel() {
             <div className="flex items-center justify-center gap-2 mt-2">
               <button onClick={() => { setPlaying(false); setIdx(0); }} className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm">⏮</button>
               <button onClick={() => setIdx(i => Math.max(0, i - 1))} className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm">◀</button>
-              <button onClick={() => setPlaying(p => !p)} className="w-10 h-8 rounded-lg bg-teal-600 text-white text-sm font-semibold">{playing ? "⏸" : "▶"}</button>
+              <button onClick={() => setPlaying(p => !p)} className="w-10 h-8 rounded-lg bg-arl-primary text-white text-sm font-semibold">{playing ? "⏸" : "▶"}</button>
               <button onClick={() => setIdx(i => Math.min(NUM_POINTS - 1, i + 1))} className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm">▶</button>
               <button onClick={() => { setPlaying(false); setIdx(NUM_POINTS - 1); }} className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm">⏭</button>
               <div className="flex items-center gap-1 ml-2">
@@ -742,7 +742,7 @@ export default function SimulatePanel() {
                   <button
                     key={s}
                     onClick={() => setPlaySpeed(s)}
-                    className={`px-2 py-1 rounded-md text-[11px] font-semibold ${playSpeed === s ? "bg-teal-600 text-white" : "bg-gray-50 text-gray-400 hover:bg-gray-100"}`}
+                    className={`px-2 py-1 rounded-md text-[11px] font-semibold ${playSpeed === s ? "bg-arl-primary text-white" : "bg-gray-50 text-gray-400 hover:bg-gray-100"}`}
                   >
                     {s}×
                   </button>

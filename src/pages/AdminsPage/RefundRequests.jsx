@@ -203,7 +203,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -573,7 +573,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             {r.bookingID && (
               <button onClick={() => navigate(`/bookings?search=${encodeURIComponent(r.bookingID)}`)}
                 title="Open this booking in Bookings"
-                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                 View Booking →
               </button>
             )}
@@ -654,7 +654,7 @@ function RefundViewModal({ r, fmt, navigate, onClose, onApprove, onReject, onHan
             {r.paymentID && (
               <button onClick={() => navigate(`/payments?paymentID=${encodeURIComponent(r.paymentID)}`)}
                 title="Open this payment — receipts, slips and every money movement are there"
-                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                 View in Payments →
               </button>
             )}
@@ -1436,7 +1436,7 @@ export default function RefundRequests() {
           <button
             onClick={fetchRequests}
             disabled={loading}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5"
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-50 flex items-center gap-1.5"
           >
             <IconRefresh className="w-3.5 h-3.5" />
             Refresh
@@ -1502,7 +1502,7 @@ export default function RefundRequests() {
                       </td>
                       <td className="pl-4 pr-8 py-3 text-right">
                         <button onClick={() => setViewId(r.refundRequestID)}
-                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
                       </td>
                     </tr>
                   );

@@ -195,7 +195,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -459,7 +459,7 @@ function ExpiryField({ userID, docId, currentValue, onSaved, canEdit = true }) {
         <button
           onClick={handleSave}
           disabled={saving || !value || value === toDateInputValue(currentValue)}
-          className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="px-3 py-1.5 bg-arl-primary text-white rounded-lg text-xs font-medium hover:bg-[#16526a] disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {saving ? "..." : savedFlash ? "Saved ✓" : "Save"}
         </button>
@@ -671,7 +671,7 @@ export default function Users() {
 
   const RefreshBtn = () => (
     <button onClick={() => { fetchUsers(); fetchEditReqCounts(); }}
-      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 transition-colors">
+      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
       <Icons.Refresh className="w-4 h-4" />
       Refresh
     </button>
@@ -731,20 +731,20 @@ export default function Users() {
       <div className="flex justify-between items-center border-t px-4 py-3">
         <div className="flex gap-2">
           <button onClick={() => setSubTab("directory")}
-            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "directory" ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
+            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "directory" ? "bg-arl-primary text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
             <Icons.Users className="w-4 h-4" />
             List
           </button>
           {activeRole.hasDocsSubTab && (
             <button onClick={() => { setDocFocus(null); setDocRequestType("all"); setDocStatus("all"); setSubTab("documents"); }}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "documents" ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "documents" ? "bg-arl-primary text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
               <Icons.IdCard className="w-4 h-4" />
               Document Request
             </button>
           )}
           {activeRole.hasEditRequestSubTab && (
             <button onClick={() => setSubTab("editRequests")}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "editRequests" ? "bg-teal-600 text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-all ${subTab === "editRequests" ? "bg-arl-primary text-white shadow" : "text-gray-600 hover:bg-gray-50"}`}>
               <Icons.Edit className="w-4 h-4" />
               Edit Request
             </button>
@@ -1033,7 +1033,7 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
                       <td className="px-5 py-3">
                         <div className="flex gap-2 justify-end">
                           <button onClick={() => setDetailUser(u)}
-                            className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700">
+                            className="px-3 py-1.5 bg-arl-primary text-white rounded-lg text-xs hover:bg-[#16526a]">
                             View
                           </button>
                         </div>
@@ -1599,7 +1599,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
         {/* Actions — same layout as the booking details window. */}
         <div className="px-5 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-1.5">
           {onEdit && (
-            <button onClick={onEdit} className="w-full px-3 py-2 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Edit</button>
+            <button onClick={onEdit} className="w-full px-3 py-2 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Edit</button>
           )}
           <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm">Close</button>
         </div>
@@ -1803,7 +1803,7 @@ function ReplaceDocumentModal({ user, kind, onClose, onSaved }) {
         </div>
         <div className="flex gap-3 p-5 border-t">
           <button onClick={onClose} disabled={saving} className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
+          <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2 bg-arl-primary text-white rounded-xl text-sm font-medium hover:bg-[#16526a] disabled:opacity-50">
             {saving ? "Uploading…" : "Replace"}
           </button>
         </div>
@@ -2157,7 +2157,7 @@ function IdRequestsTable({ users, resubRows, loading, userLookup, onRefresh, onO
                       <td className="px-5 py-3">
                         <div className="flex justify-end">
                           <button onClick={() => (isNew ? setDetailUser(u) : onOpenResub(r.req.id))}
-                            className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                            className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                             View
                           </button>
                         </div>
@@ -2232,14 +2232,14 @@ function ReviewModalShell({ title, subtitle, statusPill, onClose, footer, childr
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-4">{children}</div>
-        <div className="flex justify-end gap-2 p-4 border-t bg-white shrink-0">{footer}</div>
+        <div className="flex flex-col gap-1.5 px-6 py-4 border-t border-gray-100 bg-white shrink-0">{footer}</div>
       </div>
     </div>
   );
 }
-const btnReject  = "flex items-center gap-1.5 px-4 py-2 border border-red-200 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed";
-const btnApprove = "flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed";
-const btnClose   = "px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50";
+const btnReject  = "w-full flex items-center justify-center gap-1.5 px-3 py-1.5 border border-red-200 bg-red-50 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+const btnApprove = "w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-arl-primary text-white rounded-xl text-sm font-semibold hover:bg-[#16526a] transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+const btnClose   = "w-full py-1.5 border rounded-xl text-sm text-gray-600 hover:bg-gray-50";
 
 // Review one resubmitted license/document: current vs new photo, expiry entry
 // (license only), approve / reject. Read-only once the request is reviewed.
@@ -2269,19 +2269,19 @@ function ResubmitReviewModal({ req, user, reviewerName, busy, onClose, onViewMor
       onClose={onClose}
       footer={
         <>
-          {onViewMore && <button onClick={onViewMore} className={`${btnClose} mr-auto`}>View more</button>}
           {pending && (
             <>
-              <button onClick={() => onReject(req)} disabled={busy} className={btnReject}>
-                <Icons.X className="w-4 h-4" /> Reject
-              </button>
               <button onClick={() => onApprove(req, expiry)} disabled={busy || needsExpiry}
                 title={needsExpiry ? "Enter the license expiry date first" : undefined} className={btnApprove}>
                 <Icons.Check className="w-4 h-4" /> {busy ? "..." : "Approve"}
               </button>
+              <button onClick={() => onReject(req)} disabled={busy} className={btnReject}>
+                <Icons.X className="w-4 h-4" /> Reject
+              </button>
             </>
           )}
-          <button onClick={onClose} className={btnClose}>Close</button>
+          {onViewMore && <button onClick={onViewMore} className={btnClose}>View more</button>}
+          <button onClick={onClose} className={`${btnClose} ${onViewMore || pending ? "mt-1.5" : ""}`}>Close</button>
         </>
       }
     >
@@ -2611,7 +2611,7 @@ function ProfileRequestsTable({ rows, userLookup, onOpen, statusFilter, setStatu
                   <td className="px-5 py-3">
                     <div className="flex justify-end">
                       <button onClick={() => onOpen(r.id)}
-                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                         View
                       </button>
                     </div>
@@ -2848,7 +2848,7 @@ function ProfileRequestHistoryModal({ userID, user, userLookup = {}, requests, b
                       <Icons.X className="w-3.5 h-3.5" /> Reject
                     </button>
                     <button onClick={() => onApprove(req)} disabled={busyId === req.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 disabled:opacity-40">
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-arl-primary text-white rounded-lg text-xs hover:bg-[#16526a] disabled:opacity-40">
                       <Icons.Check className="w-3.5 h-3.5" /> {busyId === req.id ? "..." : "Approve"}
                     </button>
                   </div>
@@ -2901,17 +2901,17 @@ function DocDetailModal({ user, reviewed = false, reviewerName, onClose, onViewM
       onClose={onClose}
       footer={
         <>
-          {onViewMore && <button onClick={onViewMore} className={`${btnClose} mr-auto`}>View more</button>}
           {!reviewed && (
             <>
-              <button onClick={onReject} className={btnReject}><Icons.X className="w-4 h-4" /> Reject</button>
               <button onClick={() => onApprove(licenseExpiry)} disabled={needsExpiry}
                 title={needsExpiry ? "Enter the license expiry date first" : undefined} className={btnApprove}>
                 <Icons.Check className="w-4 h-4" /> Approve
               </button>
+              <button onClick={onReject} className={btnReject}><Icons.X className="w-4 h-4" /> Reject</button>
             </>
           )}
-          <button onClick={onClose} className={btnClose}>Close</button>
+          {onViewMore && <button onClick={onViewMore} className={btnClose}>View more</button>}
+          <button onClick={onClose} className={`${btnClose} ${onViewMore || !reviewed ? "mt-1.5" : ""}`}>Close</button>
         </>
       }
     >
@@ -3334,7 +3334,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, onDelete, vi
         </div>
         <div className="px-5 py-4 border-t flex flex-col gap-1.5">
           <button onClick={() => handleSave()} disabled={saving}
-            className="w-full px-3 py-2 bg-teal-600 text-white rounded-xl text-sm font-semibold hover:bg-teal-700 transition-colors disabled:opacity-50">
+            className="w-full px-3 py-2 bg-arl-primary text-white rounded-xl text-sm font-semibold hover:bg-[#16526a] transition-colors disabled:opacity-50">
             {saving ? "Saving..." : "Save Changes"}
           </button>
           {onDelete && (

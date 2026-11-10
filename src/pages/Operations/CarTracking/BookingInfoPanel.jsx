@@ -235,7 +235,7 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
                   onClick={e => { e.stopPropagation(); setEditing(isEditing ? null : i); }}
                   className={`shrink-0 text-[11px] font-semibold px-2.5 py-0.5 rounded-lg border transition-all ${
                     isEditing
-                      ? "bg-teal-600 text-white border-teal-600"
+                      ? "bg-arl-primary text-white border-arl-primary"
                       : "bg-white text-gray-500 border-gray-200 hover:border-teal-300 hover:text-teal-600"
                   }`}
                 >
@@ -288,7 +288,7 @@ export default function BookingInfoPanel({ carId, carLabel, sessionInfo, lastKno
         <button
           onClick={handleSave}
           disabled={saving || !targetID}
-          className="w-full py-2.5 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 active:scale-[0.98] transition-all disabled:opacity-50"
+          className="w-full py-2.5 rounded-xl bg-arl-primary text-white text-xs font-semibold hover:bg-[#16526a] active:scale-[0.98] transition-all disabled:opacity-50"
         >
           {saving ? "Saving…" : saved ? "✓ Saved" : `Save Trip Zones (${zones.length})`}
         </button>

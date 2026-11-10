@@ -18,7 +18,7 @@ const inputCls =
   "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300";
 
 const btnPrimary =
-  "px-4 py-2 text-sm font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-60 transition";
+  "px-4 py-2 text-sm font-semibold rounded-xl bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-60 transition";
 
 const btnGhost =
   "px-4 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition";
@@ -88,7 +88,7 @@ function Toast({ toast }) {
 
 // Modals share z-[60]; one rendered later in the JSX sits on top of an earlier
 // one, which is how the rule / confirm dialogs stack over the city modal.
-function Modal({ title, onClose, children, footer, width = "max-w-md", busy = false }) {
+function Modal({ title, onClose, children, footer, width = "max-w-md", busy = false, stackFooter = false }) {
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
@@ -110,7 +110,9 @@ function Modal({ title, onClose, children, footer, width = "max-w-md", busy = fa
           </button>
         </div>
         <div className="px-6 pb-2 overflow-y-auto">{children}</div>
-        {footer && <div className="flex gap-3 justify-end px-6 py-4">{footer}</div>}
+        {footer && (stackFooter
+          ? <div className="flex flex-col gap-1.5 px-6 py-4 border-t border-gray-100">{footer}</div>
+          : <div className="flex gap-3 justify-end px-6 py-4">{footer}</div>)}
       </div>
     </div>
   );
@@ -167,7 +169,7 @@ const actionBtn = "px-4 py-2 text-sm font-semibold rounded-xl border transition"
 const RowActions = ({ onView, onEdit, onDelete }) => (
   <div className="flex items-center gap-2 justify-end">
     {onView && (
-      <button onClick={onView} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+      <button onClick={onView} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
     )}
     {onEdit && (
       <button onClick={onEdit} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>Edit</button>
@@ -379,7 +381,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -541,7 +543,7 @@ export default function CodingRestrictions() {
           onChange={(e) => setSearch(e.target.value)}
           className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 w-56"
         />
-        <button onClick={() => { load(); loadExtras(); }} disabled={loading} className="px-3 py-2 text-sm rounded-xl bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 ml-auto">
+        <button onClick={() => { load(); loadExtras(); }} disabled={loading} className="px-3 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-50 ml-auto">
           {loading ? "…" : "Refresh"}
         </button>
       </div>
@@ -700,14 +702,15 @@ function CityRulesModal({ city, rules, canDelete, onClose, onEditCity, onDeleteC
       title={city}
       width="max-w-3xl"
       onClose={onClose}
+      stackFooter
       footer={
         <>
           {canDelete && (
-            <button onClick={onDeleteCity} className={`${actionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}>
+            <button onClick={onDeleteCity} className="w-full px-3 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors">
               Delete
             </button>
           )}
-          <button onClick={onClose} className={btnGhost}>Close</button>
+          <button onClick={onClose} className={`w-full py-1.5 border rounded-xl text-sm ${canDelete ? "mt-1.5" : ""}`}>Close</button>
         </>
       }
     >
@@ -988,7 +991,7 @@ function ClockPopover({ anchor, initial, onApply, onClose }) {
   const seg = (active) =>
     `px-2 py-1 rounded-lg text-3xl font-semibold tabular-nums transition ${active ? "bg-teal-50 text-teal-700" : "text-gray-500 hover:bg-gray-50"}`;
   const apBtn = (on) =>
-    `px-2.5 py-1.5 text-xs font-bold transition ${on ? "bg-teal-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`;
+    `px-2.5 py-1.5 text-xs font-bold transition ${on ? "bg-arl-primary text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`;
 
   return createPortal(
     <div
@@ -1035,7 +1038,7 @@ function ClockPopover({ anchor, initial, onApply, onClose }) {
         <button
           type="button"
           onClick={() => onApply(formatClock(draft))}
-          className="px-3 py-1.5 text-sm font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700"
+          className="px-3 py-1.5 text-sm font-semibold rounded-xl bg-arl-primary text-white hover:bg-[#16526a]"
         >
           OK
         </button>

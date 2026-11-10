@@ -310,15 +310,15 @@ export default function StatementModal({ bookingID, onClose }) {
                 </div>
               )}
 
-              <div className="flex gap-2">
-                <button onClick={onClose} className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Close</button>
+              <div className="flex flex-col gap-1.5">
+                <button onClick={() => window.print()} className="w-full rounded-xl bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-800 transition-colors">Print / Save as PDF</button>
                 <button
                   disabled={!s.customer.emailMasked || mail.stage !== "idle"}
                   title={s.customer.emailMasked ? `Email to ${s.customer.emailMasked}` : "This customer has no email on their account"}
                   onClick={() => setMail({ stage: "confirm", ok: null, msg: "" })}
-                  className="flex-1 rounded-lg border border-blue-900 py-2 text-sm font-semibold text-blue-900 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full rounded-xl border border-blue-900 px-3 py-1.5 text-sm font-semibold text-blue-900 hover:bg-blue-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >Email to customer</button>
-                <button onClick={() => window.print()} className="flex-1 rounded-lg bg-blue-900 py-2 text-sm font-semibold text-white hover:bg-blue-800">Print / Save as PDF</button>
+                <button onClick={onClose} className="w-full mt-1.5 rounded-xl border border-gray-300 py-1.5 text-sm text-gray-700 hover:bg-gray-50">Close</button>
               </div>
               {!s.customer.emailMasked && <p className="text-[11px] text-gray-400">No email address on this customer's account.</p>}
             </div>

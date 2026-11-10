@@ -273,7 +273,7 @@ export function InspectionVideos({ storage, apiUrl, phase, bookingID, carID, ite
                 className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
                   dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
                   : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
-                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                  : "bg-arl-primary hover:bg-[#16526a]"}`}>
                 {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
               </button>
             </div>
@@ -422,7 +422,7 @@ export function InspectionExtraPhotos({ storage, apiUrl, phase, bookingID, carID
                 className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
                   dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
                   : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
-                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                  : "bg-arl-primary hover:bg-[#16526a]"}`}>
                 {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
               </button>
             </div>

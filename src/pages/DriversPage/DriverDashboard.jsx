@@ -284,7 +284,7 @@ export default function DriverDashboard() {
               </div>
             </div>
             <button onClick={() => navigate("/my-trips")}
-              className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-700 text-white hover:bg-teal-800 active:scale-[0.99] transition-all">
+              className="w-full py-2 rounded-xl text-sm font-semibold bg-arl-primary text-white hover:bg-[#16526a] active:scale-[0.99] transition-all">
               {nextTrip.status === "ongoing" ? "Manage This Trip" : "Go to My Trips →"}
             </button>
           </div>

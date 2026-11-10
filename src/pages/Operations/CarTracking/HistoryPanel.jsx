@@ -146,7 +146,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
           <span key={n} className="flex items-center">
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
-              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"}`}>
               {n}
             </button>
           </span>
@@ -229,7 +229,7 @@ function TripDetailsModal({ item, onClose, onFlush, onReview, flushing, busy, no
           <button
             onClick={onReview}
             disabled={flushing || busy}
-            className="w-full px-3 py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-50"
+            className="w-full px-3 py-2 rounded-xl text-sm font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors disabled:opacity-50"
           >
             {busy ? "…" : "Review"}
           </button>
@@ -609,7 +609,7 @@ export default function HistoryPanel({ cars, token, refreshTick = 0, autoOpen = 
                                 <button
                                   onClick={() => { setFlushNote(null); setDetailId(item.bookingSessionID); }}
                                   title="View archive details"
-                                  className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                                  className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
                                 >
                                   View
                                 </button>

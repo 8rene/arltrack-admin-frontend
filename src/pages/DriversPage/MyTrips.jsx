@@ -276,7 +276,7 @@ function TripsGroupBox({ cards, tab, setTab, onRefresh, refreshing }) {
           ))}
         </div>
         <button onClick={onRefresh} disabled={refreshing}
-          className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5 disabled:opacity-50">
+          className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] flex items-center gap-1.5 disabled:opacity-50">
           <IconRefresh className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
@@ -1493,7 +1493,7 @@ function HistoryPagination({ page, totalPages, onChange, start, pageSize, count 
           <span key={n} className="flex items-center">
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
-              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>{n}</button>
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"}`}>{n}</button>
           </span>
         ))}
         <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
@@ -1707,7 +1707,7 @@ function HistoryTab({ tab, setTab }) {
                         <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
                           <div className="inline-flex items-center gap-2">
                             <button onClick={() => setDetailTrip(trip)}
-                              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
                           </div>
                         </td>
                       </tr>

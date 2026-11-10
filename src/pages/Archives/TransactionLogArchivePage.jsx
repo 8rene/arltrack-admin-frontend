@@ -81,7 +81,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -156,7 +156,7 @@ function ArchiveFooter({ onRestore, onDelete, canDelete, busy, onClose }) {
   return (
     <>
       <button onClick={onRestore} disabled={busy}
-        className="w-full py-2.5 rounded-xl text-sm font-medium bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 transition-colors">
+        className="w-full py-2.5 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-40 transition-colors">
         {busy ? "…" : "Restore"}
       </button>
       {canDelete && (
@@ -226,7 +226,7 @@ function ViewUserButton({ uid, account, viewerRole, onGo }) {
   return (
     <button type="button" disabled={!canOpen} title={title}
       onClick={() => onGo(`/users?role=${tab.key}&tab=directory&open=${encodeURIComponent(uid)}`)}
-      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors whitespace-nowrap disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
       View user →
     </button>
   );
@@ -302,7 +302,7 @@ function ViewModal({ record, fmtAmount, viewerRole, canDelete, busy, onRestore, 
   const navigate = useNavigate();
   const go = (path) => { onClose(); navigate(path); };
   const link = (label, path) => (
-    <button type="button" onClick={() => go(path)} className="px-3 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors whitespace-nowrap">{label}</button>
+    <button type="button" onClick={() => go(path)} className="px-3 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors whitespace-nowrap">{label}</button>
   );
   const idLine = (id, linkEl) => <span className="inline-flex items-center gap-2 flex-wrap"><span className="font-mono text-xs">{id}</span>{linkEl}</span>;
   const customer = useAccount(record.userID);        // the customer the money event belongs to
@@ -595,7 +595,7 @@ export default function TransactionLogArchivePage() {
             <p className="text-sm text-gray-500 mb-5">It will move back to the live transaction log.</p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setRestoreConfirmId(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Cancel</button>
-              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700">Yes, Restore</button>
+              <button onClick={() => handleRestore(restoreConfirmId)} className="px-4 py-2 rounded-xl bg-arl-primary text-white text-sm hover:bg-[#16526a]">Yes, Restore</button>
             </div>
           </div>
         </div>
@@ -655,7 +655,7 @@ export default function TransactionLogArchivePage() {
             {STATUS_OPTIONS.map((st) => <option key={st} value={st}>{st}</option>)}
           </select>
           <button onClick={fetchRecords} disabled={loading}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 disabled:opacity-50 flex items-center gap-1.5">
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-50 flex items-center gap-1.5">
             <IconRefresh className="w-3.5 h-3.5" />
             Refresh
           </button>
@@ -702,7 +702,7 @@ export default function TransactionLogArchivePage() {
                     <td className="px-4 py-3 text-gray-700 max-w-xs"><span className="block truncate" title={r.description || ""}>{r.description || "—"}</span></td>
                     <td className="pl-4 pr-8 py-3 text-right">
                       <button onClick={() => setViewRecord(r)}
-                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
                     </td>
                   </tr>
                 ))

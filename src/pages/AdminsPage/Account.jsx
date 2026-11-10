@@ -231,7 +231,7 @@ function DocSubmitButton({ pending, hasFile, onClick }) {
   }
   return (
     <button onClick={onClick}
-      className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700">
+      className="flex items-center gap-1.5 px-3 py-1.5 bg-arl-primary text-white rounded-lg text-xs font-medium hover:bg-[#16526a]">
       <IconEdit className="w-3.5 h-3.5" />
       {hasFile ? "Resubmit" : "Submit"}
     </button>
@@ -705,7 +705,7 @@ function EditProfileModal({ current, canEditDirectly, pendingRequest, onClose, o
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+                className="w-full py-2 bg-arl-primary text-white rounded-xl text-sm font-medium hover:bg-[#16526a] disabled:opacity-60"
               >
                 {saving ? "Saving..." : canEditDirectly ? "Save Changes" : "Send Request Edit"}
               </button>
@@ -927,7 +927,7 @@ function ChangePasswordModal({ onClose, onChanged }) {
               <button
                 onClick={handleSendCode}
                 disabled={sending}
-                className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+                className="w-full py-2 bg-arl-primary text-white rounded-xl text-sm font-medium hover:bg-[#16526a] disabled:opacity-60"
               >
                 {sending ? "Sending..." : "Send Code"}
               </button>
@@ -935,7 +935,7 @@ function ChangePasswordModal({ onClose, onChanged }) {
               <button
                 onClick={handleVerifyCode}
                 disabled={verifying}
-                className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+                className="w-full py-2 bg-arl-primary text-white rounded-xl text-sm font-medium hover:bg-[#16526a] disabled:opacity-60"
               >
                 {verifying ? "Verifying..." : "Verify Code"}
               </button>
@@ -943,7 +943,7 @@ function ChangePasswordModal({ onClose, onChanged }) {
               <button
                 onClick={handleChangePassword}
                 disabled={saving}
-                className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60"
+                className="w-full py-2 bg-arl-primary text-white rounded-xl text-sm font-medium hover:bg-[#16526a] disabled:opacity-60"
               >
                 {saving ? "Changing..." : "Change Password"}
               </button>
@@ -1185,7 +1185,7 @@ function ResubmitIdModal({ current, documentKind, canEditDirectly, onClose, onSu
           <div className="flex flex-col-reverse gap-2">
             <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
             <button onClick={handleSubmit} disabled={saving}
-              className="w-full py-2 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-60">
+              className="w-full py-2 bg-arl-primary text-white rounded-xl text-sm font-medium hover:bg-[#16526a] disabled:opacity-60">
               {saving ? "Uploading..." : canEditDirectly ? "Save" : "Submit for Review"}
             </button>
           </div>
@@ -1479,11 +1479,11 @@ export default function Account() {
         {/* Details / Document sub-tabs */}
         <div className="flex gap-2 px-6 pt-4">
           <button onClick={() => setProfileTab("details")}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${profileTab === "details" ? "bg-teal-600 text-white shadow" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"}`}>
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${profileTab === "details" ? "bg-arl-primary text-white shadow" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"}`}>
             Details
           </button>
           <button onClick={() => setProfileTab("document")}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${profileTab === "document" ? "bg-teal-600 text-white shadow" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"}`}>
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${profileTab === "document" ? "bg-arl-primary text-white shadow" : "bg-gray-50 border text-gray-600 hover:bg-gray-100"}`}>
             Document
           </button>
         </div>
@@ -1496,7 +1496,7 @@ export default function Account() {
           <div className="px-6 py-8 text-center space-y-3">
             <p className="text-sm text-gray-500">Couldn't load your profile right now.</p>
             <button onClick={fetchProfile}
-              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700">
+              className="px-4 py-2 bg-arl-primary text-white rounded-lg text-xs font-medium hover:bg-[#16526a]">
               Try again
             </button>
           </div>

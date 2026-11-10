@@ -263,7 +263,7 @@ export default function TermsPage() {
   const fieldLabel = `text-[11px] font-medium uppercase tracking-wide ${muted}`;
   const text = isDark ? "text-[#F5F5F5]" : "text-gray-700";
   const primaryBtn = `px-5 py-2.5 rounded-xl shadow text-sm font-medium transition-all disabled:opacity-50 ${
-    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-teal-600 hover:bg-teal-700 text-white"
+    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-primary hover:bg-[#16526a] text-white"
   }`;
   const ghostBtn = `px-5 py-2.5 rounded-xl border text-sm font-medium disabled:opacity-50 transition-all ${
     isDark ? "border-[#4FC3F7]/20 text-[#F5F5F5]/70 hover:bg-[#212121]/40" : "border-gray-200 text-gray-600 hover:bg-gray-50"
@@ -656,7 +656,7 @@ export default function TermsPage() {
                   <div className="flex-1 min-w-[260px]">
                     <VersionFields v={v} isCurrent={v.version === current?.version} isDark={isDark} />
                   </div>
-                  <button className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-50"
+                  <button className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors disabled:opacity-50"
                     onClick={() => openVersion(v.termsVersionID)} disabled={viewLoading}>View</button>
                 </div>
               ))}
@@ -691,11 +691,19 @@ export default function TermsPage() {
                 <div className="text-sm"><Markdown source={viewing.content} /></div>
               </Box>
             </div>
-            <div className={`flex gap-3 justify-end px-6 py-4 border-t ${isDark ? "border-[#4FC3F7]/20" : "border-gray-100"}`}>
-              <button className={ghostBtn} onClick={closeViewing}>Close</button>
+            <div className={`flex flex-col gap-1.5 px-6 py-4 border-t ${isDark ? "border-[#4FC3F7]/20" : "border-gray-100"}`}>
               {canEdit && viewing.version !== current?.version && (
-                <button className={primaryBtn} onClick={() => restoreVersion(viewing)}>Restore as new version</button>
+                <button
+                  className={`w-full px-3 py-1.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 ${
+                    isDark ? "bg-[#4FC3F7] hover:bg-[#4FC3F7]/90 text-[#212121]" : "bg-arl-primary hover:bg-[#16526a] text-white"
+                  }`}
+                  onClick={() => restoreVersion(viewing)}>Restore as new version</button>
               )}
+              <button
+                className={`w-full py-1.5 rounded-xl border text-sm transition-all ${canEdit && viewing.version !== current?.version ? "mt-1.5" : ""} ${
+                  isDark ? "border-[#4FC3F7]/20 text-[#F5F5F5]/70 hover:bg-[#212121]/40" : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                }`}
+                onClick={closeViewing}>Close</button>
             </div>
           </div>
         </div>
@@ -714,7 +722,7 @@ export default function TermsPage() {
                 className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
                   dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
                   : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
-                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                  : "bg-arl-primary hover:bg-[#16526a]"}`}>
                 {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
               </button>
             </div>

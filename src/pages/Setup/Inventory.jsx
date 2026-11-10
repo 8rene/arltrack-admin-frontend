@@ -44,7 +44,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -376,7 +376,7 @@ export default function Inventory() {
               </div>
               <button
                 onClick={startAdd}
-                className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold"
+                className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold"
               >
                 + Add Part
               </button>
@@ -449,7 +449,7 @@ export default function Inventory() {
                         <td className="px-4 py-3 text-left whitespace-nowrap">
                           <div className="inline-flex items-center gap-2">
                             <button onClick={() => startEdit(part)}
-                              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">Edit</button>
+                              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">Edit</button>
                             <button onClick={() => removePart(part)}
                               className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">Remove</button>
                           </div>
@@ -478,7 +478,7 @@ export default function Inventory() {
                 className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
                   dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
                   : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
-                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                  : "bg-arl-primary hover:bg-[#16526a]"}`}>
                 {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
               </button>
             </div>
@@ -546,7 +546,7 @@ function PartFormRow({ formState, setFormState, partTypes, onSave, onCancel, sav
         <button
           onClick={onSave}
           disabled={saving}
-          className="text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50"
+          className="text-xs bg-arl-primary text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-[#16526a] disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save"}
         </button>

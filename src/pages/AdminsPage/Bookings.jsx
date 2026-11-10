@@ -302,7 +302,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -353,7 +353,7 @@ function EditModal({ booking, onClose, onSave }) {
         </label>
         <div className="flex gap-3 justify-end pt-2">
           <button onClick={onClose} className="px-4 py-2 border rounded-xl text-sm">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+          <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-arl-primary text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed">
             {saving ? "Saving…" : "Save Note"}
           </button>
         </div>
@@ -485,7 +485,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
           </div>
           <div className="px-6 py-4 border-t border-gray-100 shrink-0">
             <div className="flex flex-col gap-1.5">
-              <button onClick={toPayments} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Continue to Payments &rarr;</button>
+              <button onClick={toPayments} className="w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Continue to Payments &rarr;</button>
               <button onClick={finish} className="w-full py-1.5 border rounded-xl text-sm">Done</button>
             </div>
           </div>
@@ -725,7 +725,7 @@ function RefundAfterCancelModal({ booking, onClose, onDone }) {
           <button onClick={onClose} disabled={submitting} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Back</button>
           {preview?.eligible && (
             <button onClick={submit} disabled={!canSubmit}
-              className="px-4 py-2 bg-teal-600 text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-teal-700 transition-colors">
+              className="px-4 py-2 bg-arl-primary text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#16526a] transition-colors">
               {submitting ? "Recording…" : "Record refund"}
             </button>
           )}
@@ -925,7 +925,7 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
             <button
               type="button"
               onClick={() => navigate(`/users?open=${encodeURIComponent(subID || userID)}`)}
-              className="w-full mt-3 py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+              className="w-full mt-3 py-2 rounded-xl text-sm font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
             >
               View More →
             </button>
@@ -1519,7 +1519,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                 <div className="col-span-2 flex items-center justify-between gap-4 pt-3 border-t border-gray-100 min-w-0">
                   <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Pickup, Destination/s and Drop-off</p>
                   {locationStops.length > 0 ? (
-                    <button onClick={() => setMapOpen(true)} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0">
+                    <button onClick={() => setMapOpen(true)} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors shrink-0">
                       View Map →
                     </button>
                   ) : (
@@ -1536,7 +1536,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                     type="button"
                     onClick={goToPayments}
                     title="Open this booking's payment on the Payments page"
-                    className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                    className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
                   >
                     View payments →
                   </button>
@@ -1588,7 +1588,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                         <button
                           type="button"
                           onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(booking.refundSummary.refundRequestID)}`)}
-                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors shrink-0"
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors shrink-0"
                         >
                           View refund →
                         </button>
@@ -1645,7 +1645,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
         {(onEdit || onRefund || onDelete) && (
           <div className="flex flex-col gap-1.5">
             {onEdit && (
-              <button onClick={() => onEdit(booking)} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Add Note</button>
+              <button onClick={() => onEdit(booking)} className="w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Add Note</button>
             )}
             {onRefund && status === "cancelled" && !booking.refundSummary && (refundNote === "No refund" || refundNote === "Deposit kept") && (
               <button onClick={() => onRefund(booking)} className="w-full px-3 py-1.5 border border-orange-200 bg-orange-50 text-orange-700 font-semibold rounded-xl text-sm hover:bg-orange-100 transition-colors whitespace-nowrap">Refund (cancelled)</button>
@@ -1952,7 +1952,7 @@ export default function Bookings() {
           </select>
           <button
             onClick={fetchBookings}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-teal-700 text-white hover:bg-teal-800 flex items-center gap-1.5"
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] flex items-center gap-1.5"
           >
             <IconRefresh className="w-3.5 h-3.5" />
             Refresh
@@ -2029,7 +2029,7 @@ export default function Bookings() {
                       <td className="px-4 py-3"><CopyableId value={b.bookingID || b.id} /></td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
                       <td className="pl-4 pr-8 py-3 text-right">
-                        <button onClick={() => setViewBooking(b)} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+                        <button onClick={() => setViewBooking(b)} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
                       </td>
                     </tr>
                   );

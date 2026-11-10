@@ -235,7 +235,7 @@ export default function TracebackBookingInfoPanel({
           <button
             onClick={handleSave}
             disabled={saving}
-            className="w-full py-2.5 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 active:scale-[0.98] transition-all disabled:opacity-50"
+            className="w-full py-2.5 rounded-xl bg-arl-primary text-white text-xs font-semibold hover:bg-[#16526a] active:scale-[0.98] transition-all disabled:opacity-50"
           >
             {saving ? "Saving…" : saved ? "✓ Saved" : `Save Trip Zones (${zones.length})`}
           </button>

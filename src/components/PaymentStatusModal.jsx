@@ -168,7 +168,7 @@ export default function PaymentStatusModal({
               {onReturnDeposit && p.depositStatus === "Held" && !p.depositSettled && (
                 <button
                   onClick={onReturnDeposit}
-                  className="w-full py-2 rounded-xl text-sm font-semibold bg-teal-600 text-white hover:bg-teal-700 active:scale-[0.99] transition-all"
+                  className="w-full py-2 rounded-xl text-sm font-semibold bg-arl-primary text-white hover:bg-[#16526a] active:scale-[0.99] transition-all"
                 >
                   {p.amountToReturn > 0 ? `Return ${peso(p.amountToReturn)} deposit` : "Settle deposit"}
                 </button>

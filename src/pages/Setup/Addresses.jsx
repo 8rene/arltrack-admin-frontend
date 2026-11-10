@@ -11,7 +11,7 @@ const inputCls =
   "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300";
 
 const btnPrimary =
-  "px-4 py-2 text-sm font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-60 transition";
+  "px-4 py-2 text-sm font-semibold rounded-xl bg-arl-primary text-white hover:bg-[#16526a] disabled:opacity-60 transition";
 
 const btnGhost =
   "px-4 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition";
@@ -205,7 +205,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -620,7 +620,7 @@ export default function Addresses() {
   ));
   const viewBtn = (onClick) => (
     <button onClick={onClick}
-      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors">View</button>
+      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
   );
   // Columns per tab: the name, the parents it sits under, and what is under it.
   const col = (label, kind, key) => ({ label, kind, key, sortKey: kind === "name" ? "name" : `${kind === "parent" ? "p" : "c"}:${key}` });
@@ -691,7 +691,7 @@ export default function Addresses() {
                 Refresh
               </button>
               <button onClick={startCreate} disabled={loading}
-                className="px-4 py-2 text-sm rounded-xl bg-teal-600 text-white hover:bg-teal-700 font-semibold disabled:opacity-60">
+                className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold disabled:opacity-60">
                 + Add region
               </button>
             </div>
@@ -1249,7 +1249,7 @@ function BranchPanel({
         <div className="px-6 py-4 border-t border-gray-100 shrink-0">
           {editing ? (
             <div className="flex flex-col gap-1.5">
-              <button onClick={save} disabled={!canSave} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 disabled:opacity-60 transition-colors">
+              <button onClick={save} disabled={!canSave} className="w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] disabled:opacity-60 transition-colors">
                 {saving ? "Saving…" : isNew ? "Add region" : "Save changes"}
               </button>
               <button onClick={requestCancel} disabled={saving} className="w-full py-1.5 border rounded-xl text-sm disabled:opacity-60">Cancel</button>
@@ -1257,7 +1257,7 @@ function BranchPanel({
           ) : (
             <>
               <div className="flex flex-col gap-1.5">
-                <button onClick={() => setEditing(true)} className="w-full px-3 py-1.5 bg-teal-600 text-white font-semibold rounded-xl text-sm hover:bg-teal-700 transition-colors">Edit</button>
+                <button onClick={() => setEditing(true)} className="w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Edit</button>
                 {canDelete && (
                   <button onClick={() => onDelete(levelKey, row)} className="w-full px-3 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors">Delete</button>
                 )}

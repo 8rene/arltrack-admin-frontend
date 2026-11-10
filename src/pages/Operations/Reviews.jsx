@@ -89,7 +89,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
           <span key={n} className="flex items-center">
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
-              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"}`}>
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"}`}>
               {n}
             </button>
           </span>
@@ -235,7 +235,7 @@ function ReviewModal({ review, onClose, onViewBooking, onViewReviewer, onDelete,
               type="button"
               onClick={onViewBooking}
               title="Open this booking on the Bookings page"
-              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
             >
               View Booking →
             </button>
@@ -600,7 +600,7 @@ export default function Reviews() {
                             <td className="pl-4 pr-8 py-3 text-right whitespace-nowrap">
                               <button
                                 onClick={() => setViewReview(review)}
-                                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
                               >
                                 View
                               </button>
@@ -663,7 +663,7 @@ export default function Reviews() {
                 className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
                   dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
                   : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
-                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                  : "bg-arl-primary hover:bg-[#16526a]"}`}>
                 {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
               </button>
             </div>

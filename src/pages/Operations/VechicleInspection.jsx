@@ -1529,7 +1529,7 @@ export default function VehicleDocs() {
                         type="button"
                         onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
                         title="Open this booking in Bookings"
-                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                        className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
                       >
                         View Booking →
                       </button>
@@ -1598,7 +1598,7 @@ export default function VehicleDocs() {
                         <button
                           type="button"
                           onClick={() => navigate("/driver-dispatch", { state: { assignBookingId: activeBooking.bookingID || activeBooking.id } })}
-                          className="shrink-0 px-3 py-1.5 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-700 transition-colors"
+                          className="shrink-0 px-3 py-1.5 rounded-lg bg-arl-primary text-white font-semibold hover:bg-[#16526a] transition-colors"
                         >
                           Driver Dispatch
                         </button>
@@ -1695,7 +1695,7 @@ export default function VehicleDocs() {
                             <button onClick={handleSave}
                               disabled={saving || confirmingInspection || driverMissing || !canSaveInspection || (!hasUnsavedChanges && hasPartsRecord && !!currentDoc?.inspectionConfirmed)}
                               title={driverMissing ? NEEDS_DRIVER_MSG : canSaveInspection ? undefined : NEEDS_EVIDENCE_MSG}
-                              className="text-sm bg-teal-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-50">
+                              className="text-sm bg-arl-primary text-white px-4 py-2 rounded-xl font-semibold hover:bg-[#16526a] disabled:opacity-50">
                               {saving || confirmingInspection ? "Saving..." : currentDoc?.inspectionConfirmed ? "Save" : "Save & confirm"}
                             </button>
                           </div>
@@ -1867,7 +1867,7 @@ export default function VehicleDocs() {
                 className={`px-4 py-2 text-white rounded-xl text-sm transition-colors ${
                   dlg.tone === "danger" ? "bg-red-600 hover:bg-red-700"
                   : dlg.tone === "warning" ? "bg-amber-500 hover:bg-amber-600"
-                  : "bg-teal-600 hover:bg-teal-700"}`}>
+                  : "bg-arl-primary hover:bg-[#16526a]"}`}>
                 {dlg.confirmLabel || (dlg.hideCancel ? "OK" : "Confirm")}
               </button>
             </div>
@@ -1899,7 +1899,7 @@ function PageTab({ active, onClick, label, count, dot, dotTitle, disabled, disab
       title={disabled ? disabledTitle : undefined}
       className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-all ${
         active
-          ? "bg-teal-600 text-white shadow-sm"
+          ? "bg-arl-primary text-white shadow-sm"
           : disabled
             ? "text-gray-300 cursor-not-allowed"
             : "text-gray-500 hover:text-gray-800 hover:bg-gray-50"
@@ -2027,7 +2027,7 @@ function PartPhotoCell({ fieldKey, label, image, uploading, isPending, onFilePic
       <div className="flex flex-col items-start gap-1">
         {isPending && (
           <button onClick={onUpload} disabled={uploading}
-            className="text-xs bg-teal-600 text-white px-2.5 py-1 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
+            className="text-xs bg-arl-primary text-white px-2.5 py-1 rounded-lg font-semibold hover:bg-[#16526a] disabled:opacity-50">
             {uploading ? "Uploading…" : "Save ↑"}
           </button>
         )}
@@ -2081,7 +2081,7 @@ function PhotoSlot({ fieldKey, label, sub, icon, image, uploading, isPending, on
         <p className="text-xs text-gray-300 font-mono truncate mt-0.5">{fieldKey}</p>
         {isPending && (
           <button onClick={onUpload} disabled={uploading}
-            className="mt-1.5 w-full py-1 text-xs bg-teal-600 text-white rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50">
+            className="mt-1.5 w-full py-1 text-xs bg-arl-primary text-white rounded-lg font-semibold hover:bg-[#16526a] disabled:opacity-50">
             {uploading ? "Uploading…" : "Save ↑"}
           </button>
         )}
@@ -2118,7 +2118,7 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
             {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
             <button onClick={() => onChange(n)}
               className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
-                n === page ? "bg-teal-600 text-white shadow" : "border text-gray-600 hover:bg-white"
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
               }`}>
               {n}
             </button>
@@ -2357,7 +2357,7 @@ function PastTripsSection({ pastBookings, pastBookingNames, parts, carID, expand
                     <button
                       type="button"
                       onClick={() => onToggleRow(booking)}
-                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                      className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
                     >
                       View
                     </button>
@@ -2439,7 +2439,7 @@ function TripHistoryModal({ booking, customerName, record, parts, carID, getPart
               <button
                 type="button"
                 onClick={() => navigate(`/bookings?open=${encodeURIComponent(bID)}`)}
-                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
               >
                 View Booking →
               </button>
