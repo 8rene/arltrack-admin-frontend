@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import usePolling from "../../hooks/usePolling";
+import { useAuth } from "../../context/AuthContext";
+import { ROLES } from "../../config/pagePermissions";
 import { getCarCatalog } from "../../utils/carCatalog";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -142,6 +144,10 @@ export default function DeviceTrack() {
   const [focusedDeviceId, setFocusedDeviceId] = useState(null);
 
   const token       = localStorage.getItem("token");
+  // Only Admin sets up devices. Owner and Supervisor can still open this page, but they don't get the
+  // "Add GPS Device" button and they don't see (or copy) the device IDs.
+  const { effectiveRole } = useAuth();
+  const canManageDevices = effectiveRole === ROLES.ADMIN;
   const mapRef      = useRef(null);
   const leafletMap  = useRef(null);
   const markersRef  = useRef({}); // { [gpsDeviceID]: L.Marker }
@@ -469,14 +475,16 @@ export default function DeviceTrack() {
             <span className="text-gray-300">·</span>
             <span className="text-gray-400">{gpsDevices.length} device{gpsDevices.length !== 1 ? "s" : ""} total</span>
           </p>
-          <button
-            onClick={handleAddDevice}
-            disabled={addingDevice}
-            className="flex items-center gap-1.5 px-3 py-2 bg-arl-primary text-white rounded-xl text-xs font-semibold hover:bg-[#16526a] active:scale-95 transition-all disabled:opacity-50 shrink-0"
-          >
-            <Icons.Plus className="w-3.5 h-3.5" />
-            {addingDevice ? "Adding…" : "Add GPS Device"}
-          </button>
+          {canManageDevices && (
+            <button
+              onClick={handleAddDevice}
+              disabled={addingDevice}
+              className="flex items-center gap-1.5 px-3 py-2 bg-arl-primary text-white rounded-xl text-xs font-semibold hover:bg-[#16526a] active:scale-95 transition-all disabled:opacity-50 shrink-0"
+            >
+              <Icons.Plus className="w-3.5 h-3.5" />
+              {addingDevice ? "Adding…" : "Add GPS Device"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -593,22 +601,24 @@ export default function DeviceTrack() {
                       </div>
                     )}
 
-                    {/* Device ID + copy */}
-                    <div className="flex items-center gap-1.5 mt-1.5">
-                      <code className="text-xs text-gray-400 font-mono bg-gray-50 px-2 py-0.5 rounded truncate">
-                        {device.gpsDeviceID}
-                      </code>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleCopyId(device.gpsDeviceID); }}
-                        title="Copy device ID for IoT setup"
-                        className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
-                          isCopied ? "text-green-600" : "text-gray-400 hover:text-teal-600"
-                        }`}
-                      >
-                        {isCopied ? <Icons.Check className="w-3 h-3" /> : <Icons.Copy className="w-3 h-3" />}
-                        {isCopied ? "Copied" : "Copy ID"}
-                      </button>
-                    </div>
+                    {/* Device ID + copy (Admin only) */}
+                    {canManageDevices && (
+                      <div className="flex items-center gap-1.5 mt-1.5">
+                        <code className="text-xs text-gray-400 font-mono bg-gray-50 px-2 py-0.5 rounded truncate">
+                          {device.gpsDeviceID}
+                        </code>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleCopyId(device.gpsDeviceID); }}
+                          title="Copy device ID for IoT setup"
+                          className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
+                            isCopied ? "text-green-600" : "text-gray-400 hover:text-teal-600"
+                          }`}
+                        >
+                          {isCopied ? <Icons.Check className="w-3 h-3" /> : <Icons.Copy className="w-3 h-3" />}
+                          {isCopied ? "Copied" : "Copy ID"}
+                        </button>
+                      </div>
+                    )}
 
                     {/* Assignment status */}
                     {device.assigned && assignedCar ? (
