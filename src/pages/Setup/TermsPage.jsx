@@ -534,12 +534,12 @@ export default function TermsPage() {
                 <div className="grid gap-3 lg:grid-cols-2">
                   <div className={tab === "write" ? "" : "hidden lg:block"}>
                     <p className={`hidden lg:block mb-1 ${fieldLabel}`}>Text</p>
-                    <textarea ref={taRef} className={`${inputCls} font-mono min-h-[400px] leading-relaxed`} value={content}
+                    <textarea ref={taRef} className={`${inputCls} block font-mono h-[600px] resize-none leading-relaxed`} value={content}
                       onChange={(e) => setContent(e.target.value)} onKeyDown={onEditorKey} disabled={saving} spellCheck />
                   </div>
                   <div className={tab === "preview" ? "" : "hidden lg:block"}>
                     <p className={`hidden lg:block mb-1 ${fieldLabel}`}>Preview</p>
-                    <div className={`${inputCls} min-h-[400px] max-h-[600px] overflow-y-auto ${text}`}>
+                    <div className={`${inputCls} h-[600px] overflow-y-auto ${text}`}>
                       {content.trim() ? <Markdown source={content} /> : <p className={muted}>Nothing to preview yet.</p>}
                     </div>
                   </div>

@@ -426,7 +426,7 @@ export default function DeviceTrack() {
 
   // ── Delete device ──────────────────────────────────────────────────────
   const handleDelete = async (deviceId, deviceName) => {
-    if (!(await askConfirm({ title: "Delete device", message: `Permanently delete "${deviceName}"? This cannot be undone.`, confirmLabel: "Delete", tone: "danger" }))) return;
+    if (!(await askConfirm({ title: "Delete device", message: `"${deviceName}" is currently registered in the system. Once it is deleted, the device may no longer be able to send data to the system. This cannot be undone.`, confirmLabel: "Delete", tone: "danger" }))) return;
     setBusyId(deviceId);
     try {
       const res = await fetch(`${API}/api/gps/devices/${deviceId}`, {
@@ -662,15 +662,17 @@ export default function DeviceTrack() {
                     )}
                   </div>
 
-                  {/* Delete */}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(device.id, device.gpsName); }}
-                    disabled={isBusy}
-                    title="Delete device"
-                    className="text-gray-300 hover:text-red-500 shrink-0 disabled:opacity-40"
-                  >
-                    <Icons.Trash className="w-4 h-4" />
-                  </button>
+                  {/* Delete (Admin only; asks for confirmation first) */}
+                  {canManageDevices && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(device.id, device.gpsName); }}
+                      disabled={isBusy}
+                      title="Delete device"
+                      className="text-gray-300 hover:text-red-500 shrink-0 disabled:opacity-40"
+                    >
+                      <Icons.Trash className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Assign / Unassign controls */}
