@@ -1547,10 +1547,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                 <div />
                 <InfoField label="Service Fee"      value={fmt(booking.serviceFee)} />
                 <InfoField label="Gateway Fee"      value={Number(booking.gatewayFee) > 0 ? fmt(booking.gatewayFee) : null} />
-                <InfoField
-                  label={<>Extra Fee <span className="normal-case text-gray-500">({Number(booking.extraFee) > 0 ? "Outside Base Area" : "Base Area"})</span></>}
-                  value={fmt(booking.extraFee)}
-                />
+                <div />
                 {/* Chauffeur: rate per day × days = total. driversFee is the total, so the rate is total ÷ days. */}
                 <InfoField label="Driver's Fee"     value={driverTotal > 0 ? fmt(driverTotal / driverDays) : null} />
                 <InfoField label="Duration"         value={driverTotal > 0 ? `× ${driverDays} day${driverDays > 1 ? "s" : ""}` : null} />

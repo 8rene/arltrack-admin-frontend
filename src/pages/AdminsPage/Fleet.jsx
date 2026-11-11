@@ -1,1435 +1,732 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import usePolling from "../../hooks/usePolling";
 import { useCurrency } from "../../context/CurrencyContext";
-import {
-  collection, getDocs, getDoc, doc, query, where,
-} from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "../../fireabase";
 import { useAuth } from "../../context/AuthContext";
+import DeleteBundleModal from "../../components/shared/DeleteBundleModal";
 import { ROLES } from "../../config/pagePermissions";
+import TripMapModal from "../../components/shared/TripMapModal";
+import { readCodingWarnings, warningsByCity } from "../../utils/codingWarnings";
 
-// Authenticated call to this app's own backend (/api/fleet/...) instead of
-// writing to Firestore directly from the browser. This is what actually
-// makes verifyToken + requireRole run on every car/pricing/brand/model
-// change — going straight to Firestore skipped both entirely. Throws on
-// any non-success response so callers' existing try/catch + setError(...)
-// continues to work unchanged.
-const apiFetch = async (path, options = {}) => {
-  const token = localStorage.getItem("token");
-  const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {}),
-    },
+// Same shape MyTrips.jsx's tripStops() builds for TripMapModal — pickup,
+// dropoff, and any extra stops the customer selected at booking time
+// (booking.geofenceZones, now resolved by getAllBookings alongside
+// pickupLocation/dropoffLocation — see booking.service.js's
+// resolveHistoryInfo). Kept as its own small copy here rather than a
+// shared import: duplicating small resolvers/helpers per-module is the
+// existing convention in this codebase (see driverDispatch.service.js).
+const SAME_SPOT_DEG = 0.0005;
+const isSameSpot = (a, b) =>
+  !!a && !!b && Math.abs(a.lat - b.lat) < SAME_SPOT_DEG && Math.abs(a.lng - b.lng) < SAME_SPOT_DEG;
+
+function tripStops(booking) {
+  const stops = [];
+  if (booking.pickupLocation) stops.push({ key: "pickup", type: "pickup", ...booking.pickupLocation });
+  if (booking.dropoffLocation) stops.push({ key: "dropoff", type: "dropoff", ...booking.dropoffLocation });
+  (booking.geofenceZones || []).forEach((zone, i) => {
+    if (typeof zone.lat !== "number" || typeof zone.lng !== "number") return;
+    const label = (zone.label || "").toLowerCase();
+    if (label.includes("pickup") || label.includes("drop")) return;
+    if (isSameSpot(zone, booking.pickupLocation) || isSameSpot(zone, booking.dropoffLocation)) return;
+    stops.push({ key: `stop-${i}`, type: "stop", address: zone.label || `Stop ${i + 1}`, lat: zone.lat, lng: zone.lng });
   });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
-    const err = new Error(json?.message || `Request failed (${res.status})`);
-    err.code = json?.code;      // e.g. "OTP_INVALID" — see changeCarStatus on the backend
-    err.status = res.status;
-    throw err;
-  }
-  return json?.data;
+  return stops;
+}
+
+// ─── SVG ICONS ───────────────────────────────────────────────────────────────
+
+const IconWarning = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconCheck = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClock = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+    <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const IconRefresh = ({ className = "w-4 h-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconX = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// Used for the "All Bookings" stat tab icon.
+const IconGrid = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+    <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.75" />
+  </svg>
+);
+
+// Used for the "Ongoing" stat tab icon — a pulse/activity line.
+const IconActivity = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 12h4l3 8 4-16 3 8h4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// ─── DATA ────────────────────────────────────────────────────────────────────
+
+// "To Pay" = the customer created the booking but the deposit hasn't cleared yet.
+// Nothing has been paid, so staff can't act on it (no pickup/driver) — it's listed so
+// pending bookings (and the car being held for them) are visible. It flips to
+// "Upcoming" by itself the moment the deposit is paid, or auto-cancels after 12 hours.
+const STATUS_TABS = ["All", "To Pay", "Upcoming", "Ongoing", "Cancelled", "Completed"];
+
+// Icon + color per stat tab — colors match STATUS_DOT/STATUS_BG below so a
+// status looks the same in the tab card as it does in the table badge.
+const TAB_ICON = {
+  All:       IconGrid,
+  "To Pay":  IconClock,
+  Upcoming:  IconClock,
+  Ongoing:   IconActivity,
+  Cancelled: IconX,
+  Completed: IconCheck,
 };
 
-// Same idea as apiFetch, but returns the FULL response body instead of just
-// .data — needed for /api/auth/send-otp, which reports success even when
-// the email itself failed to send (emailSent: false, e.g. a missing EmailJS
-// env var). apiFetch's "just give me .data" shape would silently swallow
-// that distinction.
-const apiFetchFull = async (path, options = {}) => {
-  const token = localStorage.getItem("token");
-  const res = await fetch(`${process.env.REACT_APP_API_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {}),
-    },
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
-    const err = new Error(json?.message || `Request failed (${res.status})`);
-    err.status = res.status;
-    err.cooldown = !!json?.cooldown;
-    err.retryAfterSeconds = json?.retryAfterSeconds;
-    throw err;
-  }
-  return json || {};
+const TAB_ICON_COLOR = {
+  All:       "bg-teal-50 text-teal-600",
+  "To Pay":  "bg-orange-50 text-orange-600",
+  Upcoming:  "bg-yellow-50 text-yellow-600",
+  Ongoing:   "bg-blue-50 text-blue-600",
+  Cancelled: "bg-red-50 text-red-600",
+  Completed: "bg-green-50 text-green-600",
 };
 
-// ─── SVG ICONS ────────────────────────────────────────────────────────────────
-const Icons = {
-  Car: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5 11l2-4h10l2 4M3 11h18v8H3v-8zm4 8v2m10-2v2" />
-      <circle cx="7.5" cy="15" r="1.5" fill="currentColor" stroke="none"/>
-      <circle cx="16.5" cy="15" r="1.5" fill="currentColor" stroke="none"/>
-    </svg>
-  ),
-  Refresh: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-    </svg>
-  ),
-  Plus: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  ),
-  Tag: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" />
-      <line x1="7" y1="7" x2="7.01" y2="7" />
-    </svg>
-  ),
-  Trash: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v6M14 11v6" />
-      <path d="M9 6V4h6v2" />
-    </svg>
-  ),
-  Edit: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-    </svg>
-  ),
-  Close: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  ),
-  ChevronDown: (props) => (
-    <svg {...props} viewBox="0 0 20 20" fill="currentColor">
-      <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.085l3.71-3.855a.75.75 0 111.08 1.04l-4.25 4.42a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd"/>
-    </svg>
-  ),
-  Camera: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
-      <circle cx="12" cy="13" r="4" />
-    </svg>
-  ),
-  Calendar: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
-  ),
-  AlertTriangle: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-      <line x1="12" y1="9" x2="12" y2="13" />
-      <line x1="12" y1="17" x2="12.01" y2="17" />
-    </svg>
-  ),
-  Brands: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" />
-      <path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32" />
-    </svg>
-  ),
-  ArrowRight: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <line x1="5" y1="12" x2="19" y2="12" />
-      <polyline points="12 5 19 12 12 19" />
-    </svg>
-  ),
-  Check: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  ),
-  Wrench: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.4 2.4-2.6-.6-.6-2.6 2.6-2.2z" />
-    </svg>
-  ),
-  Pause: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <line x1="10" y1="9" x2="10" y2="15" />
-      <line x1="14" y1="9" x2="14" y2="15" />
-    </svg>
-  ),
-  Search: (props) => (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="11" cy="11" r="7" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    </svg>
-  ),
+// STATUS_DOT / STATUS_BG / StatusBadge — kept identical to the copy in
+// Dashboard.jsx so the same status always looks the same on both pages.
+// If a new status is added, update both files.
+const STATUS_DOT = {
+  "to pay":  "bg-orange-400",
+  upcoming:  "bg-yellow-400",
+  ongoing:   "bg-blue-500",
+  completed: "bg-green-500",
+  cancelled: "bg-red-500",
+  stolen:    "bg-red-700",
 };
 
-// Icon + color per status card — same color family as STATUS_STYLE / STATUS_BORDER above,
-// so a status looks the same on the card at the top as it does on the vehicle card below.
-const STAT_CARDS = [
-  { key: "All",         label: "All Vehicles", Icon: Icons.Car,    color: "bg-teal-50 text-teal-600" },
-  { key: "Active",      label: "Active",       Icon: Icons.Check,  color: "bg-green-50 text-green-600" },
-  { key: "Maintenance", label: "Maintenance",  Icon: Icons.Wrench, color: "bg-red-50 text-red-600" },
-  { key: "Inactive",    label: "Inactive",     Icon: Icons.Pause,  color: "bg-gray-100 text-gray-500" },
+const STATUS_BG = {
+  "to pay":  "bg-orange-50 border border-orange-200",
+  upcoming:  "bg-yellow-50 border border-yellow-200",
+  ongoing:   "bg-blue-50 border border-blue-200",
+  completed: "bg-green-50 border border-green-200",
+  cancelled: "bg-red-50 border border-red-200",
+  stolen:    "bg-red-100 border border-red-300",
+};
+
+function StatusBadge({ status }) {
+  const s   = (status || "").toLowerCase();
+  const dot = STATUS_DOT[s] || "bg-gray-400";
+  const bg  = STATUS_BG[s]  || "bg-gray-50 border border-gray-200";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full capitalize text-black ${bg}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      {status?.replace("_", " ")}
+    </span>
+  );
+}
+
+const fmtDate = (val) => {
+  if (!val) return "—";
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else d = new Date(val);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+  } catch { return "—"; }
+};
+
+// Same parsing as fmtDate, but keeps the time — used for "Created", where the
+// exact moment the booking was made matters (two bookings can share a date).
+const fmtDateTime = (val) => {
+  if (!val) return "—";
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else if (val?.seconds !== undefined) d = new Date(val.seconds * 1000);
+    else d = new Date(val);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch { return "—"; }
+};
+
+// Same Firestore-Timestamp-or-string-or-seconds handling as fmtDate above,
+// but returns a raw millisecond number (or -Infinity for unparsable/empty
+// values) so sort() has something numeric to compare rather than strings.
+const toMillis = (val) => {
+  if (!val) return -Infinity;
+  try {
+    let d;
+    if (typeof val?.toDate === "function") d = val.toDate();
+    else if (val?._seconds !== undefined) d = new Date(val._seconds * 1000);
+    else if (val?.seconds !== undefined) d = new Date(val.seconds * 1000);
+    else d = new Date(val);
+    const ms = d.getTime();
+    return isNaN(ms) ? -Infinity : ms;
+  } catch { return -Infinity; }
+};
+
+// Time-of-day only (e.g. "3:45 PM") — shown in its own "Time" column next to "Date".
+const fmtTime = (val) => {
+  const ms = toMillis(val);
+  if (!isFinite(ms)) return "—";
+  return new Date(ms).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
+};
+
+// "YYYY-MM-DD" (local day) of any date value the table shows, or null — what
+// the date picker in "Search by" is compared against.
+const dayKey = (val) => {
+  const ms = toMillis(val);
+  if (!isFinite(ms)) return null;
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+// "Search by" options — mirror the table's columns. Status is NOT here: it has
+// its own dropdown. Booking ID has no column but stays searchable because
+// Payments / Refund Requests link in with ?search=<bookingID>.
+const SEARCH_BY = [
+  { key: "created",  label: "Created At", type: "date" },
+  { key: "customer", label: "Customer",   type: "text" },
+  { key: "phone",    label: "Contact No.", type: "text" },
+  { key: "vehicle",  label: "Vehicle",    type: "text" },
+  { key: "start",    label: "Trip Start", type: "date" },
+  { key: "end",      label: "Trip End",   type: "date" },
+  { key: "phase",    label: "Phase",      type: "text" },
+  { key: "booking",  label: "Booking ID", type: "text" },
 ];
 
-const STATUS_STYLE = {
-  Active:      "bg-green-50 border border-green-200 text-black",
-  Rented:      "bg-blue-50 border border-blue-200 text-black",
-  Reserved:    "bg-orange-50 border border-orange-200 text-black",
-  Maintenance: "bg-red-50 border border-red-200 text-black",
-  // Matches Inventory.jsx's gray treatment for the same status, since
-  // both pages read/write the same cars.status field.
-  Inactive:    "bg-gray-100 border border-gray-200 text-gray-500",
-};
+// ─── SORT HEADER ────────────────────────────────────────────────────────────
+// Clickable <th> that toggles asc/desc on the given sortKey. Shows a neutral
+// up/down chevrons icon when the column isn't the active sort (so it reads
+// as "sortable" even before you've clicked it), and a bold single arrow in
+// the active color once it is. Keeps Bookings/Users sort UI visually and
+// behaviorally identical.
+const IconChevronsUpDown = ({ className = "w-3.5 h-3.5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-// Card border color per status — same color family as STATUS_STYLE above,
-// just solid instead of a light fill, so a status is identifiable from the
-// card outline alone (useful when scanning a full grid at a glance).
-const STATUS_BORDER = {
-  Active:      "border-green-400",
-  Rented:      "border-blue-400",
-  Reserved:    "border-orange-400",
-  Maintenance: "border-red-400",
-  Inactive:    "border-gray-300",
-};
+const IconSortArrow = ({ dir, className = "w-3.5 h-3.5" }) => (
+  <svg
+    className={`${className} transition-transform ${dir === "desc" ? "rotate-180" : ""}`}
+    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-// Sort pricing: 12 Hours always last
-function sortPricing(pricing) {
-  return [...(pricing || [])].sort((a, b) => {
-    const aIs12 = a.durationType?.toLowerCase().includes("12");
-    const bIs12 = b.durationType?.toLowerCase().includes("12");
-    if (aIs12 && !bIs12) return 1;
-    if (!aIs12 && bIs12) return -1;
-    return 0;
-  });
+function SortableTh({ label, sortKey: key, sortKeyState, sortDir, onSort, className = "" }) {
+  const active = sortKeyState === key;
+  return (
+    <th className={`px-4 py-3 text-left select-none ${className}`}>
+      <button
+        onClick={() => onSort(key)}
+        className={`flex items-center gap-1.5 uppercase tracking-wide text-xs font-semibold px-2 py-1 -mx-2 rounded-lg transition-colors ${
+          active ? "text-teal-700 bg-teal-50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        {label}
+        {active ? <IconSortArrow dir={sortDir} /> : <IconChevronsUpDown />}
+      </button>
+    </th>
+  );
 }
 
-// Accepts a Firestore Timestamp, an ISO string, a Date, or the raw
-// { _seconds } / { seconds } shape a Timestamp turns into after JSON.
-function toDateSafe(v) {
-  if (!v) return null;
-  let d;
-  if (typeof v.toDate === "function") d = v.toDate();
-  else if (v instanceof Date) d = v;
-  else if (typeof v === "object" && (v._seconds ?? v.seconds) != null) d = new Date((v._seconds ?? v.seconds) * 1000);
-  else d = new Date(v);
-  return isNaN(d) ? null : d;
+// Admin refund/cancel only applies before the trip starts — an ongoing trip goes through the customer's cancellation request instead.
+const canRefundCancel = (status) => ["to pay", "upcoming"].includes(status?.toLowerCase());
+
+const PAGE_SIZE = 10;
+
+// ─── PAGINATION ───────────────────────────────────────────────────────────────
+function usePagination(items, pageSize = PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  // Clamp if the list shrinks (filter/search/refresh) and we were on a now-empty page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, setPage, totalPages, pageItems, start, count: items.length };
 }
 
-function fmtDate(val) {
-  const d = toDateSafe(val);
-  if (!d) return "—";
-  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-}
+function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
+  if (count === 0) return null;
 
-// "Sep 30, 2026, 9:00 AM" — date AND time
-function fmtDateTime(val) {
-  const d = toDateSafe(val);
-  if (!d) return "—";
-  return d.toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-}
+  const nums = [];
+  const add = (n) => nums.push(n);
+  add(1);
+  for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) add(n);
+  if (totalPages > 1) add(totalPages);
+  const dedup = [...new Set(nums)].sort((a, b) => a - b);
 
-// Same reference logic as Payments.jsx (refOf / channelOf): the PayMongo
-// payment id is the real reference — referenceNumber is only a last fallback
-// and is usually empty for online payments.
-const CHANNEL_LABEL = { gcash: "GCash", paymaya: "Maya", qrph: "QRPH" };
-const paymentChannel = (p) =>
-  CHANNEL_LABEL[String(p?.paymongoChannel || "").toLowerCase()] || p?.paymongoChannel || (p?.paymentMethod !== "—" ? p?.paymentMethod : null) || null;
-const paymentRef = (p) => {
-  const r = p?.depositPaymongoPaymentID || p?.paymongoPaymentID || p?.referenceNumber;
-  return r && r !== "—" && r !== "N/A" ? r : null;
-};
-
-// Rental length from start/end, e.g. "2 days 3 hrs"
-function fmtDuration(start, end) {
-  const s = toDateSafe(start), e = toDateSafe(end);
-  if (!s || !e || e < s) return null;
-  const totalHrs = Math.round((e - s) / 36e5);
-  const days = Math.floor(totalHrs / 24), hrs = totalHrs % 24;
-  return [days ? `${days} day${days > 1 ? "s" : ""}` : "", hrs ? `${hrs} hr${hrs > 1 ? "s" : ""}` : ""].filter(Boolean).join(" ") || "Under 1 hr";
-}
-
-// ─── MAIN PAGE ────────────────────────────────────────────────────────────────
-export default function Fleet() {
-  const { effectiveRole } = useAuth();
-  // Owner, Admin and Supervisor can all edit an existing vehicle's details —
-  // the same three roles the backend's /api/fleet routes allow
-  // (routes/fleet/fleet.routes.js). Uses effectiveRole so an Admin previewing
-  // as another role sees exactly what that role would.
-  const canEdit = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
-  const [cars, setCars]           = useState([]);
-  const [brands, setBrands]       = useState([]);
-  const [models, setModels]       = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [search, setSearch]       = useState("");
-  const [searchBy, setSearchBy]   = useState("all");
-  const [filterStatus, setFilter] = useState("All");
-  const [detailCar, setDetailCar] = useState(null);
-  const [editCar, setEditCar]     = useState(null);
-  const [showAddCar, setShowAddCar] = useState(false);
-  const [showManageBrands, setShowManageBrands] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(null);
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const handleDeleteCar = async (car) => {
-    try {
-      // Backend's deleteCar already cascades to that car's images + pricing
-      // docs in one batch — matches what this used to do by hand.
-      await apiFetch(`/api/fleet/cars/${car.id}`, { method: "DELETE" });
-      setConfirmDelete(null);
-      setEditCar(null);
-      fetchAll();
-    } catch (e) { console.error("Delete car error:", e); }
-  };
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      // getAllCars on the backend already merges in imageURL, pricing, and
-      // brandName/modelName — no need to fetch+join those collections
-      // client-side anymore.
-      const [carsData, brandsData, modelsData] = await Promise.all([
-        apiFetch("/api/fleet/cars"),
-        apiFetch("/api/fleet/brands"),
-        apiFetch("/api/fleet/models"),
-      ]);
-
-      setBrands(brandsData || []);
-      setModels(modelsData || []);
-      setCars(carsData || []);
-    } catch (e) {
-      console.error("Fleet fetch error:", e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-
-  // Deep link from a booking (its vehicle name): open that car's Details window right away.
-  // The id is cleared from the history entry so a refresh or Back doesn't reopen it.
-  const openCarId = location.state?.openCarId;
-  useEffect(() => {
-    if (!openCarId || loading) return;
-    const car = cars.find((c) => c.id === openCarId || c.carID === openCarId);
-    if (car) setDetailCar(car);
-    navigate(location.pathname, { replace: true, state: null });
-  }, [openCarId, loading, cars, navigate, location.pathname]);
-
-  // Refreshes just the brand / model lists (no page spinner), so the Brands & Models window can stay open after each change.
-  // Cars are refreshed too, so a rename shows on the vehicle cards and the "used by" counts stay right.
-  const refreshBrandsAndModels = useCallback(async () => {
-    const [brandsData, modelsData, carsData] = await Promise.all([
-      apiFetch("/api/fleet/brands"), apiFetch("/api/fleet/models"), apiFetch("/api/fleet/cars"),
-    ]);
-    setBrands(brandsData || []);
-    setModels(modelsData || []);
-    setCars(carsData || []);
-  }, []);
-
-  // Used by the "+ Add new brand / model" option inside the Add and Edit vehicle forms. They add to the lists in place
-  // (no full reload, so the open form keeps what was typed) and hand back the id so the form can select it right away.
-  // A name that already exists (any capitalisation) is reused rather than saved a second time.
-  const createBrandInline = async (name) => {
-    const clean = name.trim();
-    const existing = brands.find(b => (b.brandName || "").trim().toLowerCase() === clean.toLowerCase());
-    if (existing) return existing.id;
-    const data = await apiFetch("/api/fleet/brands", { method: "POST", body: JSON.stringify({ brandName: clean }) });
-    setBrands(prev => [...prev, { id: data.id, brandID: data.id, brandName: data.brandName }]);
-    return data.id;
-  };
-
-  const createModelInline = async (name, brandID) => {
-    const clean = name.trim();
-    if (!brandID) throw new Error("Select a brand first.");
-    const existing = models.find(m => m.brandID === brandID && (m.modelName || "").trim().toLowerCase() === clean.toLowerCase());
-    if (existing) return existing.id;
-    const data = await apiFetch("/api/fleet/models", { method: "POST", body: JSON.stringify({ modelName: clean, brandID }) });
-    setModels(prev => [...prev, { id: data.id, modelID: data.id, modelName: data.modelName, brandID: data.brandID }]);
-    return data.id;
-  };
-
-  // Rented/Reserved dropped from the filter chips too — now that they can't
-  // be set from the UI anymore, they'd sit stuck at 0 forever (any legacy
-  // car still tagged that way in Firestore is still reachable under "All",
-  // just no longer has its own chip). Inactive added — matches
-  // Inventory.jsx's status filter, which reads this same field and has
-  // offered "Inactive" as an option all along even though nothing could
-  // ever set it until now.
-  const statuses = ["All", "Active", "Maintenance", "Inactive"];
-  const filtered = cars.filter(c => {
-    const q = search.toLowerCase();
-    const fields = {
-      brand: [c.brandName],
-      model: [c.modelName],
-      plate: [c.plateNumber],
-      all:   [c.brandName, c.modelName, c.plateNumber, c.shortDescription],
-    }[searchBy] || [];
-    const matchSearch = !search || fields.some(v => (v || "").toLowerCase().includes(q));
-    const matchStatus = filterStatus === "All" || c.status === filterStatus;
-    return matchSearch && matchStatus;
-  });
-
-  const counts = statuses.reduce((acc, s) => {
-    acc[s] = s === "All" ? cars.length : cars.filter(c => c.status === s).length;
-    return acc;
-  }, {});
+  const rangeEnd = Math.min(start + pageSize, count);
 
   return (
-    <div className="p-4 space-y-5 font-sans">
-      {/* HEADER — Add Vehicle is the one primary action on this page */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        
-        <div className="flex items-center gap-2">
-          <button onClick={() => setShowManageBrands(true)}
-            className="flex items-center gap-2 px-4 py-2 border border-gray-300 bg-white rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
-            <Icons.Tag className="w-4 h-4" />
-            Brands &amp; Models
-          </button>
-          <button onClick={() => setShowAddCar(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-arl-primary text-white rounded-xl text-sm font-semibold hover:bg-[#16526a] shadow-sm">
-            <Icons.Plus className="w-4 h-4" />
-            Add Vehicle
-          </button>
-        </div>
-      </div>
-
-      {/* STAT CARDS — click one to filter, same pattern as Bookings */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {STAT_CARDS.map(({ key, label, Icon, color }) => (
-          <button key={key} onClick={() => setFilter(key)}
-            className={`p-4 rounded-2xl border text-left transition-all ${filterStatus === key ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}>
-            <div className="flex items-start justify-between">
-              <div className={`text-2xl font-bold ${filterStatus === key ? "text-teal-600" : "text-gray-800"}`}>
-                {loading ? "…" : counts[key] ?? 0}
-              </div>
-              <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${color}`}>
-                <Icon className="w-4 h-4" />
-              </span>
-            </div>
-            <div className="text-xs text-gray-400 mt-0.5">{label}</div>
-          </button>
+    <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50/50">
+      <p className="text-xs text-gray-400">
+        Showing {count === 0 ? 0 : start + 1}–{rangeEnd} of {count}
+      </p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Prev
+        </button>
+        {dedup.map((n, i) => (
+          <span key={n} className="flex items-center">
+            {i > 0 && n - dedup[i - 1] > 1 && <span className="px-1.5 text-gray-300 text-xs">…</span>}
+            <button onClick={() => onChange(n)}
+              className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${
+                n === page ? "bg-arl-primary text-white shadow" : "border text-gray-600 hover:bg-white"
+              }`}>
+              {n}
+            </button>
+          </span>
         ))}
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+          Next
+        </button>
       </div>
-
-      {/* SEARCH + FILTERS */}
-      <div className="bg-white rounded-2xl border">
-        <div className="flex flex-wrap gap-3 items-end p-4">
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
-            <select
-              value={searchBy}
-              onChange={e => { setSearchBy(e.target.value); setSearch(""); }}
-              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
-            >
-              <option value="all">All</option>
-              <option value="brand">Brand</option>
-              <option value="model">Model</option>
-              <option value="plate">Plate number</option>
-            </select>
-          </div>
-          <input
-            type="text"
-            value={search} onChange={e => setSearch(e.target.value)}
-            placeholder={`Enter ${searchBy === "all" ? "brand, model or plate" : searchBy === "plate" ? "plate number" : searchBy}...`}
-            className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-400"
-          />
-          <select
-            value={filterStatus}
-            onChange={e => setFilter(e.target.value)}
-            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
-          >
-            {statuses.map(st => <option key={st} value={st}>{st === "All" ? "All statuses" : st}</option>)}
-          </select>
-          <button onClick={fetchAll}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] flex items-center gap-1.5">
-            <Icons.Refresh className="w-3.5 h-3.5" />
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {/* GRID */}
-      {loading ? (
-        <div className="grid md:grid-cols-3 gap-6">
-          {[...Array(6)].map((_, i) => <div key={i} className="bg-white rounded-2xl border h-72 animate-pulse" />)}
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center text-gray-400 py-20">No vehicles found.</div>
-      ) : (
-        <div className="grid md:grid-cols-3 gap-6">
-          {filtered.map(car => (
-            <VehicleCard key={car.id} car={car}
-              canEdit={canEdit}
-              onViewDetails={() => setDetailCar(car)}
-              onStatusChange={(id, st, extra = {}) => setCars(prev => prev.map(c => c.id === id ? { ...c, status: st, ...extra } : c))} />
-          ))}
-        </div>
-      )}
-
-      {/* MODALS */}
-      {detailCar && (
-        <ViewDetailsModal car={detailCar} canEdit={canEdit} onClose={() => setDetailCar(null)}
-          onEdit={() => { setDetailCar(null); setEditCar(detailCar); }} />
-      )}
-      {editCar && (
-        <EditCarModal car={editCar} brands={brands} models={models} cars={cars}
-          onCreateBrand={createBrandInline} onCreateModel={createModelInline}
-          onClose={() => setEditCar(null)}
-          onDelete={() => setConfirmDelete(editCar)}
-          onSaved={() => { setEditCar(null); fetchAll(); }} />
-      )}
-      {showAddCar && (
-        <AddCarModal brands={brands} models={models} cars={cars}
-          onCreateBrand={createBrandInline} onCreateModel={createModelInline}
-          onClose={() => setShowAddCar(false)}
-          onSaved={() => { setShowAddCar(false); fetchAll(); }} />
-      )}
-      {showManageBrands && (
-        <ManageBrandsModal brands={brands} models={models} cars={cars}
-          onClose={() => setShowManageBrands(false)}
-          onChanged={refreshBrandsAndModels} />
-      )}
-      {confirmDelete && (
-        <ConfirmDeleteModal
-          message={`Delete ${confirmDelete.brandName || ""} ${confirmDelete.modelName || ""}? This will also remove its images and pricing.`}
-          onConfirm={() => handleDeleteCar(confirmDelete)}
-          onCancel={() => setConfirmDelete(null)} />
-      )}
     </div>
   );
 }
 
-// ─── VEHICLE CARD ─────────────────────────────────────────────────────────────
-function VehicleCard({ car, canEdit, onViewDetails, onStatusChange }) {
-  const { fmt } = useCurrency();
-  const navigate = useNavigate();
-  const [nearestBooking, setNearestBooking] = useState(null);
-  const [statusOpen, setStatusOpen] = useState(false);
-  const [statusSaving, setStatusSaving] = useState(false);
-  // null | "Maintenance" | "Inactive" — target status the reason → confirm →
-  // OTP flow (StatusChangeFlow below) is currently running for. Active
-  // never sets this; it writes immediately, no gate needed.
-  const [statusChangeTarget, setStatusChangeTarget] = useState(null);
-  const CAR_STATUSES = ["Active", "Maintenance", "Inactive"];
 
-  useEffect(() => {
-    if (car.status === "Rented" || car.status === "Reserved") {
-      getDocs(query(
-        collection(db, "bookings"),
-        where("carID", "==", car.carID || car.id)
-      )).then(snap => {
-        const future = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
-          .sort((a, b) => {
-            const aD = toDateSafe(a.startDateTime) || new Date(0);
-            const bD = toDateSafe(b.startDateTime) || new Date(0);
-            return aD - bD;
-          });
-        setNearestBooking(future[0] || null);
-      }).catch(() => {});
-    }
-  }, [car.id, car.carID, car.status]);
+// ─── ADD NOTE MODAL ───────────────────────────────────────────────────────────
+// Staff can only add / update the admin note here. Status changes and moving locations
+// are handled elsewhere (Payments, Car Tracking, Refund / Cancel).
 
-  const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.plateNumber || car.id;
+function EditModal({ booking, onClose, onSave }) {
+  const [notesAdmin, setNotesAdmin] = useState(booking.notesAdmin || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState(null);
+  const { getToken } = useAuth();
 
-  // Active writes immediately — no reason, no bookings to worry about
-  // leaving service. Maintenance/Inactive never come through here; they're
-  // handled entirely by StatusChangeFlow below (reason → refund any
-  // upcoming bookings → OTP), which calls the gated PATCH /status endpoint
-  // itself and reports back via onDone.
-  const applyActiveStatus = async () => {
-    setStatusSaving(true);
+  const handleSave = async () => {
+    setSaving(true); setError(null);
     try {
-      await apiFetch(`/api/fleet/cars/${car.id}/status`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ status: "Active" }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ notesAdmin }),
       });
-      onStatusChange?.(car.id, "Active", { statusReason: null });
-    } catch (e) { console.error(e); }
-    finally { setStatusSaving(false); setStatusOpen(false); }
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to save");
+      onSave();
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
   };
-
-  const handleStatusChange = (newStatus) => {
-    if (newStatus === car.status) { setStatusOpen(false); return; }
-    if (newStatus === "Inactive" || newStatus === "Maintenance") {
-      setStatusOpen(false);
-      setStatusChangeTarget(newStatus);
-      return;
-    }
-    applyActiveStatus();
-  };
-
-  // The gated flow finished and the PATCH already went through — just
-  // reflect it locally and, for Maintenance, send staff straight to the
-  // Maintenance page prefilled to this car.
-  const handleStatusChangeDone = (newStatus, reason) => {
-    setStatusChangeTarget(null);
-    onStatusChange?.(car.id, newStatus, { statusReason: reason });
-    if (newStatus === "Maintenance") {
-      navigate(`/maintenance?carID=${car.id}`);
-    }
-  };
-
-  const basePrice = car.pricing?.find(p =>
-    !p.durationType?.toLowerCase().includes("12")
-  ) || car.pricing?.[0];
 
   return (
-    <div className={`bg-white rounded-2xl shadow-sm border-2 overflow-hidden flex flex-col ${STATUS_BORDER[car.status] || "border-gray-200"}`}>
-      {/* IMAGE */}
-      <div className="relative h-44 bg-gray-100 overflow-hidden">
-        {car.imageURL ? (
-          <img src={car.imageURL} alt={`${car.brandName} ${car.modelName}`}
-            className="w-full h-full object-cover"
-            onError={e => { e.target.style.display = "none"; }} />
-        ) : (
-          <div className="flex items-center justify-center h-full text-gray-300">
-            <Icons.Car className="w-16 h-16" />
-          </div>
-        )}
-        {/* Status badge — click to change */}
-        <div className="absolute top-3 right-3 z-10">
-          <button
-            onClick={(e) => { e.stopPropagation(); setStatusOpen((v) => !v); }}
-            disabled={statusSaving}
-            title={car.statusReason && (car.status === "Inactive" || car.status === "Maintenance") ? `${car.status}: ${car.statusReason}` : undefined}
-            className={`px-3 py-1 text-xs rounded-full font-semibold flex items-center gap-1 transition-opacity ${STATUS_STYLE[car.status] || "bg-gray-100 text-gray-600"} hover:opacity-80`}
-          >
-            {statusSaving ? "…" : car.status}
-            <Icons.ChevronDown className="w-3 h-3" />
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h2 className="font-bold text-lg text-gray-800">Add Note</h2>
+        {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
+        <label className="block text-sm font-medium text-gray-700">Admin Note
+          <textarea rows={4} autoFocus className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none focus:border-teal-500" value={notesAdmin} onChange={(e) => setNotesAdmin(e.target.value)} placeholder="Write a note for this booking…" />
+        </label>
+        <div className="flex gap-3 justify-end pt-2">
+          <button onClick={onClose} className="px-4 py-2 border rounded-xl text-sm">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-arl-primary text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+            {saving ? "Saving…" : "Save Note"}
           </button>
-          {statusOpen && (
-            <div className="absolute right-0 mt-1 bg-white border border-gray-100 rounded-xl shadow-xl overflow-hidden z-20 min-w-[130px]">
-              {CAR_STATUSES.map((s) => (
-                <button key={s} onClick={(e) => { e.stopPropagation(); handleStatusChange(s); }}
-                  className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center gap-2 hover:bg-gray-50 transition-colors ${s === car.status ? "opacity-50 cursor-default" : ""}`}>
-                  <span className={`w-2 h-2 rounded-full ${s === "Active" ? "bg-green-500" : s === "Inactive" ? "bg-gray-400" : "bg-red-500"}`}/>
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* BODY */}
-      <div className="p-4 flex flex-col gap-3 flex-1">
-        {/* Brand + Model as title */}
-        <div>
-          <h3 className="font-bold text-gray-800 text-base leading-tight">
-            {car.brandName} {car.modelName}
-          </h3>
-          <p className="text-xs text-gray-400 mt-0.5">{car.bodyType || "—"} · {car.year || "—"}</p>
-          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-md mt-1 inline-block text-gray-600">
-            {car.plateNumber || "—"}
-          </span>
-        </div>
+// ─── REFUND & CANCEL MODAL ────────────────────────────────────────────────────
+// Admin/Owner only. Three refund types, each hitting the server, which sends the PayMongo refund(s), cancels the booking
+// + GPS session, flips the refund-request/payment records and notifies the customer:
+//   Full refund      -- our issue: deposit returned, gateway fee returned     POST /refund-cancel { refundType: "full" }
+//   Normal refund    -- deposit returned, gateway fee kept                    POST /refund-cancel { refundType: "normal" }
+//   No Deposit Refund -- deposit and gateway fee kept, everything else returned  POST /no-show
+// "Cancel only" cancels without returning any money.
 
-        {/* Why this car is out of service, shown directly on the card —
-            previously this only existed as a hover title="" tooltip on
-            the badge above, which is unreachable on touch/mobile and
-            easy to miss even on desktop. Staff scanning the fleet grid
-            should see this without opening Details. */}
-        {(car.status === "Inactive" || car.status === "Maintenance") && car.statusReason && (
-          <div className={`flex items-start gap-1.5 text-xs rounded-lg px-2 py-1.5 -mt-1 ${car.status === "Maintenance" ? "bg-red-50 text-red-600" : "bg-gray-100 text-gray-500"}`}>
-            <span className="shrink-0">{car.status === "Maintenance" ? "🔧" : "⛔"}</span>
-            <span className="line-clamp-2">{car.statusReason}</span>
+function RefundCancelModal({ booking, onClose, onDone }) {
+  const { fmt } = useCurrency();
+  const { getToken } = useAuth();
+  const [preview, setPreview]   = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [mode, setMode]         = useState("full"); // "full" | "normal" | "no_show" | "cancel"
+  const [reason, setReason]     = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]       = useState(null);
+  const [notice, setNotice]     = useState(null); // set when part of the money has to be settled by staff after the cancel went through
+  const [confirming, setConfirming] = useState(false); // "Cancel only" keeps the customer's money: ask once more first
+  const navigate = useNavigate();
+  const api = `${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`;
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${api}/refund-preview`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!alive) return;
+        if (!ok) throw new Error(j.message || "Could not load refund preview.");
+        setPreview(j.data);
+        if (!(j.data.total > 0)) setMode("cancel"); // nothing to refund → plain cancel
+      })
+      .catch((e) => alive && setError(e.message))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking.id]);
+
+  useEffect(() => { setConfirming(false); }, [mode]);
+
+  const hasMoney = (preview?.total || 0) > 0;
+  const blocked  = !!preview?.existingRequest && (mode === "cancel" || mode === "no_show");
+  const ns       = preview?.noShow;
+  const nm       = preview?.normal;
+  // No pickup check any more: the option is always offered while there is a payment to refund.
+  const canNoDeposit = !!ns && !preview?.alreadyRefunded;
+  // A customer's open refund request is approved as a Full refund, so Normal / No-show can't be chosen meanwhile.
+  const hasOpenRequest = !!preview?.existingRequest;
+  const canNormal = !!nm && nm.available && !hasOpenRequest && !preview?.alreadyRefunded;
+  const isRefundMode = mode === "full" || mode === "normal" || mode === "no_show";
+  // The figures of the option that is selected.
+  const sel = mode === "full" ? { total: preview?.total || 0, online: preview?.onlineAmount || 0, manual: preview?.manualAmount || 0, scheduled: false, sendAfter: null }
+    : mode === "normal" && nm ? { total: nm.total, online: nm.onlineAmount, manual: nm.manualAmount, scheduled: !!nm.scheduled, sendAfter: nm.sendAfter }
+    : mode === "no_show" && ns ? { total: ns.total, online: ns.onlineAmount, manual: ns.manualAmount, scheduled: !!ns.scheduled, sendAfter: ns.sendAfter }
+    : null;
+  const paidSoFar = ns?.grossPaid ?? nm?.grossPaid ?? 0;
+  const sendDay = (v) => {
+    const d = v ? new Date(v) : null;
+    return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" }) : "after midnight";
+  };
+
+  const submit = async () => {
+    setSubmitting(true); setError(null);
+    try {
+      // "No Deposit Refund" keeps the deposit and refunds the rest.
+      const res  = await fetch(mode === "no_show" ? `${api}/no-show` : `${api}/refund-cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify(mode === "no_show" ? { reason: reason.trim() } : { reason: reason.trim(), refund: mode !== "cancel", refundType: mode === "normal" ? "normal" : "full" }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Request failed.");
+      // The booking IS cancelled and the online part is on its way. If some money can't go back online, keep the
+      // modal open with what staff still have to do instead of closing on a toast they might miss.
+      if (json.data?.followUp) { setNotice({ message: json.message || "Booking cancelled.", ...json.data.followUp }); return; }
+      onDone(json.message || "Booking cancelled.");
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
+  };
+
+  // disabledWhy: when set the option is greyed out and this says why (instead of the option silently disappearing).
+  const opt = (value, title, desc, disabledWhy = null) => (
+    <label className={`flex items-start gap-3 p-3 rounded-xl border ${disabledWhy ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${mode === value ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
+      <input type="radio" className="mt-1" checked={mode === value} disabled={!!disabledWhy} onChange={() => setMode(value)} />
+      <div>
+        <p className="text-sm font-semibold text-gray-800">{title}</p>
+        <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+        {disabledWhy && <p className="text-xs text-amber-700 mt-0.5">{disabledWhy}</p>}
+      </div>
+    </label>
+  );
+
+  // Partial refund: amber notice (not a red error) with what is left to do and a way straight to the payment.
+  if (notice) {
+    const finish = () => onDone(notice.message);
+    const toPayments = () => { finish(); navigate(notice.paymentID ? `/payments?paymentID=${encodeURIComponent(notice.paymentID)}` : "/payments"); };
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+          <div className="px-6 pt-5 pb-3 shrink-0">
+            <h2 className="font-bold text-lg text-gray-800">{notice.onlineAmount > 0 ? "Partial refund sent" : "Booking cancelled"}</h2>
+            <p className="text-xs text-gray-400 font-mono break-all mt-1">{booking.bookingID || booking.id}</p>
           </div>
-        )}
-
-        {/* Short Description */}
-        {car.shortDescription && (
-          <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">{car.shortDescription}</p>
-        )}
-
-        {/* Specs */}
-        <div className="grid grid-cols-3 text-xs text-center border-t border-b py-2">
-          <div><p className="text-gray-400">Seats</p><p className="font-semibold text-gray-700">{car.seatingCapacity || "—"}</p></div>
-          <div><p className="text-gray-400">Fuel</p><p className="font-semibold text-gray-700">{car.fuelType || "—"}</p></div>
-          <div><p className="text-gray-400">Trans.</p><p className="font-semibold text-gray-700">{car.transmission || "—"}</p></div>
-        </div>
-
-        {/* Price + rented info + buttons */}
-        <div className="flex justify-between items-end flex-1">
-          <div>
-            {basePrice && (
-              <p className="text-sm font-bold text-teal-700">
-                {fmt(basePrice.price)}
-                <span className="text-xs font-normal text-gray-400 ml-1">/{basePrice.durationType}</span>
-              </p>
+          <div className="px-6 pb-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+          <div className="text-sm bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-xl space-y-2">
+            {notice.onlineAmount > 0 && (
+              <div className="flex justify-between gap-4"><span>Going back through PayMongo</span><span className="font-semibold">{fmt(notice.onlineAmount)}</span></div>
             )}
-            {(car.status === "Rented" || car.status === "Reserved") && nearestBooking && (
-              <p className="text-xs text-blue-600 font-medium mt-0.5 flex items-center gap-1">
-                <Icons.Calendar className="w-3 h-3" />
-                Until {fmtDate(nearestBooking.endDateTime)}
-              </p>
+            {notice.inStoreAmount > 0 && (
+              <div className="flex justify-between gap-4"><span>Can't be refunded online, settle in store</span><span className="font-semibold text-orange-700">{fmt(notice.inStoreAmount)}</span></div>
+            )}
+            {notice.unrefundableAmount > 0 && (
+              <div className="flex justify-between gap-4"><span>Paid online, no PayMongo payment ID</span><span className="font-semibold text-red-600">{fmt(notice.unrefundableAmount)}</span></div>
             )}
           </div>
-          <div className="flex gap-2">
-            <button onClick={onViewDetails} className="flex items-center gap-1.5 px-3 py-1.5 bg-arl-primary text-white rounded-lg text-xs hover:bg-[#16526a]">
-              Details
-              <Icons.ArrowRight className="w-3.5 h-3.5" />
+          <p className="text-sm text-gray-600">
+            {notice.inStoreAmount > 0
+              ? "The booking is cancelled. Please settle the in-store amount with the customer, then record it on the payment."
+              : "The booking is cancelled. Refund the remaining amount from the PayMongo dashboard."}
+          </p>
+          </div>
+          <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+            <div className="flex flex-col gap-1.5">
+              <button onClick={toPayments} className="w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Continue to Payments &rarr;</button>
+              <button onClick={finish} className="w-full py-1.5 border rounded-xl text-sm">Done</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+        {/* Header */}
+        <div className="px-6 pt-5 pb-3 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-bold text-lg text-gray-800">Cancel Booking</h2>
+            <button onClick={onClose} disabled={submitting} className="text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
+              <IconX className="w-5 h-5" />
             </button>
           </div>
-        </div>
-      </div>
-      {statusChangeTarget && (
-        <StatusChangeFlow
-          car={car}
-          carLabel={carLabel}
-          targetStatus={statusChangeTarget}
-          onCancel={() => setStatusChangeTarget(null)}
-          onDone={handleStatusChangeDone}
-        />
-      )}
-    </div>
-  );
-}
-
-// Small modal collecting why a car is being switched to Maintenance or
-// Inactive — a required, free-text reason either way. Written to the car
-// doc as statusReason and surfaced via a tooltip on the status badge and
-// in the details modal. Shared between both statuses so staff give a
-// reason no matter which direction the car is leaving Active for.
-function StatusReasonModal({ carLabel, status, saving, onConfirm, onCancel }) {
-  const [reason, setReason] = useState("");
-  const trimmed = reason.trim();
-  const verb = status === "Maintenance" ? "sent for maintenance" : "taken out of service";
-
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
-        <div>
-          <h3 className="font-bold text-gray-800 text-lg">Mark as {status}</h3>
-          <p className="text-sm text-gray-500 mt-1">Why is <span className="font-medium text-gray-700">{carLabel}</span> being {verb}?</p>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-gray-500">Reason</label>
-          <input type="text" value={reason} onChange={(e) => setReason(e.target.value)}
-            placeholder={status === "Maintenance" ? "e.g. Scheduled oil change, Flat tire…" : "e.g. Sold, Retired, Stolen/Lost…"}
-            autoFocus
-            className="w-full mt-1 border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-        </div>
-        <div className="flex gap-3">
-          <button onClick={onCancel} disabled={saving}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-            Cancel
-          </button>
-          <button onClick={() => onConfirm(trimmed)} disabled={saving || !trimmed}
-            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
-            {saving ? "Saving…" : "Confirm"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── STATUS CHANGE FLOW (reason → OTP → confirm+refund, batch-fired once) ────
-// Orchestrates the full gate before a car can be switched to Maintenance or
-// Inactive. Shared by the quick status badge (VehicleCard) and the Edit
-// Vehicle modal's Status field — the only two places a car's status can be
-// changed — so this gate can never be bypassed from either one.
-//
-// The OTP screen comes right after the reason, but the code it collects
-// ISN'T checked yet — it just gets carried forward and verified server-side
-// at the very last step, in the same call that actually fires the refunds.
-// That's deliberate: OTP codes are single-use, so checking it early and
-// checking it at the point money actually moves can't both be true. If a
-// batch stops partway (one booking fails), that code is already spent —
-// this drops back to the OTP step for a fresh one rather than trying to
-// reuse it, carrying forward what already succeeded so staff aren't
-// starting over blind.
-function StatusChangeFlow({ car, carLabel, targetStatus, onDone, onCancel }) {
-  const [step, setStep] = useState("reason"); // "reason" | "otp" | "confirm"
-  const [reason, setReason] = useState("");
-  const [otp, setOtp] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
-  const [lastResults, setLastResults] = useState(null); // refundResults from a stopped attempt, for context on retry
-  // The bookings staff already confirmed on the last screen, with HOW each one is to be refunded:
-  // { [bookingID]: "full" | "normal" | "no_show" | "cancel" }. Kept HERE (not
-  // inside the modal) so that if the verification code turns out to be
-  // expired at the final click, staff get a fresh code and come back to the
-  // same confirmed rows (and the same refund choices) instead of re-confirming every booking from scratch.
-  const [stagedChoices, setStagedChoices] = useState({});
-  const [otpNotice, setOtpNotice] = useState(null); // why we're back on the code screen
-  const [reloadKey, setReloadKey] = useState(0); // remounts the confirm list after a partial batch
-
-  const submitBatch = async () => {
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      const data = await apiFetch(`/api/fleet/cars/${car.id}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: targetStatus, statusReason: reason, otp, refundChoices: stagedChoices }),
-      });
-      if (data.statusChanged) {
-        onDone(targetStatus, reason);
-        return;
-      }
-      // Stopped partway — anything in data.refundResults before the
-      // "failed" entry already happened for real and can't be undone. The
-      // code is NOT spent (the server only burns it after full success), so
-      // stay on this screen, show what happened, and reload the list (via
-      // the key bump) so already-resolved bookings drop out of "upcoming".
-      setLastResults(data.refundResults || []);
-      setStagedChoices({});
-      setSubmitError(data.message || "The batch stopped partway. Review the remaining bookings and try again.");
-      setReloadKey((k) => k + 1);
-    } catch (e) {
-      if (e.code === "OTP_INVALID") {
-        // The code expired (it only lives 5 minutes, and it was sent before
-        // staff went through every booking), was used up, or got locked
-        // out. The server rejects this BEFORE any refund runs, so nothing
-        // has happened — go back for a fresh code and keep the confirmed
-        // rows, instead of stranding staff on an error they can't act on.
-        setOtp("");
-        setOtpNotice(e.message);
-        setStep("otp");
-      } else {
-        setSubmitError(e.message);
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // The three modals below are `fixed` overlays but still live INSIDE
-  // whatever rendered this flow in the React tree — and React clicks bubble
-  // through that tree, not through the screen layout. EditCarModal's dark
-  // backdrop closes itself on click, so without this every click in the flow
-  // ("Continue", each Refund button, "Confirm & Change Status") bubbled up to
-  // it, closed the Edit modal and tore the whole flow down mid-step. That's
-  // why changing status from Details never got past its first click.
-  const isolate = (node) => <div onClick={(e) => e.stopPropagation()}>{node}</div>;
-
-  if (step === "reason") {
-    return isolate(
-      <StatusReasonModal
-        carLabel={carLabel}
-        status={targetStatus}
-        saving={false}
-        onConfirm={(r) => { setReason(r); setStep("otp"); }}
-        onCancel={onCancel}
-      />
-    );
-  }
-
-  if (step === "otp") {
-    return isolate(
-      <OtpConfirmModal
-        carLabel={carLabel}
-        targetStatus={targetStatus}
-        priorResults={lastResults}
-        notice={otpNotice}
-        onNext={(code) => { setOtp(code); setOtpNotice(null); setStep("confirm"); }}
-        onCancel={onCancel}
-      />
-    );
-  }
-
-  return isolate(
-    <AreYouSureRefundModal
-      key={reloadKey}
-      car={car}
-      carLabel={carLabel}
-      targetStatus={targetStatus}
-      reason={reason}
-      submitting={submitting}
-      submitError={submitError}
-      initialStaged={stagedChoices}
-      onStagedChange={setStagedChoices}
-      onSubmit={submitBatch}
-      onCancel={onCancel}
-    />
-  );
-}
-
-// ─── OTP CONFIRM MODAL ─────────────────────────────────────────────────────
-// Step 2 of StatusChangeFlow — collects the code but does NOT verify it
-// here (see the flow's own comment above for why). Confirms the STAFF
-// member making the change, not the customer: a code sent to the logged-in
-// admin/supervisor/owner's own email via POST /api/auth/send-otp, same
-// "prove it's really you" mechanic already used for role changes.
-function OtpConfirmModal({ carLabel, targetStatus, priorResults, notice, onNext, onCancel }) {
-  const { user } = useAuth();
-  const [otp, setOtp] = useState("");
-  const [sendState, setSendState] = useState("sending"); // "sending" | "sent" | "error"
-  const [sendMessage, setSendMessage] = useState(null);
-  // Guards against React StrictMode's intentional double-invoke of effects
-  // in development (mount → effect → cleanup → effect again, on the same
-  // instance). Without this, that double-invoke fires sendCode() twice on
-  // mount — two real /send-otp calls, two emails, and since the backend
-  // stores the code with a plain overwrite (otpCodes/{email}.set(...)),
-  // whichever of the two calls' writes lands second silently invalidates
-  // the code in the email that arrived first. A ref survives the
-  // double-invoke (only the effect re-runs, not the component instance),
-  // so this makes sure the real network call only ever fires once per mount.
-  const sentOnceRef = useRef(false);
-
-  const [resendIn, setResendIn] = useState(0);
-  useEffect(() => {
-    if (resendIn <= 0) return;
-    const t = setTimeout(() => setResendIn((n) => n - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendIn]);
-
-  const sendCode = useCallback(async () => {
-    setSendState("sending");
-    setSendMessage(null);
-    try {
-      const json = await apiFetchFull("/api/auth/send-otp", { method: "POST" });
-      if (json.emailSent === false) {
-        setSendState("error");
-        setSendMessage(json.message || "Couldn't send the code — check the email configuration.");
-      } else {
-        setSendState("sent");
-        setResendIn(60);
-      }
-    } catch (e) {
-      if (e.status === 429 && e.cooldown) {
-        // A code went out less than a minute ago and is still valid — not an
-        // error, just don't send another one yet.
-        setSendState("sent");
-        setSendMessage("A code was already sent a moment ago — check your email and use that one (it's still valid).");
-        setResendIn(e.retryAfterSeconds || 60);
-      } else {
-        setSendState("error");
-        setSendMessage(e.message);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (sentOnceRef.current) return;
-    sentOnceRef.current = true;
-    sendCode();
-  }, [sendCode]);
-
-  const [checking, setChecking] = useState(false);
-  const [checkError, setCheckError] = useState(null);
-  const trimmed = otp.trim();
-  const resolvedCount = priorResults?.filter((r) => r.outcome !== "failed").length || 0;
-  const failedResult = priorResults?.find((r) => r.outcome === "failed");
-
-  // Real check (peekOtp on the backend — wrong digits, expired, locked out
-  // all genuinely apply) but doesn't burn the code, since nothing's
-  // actually happening yet at this screen. Lets staff know right away if
-  // they mistyped it instead of finding out only after staging every
-  // booking on the next screen. The code still gets verified for real
-  // (and actually consumed) at the final "Confirm & Change Status" step.
-  const handleContinue = async () => {
-    setChecking(true);
-    setCheckError(null);
-    try {
-      await apiFetch("/api/auth/check-otp", { method: "POST", body: JSON.stringify({ otp: trimmed }) });
-      onNext(trimmed);
-    } catch (e) {
-      setCheckError(e.message);
-    } finally {
-      setChecking(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
-        <div>
-          <h3 className="font-bold text-gray-800 text-lg">Confirm it's you</h3>
-          <p className="text-sm text-gray-500 mt-1">
-            Enter the code sent to <span className="font-medium text-gray-700">{user?.email || "your email"}</span> to
-            {priorResults ? " finish" : " start"} switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
-          </p>
+          <p className="text-xs text-gray-400 font-mono break-all mt-1">{booking.bookingID || booking.id}</p>
         </div>
 
-        {notice && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
-            {notice} A fresh code is on its way to your email — the bookings you confirmed are still marked, nothing was refunded.
-          </div>
-        )}
-
-        {priorResults && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-            {resolvedCount} booking(s) were already resolved before the last attempt stopped. That code's already used —
-            this one will pick up where it left off; anything already resolved won't be touched again.
-            {failedResult && (
-              <p className="mt-1.5 font-semibold text-red-700">
-                Stopped at {failedResult.bookingID}: {failedResult.error}
-              </p>
-            )}
-          </div>
-        )}
-
-        {sendState === "sending" && <p className="text-xs text-gray-400">Sending code…</p>}
-        {sendState === "error" && <p className="text-xs text-red-600">{sendMessage}</p>}
-        {sendState === "sent" && sendMessage && <p className="text-xs text-amber-700">{sendMessage}</p>}
-
-        <div>
-          <label className="text-xs font-medium text-gray-500">6-digit code</label>
-          <input type="text" inputMode="numeric" maxLength={6} value={otp}
-            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-            placeholder="000000" autoFocus
-            className="w-full mt-1 border rounded-xl px-3 py-2 text-sm tracking-widest outline-none focus:ring-2 focus:ring-teal-400" />
-        </div>
-
-        {checkError && <p className="text-xs text-red-600">{checkError}</p>}
-
-        <button onClick={sendCode} disabled={sendState === "sending" || resendIn > 0}
-          className="text-xs text-teal-600 hover:underline disabled:opacity-50 disabled:no-underline">
-          {resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}
-        </button>
-
-        <div className="flex gap-3">
-          <button onClick={onCancel} disabled={checking}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-            Cancel
-          </button>
-          <button onClick={handleContinue} disabled={trimmed.length !== 6 || checking}
-            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
-            {checking ? "Checking…" : "Continue"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── ARE YOU SURE + REFUND MODAL ──────────────────────────────────────────────
-// Final step of StatusChangeFlow. Shows the reason up top, then every
-// upcoming booking on this car with a Refund row + live ₱ amount (each one
-// staged locally with its own confirm click — nothing is sent to the
-// server yet), every ongoing booking as an FYI-only row (car's already
-// with that customer, nothing to refund there), and — for context on a
-// retry — every booking already resolved by an earlier attempt on this
-// same car. "Confirm & Change Status" is the ONLY thing that talks to the
-// server: it fires the whole batch (refunds + cancels + the status write)
-// in one call, all or nothing up to the first real failure — see
-// StatusChangeFlow.submitBatch and changeCarStatus() on the backend.
-// How staff can settle one upcoming booking when its car goes to Maintenance / Inactive. Same four choices as the Cancel
-// button on the Bookings page, and the server runs exactly the one picked (see changeCarStatus -> refundChoices).
-const REFUND_CHOICE_LABEL = { full: "Full refund", normal: "Normal refund", no_show: "No Deposit Refund", cancel: "Cancel only (no refund)" };
-// The money of one choice, read from the booking's refundPreview (Full at the top level, `normal` and `noShow` blocks).
-const refundFigures = (pv, choice) => {
-  const p = pv || {};
-  if (choice === "normal" && p.normal) return { total: p.normal.total || 0, online: p.normal.onlineAmount || 0, manual: p.normal.manualAmount || 0, scheduled: !!p.normal.scheduled, sendAfter: p.normal.sendAfter || null };
-  if (choice === "no_show" && p.noShow) return { total: p.noShow.total || 0, online: p.noShow.onlineAmount || 0, manual: p.noShow.manualAmount || 0, scheduled: !!p.noShow.scheduled, sendAfter: p.noShow.sendAfter || null };
-  if (choice === "cancel") return { total: 0, online: 0, manual: 0, scheduled: false, sendAfter: null };
-  return { total: p.total || 0, online: p.onlineAmount || 0, manual: p.manualAmount || 0, scheduled: false, sendAfter: null };
-};
-const sendDayLabel = (v) => {
-  const d = v ? new Date(v) : null;
-  return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" }) : "after midnight";
-};
-
-function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting, submitError, initialStaged = [], onStagedChange, onSubmit, onCancel }) {
-  const { fmt } = useCurrency();
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
-  const [upcoming, setUpcoming] = useState([]); // [{ ...booking, refundPreview, staged, choice }]
-  const [ongoing, setOngoing] = useState([]);
-  const [resolved, setResolved] = useState([]);
-  // bookingID of the row whose mini confirm modal is open, or null. Clicking
-  // a row's button never stages it directly anymore — it opens this modal
-  // (booking details + who booked + the payment breakdown) and staging only
-  // happens from a real Confirm click inside that modal.
-  const [activeBookingID, setActiveBookingID] = useState(null);
-  // Rows staff had already confirmed before a verification-code retry sent
-  // them away and back (see StatusChangeFlow). Read once at mount.
-  const initialStagedRef = useRef(initialStaged);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    apiFetch(`/api/fleet/cars/${car.id}/status-change-preview`)
-      .then((data) => {
-        if (cancelled) return;
-        setUpcoming((data?.upcoming || []).map((b) => ({ ...b, staged: !!initialStagedRef.current[b.bookingID], choice: initialStagedRef.current[b.bookingID] || null })));
-        setOngoing(data?.ongoing || []);
-        setResolved(data?.resolved || []);
-      })
-      .catch((e) => !cancelled && setLoadError(e.message))
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [car.id]);
-
-  // Confirm (with the chosen refund type) or un-confirm one booking.
-  const toggleStaged = (bookingID, choice = "full") => {
-    const next = upcoming.map((b) => b.bookingID === bookingID ? (b.staged ? { ...b, staged: false, choice: null } : { ...b, staged: true, choice }) : b);
-    setUpcoming(next);
-    onStagedChange?.(Object.fromEntries(next.filter((b) => b.staged).map((b) => [b.bookingID, b.choice || "full"]))); // remembered by StatusChangeFlow
-  };
-
-  const dateRange = (b) => `${fmtDateTime(b.startDateTime)} – ${fmtDateTime(b.endDateTime)}`;
-
-  const resolvedLabel = (r) => {
-    if (r.outcome === "refunded") return `${r.depositForfeited > 0 ? "No Deposit Refund" : r.gatewayFeeKept > 0 ? "Normal refund" : "Refunded"} ${fmt(r.amount || 0)}`;
-    if (r.outcome === "cancelled_no_refund") return "Cancelled — no refund, customer's money kept";
-    if (r.outcome === "already_refunded") return "Cancelled — already refunded earlier";
-    if (r.outcome === "nothing_owed") return "Cancelled — nothing had been paid";
-    if (r.outcome === "deposit_forfeited") return "Cancelled — deposit kept, nothing to refund";
-    if (r.outcome === "no_payment") return "Cancelled — no payment record found";
-    return "Resolved";
-  };
-
-  const allStaged = upcoming.length === 0 || upcoming.every((b) => b.staged);
-  const activeBooking = upcoming.find((b) => b.bookingID === activeBookingID) || null;
-
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[85vh] overflow-y-auto">
-        <div>
-          <h3 className="font-bold text-gray-800 text-lg">Are you sure?</h3>
-          <p className="text-sm text-gray-500 mt-1">
-            Switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
-          </p>
-          <p className="text-sm text-gray-600 bg-gray-50 border rounded-lg px-3 py-2 mt-2">
-            <span className="font-medium">Reason:</span> {reason}
-          </p>
-        </div>
+        {/* Body */}
+        <div className="px-6 pb-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+        {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
 
         {loading ? (
-          <p className="text-sm text-gray-400 py-6 text-center">Checking bookings…</p>
-        ) : loadError ? (
-          <p className="text-sm text-red-600 py-4">{loadError}</p>
-        ) : (
-          <div className="space-y-4">
-            {upcoming.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-2">
-                  Upcoming bookings — confirm each one below; nothing is actually refunded until "Confirm & Change Status" is clicked
+          <div className="text-sm text-gray-400">Checking payment…</div>
+        ) : preview && (
+          <>
+            {preview.alreadyRefunded ? (
+              <div className="text-sm bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">This payment was already refunded — cancelling will just close the booking.</div>
+            ) : hasMoney ? null : (
+              <div className="text-sm bg-gray-50 border border-gray-200 text-gray-600 p-3 rounded-xl">{preview.unrefundableAmount > 0 ? "Nothing can be refunded through PayMongo for this booking." : "Nothing has been paid on this booking, so there is nothing to refund."}</div>
+            )}
+
+            {!preview.alreadyRefunded && preview.unrefundableAmount > 0 && (
+              <div className="text-sm bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl">
+                <span className="font-semibold">{fmt(preview.unrefundableAmount)} — Payment ID does not exist.</span>{" "}
+                It was paid online but no PayMongo payment ID is on record, so it can't be refunded through PayMongo{hasMoney ? " (the amount below is only the part that can be)" : ""}. Fix the payment record or refund it from the PayMongo dashboard.
+              </div>
+            )}
+
+            {preview.existingRequest && (
+              <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">
+                The customer already has a refund request ({preview.existingRequest.status}). Refunding here will approve that same request as a Full refund — no double refund.
+              </div>
+            )}
+
+            {hasMoney && (
+              <div className="space-y-2">
+                {opt("full", "Full refund", "Use this when it's our issue. The deposit and the online payment fee are both returned to the customer.")}
+                {opt(
+                  "normal",
+                  "Normal refund",
+                  "The deposit is returned, but the online payment fee is not.",
+                  canNormal ? null : hasOpenRequest ? "Not available while the customer's own refund request is open." : "This booking has no online payment fee to keep, so it would be the same as a Full refund."
+                )}
+                {opt(
+                  "no_show",
+                  "No Deposit Refund",
+                  "The deposit and the online payment fee are not returned. Everything else the customer paid is refunded.",
+                  canNoDeposit ? null : "Not available for this booking."
+                )}
+                {opt("cancel", "Cancel only (no refund)", "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.")}
+              </div>
+            )}
+
+            {hasMoney && isRefundMode && sel && (
+              <div className={`text-sm border p-3 rounded-xl space-y-1 ${mode === "full" ? "bg-gray-50 border-gray-200" : "bg-amber-50 border-amber-200"}`}>
+                {paidSoFar > 0 && <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(paidSoFar)}</span></div>}
+                {mode === "no_show" && ns && <div className="flex justify-between text-amber-700"><span>Deposit not refunded</span><span className="font-semibold">-{fmt(ns.forfeit)}</span></div>}
+                {mode === "no_show" && ns && Number(ns.gatewayFeeKept) > 0 && <div className="flex justify-between text-amber-700"><span>Online payment fee kept</span><span className="font-semibold">-{fmt(ns.gatewayFeeKept)}</span></div>}
+                {mode === "normal" && nm && <div className="flex justify-between text-amber-700"><span>Online payment fee kept</span><span className="font-semibold">-{fmt(nm.gatewayFeeKept)}</span></div>}
+                <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Refund</span><span className="font-black">{fmt(sel.total)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Via PayMongo (automatic)</span><span>{fmt(sel.online)}</span></div>
+                {sel.manual > 0 && <div className="flex justify-between"><span className="text-gray-500">Hand back in person</span><span>{fmt(sel.manual)}</span></div>}
+                {sel.scheduled && (
+                  <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-2 mt-1">
+                    The customer paid today, and PayMongo can't send a partial refund on the day of payment. The booking is cancelled now and {fmt(sel.online)} is sent by PayMongo on {sendDay(sel.sendAfter)} (after midnight). The customer is told.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <label className="block text-sm font-medium text-gray-700">Reason (shown to the customer)
+              <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
+                className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" />
+            </label>
+            {blocked && <p className="text-xs text-red-600">Resolve the customer's open refund request first, or choose Full refund.</p>}
+            {confirming && (
+              <div className="text-sm bg-red-50 border border-red-300 text-red-800 p-3 rounded-xl space-y-1">
+                <p className="font-semibold">Cancel without a refund?</p>
+                <p className="text-xs">
+                  The customer's money ({fmt(preview?.total || 0)}) is kept, the deposit is not returned, and the customer is told no refund was issued.
+                  If you change your mind, a refund can still be recorded afterwards from the cancelled booking's details.
                 </p>
-                <div className="space-y-2">
-                  {upcoming.map((b) => (
-                    <div key={b.bookingID}
-                      className={`border rounded-xl p-3 flex items-center justify-between gap-3 ${(b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment) ? "bg-amber-50 border-amber-200" : ""}`}>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
-                        <p className="text-xs text-gray-500">{b.paymentDetails?.customerName || "—"} · {dateRange(b)}</p>
-                        {b.refundPreview?.alreadyRefunded ? (
-                          <p className="text-xs text-amber-700 mt-1">Payment already refunded earlier — this will just cancel the booking to match.</p>
-                        ) : b.refundPreview?.noPayment ? (
-                          <p className="text-xs text-amber-700 mt-1">No payment record found — this will just cancel the booking.</p>
-                        ) : (
-                          <>
-                            {b.staged ? (
-                              <p className="text-xs text-emerald-700">
-                                {REFUND_CHOICE_LABEL[b.choice] || "Full refund"} · {b.choice === "cancel" ? "no money returned" : `${fmt(refundFigures(b.refundPreview, b.choice).total)} to refund`}
-                              </p>
-                            ) : (
-                              <p className="text-xs text-gray-500">Choose how to refund this booking (up to {fmt(b.refundPreview?.total || 0)})</p>
-                            )}
-                            {b.refundPreview?.existingRequest && (
-                              <p className="text-xs text-blue-700 mt-0.5">Customer already requested a refund — confirming will approve it.</p>
-                            )}
-                          </>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => setActiveBookingID(b.bookingID)}
-                        className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium ${
-                          b.staged
-                            ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                            : (b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment)
-                              ? "bg-amber-600 text-white hover:bg-amber-700"
-                              : "bg-red-600 text-white hover:bg-red-700"
-                        }`}>
-                        {b.staged
-                          ? "Confirmed ✓"
-                          : (b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment)
-                            ? "Confirm cancel"
-                            : "Choose refund"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
+          </>
+        )}
 
-            {ongoing.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-2">Ongoing — car is currently with the customer</p>
-                <div className="space-y-2">
-                  {ongoing.map((b) => (
-                    <div key={b.bookingID} className="border rounded-xl p-3 bg-gray-50">
-                      <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
-                      <p className="text-xs text-gray-500">{dateRange(b)}</p>
-                      <p className="text-xs text-gray-400 mt-1">No refund needed — trip already in progress.</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+        </div>
 
-            {resolved.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-2">Already resolved</p>
-                <div className="space-y-2">
-                  {resolved.map((b) => (
-                    <div key={b.bookingID} className="border rounded-xl p-3 bg-gray-50 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-800 truncate">{b.bookingID}</p>
-                        <p className="text-xs text-gray-500">{dateRange(b)}</p>
-                      </div>
-                      <span className="shrink-0 text-xs font-medium text-emerald-600">{resolvedLabel(b)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {upcoming.length === 0 && ongoing.length === 0 && resolved.length === 0 && (
-              <p className="text-sm text-gray-500 py-4">No upcoming or ongoing bookings on this car right now.</p>
-            )}
+        {/* Actions — stacked full-width, same as the Booking Details window */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+          <div className="flex flex-col gap-1.5">
+          <button
+            onClick={() => (mode === "cancel" && hasMoney && !confirming ? setConfirming(true) : submit())}
+            disabled={submitting || loading || !preview || !reason.trim() || blocked}
+            className="w-full px-3 py-1.5 bg-red-600 text-white font-semibold rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
+          >
+            {submitting ? "Processing…" : confirming ? "Yes, cancel without refund" : !hasMoney || mode === "cancel" ? "Cancel Booking" : mode === "no_show" ? "No Deposit Refund & Cancel" : mode === "normal" ? "Normal Refund & Cancel" : "Full Refund & Cancel"}
+          </button>
+          <button onClick={onClose} disabled={submitting} className="w-full py-1.5 border rounded-xl text-sm disabled:opacity-50">Back</button>
           </div>
-        )}
-
-        {!loading && !loadError && upcoming.length > 0 && (() => {
-          const toRefund = upcoming.filter((b) => !b.refundPreview?.alreadyRefunded && !b.refundPreview?.noPayment);
-          const figs = (b) => refundFigures(b.refundPreview, b.staged ? b.choice : "full");   // a confirmed row counts its chosen option
-          const total = toRefund.reduce((sum, b) => sum + figs(b).total, 0);
-          const manual = toRefund.reduce((sum, b) => sum + figs(b).manual, 0);
-          return (
-            <div className="border-t pt-3 space-y-1">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-gray-700">Total refund ({toRefund.length} booking{toRefund.length === 1 ? "" : "s"})</span>
-                <span className="font-bold text-gray-900">{fmt(total)}</span>
-              </div>
-              {manual > 0 && (
-                <p className="text-xs text-gray-500 text-right">
-                  {fmt(total - manual)} online via PayMongo · {fmt(manual)} handed back in person
-                </p>
-              )}
-            </div>
-          );
-        })()}
-
-        {submitError && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 break-words">{submitError}</div>
-        )}
-
-        <div className="flex gap-3 pt-2">
-          <button onClick={onCancel} disabled={submitting}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-            Cancel
-          </button>
-          <button onClick={onSubmit} disabled={loading || !!loadError || !allStaged || submitting}
-            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
-            {submitting ? "Processing…" : "Confirm & Change Status"}
-          </button>
         </div>
       </div>
-
-      {activeBooking && (
-        <BookingConfirmModal
-          booking={activeBooking}
-          fmt={fmt}
-          onConfirm={(choice) => { toggleStaged(activeBooking.bookingID, choice); setActiveBookingID(null); }}
-          onUnconfirm={() => { toggleStaged(activeBooking.bookingID); setActiveBookingID(null); }}
-          onClose={() => setActiveBookingID(null)}
-        />
-      )}
     </div>
   );
 }
 
-// ─── BOOKING CONFIRM MODAL ─────────────────────────────────────────────────
-// Opens on top of AreYouSureRefundModal when a booking's row is clicked —
-// booking ID, who booked it, the dates, and the payment breakdown, with its
-// own real Confirm button. Nothing gets staged just from clicking the row
-// button anymore; this is the actual "are you sure about THIS one"
-// step — the row button only opens it.
-const cancelOnlyLabel = (b) => (b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment) ? "cancel" : (REFUND_CHOICE_LABEL[b.choice] || "Full refund");
-function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) {
-  const [choice, setChoice] = useState(booking.choice || "full"); // full | normal | no_show | cancel
-  const already = booking.refundPreview?.alreadyRefunded;
-  const noPayment = !!booking.refundPreview?.noPayment;
-  const cancelOnly = already || noPayment;
-  const p = booking.paymentDetails; // full detail from getPaymentDetailsByBookingID — may be null if lookup failed
+// ─── REFUND AFTER CANCEL MODAL ────────────────────────────────────────────────
+// Admin/Owner only. For a booking that was cancelled WITHOUT a refund ("Cancel only"): record that some of the money goes back.
+// Nothing is sent to PayMongo. It is handed back in store and marked as handed back on the Refund Requests page.
+//   Full refund      -- our issue: nothing kept
+//   Normal refund    -- deposit returned, gateway fee kept (the customer's loss is the fee)
+//   No deposit refund -- deposit and gateway fee kept (the customer's loss is the deposit and the fee)
+//   Custom amount    -- staff type the amount, up to what the customer paid
+function RefundAfterCancelModal({ booking, onClose, onDone }) {
+  const { fmt } = useCurrency();
+  const { getToken } = useAuth();
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode]       = useState("full"); // "full" | "normal" | "no_show" | "manual"
+  const [amount, setAmount]   = useState("");
+  const [reason, setReason]   = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]     = useState(null);
+  const api = `${process.env.REACT_APP_API_URL}/api/bookings/${booking.id}`;
 
-  const stageColor = {
-    Completed: "text-emerald-700 bg-emerald-50 border-emerald-200",
-    Partial: "text-amber-700 bg-amber-50 border-amber-200",
-    Pending: "text-gray-600 bg-gray-100 border-gray-200",
-  }[p?.paymentStage] || "text-gray-600 bg-gray-100 border-gray-200";
+  useEffect(() => {
+    let alive = true;
+    fetch(`${api}/refund-after-cancel-preview`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!alive) return;
+        if (!ok) throw new Error(j.message || "Could not load the refund options.");
+        setPreview(j.data);
+      })
+      .catch((e) => alive && setError(e.message))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking.id]);
+
+  const opts   = preview?.options;
+  const paid   = preview?.paid || 0;
+  const typed  = Number(amount);
+  const manualOk = Number.isFinite(typed) && typed > 0 && typed <= (opts?.manual?.max || 0);
+  // What the selected option returns and what the customer loses.
+  const refund = !opts ? 0 : mode === "full" ? opts.full.total : mode === "normal" ? opts.normal.total : mode === "no_show" ? opts.no_show.total : (manualOk ? typed : 0);
+  const kept   = Math.max(0, Math.round((paid - refund) * 100) / 100);
+  const canSubmit = !!opts && !!reason.trim() && !submitting && (mode !== "manual" || manualOk)
+    && (mode !== "normal" || opts.normal.available) && (mode !== "no_show" || opts.no_show.available);
+
+  const submit = async () => {
+    setSubmitting(true); setError(null);
+    try {
+      const res = await fetch(`${api}/refund-after-cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ option: mode, reason: reason.trim(), ...(mode === "manual" ? { amount: typed } : {}) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Request failed.");
+      onDone(json.message || "Refund recorded.");
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
+  };
+
+  const opt = (value, title, desc, disabledWhy = null) => (
+    <label className={`flex items-start gap-3 p-3 rounded-xl border ${disabledWhy ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${mode === value ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
+      <input type="radio" className="mt-1" checked={mode === value} disabled={!!disabledWhy} onChange={() => setMode(value)} />
+      <div className="flex-1">
+        <p className="text-sm font-semibold text-gray-800">{title}</p>
+        <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+        {disabledWhy && <p className="text-xs text-amber-700 mt-0.5">{disabledWhy}</p>}
+        {value === "manual" && mode === "manual" && (
+          <input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)}
+            placeholder={`Amount (up to ${fmt(opts?.manual?.max || 0)})`}
+            className="mt-2 w-full border rounded-lg px-3 py-2 text-sm outline-none" />
+        )}
+      </div>
+    </label>
+  );
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
-        <h4 className="font-bold text-gray-800 text-lg">
-          {booking.staged ? `Already confirmed — ${cancelOnlyLabel(booking)}` : "Confirm this booking"}
-        </h4>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h2 className="font-bold text-lg text-gray-800">Refund Cancelled Booking</h2>
+        <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
+        {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
 
-        {/* Booking details */}
-        <div className="text-sm space-y-1.5">
-          <p><span className="text-gray-500">Booking:</span> <span className="font-medium text-gray-800 break-all">{booking.bookingID}</span></p>
-          <p><span className="text-gray-500">Status:</span> <span className="font-medium text-gray-800 capitalize">{booking.status || "upcoming"}</span></p>
-          <p><span className="text-gray-500">Booked by:</span> <span className="font-medium text-gray-800">{p?.customerName || "—"}</span></p>
-          {(booking.vehicleLabel || p?.vehicleName) && (
-            <p><span className="text-gray-500">Vehicle:</span> <span className="font-medium text-gray-800">
-              {booking.vehicleLabel || p.vehicleName}{booking.plateNumber ? ` · ${booking.plateNumber}` : ""}
-            </span></p>
-          )}
-          {booking.modeOfDriving && <p><span className="text-gray-500">Driving:</span> <span className="font-medium text-gray-800">{booking.modeOfDriving}</span></p>}
-          {booking.location && <p><span className="text-gray-500">Location:</span> <span className="font-medium text-gray-800">{booking.location}</span></p>}
-        </div>
-
-        {/* Schedule — full date + time */}
-        <div className="text-sm space-y-1.5 bg-gray-50 border rounded-lg px-3 py-2">
-          <p><span className="text-gray-500">Start:</span> <span className="font-medium text-gray-800">{fmtDateTime(booking.startDateTime)}</span></p>
-          <p><span className="text-gray-500">End:</span> <span className="font-medium text-gray-800">{fmtDateTime(booking.endDateTime)}</span></p>
-          {(fmtDuration(booking.startDateTime, booking.endDateTime) || booking.totalDays > 0) && (
-            <p><span className="text-gray-500">Duration:</span> <span className="font-medium text-gray-800">
-              {fmtDuration(booking.startDateTime, booking.endDateTime) || `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}`}
-            </span></p>
-          )}
-          {booking.createdAt && <p className="text-xs text-gray-500">Booked on {fmtDateTime(booking.createdAt)}</p>}
-        </div>
-
-        {/* Payment details + timeline */}
-        {p && (
-          <div className="border-t pt-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-gray-500">Payment</span>
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${stageColor}`}>{p.paymentStage}</span>
+        {loading ? (
+          <div className="text-sm text-gray-400">Checking payment…</div>
+        ) : preview && !preview.eligible ? (
+          <div className="text-sm bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">{preview.blockedReason || "A refund can't be recorded for this booking."}</div>
+        ) : opts && (
+          <>
+            <p className="text-xs text-gray-500">This booking was cancelled without a refund, so the customer's money is being kept. Choose what goes back. It is handed back in store, nothing is sent to PayMongo.</p>
+            <div className="space-y-2">
+              {opt("full", "Full refund", `Our issue. Everything the customer paid goes back: ${fmt(opts.full.total)}.`)}
+              {opt("normal", "Normal refund",
+                opts.normal.available ? `The deposit goes back but the ${fmt(opts.normal.gatewayFeeKept)} online payment fee is not returned: ${fmt(opts.normal.total)} back.` : "The deposit goes back but the online payment fee is not.",
+                opts.normal.available ? null : "This booking has no online payment fee to keep, so it would be the same as a Full refund.")}
+              {opt("no_show", "No deposit refund",
+                opts.no_show.available ? `The ${fmt(opts.no_show.forfeit)} deposit${Number(opts.no_show.gatewayFeeKept) > 0 ? ` and the ${fmt(opts.no_show.gatewayFeeKept)} online payment fee are` : " is"} kept, the rest goes back: ${fmt(opts.no_show.total)} back.` : "The deposit and the online payment fee are kept, everything else goes back.",
+                opts.no_show.available ? null : "The deposit and the fee are all that was paid, so nothing would go back.")}
+              {opt("manual", "Custom amount", `You decide how much goes back (up to ${fmt(opts.manual.max)}). The rest is kept.`)}
             </div>
 
-            <div className="text-sm space-y-1">
-              {(p.rentalFee > 0 || p.serviceFee > 0 || p.extraFee > 0) && (
-                <p className="text-xs text-gray-500">
-                  Rental {fmt(p.rentalFee)}{p.serviceFee > 0 ? ` + Service ${fmt(p.serviceFee)}` : ""}{p.extraFee > 0 ? ` + Extra ${fmt(p.extraFee)}` : ""}
-                </p>
-              )}
-              <p><span className="text-gray-500">Total fee:</span> {fmt(p.totalFee)}</p>
-              <p><span className="text-gray-500">Paid so far:</span> {fmt(p.amountPaid)}</p>
-              {p.balance > 0 && <p><span className="text-gray-500">Still owed:</span> {fmt(p.balance)}</p>}
-              <p><span className="text-gray-500">Payment ID:</span> <span className="font-mono text-xs break-all">{p.paymentID || "—"}</span></p>
-              <p><span className="text-gray-500">Payment type:</span> {p.methodOfPayment && p.methodOfPayment !== "—" ? p.methodOfPayment : "—"}</p>
-              <p><span className="text-gray-500">Channel:</span> {paymentChannel(p) || "—"}</p>
-              <p><span className="text-gray-500">PayMongo ref:</span> <span className="font-mono text-xs break-all">{paymentRef(p) || (p.confirmedBy ? `Cash — confirmed by ${p.confirmedBy}` : "— (no online reference on file)")}</span></p>
-              {p.balancePaymongoPaymentID && <p><span className="text-gray-500">Balance ref:</span> <span className="font-mono text-xs break-all">{p.balancePaymongoPaymentID}</span></p>}
-              {p.discountAmount > 0 && (
-                <p className="text-teal-700">
-                  Discount: {fmt(p.discountAmount)}{p.discountReason ? ` — ${p.discountReason}` : ""}
-                </p>
-              )}
+            <div className={`text-sm border p-3 rounded-xl space-y-1 ${kept > 0 ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"}`}>
+              <div className="flex justify-between"><span className="text-gray-600">Customer paid</span><span className="font-semibold">{fmt(paid)}</span></div>
+              {kept > 0 && <div className="flex justify-between text-amber-700"><span>Kept (customer's loss)</span><span className="font-semibold">-{fmt(kept)}</span></div>}
+              <div className="flex justify-between border-t border-black/10 pt-1"><span className="font-bold text-gray-800">Hand back in store</span><span className="font-black">{fmt(refund)}</span></div>
             </div>
 
-            {/* Timeline — when the deposit landed, when the balance (if any)
-                got settled, and how, so staff aren't refunding blind to the
-                payment's actual history. */}
-            <div className="text-xs text-gray-500 space-y-1 bg-gray-50 border rounded-lg px-3 py-2">
-              {p.paidAt && <p>Deposit paid {fmtDateTime(p.paidAt)}</p>}
-              {p.payType !== "Full" && (
-                p.balanceStatus === "paid" && p.balancePaidAt ? (
-                  <p>Balance settled online {fmtDateTime(p.balancePaidAt)}</p>
-                ) : p.balanceCollected && p.balanceCollectedAt ? (
-                  <p>Balance collected in person ({p.balanceMethod || "—"}) {fmtDateTime(p.balanceCollectedAt)}</p>
-                ) : p.balance > 0 ? (
-                  <p>Balance not yet settled</p>
-                ) : null
-              )}
-              {p.paymentStage === "Completed" && <p className="text-emerald-700 font-medium">Fully settled</p>}
-              {!p.paidAt && !p.balancePaidAt && !p.balanceCollectedAt && <p>No payment activity recorded yet.</p>}
-            </div>
-          </div>
+            <label className="block text-sm font-medium text-gray-700">Reason (kept in the audit log)
+              <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
+                className="mt-1 w-full border rounded-xl px-3 py-2 text-sm outline-none resize-none" />
+            </label>
+          </>
         )}
 
-        {/* What confirming this row actually does: the staff member picks HOW this booking is refunded */}
-        {cancelOnly ? (
-          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            {noPayment
-              ? "No payment record was found for this booking — confirming this will just cancel it. Nothing is refunded."
-              : "Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued."}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-gray-500">What kind of refund?</p>
-            {(() => {
-              const pv = booking.refundPreview || {};
-              const open = !!pv.existingRequest;
-              const nm = pv.normal, ns = pv.noShow;
-              const rows = [
-                { v: "full", title: "Full refund", desc: "Our issue. The deposit and the online payment fee are both returned to the customer.", off: null },
-                { v: "normal", title: "Normal refund",
-                  desc: "The deposit is returned, but the online payment fee is not.",
-                  off: open ? "Not available while the customer's own refund request is open." : !(nm && nm.available) ? "No online payment fee on this booking, so it would be the same as a Full refund." : null },
-                { v: "no_show", title: "No Deposit Refund",
-                  desc: "The deposit and the online payment fee are not returned. Everything else the customer paid is refunded.",
-                  off: open ? "Not available while the customer's own refund request is open." : !ns ? "Not available for this booking." : null },
-                { v: "cancel", title: "Cancel only (no refund)", desc: "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.",
-                  off: open ? "The customer has an open refund request: approve or reject it first, or choose Full refund." : null },
-              ];
-              return rows.map((o) => (
-                <label key={o.v} className={`flex items-start gap-3 p-2.5 rounded-xl border ${o.off ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${choice === o.v ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
-                  <input type="radio" className="mt-1" checked={choice === o.v} disabled={!!o.off || !!booking.staged} onChange={() => setChoice(o.v)} />
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800">{o.title}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{o.desc}</p>
-                    {o.off && <p className="text-xs text-amber-700 mt-0.5">{o.off}</p>}
-                  </div>
-                </label>
-              ));
-            })()}
-
-            {(() => {
-              const f = refundFigures(booking.refundPreview, choice);
-              const pv = booking.refundPreview || {};
-              return (
-                <div className={`text-sm border rounded-lg px-3 py-2 space-y-0.5 ${choice === "full" ? "bg-gray-50" : "bg-amber-50 border-amber-200"}`}>
-                  {choice === "cancel" ? (
-                    <p className="text-xs text-red-700">No money is returned. The customer keeps nothing back and is told no refund was issued.</p>
-                  ) : (
-                    <>
-                      {choice === "no_show" && pv.noShow && <p className="text-xs text-amber-700">Deposit not refunded: -{fmt(pv.noShow.forfeit)}</p>}
-                      {choice === "no_show" && pv.noShow && Number(pv.noShow.gatewayFeeKept) > 0 && <p className="text-xs text-amber-700">Online payment fee kept: -{fmt(pv.noShow.gatewayFeeKept)}</p>}
-                      {choice === "normal" && pv.normal && <p className="text-xs text-amber-700">Online payment fee kept: -{fmt(pv.normal.gatewayFeeKept)}</p>}
-                      <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(f.total)}</span></p>
-                      {pv.existingRequest && (
-                        <p className="text-xs text-blue-700">The customer already requested a refund — confirming approves that request as a Full refund.</p>
-                      )}
-                      {f.manual > 0 && (
-                        <p className="text-xs text-gray-500">{fmt(f.online)} via PayMongo + {fmt(f.manual)} handed back in person</p>
-                      )}
-                      {f.scheduled && (
-                        <p className="text-xs text-blue-700">The customer paid today, so PayMongo can't send a partial refund yet: {fmt(f.online)} is sent on {sendDayLabel(f.sendAfter)} (after midnight). The booking is cancelled now.</p>
-                      )}
-                    </>
-                  )}
-                  {(pv.unrefundableAmount || 0) > 0 && choice !== "cancel" && (
-                    <p className="text-xs text-red-600 font-semibold">
-                      {fmt(pv.unrefundableAmount)} not refundable — Payment ID does not exist
-                    </p>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-        <div className="flex gap-3 pt-2">
-          <button onClick={onClose}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
-            Close
-          </button>
-          {booking.staged ? (
-            <button onClick={onUnconfirm}
-              className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-300">
-              Un-confirm
-            </button>
-          ) : (
-            <button onClick={() => onConfirm(cancelOnly ? "full" : choice)}
-              className={`flex-1 px-4 py-2 text-white rounded-xl text-sm font-medium ${cancelOnly || choice === "cancel" ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
-              {cancelOnly ? "Confirm cancel" : choice === "cancel" ? "Confirm cancel only" : `Confirm ${REFUND_CHOICE_LABEL[choice].toLowerCase()} ${fmt(refundFigures(booking.refundPreview, choice).total)}`}
+        <div className="flex gap-3 justify-end pt-1">
+          <button onClick={onClose} disabled={submitting} className="px-4 py-2 border rounded-xl text-sm disabled:opacity-50">Back</button>
+          {preview?.eligible && (
+            <button onClick={submit} disabled={!canSubmit}
+              className="px-4 py-2 bg-arl-primary text-white rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#16526a] transition-colors">
+              {submitting ? "Recording…" : "Record refund"}
             </button>
           )}
         </div>
@@ -1439,1322 +736,1349 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
 }
 
 // ─── VIEW DETAILS MODAL ───────────────────────────────────────────────────────
-function ViewDetailsModal({ car, canEdit, onClose, onEdit }) {
-  const { fmt } = useCurrency();
-  const navigate = useNavigate();
-  const [bookings, setBookings]   = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [allImages, setAllImages] = useState([]);
-  const [activeImg, setActiveImg] = useState(car.imageURL || null);
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const imgSnap = await getDocs(query(collection(db, "carImages"), where("carID", "==", car.id)));
-        const imgs = imgSnap.docs.map(d => d.data().imageURL).filter(Boolean);
-        setAllImages(imgs);
-        if (imgs.length > 0) setActiveImg(imgs[0]);
-
-        // Query by carID only — status is written by the customer-facing
-        // backend, so its exact casing isn't guaranteed here. Filter
-        // client-side with toLowerCase(), same as Vehicle Inspection's
-        // Past Trips does for this same status check.
-        const bSnap = await getDocs(query(
-          collection(db, "bookings"),
-          where("carID", "==", car.carID || car.id)
-        ));
-        // "upcoming"/"ongoing" ARE the "still open" states — same as the
-        // backend's own definition (see dashboard.service.js's upcoming
-        // count and midinghtFlush.job.js's checkOverdueBookings), both of
-        // which key off status alone. Neither status auto-clears itself
-        // once its date passes — a no-show pickup stays "upcoming" and an
-        // overdue return stays "ongoing" until staff act on it — so an
-        // extra endDateTime >= now check here only hid bookings that are
-        // still genuinely open, including every real case in this car's
-        // data.
-        const future = bSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-          .filter(b => ["upcoming", "ongoing"].includes(b.status?.toLowerCase()))
-          .sort((a, b) => {
-            const aD = toDateSafe(a.startDateTime) || new Date(0);
-            const bD = toDateSafe(b.startDateTime) || new Date(0);
-            return aD - bD;
-          });
-
-        // Resolve booker names — same lookup Vehicle Inspection uses for
-        // an active booking's customer: userDetails (firstName/lastName)
-        // falling back to user (username/email), both keyed by userID.
-        const withNames = await Promise.all(future.map(async (b) => {
-          if (!b.userID) return { ...b, customerName: "Customer" };
-          try {
-            const [detailDoc, userDoc] = await Promise.all([
-              getDoc(doc(db, "userDetails", b.userID)),
-              getDoc(doc(db, "user", b.userID)),
-            ]);
-            const { firstName = "", lastName = "" } = detailDoc.exists() ? detailDoc.data() : {};
-            const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
-            const { username = "", email = "" } = userDoc.exists() ? userDoc.data() : {};
-            return { ...b, customerName: fullName || username || email || "Customer" };
-          } catch {
-            return { ...b, customerName: "Customer" };
-          }
-        }));
-        setBookings(withNames);
-      } catch (e) {
-        console.error("ViewDetails error:", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [car.id, car.carID]);
-
-  const sorted = sortPricing(car.pricing || []);
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
-        onClick={e => e.stopPropagation()}>
-
-        <div className="flex justify-between items-center p-5 border-b shrink-0 bg-white">
-          <div>
-            <h2 className="font-bold text-xl text-gray-800">{car.brandName} {car.modelName}</h2>
-            <p className="text-sm text-gray-400">{car.bodyType} · {car.plateNumber}</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-            <Icons.Close className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-5 overflow-y-auto flex-1">
-          {/* Image gallery */}
-          <div>
-            <div className="h-56 bg-gray-100 rounded-xl overflow-hidden">
-              {activeImg
-                ? <img src={activeImg} alt="car" className="w-full h-full object-cover" />
-                : <div className="flex items-center justify-center h-full text-gray-300"><Icons.Car className="w-16 h-16" /></div>
-              }
-            </div>
-            {allImages.length > 1 && (
-              <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
-                {allImages.map((img, i) => (
-                  <img key={i} src={img} onClick={() => setActiveImg(img)} alt={`Vehicle view ${i + 1}`}
-                    className={`h-14 w-20 object-cover rounded-lg cursor-pointer border-2 flex-shrink-0 ${activeImg === img ? "border-teal-500" : "border-transparent"}`} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Details grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            {[
-              ["Seats", car.seatingCapacity], ["Fuel", car.fuelType],
-              ["Trans.", car.transmission],   ["Color", car.color],
-              ["Year", car.year],             ["Body", car.bodyType],
-              ["Status", car.status],
-            ].map(([label, val]) => (
-              <div key={label} className="bg-gray-50 rounded-xl p-3">
-                <p className="text-xs text-gray-400">{label}</p>
-                <p className="font-semibold text-gray-800 mt-0.5">{val || "—"}</p>
-              </div>
-            ))}
-          </div>
-
-          {(car.status === "Inactive" || car.status === "Maintenance") && car.statusReason && (
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm">
-              <p className="text-xs text-gray-400">{car.status} Reason</p>
-              <p className="font-semibold text-gray-800 mt-0.5">{car.statusReason}</p>
-            </div>
-          )}
-
-          {/* Pricing (12 Hours last) */}
-          {sorted.length > 0 && (
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Pricing Tiers</h3>
-              <div className="flex flex-wrap gap-2">
-                {sorted.map((p, i) => (
-                  <div key={i} className="bg-teal-50 border border-teal-100 rounded-xl px-4 py-2 text-sm">
-                    <p className="text-xs text-gray-400">{p.durationType}</p>
-                    <p className="font-bold text-teal-700">{fmt(p.price)}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Short Description */}
-          {car.shortDescription && (
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-1">Short Description</h3>
-              <p className="text-sm text-gray-600">{car.shortDescription}</p>
-            </div>
-          )}
-
-          {/* Long Description */}
-          {car.longDescription && (
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-1">Long Description</h3>
-              <p className="text-sm text-gray-600 leading-relaxed">{car.longDescription}</p>
-            </div>
-          )}
-
-          {/* Upcoming bookings */}
-          <div>
-            <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
-              Upcoming & Active Bookings
-              <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full">{bookings.length}</span>
-            </h3>
-            {loading ? (
-              <div className="space-y-2">{[...Array(2)].map((_, i) => <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />)}</div>
-            ) : bookings.length === 0 ? (
-              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 text-center">No upcoming bookings</p>
-            ) : (
-              <div className="space-y-2">
-                {bookings.map(b => (
-                  <div key={b.id} className="flex justify-between items-center bg-gray-50 rounded-xl px-4 py-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-800">{b.customerName || "Customer"}</p>
-                      <p className="text-xs text-gray-400">{fmtDate(b.startDateTime)} → {fmtDate(b.endDateTime)}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
-                        b.status?.toLowerCase() === "ongoing" ? "bg-blue-50 border border-blue-200 text-black" : "bg-yellow-50 border border-yellow-200 text-black"
-                      }`}>{b.status}</span>
-                      <button
-                        onClick={() => navigate(`/bookings?open=${b.bookingID || b.id}`)}
-                        className="flex items-center gap-1 text-xs font-medium text-teal-600 hover:text-teal-700 px-2 py-1 rounded-lg hover:bg-teal-50"
-                      >
-                        View
-                        <Icons.ArrowRight className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Actions — same layout as the booking details window. */}
-        <div className="px-5 py-4 border-t border-gray-100 shrink-0 flex flex-col gap-1.5">
-          {canEdit && (
-            <button onClick={onEdit} className="w-full px-3 py-2 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Edit</button>
-          )}
-          <button onClick={onClose} className="w-full py-2 border rounded-xl text-sm">Close</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── PRICING ICON ─────────────────────────────────────────────────────────────
-const PricingIcon = (props) => (
-  <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-    <line x1="12" y1="1" x2="12" y2="23" />
-    <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
+// ─── CUSTOMER PROFILE MODAL ─────────────────────────────────────────────
+// Opened from the Customer name in either the table row or ViewModal,
+// instead of navigating to /users. Pulls the base user doc (by-uid, which
+// also carries the profile photo + referral info) and the userDetails doc
+// (details).
+//
+// Booking counts come from the `bookings` list this page already loaded
+// (/api/bookings?status=all returns every booking with its userID), so
+// showing "how many bookings has this person made" costs no extra request.
+//
+// The invited-users list only shows each person's booking count plus a
+// "View" button. View swaps THIS modal's content to a brief profile of that
+// invited user (same modal, no stacking); the back arrow returns to the
+// original customer's view.
+const IconArrowLeft = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="19" y1="12" x2="5" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <polyline points="12 19 5 12 12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
-// ─── DETAILS FORM ─────────────────────────────────────────────────────────────
-// Shared look for every text box / dropdown / textarea in the vehicle form.
-const FIELD_CLS =
-  "w-full bg-white border border-gray-300 rounded-lg px-3 py-2.5 text-sm text-gray-800 placeholder-gray-400 " +
-  "outline-none transition-colors hover:border-gray-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 " +
-  "disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed";
-const SELECT_CLS = FIELD_CLS + " appearance-none pr-9 bg-no-repeat cursor-pointer";
-const LABEL_CLS = "block text-sm font-medium text-gray-700 mb-1.5";
-// our own chevron, so the dropdown arrow isn't jammed against the right edge
-const SELECT_STYLE = {
-  backgroundImage:
-    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%236b7280' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 7.5l5 5 5-5'/%3E%3C/svg%3E\")",
-  backgroundPosition: "right 0.75rem center",
-  backgroundSize: "1rem",
-};
-
-// IMPORTANT: this lives at module level on purpose. When it was declared inside CarDetailsForm, every keystroke
-// created a brand-new component type, React remounted the <input>, and the text box lost focus after one character.
-function DetailsField({ label, name, form, setForm, type = "text", options, placeholder, ...rest }) {
-  const onChange = (e) => setForm((f) => ({ ...f, [name]: e.target.value }));
-  return (
-    <div>
-      <label className={LABEL_CLS}>{label}</label>
-      {options ? (
-        <select value={form[name] || ""} onChange={onChange} className={SELECT_CLS} style={SELECT_STYLE}>
-          <option value="">Select {label}</option>
-          {options.map((o) => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}
-        </select>
-      ) : (
-        <input type={type} value={form[name] ?? ""} onChange={onChange} placeholder={placeholder} className={FIELD_CLS} {...rest} />
-      )}
-    </div>
-  );
+// Profile photo with an initials fallback (no photo, or the image fails to load).
+function ProfileAvatar({ src, initials, className = "w-16 h-16 text-xl" }) {
+  const [failed, setFailed] = useState(false);
+  const base = `${className} rounded-xl flex-shrink-0`;
+  if (src && !failed) {
+    return <img src={src} alt="" onError={() => setFailed(true)} className={`${base} object-cover bg-gray-100`} />;
+  }
+  return <div className={`${base} bg-teal-600 text-white flex items-center justify-center font-bold`}>{initials}</div>;
 }
 
-// ─── PICK OR ADD ──────────────────────────────────────────────────────────────
-// A dropdown of what already exists, with "+ Add new …" as its last entry. Choosing that swaps the dropdown for a small
-// input; Add saves it (onCreate may call the API) and selects it straight away, so nobody has to leave the form.
-// Module level on purpose, like DetailsField: declaring it inside another component would drop focus on every keystroke.
-const ADD_NEW = "__add_new__";
+// Loads one customer's base doc + details. Safe to call with a null id (idle).
+function useCustomerProfile(userID) {
+  const { getToken } = useAuth();
+  const [state, setState] = useState({ basic: null, details: null, loading: !!userID, error: null });
 
-function PickOrAddField({ label, noun, value, onChange, options, onCreate, inputType = "text", placeholder, disabled = false, disabledHint }) {
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft]   = useState("");
-  const [busy, setBusy]     = useState(false);
-  const [err, setErr]       = useState(null);
-  const inputRef = useRef(null);
-
-  useEffect(() => { if (adding) inputRef.current?.focus(); }, [adding]);
-
-  const close = () => { setAdding(false); setDraft(""); setErr(null); };
-
-  const submit = async () => {
-    const clean = draft.trim();
-    if (!clean) { setErr(`Enter a ${noun}.`); return; }
-    setBusy(true); setErr(null);
-    try {
-      const created = await onCreate(clean);
-      onChange(created);
-      close();
-    } catch (e) {
-      setErr(e.message || `Could not add ${noun}.`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div>
-      <label className={LABEL_CLS}>{label}</label>
-      {adding ? (
-        <>
-          <div className="flex gap-2">
-            <input
-              ref={inputRef} type={inputType} value={draft} disabled={busy}
-              min={inputType === "number" ? "1" : undefined} inputMode={inputType === "number" ? "numeric" : undefined}
-              placeholder={placeholder || `New ${noun}`} className={FIELD_CLS}
-              onChange={(e) => { setDraft(e.target.value); setErr(null); }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") { e.preventDefault(); submit(); }
-                if (e.key === "Escape") { e.preventDefault(); close(); }
-              }} />
-            <button type="button" onClick={submit} disabled={busy}
-              className="px-4 rounded-lg bg-arl-primary text-white text-sm font-medium hover:bg-[#16526a] disabled:opacity-50 whitespace-nowrap">
-              {busy ? "Adding…" : "Add"}
-            </button>
-            <button type="button" onClick={close} disabled={busy} aria-label={`Cancel adding ${noun}`}
-              className="px-3 rounded-lg border border-gray-300 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50">
-              ×
-            </button>
-          </div>
-          {err && <p className="text-xs text-red-500 mt-1.5">{err}</p>}
-        </>
-      ) : (
-        <select
-          value={value || ""} disabled={disabled} className={SELECT_CLS} style={SELECT_STYLE}
-          onChange={(e) => (e.target.value === ADD_NEW ? setAdding(true) : onChange(e.target.value))}>
-          <option value="">{disabled && disabledHint ? disabledHint : `Select ${label}`}</option>
-          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          {!disabled && <option disabled>──────────</option>}
-          {!disabled && <option value={ADD_NEW}>+ Add new {noun}…</option>}
-        </select>
-      )}
-    </div>
-  );
-}
-
-// Color / body type / seats have no table of their own: the choices are a few common ones plus whatever the fleet
-// already uses, so a value added once shows up in the dropdown for every later vehicle. `current` is always kept in the
-// list so editing an old car never blanks its value.
-const COLOR_PRESETS = ["White", "Black", "Silver", "Gray", "Red", "Blue", "Green", "Brown", "Beige", "Orange", "Yellow", "Maroon"];
-const BODY_TYPE_PRESETS = ["Sedan", "Hatchback", "SUV", "MPV", "Van", "Pickup", "Crossover", "Coupe", "Wagon"];
-const SEAT_PRESETS = [2, 4, 5, 6, 7, 8, 9, 12, 15];
-
-const buildOptions = (presets, existing, current, numeric = false) => {
-  const seen = new Map(); // lower-case -> shown text, so "white" and "White" are one entry
-  const add = (v) => {
-    const t = String(v ?? "").trim();
-    if (t && !seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t);
-  };
-  add(current);
-  presets.forEach(add);
-  existing.forEach(add);
-  const sorted = [...seen.values()].sort((a, b) => (numeric ? Number(a) - Number(b) : a.localeCompare(b)));
-  return sorted.map((v) => ({ value: v, label: v }));
-};
-// A price tier only counts when it has a duration AND a price above zero.
-const validTiers = (pricing) => pricing.filter(p => p.durationType && Number(p.price) > 0);
-
-// What the vehicle form still needs before it can be saved. Returns null when everything is there, otherwise the
-// message to show and the tab that holds the first missing thing (photo is on Details, prices on Pricing).
-const requiredCheck = ({ form, hasPhoto, pricing, checkBrandModel }) => {
-  const missing = [];
-  let tab = null;
-  if (checkBrandModel && (!form.brandID || !form.modelID)) { missing.push("a brand and model"); tab = "details"; }
-  if (!hasPhoto) { missing.push("a photo"); tab = tab || "details"; }
-  if (validTiers(pricing).length === 0) { missing.push("at least one price"); tab = tab || "pricing"; }
-  if (!missing.length) return null;
-  const list = missing.length > 1 ? `${missing.slice(0, -1).join(", ")} and ${missing[missing.length - 1]}` : missing[0];
-  return { message: `Please add ${list}.`, tab };
-};
-
-const matchOption = (options, v) => {
-  const t = String(v ?? "").trim().toLowerCase();
-  return options.find((o) => o.value.toLowerCase() === t)?.value || "";
-};
-
-function CarDetailsForm({ form, setForm, imagePreview, onImageChange, brands, models, cars = [], onCreateBrand, onCreateModel, imageMissing = false, currentStatus, onStatusChangeRequest }) {
-  const filteredModels = models.filter(m => m.brandID === form.brandID);
-  const byLabel = (a, b) => a.label.localeCompare(b.label);
-  const brandOptions = brands.map(b => ({ value: b.id, label: b.brandName })).sort(byLabel);
-  const modelOptions = filteredModels.map(m => ({ value: m.id, label: m.modelName })).sort(byLabel);
-  const colorOptions = buildOptions(COLOR_PRESETS, cars.map(c => c.color), form.color);
-  const bodyOptions  = buildOptions(BODY_TYPE_PRESETS, cars.map(c => c.bodyType), form.bodyType);
-  const seatOptions  = buildOptions(SEAT_PRESETS, cars.map(c => c.seatingCapacity), form.seatingCapacity, true);
-  // Year is a plain list, newest first: next year (for a car that's just been announced) back to 1980. A saved year outside that
-  // range (bad old data) is kept in the list so editing the car never blanks it.
-  const thisYear = new Date().getFullYear();
-  const yearOptions = Array.from({ length: thisYear + 1 - 1980 + 1 }, (_, i) => String(thisYear + 1 - i));
-  if (form.year && !yearOptions.includes(String(form.year))) yearOptions.push(String(form.year));
-  yearOptions.sort((a, b) => Number(b) - Number(a));
-  const setField = (name) => (v) => setForm(f => ({ ...f, [name]: v }));
-  // a name already in the list is reused (any capitalisation) instead of being added twice
-  const reuseOrAdd = (options) => (name) => options.find(o => o.value.toLowerCase() === name.toLowerCase())?.value || name;
-  const createSeats = (raw) => {
-    const n = Number(raw);
-    if (!Number.isInteger(n) || n < 1 || n > 100) throw new Error("Enter a whole number of seats, like 7.");
-    return String(n);
-  };
-
-  return (
-    <div className="space-y-5">
-      {/* Image */}
-      <div>
-        <label className={LABEL_CLS}>Primary Photo <span className="text-red-500">*</span></label>
-        <div className="flex gap-4 items-center">
-          <div className={`w-28 h-20 bg-gray-100 rounded-xl overflow-hidden flex-shrink-0${imageMissing ? " ring-2 ring-red-400" : ""}`}>
-            {imagePreview
-              ? <img src={imagePreview} alt="preview" className="w-full h-full object-cover" />
-              : <div className="flex items-center justify-center h-full text-gray-300"><Icons.Camera className="w-8 h-8" /></div>
-            }
-          </div>
-          <label className={`cursor-pointer flex items-center gap-2 px-4 py-2 border-2 border-dashed rounded-xl text-sm hover:border-teal-400 hover:text-teal-600 transition-colors ${imageMissing ? "border-red-400 text-red-500" : "border-gray-300 text-gray-500"}`}>
-            <Icons.Camera className="w-4 h-4" />
-            Choose Image
-            <input type="file" accept="image/*" className="hidden" onChange={onImageChange} />
-          </label>
-        </div>
-        {imageMissing && <p className="text-xs text-red-500 mt-1.5">A photo of the vehicle is required.</p>}
-      </div>
-
-      {/* Brand + Model */}
-      <div className="grid grid-cols-2 gap-4">
-        <PickOrAddField label="Brand" noun="brand" value={form.brandID} options={brandOptions}
-          onChange={(id) => setForm(f => ({ ...f, brandID: id, modelID: "" }))}
-          onCreate={onCreateBrand} placeholder="e.g. Toyota" />
-        <PickOrAddField label="Model" noun="model" value={form.modelID} options={modelOptions}
-          onChange={setField("modelID")}
-          onCreate={(name) => onCreateModel(name, form.brandID)} placeholder="e.g. Hiace"
-          disabled={!form.brandID} disabledHint="Select a brand first" />
-      </div>
-
-      {/* Other fields */}
-      <div className="grid grid-cols-2 gap-4">
-        <DetailsField form={form} setForm={setForm} label="Plate Number" name="plateNumber" placeholder="e.g. ABC 1234" autoComplete="off" />
-        <PickOrAddField label="Color" noun="color" value={matchOption(colorOptions, form.color)} options={colorOptions}
-          onChange={setField("color")} onCreate={reuseOrAdd(colorOptions)} placeholder="e.g. Pearl White" />
-        <PickOrAddField label="Body Type" noun="body type" value={matchOption(bodyOptions, form.bodyType)} options={bodyOptions}
-          onChange={setField("bodyType")} onCreate={reuseOrAdd(bodyOptions)} placeholder="e.g. Minibus" />
-        <DetailsField form={form} setForm={setForm} label="Year"         name="year"        options={yearOptions} />
-        <PickOrAddField label="Seats" noun="seat count" value={matchOption(seatOptions, form.seatingCapacity)} options={seatOptions}
-          onChange={setField("seatingCapacity")} onCreate={(raw) => reuseOrAdd(seatOptions)(createSeats(raw))}
-          inputType="number" placeholder="e.g. 7" />
-        <DetailsField form={form} setForm={setForm} label="Fuel Type"    name="fuelType"     options={["Gasoline","Diesel","Electric","Hybrid"]} />
-        <DetailsField form={form} setForm={setForm} label="Transmission" name="transmission" options={["Automatic","Manual"]} />
-        <div>
-          <label className={LABEL_CLS}>Status</label>
-          <select
-            value={form.status || "Active"}
-            onChange={(e) => {
-              const newStatus = e.target.value;
-              // Gate only applies when a handler was given (EditCarModal;
-              // AddCarModal has no car yet so no bookings to worry about)
-              // and it's an actual move INTO Maintenance/Inactive.
-              if (onStatusChangeRequest && ["Maintenance", "Inactive"].includes(newStatus) && newStatus !== currentStatus) {
-                onStatusChangeRequest(newStatus); // opens reason → refund → OTP; form.status only updates once that succeeds
-                return;
-              }
-              setForm(f => ({ ...f, status: newStatus }));
-            }}
-            className={SELECT_CLS} style={SELECT_STYLE}>
-            <option value="Active">Active</option>
-            <option value="Maintenance">Maintenance</option>
-            <option value="Inactive">Inactive</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Short Description */}
-      <div>
-        <label className={LABEL_CLS}>Short Description</label>
-        <input value={form.shortDescription || ""} onChange={e => setForm(f => ({ ...f, shortDescription: e.target.value }))}
-          placeholder="One line shown on the vehicle card" className={FIELD_CLS} />
-      </div>
-
-      {/* Long Description */}
-      <div>
-        <label className={LABEL_CLS}>Long Description</label>
-        <textarea rows={3} value={form.longDescription || ""}
-          onChange={e => setForm(f => ({ ...f, longDescription: e.target.value }))}
-          placeholder="Full details shown on the vehicle page" className={FIELD_CLS + " resize-y"} />
-      </div>
-    </div>
-  );
-}
-
-// ─── PRICING FORM (standalone tab) ────────────────────────────────────────────
-function PricingForm({ pricing, setPricing, showRequired = false }) {
-  // editingIdx: which tier is currently in edit mode (-1 = none, "new" = new tier being added)
-  const [editingIdx, setEditingIdx] = useState(null);
-  // draft holds the temp values while editing
-  const [draft, setDraft] = useState({ durationType: "", price: "" });
-
-  const sorted = sortPricing(pricing);
-
-  const DURATION_SUGGESTIONS = ["3 Hours", "6 Hours", "12 Hours", "24 Hours", "Full Day", "2 Days", "Weekly"];
-
-  const startEdit = (idx) => {
-    setEditingIdx(idx);
-    setDraft({ durationType: sorted[idx].durationType, price: sorted[idx].price });
-  };
-
-  const cancelEdit = () => {
-    setEditingIdx(null);
-    setDraft({ durationType: "", price: "" });
-  };
-
-  const saveEdit = (idx) => {
-    // find the actual index in the unsorted pricing array matching the sorted item
-    const target = sorted[idx];
-    setPricing(prev => prev.map(p =>
-      p === target ? { ...p, durationType: draft.durationType, price: draft.price } : p
-    ));
-    cancelEdit();
-  };
-
-  const startAdd = () => {
-    setEditingIdx("new");
-    setDraft({ durationType: "", price: "" });
-  };
-
-  const saveNew = () => {
-    if (!draft.durationType || draft.price === "") return;
-    setPricing(prev => [...prev, { durationType: draft.durationType, price: draft.price }]);
-    cancelEdit();
-  };
-
-  const removeTier = (idx) => {
-    const target = sorted[idx];
-    setPricing(prev => prev.filter(p => p !== target));
-    if (editingIdx === idx) cancelEdit();
-  };
-
-  return (
-    <div className="space-y-5">
-      {/* Header info */}
-      <div className="bg-teal-50 border border-teal-100 rounded-xl p-4">
-        <div className="flex items-start gap-3">
-          <PricingIcon className="w-5 h-5 text-teal-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-semibold text-teal-800">Pricing Tiers</p>
-            <p className="text-xs text-teal-600 mt-0.5">Click Edit on a tier to modify it. "12 Hours" tier will always appear last.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Shown after a failed save; its own element because a new vehicle starts with a blank tier row, so the empty state below never appears */}
-      {showRequired && (
-        <div className="text-sm text-red-600 font-medium bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          At least one price is required. Enter a duration and a price above ₱0, then save the tier.
-        </div>
-      )}
-
-      {/* Existing tiers */}
-      <div className="space-y-3">
-        {sorted.length === 0 && editingIdx !== "new" && (
-          <div className="text-center py-10 text-gray-400">
-            <PricingIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
-            <p className="text-sm">No pricing tiers yet</p>
-            <p className="text-xs mt-1">Click "Add Pricing Tier" to get started</p>
-          </div>
-        )}
-
-        {sorted.map((p, i) => {
-          const isEditing = editingIdx === i;
-          return (
-            <div key={p.id || `new-${i}`} className={`rounded-xl border transition-all ${isEditing ? "border-teal-300 bg-teal-50/40" : "border-gray-100 bg-gray-50"}`}>
-              {isEditing ? (
-                /* ── Edit mode ── */
-                <div className="p-4 space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-semibold text-teal-700 uppercase tracking-wide">Editing Tier {i + 1}</span>
-                    <button onClick={() => removeTier(i)} type="button"
-                      className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors">
-                      <Icons.Trash className="w-3.5 h-3.5" />
-                      Remove
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Duration Type</label>
-                      <input value={draft.durationType} placeholder="e.g. 24 Hours"
-                        onChange={e => setDraft(d => ({ ...d, durationType: e.target.value }))}
-                        list="dur-suggestions"
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Price (₱)</label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-2.5 text-sm text-gray-400 font-medium">₱</span>
-                        <input type="number" value={draft.price} min={0} placeholder="0.00"
-                          onChange={e => setDraft(d => ({ ...d, price: e.target.value }))}
-                          className="w-full border rounded-xl pl-8 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <button onClick={() => saveEdit(i)} type="button"
-                      className="flex items-center gap-1.5 px-4 py-2 bg-arl-primary text-white rounded-xl text-xs font-semibold hover:bg-[#16526a] transition-colors">
-                      <Icons.Edit className="w-3.5 h-3.5" />
-                      Save
-                    </button>
-                    <button onClick={cancelEdit} type="button"
-                      className="px-4 py-2 border rounded-xl text-xs text-gray-600 hover:bg-gray-100 transition-colors">
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* ── Read-only mode ── */
-                <div className="flex items-center justify-between px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-400 font-medium w-12">Tier {i + 1}</span>
-                    <span className="bg-teal-50 border border-teal-100 text-teal-700 text-xs font-semibold px-3 py-1 rounded-full">
-                      ₱{Number(p.price).toLocaleString()} / {p.durationType}
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => removeTier(i)} type="button"
-                      className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                      <Icons.Trash className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => startEdit(i)} type="button"
-                      disabled={editingIdx !== null}
-                      className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40">
-                      <Icons.Edit className="w-3.5 h-3.5" />
-                      Edit
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* New tier form */}
-        {editingIdx === "new" && (
-          <div className="rounded-xl border border-teal-300 bg-teal-50/40 p-4 space-y-3">
-            <span className="text-xs font-semibold text-teal-700 uppercase tracking-wide">New Tier</span>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Duration Type</label>
-                <input value={draft.durationType} placeholder="e.g. 24 Hours"
-                  onChange={e => setDraft(d => ({ ...d, durationType: e.target.value }))}
-                  list="dur-suggestions"
-                  className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Price (₱)</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2.5 text-sm text-gray-400 font-medium">₱</span>
-                  <input type="number" value={draft.price} min={0} placeholder="0.00"
-                    onChange={e => setDraft(d => ({ ...d, price: e.target.value }))}
-                    className="w-full border rounded-xl pl-8 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-400 bg-white" />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button onClick={saveNew} type="button"
-                disabled={!draft.durationType || draft.price === ""}
-                className="flex items-center gap-1.5 px-4 py-2 bg-arl-primary text-white rounded-xl text-xs font-semibold hover:bg-[#16526a] disabled:opacity-40 transition-colors">
-                <Icons.Edit className="w-3.5 h-3.5" />
-                Save
-              </button>
-              <button onClick={cancelEdit} type="button"
-                className="px-4 py-2 border rounded-xl text-xs text-gray-600 hover:bg-gray-100 transition-colors">
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <datalist id="dur-suggestions">
-        {DURATION_SUGGESTIONS.map(s => <option key={s} value={s} />)}
-      </datalist>
-
-      {/* Add tier button — hidden while editing */}
-      {editingIdx === null && (
-        <button onClick={startAdd} type="button"
-          className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-teal-200 rounded-xl text-sm text-teal-600 hover:border-teal-400 hover:bg-teal-50 transition-colors font-medium">
-          <Icons.Plus className="w-4 h-4" />
-          Add Pricing Tier
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ─── EDIT CAR MODAL ───────────────────────────────────────────────────────────
-function EditCarModal({ car, brands, models, cars, onCreateBrand, onCreateModel, onClose, onDelete, onSaved }) {
-  const [activeTab, setActiveTab] = useState("details");
-  const [form, setForm]         = useState({
-    shortDescription: car.shortDescription || "",
-    longDescription:  car.longDescription  || "",
-    color:            car.color            || "",
-    fuelType:         car.fuelType         || "",
-    transmission:     car.transmission     || "",
-    seatingCapacity:  car.seatingCapacity  || "",
-    year:             car.year             || "",
-    bodyType:         car.bodyType         || "",
-    status:           car.status           || "Active",
-    plateNumber:      car.plateNumber || "",
-    brandID:          car.brandID          || "",
-    modelID:          car.modelID          || "",
-  });
-  const [pricing, setPricing]   = useState(sortPricing(car.pricing || []));
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(car.imageURL || null);
-  const [saving, setSaving]     = useState(false);
-  const [error, setError]       = useState(null);
-  const [tried, setTried]       = useState(false); // true after a save attempt, so missing things can turn red
-  // The message goes away once something is changed, so it never lingers after the problem has been fixed.
-  useEffect(() => { setError(null); }, [form, pricing, imageFile]);
-  // The status actually applied so far (starts as the car's real live
-  // status). Only ever updated once StatusChangeFlow's gated PATCH call
-  // genuinely succeeds — form.status can show Maintenance/Inactive mid-flow
-  // for display, but the write itself never happens until that resolves,
-  // so this is what the rest of Save Changes (and the bypass guard on the
-  // backend's PUT) actually treats as "current".
-  const [confirmedStatus, setConfirmedStatus] = useState(car.status || "Active");
-  // null | "Maintenance" | "Inactive" — same gate as VehicleCard's, just
-  // triggered from this modal's Status dropdown instead of the quick badge.
-  const [statusChangeTarget, setStatusChangeTarget] = useState(null);
-
-  const carLabel = `${car.brandName || ""} ${car.modelName || ""}`.trim() || car.plateNumber || car.id;
-
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
-  };
-
-  // Status dropdown asked to move to Maintenance/Inactive — opens the same
-  // reason → refund → OTP gate the quick badge uses, instead of letting it
-  // slip into the plain form field it used to be. Active needs no gate.
-  const handleStatusChangeRequest = (newStatus) => {
-    if (newStatus === "Active") {
-      // Same clearing applyActiveStatus()'s PATCH does elsewhere — a
-      // leftover reason shouldn't survive the car coming back into service.
-      setForm((f) => ({ ...f, status: newStatus, statusReason: null }));
-      return;
-    }
-    setStatusChangeTarget(newStatus);
-  };
-
-  const handleStatusChangeDone = (newStatus, reason) => {
-    setStatusChangeTarget(null);
-    setConfirmedStatus(newStatus);
-    setForm((f) => ({ ...f, status: newStatus, statusReason: reason }));
-  };
-
-  const handleSave = async () => {
-    // imagePreview is the car's saved photo until a new file is chosen, so it covers "already has one" too
-    const problem = requiredCheck({ form, hasPhoto: !!imagePreview, pricing, checkBrandModel: false });
-    if (problem) { setTried(true); setActiveTab(problem.tab); setError(problem.message); return; }
-    setSaving(true); setError(null);
-    try {
-      // PUT /api/fleet/cars/:carID — runs through verifyToken +
-      // requireRole on the backend, unlike the old direct Firestore write.
-      await apiFetch(`/api/fleet/cars/${car.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          ...form,
-          seatingCapacity: Number(form.seatingCapacity) || form.seatingCapacity,
-          year: Number(form.year) || form.year,
-        }),
-      });
-
-      // POST /api/fleet/cars/:carID/image — upload still goes to Storage
-      // directly via the client SDK, but the resulting Firestore
-      // carImages doc write now runs through verifyToken + requireRole
-      // on the backend, unlike the old direct addDoc/updateDoc.
-      if (imageFile) {
-        const imgRef = ref(storage, `carImages/${car.id}/${Date.now()}_${imageFile.name}`);
-        await uploadBytes(imgRef, imageFile);
-        const downloadURL = await getDownloadURL(imgRef);
-        await apiFetch(`/api/fleet/cars/${car.id}/image`, {
-          method: "POST",
-          body: JSON.stringify({ imageURL: downloadURL }),
-        });
-      }
-
-      // PUT /api/fleet/cars/:carID/pricing/replace deletes every existing
-      // tier for this car and reinserts the current list in one go — same
-      // idea as the manual diff-and-delete this used to need client-side,
-      // except it's atomic-ish on the backend and actually enforces
-      // requireRole. Also fixes the old "Remove doesn't actually delete"
-      // bug for free, since there's no separate delete step to forget.
-      await apiFetch(`/api/fleet/cars/${car.id}/pricing/replace`, {
-        method: "PUT",
-        body: JSON.stringify({
-          pricing: validTiers(pricing).map(p => ({ durationType: p.durationType, price: p.price })),
-        }),
-      });
-
-      onSaved();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const pricingCount = validTiers(pricing).length;
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex justify-between items-center p-5 border-b">
-          <div>
-            <h2 className="font-bold text-lg text-gray-800">Edit Vehicle</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{car.brandName} {car.modelName} · {car.plateNumber}</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-            <Icons.Close className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 px-5 pt-4 border-b pb-0">
-          <button
-            onClick={() => setActiveTab("details")}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "details"
-                ? "border-teal-600 text-teal-700"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}>
-            <Icons.Car className="w-4 h-4" />
-            Details
-          </button>
-          <button
-            onClick={() => setActiveTab("pricing")}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors relative ${
-              activeTab === "pricing"
-                ? "border-teal-600 text-teal-700"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}>
-            <PricingIcon className="w-4 h-4" />
-            Pricing
-            {pricingCount > 0 && (
-              <span className="ml-1 bg-teal-100 text-teal-700 text-xs font-bold px-1.5 py-0.5 rounded-full">
-                {pricingCount}
-              </span>
-            )}
-          </button>
-        </div>
-
-        {/* Error banner: outside the scrolling area on purpose, so it is visible without scrolling down to find it */}
-        {error && (
-          <div role="alert" className="flex-shrink-0 mx-5 mt-4 flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3.5 py-3">
-            <span aria-hidden="true">⚠</span>
-            <span>{error}</span>
-          </div>
-        )}
-
-        {/* Scrollable content */}
-        <div className="overflow-y-auto flex-1 p-5">
-          {activeTab === "details" ? (
-            <CarDetailsForm form={form} setForm={setForm}
-              imagePreview={imagePreview} onImageChange={handleImageChange}
-              brands={brands} models={models} cars={cars}
-              onCreateBrand={onCreateBrand} onCreateModel={onCreateModel}
-              imageMissing={tried && !imagePreview}
-              currentStatus={confirmedStatus} onStatusChangeRequest={handleStatusChangeRequest} />
-          ) : (
-            <PricingForm pricing={pricing} setPricing={setPricing} showRequired={tried && pricingCount === 0} />
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl shrink-0 flex flex-col gap-1.5">
-          <p className="text-xs text-gray-400 text-center mb-1">
-            {activeTab === "details" ? "Edit vehicle info, then switch to Pricing tab" : `${pricingCount} pricing tier${pricingCount !== 1 ? "s" : ""} configured`}
-          </p>
-          <button onClick={handleSave} disabled={saving || !!statusChangeTarget}
-            className="w-full px-3 py-2 bg-arl-primary text-white rounded-xl text-sm font-semibold hover:bg-[#16526a] transition-colors disabled:opacity-50">
-            {saving ? "Saving..." : "Save Changes"}
-          </button>
-          {onDelete && (
-            <button onClick={onDelete} disabled={saving || !!statusChangeTarget}
-              className="w-full px-3 py-2 border border-red-200 bg-red-50 text-red-600 rounded-xl text-sm font-semibold hover:bg-red-100 transition-colors disabled:opacity-50">
-              Delete
-            </button>
-          )}
-          <button onClick={onClose} className="w-full mt-0.5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 bg-white">Cancel</button>
-        </div>
-      </div>
-      {statusChangeTarget && (
-        <StatusChangeFlow
-          car={car}
-          carLabel={carLabel}
-          targetStatus={statusChangeTarget}
-          onCancel={() => setStatusChangeTarget(null)}
-          onDone={handleStatusChangeDone}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── ADD CAR MODAL ────────────────────────────────────────────────────────────
-function AddCarModal({ brands, models, cars, onCreateBrand, onCreateModel, onClose, onSaved }) {
-  const [activeTab, setActiveTab] = useState("details");
-  const [form, setForm]     = useState({ status: "Active", fuelType: "Gasoline", transmission: "Automatic" });
-  const [pricing, setPricing] = useState([]); // starts empty: no blank "Tier 1" row until the person adds one
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState(null);
-  const [tried, setTried]   = useState(false); // true after a save attempt, so missing things can turn red
-  // The message goes away once something is changed, so it never lingers after the problem has been fixed.
-  useEffect(() => { setError(null); }, [form, pricing, imageFile]);
-
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
-  };
-
-  const handleSave = async () => {
-    const problem = requiredCheck({ form, hasPhoto: !!imageFile, pricing, checkBrandModel: true });
-    if (problem) { setTried(true); setActiveTab(problem.tab); setError(problem.message); return; }
-    setSaving(true); setError(null);
-    try {
-      // POST /api/fleet/cars accepts pricing[] in the same body and
-      // creates the tiers itself — one authenticated call covers car +
-      // pricing instead of separate addDoc calls per tier.
-      const data = await apiFetch("/api/fleet/cars", {
-        method: "POST",
-        body: JSON.stringify({
-          ...form,
-          seatingCapacity: Number(form.seatingCapacity) || 0,
-          year: Number(form.year) || 0,
-          pricing: validTiers(pricing).map(p => ({ durationType: p.durationType, price: p.price })),
-        }),
-      });
-      const carID = data.id;
-
-      // POST /api/fleet/cars/:carID/image — same as the edit modal: upload
-      // stays client-side via the Storage SDK, but the Firestore write is
-      // now behind verifyToken + requireRole instead of a direct addDoc.
-      if (imageFile) {
-        const imgRef = ref(storage, `carImages/${carID}/${Date.now()}_${imageFile.name}`);
-        await uploadBytes(imgRef, imageFile);
-        const downloadURL = await getDownloadURL(imgRef);
-        await apiFetch(`/api/fleet/cars/${carID}/image`, {
-          method: "POST",
-          body: JSON.stringify({ imageURL: downloadURL }),
-        });
-      }
-
-      onSaved();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const pricingCount = validTiers(pricing).length;
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex justify-between items-center p-5 border-b">
-          <h2 className="font-bold text-lg text-gray-800">Add New Vehicle</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-            <Icons.Close className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 px-5 pt-4 border-b pb-0">
-          <button
-            onClick={() => setActiveTab("details")}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "details"
-                ? "border-teal-600 text-teal-700"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}>
-            <Icons.Car className="w-4 h-4" />
-            Details
-          </button>
-          <button
-            onClick={() => setActiveTab("pricing")}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "pricing"
-                ? "border-teal-600 text-teal-700"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}>
-            <PricingIcon className="w-4 h-4" />
-            Pricing
-            {pricingCount > 0 && (
-              <span className="ml-1 bg-teal-100 text-teal-700 text-xs font-bold px-1.5 py-0.5 rounded-full">
-                {pricingCount}
-              </span>
-            )}
-          </button>
-        </div>
-
-        {/* Error banner: outside the scrolling area on purpose, so it is visible without scrolling down to find it */}
-        {error && (
-          <div role="alert" className="flex-shrink-0 mx-5 mt-4 flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3.5 py-3">
-            <span aria-hidden="true">⚠</span>
-            <span>{error}</span>
-          </div>
-        )}
-
-        {/* Scrollable content */}
-        <div className="overflow-y-auto flex-1 p-5">
-          {activeTab === "details" ? (
-            <CarDetailsForm form={form} setForm={setForm}
-              imagePreview={imagePreview} onImageChange={handleImageChange}
-              brands={brands} models={models} cars={cars}
-              onCreateBrand={onCreateBrand} onCreateModel={onCreateModel}
-              imageMissing={tried && !imagePreview} />
-          ) : (
-            <PricingForm pricing={pricing} setPricing={setPricing} showRequired={tried && pricingCount === 0} />
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex justify-between items-center gap-3 p-5 border-t bg-gray-50 rounded-b-2xl">
-          <div className="text-xs text-gray-400">
-            {activeTab === "details" ? "Fill in vehicle info, then set Pricing" : `${pricingCount} pricing tier${pricingCount !== 1 ? "s" : ""} configured`}
-          </div>
-          <div className="flex gap-3">
-            <button onClick={onClose} className="px-5 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 bg-white">Cancel</button>
-            <button onClick={handleSave} disabled={saving}
-              className="px-5 py-2 bg-arl-primary text-white rounded-xl text-sm font-medium hover:bg-[#16526a] disabled:opacity-50">
-              {saving ? "Adding..." : "Add Vehicle"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── MANAGE BRANDS & MODELS MODAL ─────────────────────────────────────────────
-// Brands tab: add a brand, see every brand with its model count.
-// Models tab: pick a brand from the dropdown (same look as the vehicle form), then add / remove models for that brand only.
-// The window stays open after every add or delete (the lists are refreshed in place via onChanged), so several brands or models
-// can be entered in one go.
-const byName = (key) => (a, b) => (a[key] || "").localeCompare(b[key] || "");
-
-function ManageBrandsModal({ brands, models, cars = [], onClose, onChanged }) {
-  const [selectedBrandID, setSelectedBrandID] = useState("");
-  const [brandSearch, setBrandSearch] = useState("");
-  const [newBrand, setNewBrand]       = useState("");
-  const [newModel, setNewModel]       = useState("");
-  const [editing, setEditing]         = useState(null);   // { type: "brand" | "model", id, value }
-  const [saving, setSaving]           = useState(false);
-  const [error, setError]             = useState(null);
-  const [confirmDel, setConfirmDel]   = useState(null);
-
-  const sortedBrands = useMemo(() => [...brands].sort(byName("brandName")), [brands]);
-  const shownBrands  = sortedBrands.filter(b => (b.brandName || "").toLowerCase().includes(brandSearch.trim().toLowerCase()));
-  const brandModels  = useMemo(() => models.filter(m => m.brandID === selectedBrandID).sort(byName("modelName")), [models, selectedBrandID]);
-  const selectedBrand = brands.find(b => b.id === selectedBrandID);
-
-  // How many vehicles use each brand / model. The backend refuses to delete anything still in use,
-  // so we show the count and disable the button instead of letting the person hit an error.
-  const usage = useMemo(() => {
-    const byModel = {}, byBrand = {};
-    cars.forEach(c => {
-      if (c.modelID) byModel[c.modelID] = (byModel[c.modelID] || 0) + 1;
-      if (c.brandID) byBrand[c.brandID] = (byBrand[c.brandID] || 0) + 1;
-    });
-    const brandUse = {};
-    brands.forEach(b => {
-      const viaModels = models.filter(m => m.brandID === b.id).reduce((n, m) => n + (byModel[m.id] || 0), 0);
-      brandUse[b.id] = Math.max(byBrand[b.id] || 0, viaModels);
-    });
-    return { byModel, brandUse };
-  }, [cars, brands, models]);
-
-  // keep a brand selected: pick the first one when none is chosen or the chosen one was deleted
   useEffect(() => {
-    if (selectedBrandID && brands.some(b => b.id === selectedBrandID)) return;
-    setSelectedBrandID(sortedBrands[0]?.id || "");
-  }, [brands, sortedBrands, selectedBrandID]);
+    if (!userID) { setState({ basic: null, details: null, loading: false, error: null }); return; }
+    let cancelled = false;
+    setState({ basic: null, details: null, loading: true, error: null });
+    const headers = { Authorization: `Bearer ${getToken()}` };
+    Promise.all([
+      fetch(`${process.env.REACT_APP_API_URL}/api/users/by-uid/${userID}`, { headers }).then((r) => r.json()),
+      fetch(`${process.env.REACT_APP_API_URL}/api/users/details/${userID}`, { headers }).then((r) => r.json()).catch(() => null),
+    ])
+      .then(([basicRes, detailsRes]) => {
+        if (cancelled) return;
+        if (!basicRes?.success) throw new Error(basicRes?.message || "Could not load customer profile.");
+        // Details 404s for a customer who never filled in personal info —
+        // that's a normal state here, not an error worth surfacing.
+        setState({ basic: basicRes.data, details: detailsRes?.success ? detailsRes.data : null, loading: false, error: null });
+      })
+      .catch((e) => !cancelled && setState({ basic: null, details: null, loading: false, error: e.message }));
+    return () => { cancelled = true; };
+  }, [userID, getToken]);
 
-  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  const clearMsgs = () => setError(null);
+  return state;
+}
 
-  const addBrand = async () => {
-    const clean = newBrand.trim();
-    if (!clean) { setError("Enter a brand name."); return; }
-    if (brands.some(b => (b.brandName || "").trim().toLowerCase() === clean.toLowerCase())) {
-      setError(`"${clean}" already exists.`); return;
-    }
-    setSaving(true); setError(null);
-    try {
-      const created = await apiFetch("/api/fleet/brands", { method: "POST", body: JSON.stringify({ brandName: clean }) });
-      setNewBrand(""); await onChanged();
-      if (created?.id) { setSelectedBrandID(created.id); setBrandSearch(""); }   // jump to the new brand so its models can be added next
-    } catch (e) { setError(e.message); } finally { setSaving(false); }
-  };
+const profileFullName = (details, basic) =>
+  (details
+    ? `${details.firstName || ""} ${details.middleName ? details.middleName + " " : ""}${details.lastName || ""}`.trim()
+    : "") || basic?.username || "Customer Profile";
 
-  const addModel = async () => {
-    const clean = newModel.trim();
-    if (!selectedBrandID) { setError("Select a brand first."); return; }
-    if (!clean) { setError("Enter a model name."); return; }
-    if (brandModels.some(m => (m.modelName || "").trim().toLowerCase() === clean.toLowerCase())) {
-      setError(`"${clean}" already exists under ${selectedBrand?.brandName}.`); return;
-    }
-    setSaving(true); setError(null);
-    try {
-      await apiFetch("/api/fleet/models", { method: "POST", body: JSON.stringify({ modelName: clean, brandID: selectedBrandID }) });
-      setNewModel(""); await onChanged();
-    } catch (e) { setError(e.message); } finally { setSaving(false); }
-  };
+const profileInitials = (details, basic) =>
+  ((details?.firstName?.[0] || basic?.email?.[0] || "?") + (details?.lastName?.[0] || "")).toUpperCase();
 
-  const startEdit = (type, item) => {
-    setError(null);
-    setEditing({ type, id: item.id, value: type === "brand" ? item.brandName || "" : item.modelName || "" });
-  };
+function CustomerProfileModal({ userID, bookings, onClose }) {
+  const navigate = useNavigate();
+  const [subID, setSubID] = useState(null); // invited user currently being viewed (null = original customer)
+  const root = useCustomerProfile(userID);
+  const sub  = useCustomerProfile(subID);
+  const cur  = subID ? sub : root;
+  const { basic, details, loading, error } = cur;
 
-  const saveEdit = async () => {
-    if (!editing) return;
-    const clean = editing.value.trim();
-    const isBrand = editing.type === "brand";
-    const current = isBrand ? brands.find(b => b.id === editing.id)?.brandName : models.find(m => m.id === editing.id)?.modelName;
-    if (!clean) { setError(`Enter a ${isBrand ? "brand" : "model"} name.`); return; }
-    if (clean === (current || "")) { setEditing(null); return; }   // nothing changed
+  // userID -> { total, completed } across every booking this page loaded. Only `completed` is shown in this window.
+  const statsMap = useMemo(() => {
+    const m = new Map();
+    (bookings || []).forEach((b) => {
+      if (!b.userID) return;
+      const s = m.get(b.userID) || { total: 0, completed: 0 };
+      s.total += 1;
+      if ((b.status || "").toLowerCase() === "completed") s.completed += 1;
+      m.set(b.userID, s);
+    });
+    return m;
+  }, [bookings]);
+  const statsOf = (id) => statsMap.get(id) || { total: 0, completed: 0 };
 
-    const pool = isBrand ? brands.filter(b => b.id !== editing.id).map(b => b.brandName)
-                         : brandModels.filter(m => m.id !== editing.id).map(m => m.modelName);
-    if (pool.some(n => (n || "").trim().toLowerCase() === clean.toLowerCase())) {
-      setError(`"${clean}" already exists${isBrand ? "" : ` under ${selectedBrand?.brandName}`}.`); return;
-    }
-    setSaving(true); setError(null);
-    try {
-      await apiFetch(`/api/fleet/${isBrand ? "brands" : "models"}/${editing.id}`, {
-        method: "PUT",
-        body: JSON.stringify(isBrand ? { brandName: clean } : { modelName: clean }),
-      });
-      setEditing(null); await onChanged();
-    } catch (e) { setError(e.message); } finally { setSaving(false); }
-  };
+  const shownID = subID || userID;
+  const stats   = statsOf(shownID);
+  const bookingsText = String(stats.completed);   // only completed bookings are counted here
 
-  const handleDelete = async () => {
-    if (!confirmDel) return;
-    setSaving(true); setError(null);
-    try {
-      // The backend refuses (409) while a car still uses the brand / model, and deleting a brand also removes its models.
-      const path = confirmDel.type === "brand" ? "brands" : "models";
-      await apiFetch(`/api/fleet/${path}/${confirmDel.item.id}`, { method: "DELETE" });
-      setConfirmDel(null); await onChanged();
-    } catch (e) { setConfirmDel(null); setError(e.message); } finally { setSaving(false); }
-  };
+  const refBy = basic?.referral?.referredBy;
+  const refByText = refBy
+    ? (refBy.removed
+        ? `${refBy.code || "—"} (account removed)`
+        : (refBy.name && refBy.username ? `${refBy.name} (@${refBy.username})`
+          : refBy.name || (refBy.username ? `@${refBy.username}` : refBy.code)))
+    : "None";
 
-  const onEnter = (fn, esc) => (e) => {
-    if (e.key === "Enter") { e.preventDefault(); fn(); }
-    if (e.key === "Escape" && esc) { e.stopPropagation(); esc(); }
-  };
-
-  const iconBtn = "p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
-
-  // one list row, shared by brands and models; switches to an inline input while being renamed
-  const renderRow = ({ type, item, name, meta, used, selected, onSelect }) => {
-    const isEditing = editing?.type === type && editing?.id === item.id;
-    if (isEditing) {
-      return (
-        <div key={item.id} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-teal-400 bg-white">
-          <input autoFocus value={editing.value} disabled={saving}
-            onChange={e => { setEditing({ ...editing, value: e.target.value }); clearMsgs(); }}
-            onKeyDown={onEnter(saveEdit, () => setEditing(null))}
-            className="flex-1 min-w-0 text-sm text-gray-800 outline-none bg-transparent" />
-          <button onClick={saveEdit} disabled={saving} title="Save"
-            className={`${iconBtn} text-teal-600 hover:bg-teal-50`}><Icons.Check className="w-4 h-4" /></button>
-          <button onClick={() => setEditing(null)} disabled={saving} title="Cancel"
-            className={`${iconBtn} text-gray-400 hover:bg-gray-100`}><Icons.Close className="w-4 h-4" /></button>
-        </div>
-      );
-    }
-    return (
-      <div key={item.id} onClick={onSelect}
-        className={`flex items-center gap-2 pl-3 pr-1.5 py-2 rounded-xl border transition-colors ${
-          onSelect ? "cursor-pointer" : ""} ${selected ? "border-teal-400 bg-teal-50" : "border-transparent bg-gray-50 hover:bg-gray-100"}`}>
-        <div className="flex-1 min-w-0">
-          <div className={`text-sm font-medium truncate ${selected ? "text-teal-800" : "text-gray-700"}`}>{name}</div>
-          {meta && <div className="text-xs text-gray-400">{meta}</div>}
-        </div>
-        <button onClick={e => { e.stopPropagation(); startEdit(type, item); }} title="Rename" disabled={saving}
-          className={`${iconBtn} text-gray-400 hover:text-teal-600 hover:bg-white`}><Icons.Edit className="w-4 h-4" /></button>
-        <button onClick={e => { e.stopPropagation(); setConfirmDel({ type, item }); }} disabled={saving || used > 0}
-          title={used > 0 ? `Can't delete: used by ${plural(used, "vehicle")}` : "Delete"}
-          className={`${iconBtn} text-red-400 hover:text-red-600 hover:bg-white`}><Icons.Trash className="w-4 h-4" /></button>
-      </div>
-    );
-  };
+  const row = (label, value) => (
+    <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
+      <span className="text-gray-500 font-medium w-32 shrink-0">{label}</span>
+      <span className="text-gray-800 text-right break-words">{value || "—"}</span>
+    </div>
+  );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-start p-5 border-b">
-          <div>
-            <h2 className="font-bold text-lg text-gray-800">Brands &amp; Models</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Pick a brand on the left to manage its models. A brand or model in use by a vehicle can be renamed but not deleted.</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><Icons.Close className="w-5 h-5" /></button>
-        </div>
-
-        <div className="grid md:grid-cols-2 md:divide-x overflow-y-auto">
-          {/* BRANDS */}
-          <div className="p-5 space-y-3 flex flex-col min-h-0">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-700">Brands <span className="text-gray-400 font-normal">({brands.length})</span></h3>
-            </div>
-            <div className="flex gap-2">
-              <input value={newBrand} onChange={e => { setNewBrand(e.target.value); clearMsgs(); }} onKeyDown={onEnter(addBrand)}
-                placeholder="New brand (e.g. Toyota)" disabled={saving} className={FIELD_CLS} />
-              <button onClick={addBrand} disabled={saving}
-                className="px-4 rounded-lg bg-arl-primary text-white text-sm font-medium hover:bg-[#16526a] disabled:opacity-50">Add</button>
-            </div>
-            {brands.length > 6 && (
-              <div className="relative">
-                <Icons.Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input value={brandSearch} onChange={e => setBrandSearch(e.target.value)} placeholder="Search brands"
-                  className={`${FIELD_CLS} pl-9`} />
-              </div>
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-2 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {subID && (
+              <button onClick={() => setSubID(null)} title="Back" aria-label="Back"
+                className="shrink-0 p-1.5 -ml-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100">
+                <IconArrowLeft className="w-5 h-5" />
+              </button>
             )}
-            <div className="space-y-1 overflow-y-auto max-h-72 md:max-h-80 pr-1">
-              {sortedBrands.length === 0
-                ? <p className="text-sm text-gray-400 text-center py-8">No brands yet. Add your first one above.</p>
-                : shownBrands.length === 0
-                  ? <p className="text-sm text-gray-400 text-center py-8">No brand matches "{brandSearch}".</p>
-                  : shownBrands.map(b => renderRow({
-                      type: "brand", item: b, name: b.brandName,
-                      meta: `${plural(models.filter(m => m.brandID === b.id).length, "model")} · ${plural(usage.brandUse[b.id] || 0, "vehicle")}`,
-                      used: usage.brandUse[b.id] || 0,
-                      selected: b.id === selectedBrandID,
-                      onSelect: () => { setSelectedBrandID(b.id); setEditing(null); clearMsgs(); },
-                    }))}
-            </div>
+            <h2 className="font-bold text-lg text-gray-800 truncate">
+              {loading ? (subID ? "Invited user" : "Customer Profile") : profileFullName(details, basic)}
+            </h2>
           </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0">
+            <IconX className="w-5 h-5" />
+          </button>
+        </div>
 
-          {/* MODELS */}
-          <div className="p-5 space-y-3 flex flex-col min-h-0 border-t md:border-t-0">
-            <h3 className="text-sm font-semibold text-gray-700">
-              {selectedBrand ? <>Models of <span className="text-teal-700">{selectedBrand.brandName}</span></> : "Models"}
-              {selectedBrand && <span className="text-gray-400 font-normal"> ({brandModels.length})</span>}
-            </h3>
-            <div className="flex gap-2">
-              <input value={newModel} onChange={e => { setNewModel(e.target.value); clearMsgs(); }} onKeyDown={onEnter(addModel)}
-                placeholder={selectedBrand ? `New ${selectedBrand.brandName} model (e.g. Vios)` : "Select a brand first"}
-                disabled={saving || !selectedBrandID} className={FIELD_CLS} />
-              <button onClick={addModel} disabled={saving || !selectedBrandID}
-                className="px-4 rounded-lg bg-arl-primary text-white text-sm font-medium hover:bg-[#16526a] disabled:opacity-50">Add</button>
+        {loading ? (
+          <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
+        ) : error ? (
+          <div className="py-8 text-center text-sm text-red-500">{error}</div>
+        ) : (
+          <div>
+            <div className="flex items-center gap-3 pb-3 mb-1 border-b border-gray-100">
+              <ProfileAvatar key={basic?.profileImage || "none"} src={basic?.profileImage} initials={profileInitials(details, basic)} />
+              <div className="min-w-0">
+                <p className="font-semibold text-gray-800 truncate">{profileFullName(details, basic)}</p>
+                <p className="text-xs text-gray-400 truncate">@{basic?.username || "—"}</p>
+                <p className="mt-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200">
+                  {stats.completed} completed {stats.completed === 1 ? "booking" : "bookings"}
+                </p>
+              </div>
             </div>
-            <div className="space-y-1 overflow-y-auto max-h-72 md:max-h-80 pr-1">
-              {!selectedBrand ? (
-                <p className="text-sm text-gray-400 text-center py-8">Choose a brand to see and add its models.</p>
-              ) : brandModels.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-8">No models for {selectedBrand.brandName} yet.</p>
-              ) : brandModels.map(m => renderRow({
-                  type: "model", item: m, name: m.modelName,
-                  meta: plural(usage.byModel[m.id] || 0, "vehicle"),
-                  used: usage.byModel[m.id] || 0,
-                }))}
+
+            {row("Email",     basic?.email)}
+            {row("Phone",     basic?.phone)}
+            {row("Username",  basic?.username)}
+            {row("Status",    basic?.status)}
+            {row("ID Status", basic?.isVerified ? "✓ Verified" : "Pending")}
+            {row("Joined",    fmtDate(basic?.createdAt))}
+            {row("Completed Bookings",  bookingsText)}
+
+            {subID ? (
+              // Brief view of an invited user: just the essentials.
+              row("Invited", String(basic?.referral?.invitedCount || 0))
+            ) : (
+              <>
+                {row("Referral Code", basic?.referral?.code)}
+                {row("Referred By",   refByText)}
+                {row("Invited",       String(basic?.referral?.invitedCount || 0))}
+                {basic?.referral?.invited?.length > 0 && (
+                  <ul className="mt-1 mb-1 divide-y border rounded-xl">
+                    {basic.referral.invited.map((p) => {
+                      const n = statsOf(p.id).completed;
+                      return (
+                        <li key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                          <span className="min-w-0 truncate text-gray-700">
+                            {p.name || "—"}{p.username && <span className="text-gray-400"> (@{p.username})</span>}
+                          </span>
+                          <span className="flex items-center gap-2 shrink-0">
+                            <span className="text-xs text-gray-500">{n} completed</span>
+                            <button onClick={() => setSubID(p.id)}
+                              className="px-2.5 py-1 border border-teal-200 text-teal-700 rounded-lg text-xs font-semibold hover:bg-teal-50">
+                              View
+                            </button>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {details && row("Birth Date", details.birthDate ? fmtDate(details.birthDate) : "—")}
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => navigate(`/users?open=${encodeURIComponent(subID || userID)}`)}
+              className="w-full mt-3 py-2 rounded-xl text-sm font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
+            >
+              View More →
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Check circle for each step in the booking checklist (View modal, "Step by step" tab).
+const STEP_STYLE = {
+  done:    { dot: "bg-green-500 text-white border-green-500",                      text: "text-gray-800" },
+  current: { dot: "bg-white text-teal-700 border-teal-500 ring-4 ring-teal-100",   text: "text-gray-900" },
+  todo:    { dot: "bg-white text-gray-400 border-gray-300",                        text: "text-gray-500" },
+  skipped: { dot: "bg-gray-100 text-gray-400 border-gray-200",                     text: "text-gray-400" },
+  missing: { dot: "bg-amber-50 text-amber-600 border-amber-300",                   text: "text-gray-700" },
+  review:  { dot: "bg-amber-50 text-amber-600 border-amber-300",                   text: "text-gray-700" },   // penalties noted but still waiting for a supervisor to confirm
+  partial: { dot: "bg-orange-100 text-orange-600 border-orange-400",               text: "text-orange-700" },
+  stopped: { dot: "bg-red-500 text-white border-red-500",                          text: "text-red-700" },
+};
+
+// Which step of the booking tracker (the 9 steps in ViewModal) a booking is on, for the table's "Phase" column.
+// Booked and Paid are left out on purpose: every booking in the list is already booked, and payment has its own
+// page. Same rules as ViewModal's step checks, so the list and the popup agree. Returns the NEXT unfinished step.
+//   Driver → Pre-rental → Pickup/Monitor → Post-rental → Maintenance → Penalty → Deposit → Done
+// Maintenance / Penalty only show while something is actually open (work filed and unfinished / a penalty waiting
+// for review); a booking with none filed doesn't stall there. Cancelled / stolen bookings have no stage ("—").
+function getBookingStage(b) {
+  const status = (b.status || "").toLowerCase();
+  if (status === "cancelled" || status === "stolen") return { label: "—", tone: "none" };
+  if (status === "to pay") return { label: "—", tone: "none" };
+
+  const isChauffeur = (b.modeOfDriving || "").toLowerCase().includes("chauffeur");
+  const completed   = status === "completed";
+  const started     = !!b.startedAt || status === "ongoing" || completed;
+  const droppedOff  = !!b.droppedOffTime || completed;
+  const inspDone    = (chk) => !!chk?.parts && !!chk?.photos;
+  const depStatus   = b.deposit?.status || (b.paymentStatus === "Refunded" ? "Refunded" : null);
+  const hasDeposit  = !!b.deposit || Number(b.securityDeposit) > 0;
+  const depClosed   = ["Settled", "Refunded", "Forfeited", "Waived"].includes(depStatus);
+
+  let label = null;
+  if (isChauffeur && !b.driverID)            label = "Driver";
+  else if (!inspDone(b.beforeInspection))    label = "Pre-rental";
+  else if (!droppedOff)                      label = started ? "Monitor" : "Pickup";
+  else if (!inspDone(b.afterInspection))     label = "Post-rental";
+  else if (Number(b.maintenancePending) > 0) label = "Maintenance";
+  else if (Number(b.penaltyReview) > 0)      label = "Penalty";
+  else if (hasDeposit && !depClosed)         label = "Deposit";
+
+  if (!label) return { label: "Done", tone: "done" };
+  // A finished booking that still has an earlier step open (e.g. completed from Payments before the inspection) is flagged.
+  return { label, tone: completed ? "warn" : "pending" };
+}
+const STAGE_STYLE = {
+  pending: "bg-teal-50 text-teal-700 border-teal-200",
+  warn:    "bg-amber-50 text-amber-700 border-amber-300",
+  done:    "bg-green-50 text-green-700 border-green-200",
+};
+
+// Card + label-over-value cell, same look as the user details window (Users.jsx ViewDetailsModal).
+function InfoSection({ title, aside, children, cols = 2 }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {aside}
+      </div>
+      <div className={`p-4 grid ${cols === 3 ? "grid-cols-3" : "grid-cols-2"} gap-x-6 gap-y-4`}>{children}</div>
+    </section>
+  );
+}
+function InfoField({ label, value, wide }) {
+  return (
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</div>
+    </div>
+  );
+}
+
+function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelete }) {
+  const { fmt } = useCurrency();
+  const { getToken } = useAuth();
+  const navigate = useNavigate();
+  const driverTotal = Number(booking.driversFee) || 0;
+  const driverDays  = Math.max(1, Number(booking.totalDays) || 1);
+  // Amount only; the "Refunded" label is not shown any more (the Cancellation section covers refunds).
+  const depositText = booking.deposit?.status === "Waived" ? "Waived"
+    : booking.deposit ? `${fmt(booking.deposit.amount)}${booking.deposit.status && booking.deposit.status !== "Refunded" ? ` · ${booking.deposit.status}` : ""}`
+    : Number(booking.securityDeposit) > 0 ? `${fmt(booking.securityDeposit)}${booking.paymentStatus === "Refunded" ? "" : " · Awaiting payment"}`
+    : "Not collected";
+  const row = (label, value) => (
+    <div className="flex justify-between py-2 border-b border-gray-50 last:border-0 text-sm">
+      <span className="text-gray-500 font-medium w-36 shrink-0">{label}</span>
+      <span className="text-gray-800 text-right">{value || "—"}</span>
+    </div>
+  );
+
+  // Inline check: does THIS booking actually have before/after-trip
+  // inventory records? Don't just link off to Vehicle Inspections and
+  // hope it lands on the right one — that page defaults to a car's
+  // nearest/upcoming booking, which for a completed booking is very
+  // likely the wrong record entirely.
+  const [inventoryCheck, setInventoryCheck]     = useState(null); // { before, after } | null
+  const [inventoryLoading, setInventoryLoading] = useState(true);
+
+  useEffect(() => {
+    const bID = booking.bookingID || booking.id;
+    if (!bID) { setInventoryLoading(false); return; }
+    setInventoryLoading(true);
+    fetch(`${process.env.REACT_APP_API_URL}/api/inventory/booking/${encodeURIComponent(bID)}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((r) => r.json())
+      .then((json) => setInventoryCheck(json.data || { before: null, after: null }))
+      .catch(() => setInventoryCheck(null))
+      .finally(() => setInventoryLoading(false));
+  }, [booking, getToken]);
+
+  const goToHistory = () => {
+    navigate("/car-tracking", {
+      state: {
+        tab: "history",
+        carID: booking.carID,
+        bookingID: booking.bookingID || booking.id,
+      },
+    });
+  };
+
+  // Car Tracking (Live tab) with this car already selected.
+  // CarTracking already reads location.state.selectCarId (same deep link
+  // Header notifications and GPS Setup use) and selects that car.
+  const goToCarTracking = () => {
+    navigate("/car-tracking", { state: { selectCarId: booking.carID } });
+  };
+
+  // Vehicle name -> Fleet, with this car's Details window already open.
+  // Fleet reads location.state.openCarId.
+  const goToFleet = () => {
+    navigate("/fleet", { state: { openCarId: booking.carID } });
+  };
+
+  const goToPayments = () => {
+    navigate(`/payments?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
+  };
+
+  // Terms & Conditions page, opened on the exact version this booking agreed to
+  // (termsViewID = the termsVersions doc ID, or the old hash for pre-switch bookings).
+  // bookingID lets the Terms page offer a "Back to booking" button.
+  const goToTerms = () => {
+    const params = new URLSearchParams({
+      version: booking.termsViewID,
+      bookingID: booking.bookingID || booking.id,
+    });
+    navigate(`/terms?${params.toString()}`);
+  };
+
+  // Vehicle Inspections page (system inventory: before/after-trip part
+  // condition + photos) is keyed by carID first, bookingID second — same
+  // deep-link shape it already reads elsewhere (?carID=...&bookingID=...).
+  const goToInventory = () => {
+    const params = new URLSearchParams({
+      carID: booking.carID || "",
+      bookingID: booking.bookingID || booking.id || "",
+    });
+    navigate(`/vehicle-documentation?${params.toString()}`);
+  };
+
+  // Maintenance.jsx already handles ?carID= (from Fleet.jsx); this reuses
+  // that same effect, extended to also pre-fill ?bookingID= and default
+  // the basis to "Post-Rental" — see that file's deep-link effect.
+  const goToMaintenance = () => {
+    const params = new URLSearchParams({
+      carID: booking.carID || "",
+      bookingID: booking.bookingID || booking.id || "",
+    });
+    navigate(`/maintenance?${params.toString()}`);
+  };
+
+  // A record is already filed for this booking: open it in its read-only view (Maintenance.jsx reads ?open=<id>)
+  // instead of the add form. With several records, the newest one still in progress opens first (the list is newest first).
+  const viewMaintenance = () => {
+    const list = linkedMaintenance || [];
+    const target = list.find((m) => m.status !== "Completed") || list[0];
+    if (!target?.id) { goToMaintenance(); return; }
+    navigate(`/maintenance?open=${encodeURIComponent(target.id)}`);
+  };
+
+  // Maintenance records already linked to THIS booking (filed manually
+  // via the button below) — so staff can see at a glance whether post-rental cleaning/repair
+  // has already been scheduled instead of guessing or re-filing it.
+  const [linkedMaintenance, setLinkedMaintenance] = useState(null); // null = loading
+  useEffect(() => {
+    const bID = booking.bookingID || booking.id;
+    if (!bID) { setLinkedMaintenance([]); return; }
+    fetch(`${process.env.REACT_APP_API_URL}/api/maintenance/booking/${encodeURIComponent(bID)}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((r) => r.json())
+      .then((json) => setLinkedMaintenance(json.data || []))
+      .catch(() => setLinkedMaintenance([]));
+  }, [booking, getToken]);
+
+  // Every stop for this booking's trip (pickup, dropoff, any extra stops
+  // selected at booking time) — same shape MyTrips.jsx's map already uses.
+  // Only ever non-empty once getAllBookings has resolved a session for
+  // this booking (see booking.service.js's resolveHistoryInfo).
+  const [mapOpen, setMapOpen] = useState(false);
+  const locationStops = tripStops(booking);
+    // Booking-time Number Coding restrictions the customer app saved (booking.codingWarnings) —
+  // the list the customer was warned about; empty for bookings made before that existed.
+  const codingByCity = warningsByCity(readCodingWarnings(booking.codingWarnings));
+
+  // Existing penalties already tied to this booking — same "always shown,
+  // even when empty" treatment as Linked Maintenance below, so staff can
+  // see at a glance whether anything's been noted against this booking
+  // instead of guessing or re-checking on the Penalties page.
+  const [linkedPenalties, setLinkedPenalties] = useState(null); // null = loading
+  useEffect(() => {
+    const bID = booking.bookingID || booking.id;
+    if (!bID) { setLinkedPenalties([]); return; }
+    fetch(`${process.env.REACT_APP_API_URL}/api/penalties/booking/${encodeURIComponent(bID)}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((r) => r.json())
+      .then((json) => setLinkedPenalties(json.data || []))
+      .catch(() => setLinkedPenalties([]));
+  }, [booking, getToken]);
+
+  // Penalties.jsx is where penalties actually get drafted (see its own
+  // CreatePenaltyModal) — this hands it the bookingID via query param so
+  // the draft it opens is pre-filled and locked to THIS booking, instead
+  // of staff having to copy/type the ID over there themselves.
+  const goToNotePenalty = () => {
+    navigate(`/penalties?bookingID=${encodeURIComponent(booking.bookingID || booking.id)}`);
+  };
+
+  // ── Two tabs: "Step by step" (a checklist with View buttons) and "Details" ──
+  // The 8 steps: Booked → Paid → Driver → Before-trip inspection → Pickup & trip
+  // → Drop-off & after-trip inspection → Maintenance → Deposit & completion.
+  // Each step's check is worked out from data this modal already has, and its
+  // View button jumps to the page where that step is handled.
+  const [tab, setTab] = useState("steps");
+
+  const status        = (booking.status || "").toLowerCase();
+  const dead          = status === "cancelled" || status === "stolen";
+  const isStolen      = status === "stolen";
+  const isCancelled   = status === "cancelled";
+  const isChauffeur   = (booking.modeOfDriving || "").toLowerCase().includes("chauffeur");
+  const before        = inventoryCheck?.before || null;
+  const after         = inventoryCheck?.after || null;
+  // The same before/after checklist the Pickup and Return gates use (it comes with every booking in the list):
+  // { photos, parts, complete, videos } where photos = a video OR the 3 exterior photos. An inspection step is only
+  // green when the parts condition AND that video/photos evidence both exist, so the tracker never says "done"
+  // for something the gate would still block.
+  const beforeChk     = booking.beforeInspection || null;
+  const afterChk      = booking.afterInspection || null;
+  const maint         = linkedMaintenance || [];
+  const maintAllDone  = maint.length > 0 && maint.every((m) => m.status === "Completed");
+  const depStatus     = booking.deposit?.status || (booking.paymentStatus === "Refunded" ? "Refunded" : null);
+  const depositClosed = ["Settled", "Refunded", "Forfeited", "Waived"].includes(depStatus);
+  // A cancelled booking that was refunded may have lost its deposit record, so money that came in
+  // (or went back out) still counts as paid.
+  const paid          = ["upcoming", "ongoing", "completed", "cancellation_request"].includes(status) || !!booking.deposit
+    || (dead && (booking.paymentStatus === "Refunded" || booking.paymentStage === "Refunded" || Number(booking.amountPaid) > 0));
+  // What happened to the money on a cancelled booking (shown under "Paid" and in the red banner).
+  const refundNote    = status !== "cancelled" || !paid ? null
+    : (booking.paymentStatus === "Refunded" || booking.paymentStage === "Refunded") ? "Refunded"
+    : booking.paymentStage === "For Refund" ? "Refund pending"
+    : depStatus === "Forfeited" ? "Deposit kept"
+    : "No refund";
+  // Paid but not in full yet (the balance is still owed) -> shown orange, "in the middle".
+  const partial       = paid && !dead && status !== "completed" && (String(booking.paymentStage || "").toLowerCase() === "partial" || Number(booking.balance) > 0);
+  const discountGiven = Number(booking.discountAmount) > 0;
+  const started       = !!booking.startedAt || status === "ongoing" || status === "completed";
+  const droppedOff    = !!booking.droppedOffTime || status === "completed";
+  const invLabel      = (rec) => (rec.inventoryOverallStatus === "has damage" ? `Has damage (${rec.damageParts?.length || 0})` : "Good");
+  // Parts confirmed = the saved parts record (fetched just now) or the checklist's flag; evidence = video or 3 photos.
+  const inspectionDone = (rec, chk) => (!!rec || !!chk?.parts) && !!chk?.photos;
+  const inspectionSub  = (rec, chk, emptyText) => {
+    if (inventoryLoading) return "Checking…";
+    const hasParts = !!rec || !!chk?.parts;
+    const hasMedia = !!chk?.photos;
+    const partsText = rec ? invLabel(rec) : "Parts confirmed";
+    const mediaText = chk?.videos > 0 ? `${chk.videos} video${chk.videos > 1 ? "s" : ""}` : "photos";
+    if (hasParts && hasMedia) return `${partsText} · ${mediaText}`;
+    if (hasParts)             return `${partsText} · video or photos missing`;
+    if (hasMedia)             return `${chk?.videos > 0 ? "Video added" : "Photos added"} · parts condition not confirmed`;
+    return emptyText;
+  };
+  const pendingMaint  = maint.filter((m) => m.status !== "Completed").length;
+  const penaltyCount  = (linkedPenalties || []).length;
+
+  const monitorText = !started ? "Not started"
+    : isStolen ? `Flagged stolen${booking.hasHistory ? " · GPS trail saved" : ""}`
+    : !droppedOff ? "Trip in progress — track it live"
+    : booking.hasHistory ? "GPS trail saved" : "No GPS trail saved";
+  // A penalty a driver noted stays "Under Review" until a supervisor confirms it. Until then the step is yellow, not green.
+  const penaltyReviewCount = (linkedPenalties || []).filter((x) => x.status === "UnderReview").length;
+  const penaltiesDone = penaltyCount > 0 && penaltyReviewCount === 0;
+
+  const stepDefs = [
+    { key: "booked", title: "Booked", done: true, sub: fmtDateTime(booking.createdAt) },
+    {
+      // Payment AND the one-time discount. Orange while only part of the fee has come in.
+      key: "paid", title: "Paid", done: paid && !partial, partial,
+      sub: !paid ? "Awaiting payment"
+        : [
+            partial ? `Partial · ${fmt(booking.balance)} still to pay` : (booking.paymentMethod || "Paid"),
+            refundNote,
+            discountGiven ? `Discount −${fmt(booking.discountAmount)}` : null,
+          ].filter(Boolean).join(" · "),
+    },
+    {
+      // On a cancelled booking "self-drive, no driver needed" is not something that got done, so only a real assignment counts.
+      key: "driver", title: "Driver assigned", done: isCancelled ? !!booking.driverID : (!isChauffeur || !!booking.driverID),
+      sub: !isChauffeur ? "Self-drive — no driver needed" : booking.driverID ? (booking.driverName || "Assigned") : "No driver yet",
+    },
+    { key: "before", title: "Before-trip inspection", done: inspectionDone(before, beforeChk), sub: inspectionSub(before, beforeChk, "Not recorded") },
+    {
+      // One process: pickup → monitor → drop-off. Done once the car is dropped off.
+      key: "trip", title: "Pickup, monitor & drop-off", done: droppedOff,
+      sub: droppedOff ? "Dropped off" : started ? "Trip in progress" : "Not started",
+      parts: [
+        { key: "pickup", label: "Pickup", done: started, text: booking.startedAt ? fmtDateTime(booking.startedAt) : started ? "Trip started" : "Not picked up yet" },
+        {
+          key: "monitor", label: "Monitor", done: droppedOff || isStolen, text: monitorText,
+          actions: [{ label: "Car Tracking", onClick: goToCarTracking }],
+        },
+        { key: "dropoff", label: "Drop-off", done: droppedOff, bad: isStolen && !droppedOff,
+          text: booking.droppedOffTime ? fmtDateTime(booking.droppedOffTime) : droppedOff ? "Dropped off" : isStolen ? "Never dropped off — flagged stolen" : "Not dropped off yet",
+          actions: booking.hasHistory ? [{ label: "Trip History", onClick: goToHistory }] : [] },
+      ],
+    },
+    {
+      // Green once the after-trip inspection is complete: parts condition + a video (or the 3 exterior photos).
+      key: "after", title: "Post-rental inspection", done: inspectionDone(after, afterChk),
+      warn: after?.inventoryOverallStatus === "has damage",
+      sub: inspectionSub(after, afterChk, droppedOff ? "Dropped off · not inspected yet" : "Not recorded"),
+    },
+    {
+      key: "maintenance", title: "Maintenance", done: maintAllDone,
+      skipped: !maintAllDone && linkedMaintenance !== null && maint.length === 0 && status === "completed",
+      sub: linkedMaintenance === null ? "Checking…"
+        : maint.length === 0 ? (status === "completed" ? "None filed" : "None filed yet")
+        : maintAllDone ? "Completed" : `${pendingMaint} in progress`,
+    },
+    {
+      key: "penalties", title: "Penalties", done: penaltiesDone, review: penaltyReviewCount > 0,
+      skipped: !penaltiesDone && penaltyReviewCount === 0 && linkedPenalties !== null && status === "completed",
+      sub: linkedPenalties === null ? "Checking…"
+        : penaltyReviewCount ? `${penaltyCount} noted · ${penaltyReviewCount} to review`
+        : penaltyCount ? `${penaltyCount} noted` : status === "completed" ? "None noted" : "None noted yet",
+    },
+    {
+      // A cancelled booking never completed: its refund / forfeit (already shown under "Paid") writes the deposit
+      // status as Refunded/Forfeited, which used to turn this step green. It now shows as stopped, with the outcome.
+      key: "deposit", title: "Deposit & completion", done: depositClosed && !isCancelled,
+      stoppedSub: isCancelled && refundNote ? `Cancelled — ${refundNote}` : null,
+      sub: depStatus || (Number(booking.securityDeposit) > 0 ? "Not settled yet" : "No deposit"),
+    },
+  ];
+
+  // done as computed; on a cancelled or stolen booking every step that never happened is red
+  // ("stopped"); otherwise the first one not done is "current", and on a finished booking gaps show as "missing".
+  let currentSeen = false;
+  const steps = stepDefs.map((d, i) => {
+    let state;
+    if (d.done) state = "done";
+    else if (dead) state = "stopped";        // cancelled / stolen: everything that didn't happen is red
+    else if (d.partial) state = "partial";   // in the middle: orange, and it doesn't hold up the steps after it
+    else if (d.review) state = "review";     // penalties waiting for review: yellow, doesn't hold up the steps after it
+    else if (d.skipped) state = "skipped";
+    else if (status === "completed") state = "missing";
+    else if (!currentSeen) { state = dead ? "stopped" : "current"; currentSeen = true; }
+    else state = "todo";
+    return { ...d, n: i + 1, state };
+  });
+  const countable = steps.filter((s) => s.state !== "skipped");
+  const doneCount = countable.filter((s) => s.state === "done").length;
+
+  // Every button is named after the page it opens.
+  const goToDispatch = () => navigate("/driver-dispatch", {
+    state: { assignBookingId: booking.bookingID || booking.id, assignCustomerName: booking.customerName },
+  });
+  const stepActions = {
+    booked:      [{ label: "Details", onClick: () => setTab("details") }],
+    paid:        [{ label: "Payments", onClick: goToPayments }],
+    driver:      isChauffeur ? [{ label: "Driver Dispatch", onClick: goToDispatch }] : [],
+    before:      [{ label: "Vehicle Inspections", onClick: goToInventory }],
+    after:       [{ label: "Vehicle Inspections", onClick: goToInventory }],
+    // Already filed: open it. Nothing filed (or still loading): the add form, as before.
+    maintenance: maint.length > 0
+      ? [{ label: maint.length > 1 ? `View maintenance (${maint.length})` : "View maintenance", onClick: viewMaintenance }]
+      : [{ label: "Maintenance", onClick: goToMaintenance }],
+    penalties:   [{ label: "Penalties", onClick: goToNotePenalty }],
+    // The deposit is handed back from the Payments page ("Return deposit"), so name the button for it while one is waiting.
+    deposit:     [{ label: status === "ongoing" && depStatus === "Held" ? "Return deposit (Payments)" : "Payments", onClick: goToPayments }],
+  };
+
+  const stepBtn = "px-3 py-1.5 text-sm font-medium rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors whitespace-nowrap";
+  const partBtn = "px-2.5 py-1 text-xs font-medium rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors whitespace-nowrap";
+
+  const tabBtn = (key, label) => (
+    <button
+      onClick={() => setTab(key)}
+      className={`px-5 py-2.5 text-sm font-semibold border-b-2 -mb-px transition ${
+        tab === key ? "border-teal-600 text-teal-700" : "border-transparent text-gray-400 hover:text-gray-600"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+        {/* Header */}
+        <div className="px-6 pt-5 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <h2 className="font-bold text-lg text-gray-800">Booking Details</h2>
+              <StatusBadge status={booking.status} />
             </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0">
+              <IconX className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-sm text-gray-500 mt-1 truncate">
+            {booking.customerName || "—"}{booking.vehicleName ? ` · ${booking.vehicleName}` : ""}
+          </p>
+          <div className="flex border-b border-gray-100 mt-3">
+            {tabBtn("steps", "Step by step")}
+            {tabBtn("details", "Details")}
           </div>
         </div>
 
-        {error && <p className="text-sm text-red-600 bg-red-50 border-t border-red-100 px-5 py-3">{error}</p>}
-      </div>
+        {/* Body */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
+          {/* The customer's own request to cancel an ongoing trip (cancellationRequests).
+              Shown on both tabs — this is the only place the approver can read WHY it was asked. */}
+          {booking.cancellationRequest && (
+            <div className="mt-2 rounded-xl border border-orange-100 bg-orange-50/60 px-3 py-2">
+              <p className="text-xs font-semibold text-orange-700 mb-1">Cancellation request</p>
+              {row("Status", String(booking.cancellationRequest.status || "").replace(/^./, (c) => c.toUpperCase()))}
+              {row("Reason", booking.cancellationRequest.reason || "—")}
+              {row("Requested", fmtDateTime(booking.cancellationRequest.createdAt || booking.cancellationRequest.requestedAt))}
+              {booking.cancellationRequest.processedAt && row(
+                "Processed",
+                `${fmtDateTime(booking.cancellationRequest.processedAt)}${booking.cancellationRequest.processedByName ? ` by ${booking.cancellationRequest.processedByName}` : ""}`
+              )}
+              {booking.cancellationRequest.rejectReason && row("Reject reason", booking.cancellationRequest.rejectReason)}
+            </div>
+          )}
 
-      {confirmDel && (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
-            <div className="text-center">
-              <div className="flex justify-center mb-3">
-                <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
-                  <Icons.Trash className="w-7 h-7 text-red-500" />
-                </div>
-              </div>
-              <h3 className="font-bold text-gray-800 text-lg">Confirm Delete</h3>
-              <p className="text-sm text-gray-500 mt-1">
-                {confirmDel.type === "brand"
-                  ? `Delete brand "${confirmDel.item.brandName}"? All its models will also be deleted.`
-                  : `Delete model "${confirmDel.item.modelName}"?`}
+          {/* Cancelled / stolen: one clear red banner on both tabs. The header says WHO cancelled;
+              the details (reason, time, refund) are in the Cancellation section of the Details tab. */}
+          {dead && (
+            <div className="mt-2 mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+              <p className="text-xs font-bold uppercase tracking-wide text-red-700">
+                {isStolen
+                  ? "Stolen — car flagged stolen"
+                  : booking.cancelledBy === "customer" ? "Cancelled by Customer"
+                  : booking.cancelledBy === "staff" ? "Cancelled by Staff"
+                  : booking.cancelledBy === "system" ? "Cancelled by System"
+                  : "Cancelled"}
               </p>
             </div>
-            <div className="flex gap-3">
-              <button onClick={() => setConfirmDel(null)}
-                className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
-              <button onClick={handleDelete} disabled={saving}
-                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-medium hover:bg-red-600 disabled:opacity-50">
-                {saving ? "Deleting..." : "Delete"}
-              </button>
+          )}
+
+          {/* Number Coding restrictions the customer was warned about when booking
+              (booking.codingWarnings). Shown on both tabs — staff doing pickup on the Steps tab
+              need it as much as someone reading Details. Nothing renders for older bookings. */}
+          {codingByCity.length > 0 && (
+            <div className="mt-2 mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="font-semibold">⚠️ Number Coding restrictions found before booking</p>
+              <ul className="mt-1.5 space-y-0.5">
+                {codingByCity.map((c) => (
+                  <li key={c.city || "city"}>
+                    <span className="font-semibold">{c.city || "City"}</span>
+                    {c.plateLastDigit != null ? ` (plate ending ${c.plateLastDigit})` : ""}
+                    {c.text ? `: ${c.text}` : ""}
+                  </li>
+                ))}
+              </ul>
             </div>
-          </div>
+          )}
+
+          {tab === "steps" ? (
+            <>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+                {doneCount} of {countable.length} steps done
+              </p>
+              <ol className="space-y-2">
+                {steps.map((st) => {
+                  const sty = STEP_STYLE[st.state];
+                  const actions = stepActions[st.key] || [];
+                  return (
+                    <li
+                      key={st.key}
+                      className={`rounded-xl border ${st.state === "current" ? "border-teal-200 bg-teal-50/40" : st.state === "stopped" ? "border-red-200 bg-red-50/40" : "border-gray-100 bg-white"}`}
+                    >
+                      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                        <span className={`w-8 h-8 shrink-0 rounded-full border-2 flex items-center justify-center text-xs font-bold ${sty.dot}`}>
+                          {st.state === "done" ? <IconCheck className="w-4 h-4" />
+                            : st.state === "stopped" ? <IconX className="w-4 h-4" />
+                            : st.state === "skipped" ? "–"
+                            : st.state === "missing" || st.state === "review" ? "!"
+                            : st.n}
+                        </span>
+                        <div className="min-w-0 flex-1 basis-40">
+                          <p className={`text-sm font-semibold leading-snug ${sty.text}`}>{st.n}. {st.title}</p>
+                          <p className={`text-xs mt-0.5 ${st.warn ? "text-red-600 font-semibold" : "text-gray-400"}`}>
+                            {st.state === "stopped" ? (isStolen ? "Not completed — car flagged stolen" : st.stoppedSub || "Cancelled — did not happen") : st.sub}
+                          </p>
+                        </div>
+                        {actions.length > 0 && (
+                          <div className="flex items-center gap-2 shrink-0 ml-auto">
+                            {actions.map((a) => (
+                              <button key={a.label} onClick={a.onClick} className={stepBtn}>{a.label}</button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {st.parts && (
+                        <ul className="pl-[3.75rem] pr-4 pb-3 pt-0.5 space-y-2">
+                          {st.parts.map((p) => (
+                            <li key={p.key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                              <span className={`w-5 h-5 shrink-0 rounded-full border flex items-center justify-center text-[10px] font-bold ${
+                                p.bad ? "bg-red-500 text-white border-red-500"
+                                : p.done === undefined ? "bg-gray-100 text-gray-400 border-gray-200"
+                                : p.done ? "bg-green-500 text-white border-green-500"
+                                : "bg-white text-gray-300 border-gray-300"
+                              }`}>
+                                {p.bad ? <IconX className="w-3 h-3" /> : p.done ? <IconCheck className="w-3 h-3" /> : p.done === undefined ? "•" : ""}
+                              </span>
+                              <div className="min-w-0 flex-1 basis-40">
+                                <span className="text-sm font-medium text-gray-700">{p.label}</span>
+                                <span className={`text-xs ml-2 ${p.warn || p.bad ? "text-red-600 font-semibold" : "text-gray-400"}`}>{p.text}</span>
+                              </div>
+                              {p.actions && (
+                                <div className="flex items-center gap-2 shrink-0 ml-auto">
+                                  {p.actions.map((a) => (
+                                    <button key={a.label} onClick={a.onClick} className={partBtn}>{a.label}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </>
+          ) : (
+            <div className="space-y-4">
+              {/* Same look as the user details window in Users.jsx: one bordered card per group. */}
+              <InfoSection title="Customer Information">
+                <InfoField label="Customer" value={booking.userID ? (
+                  <button onClick={() => onViewCustomer(booking.userID)} className="text-indigo-600 hover:underline font-medium text-left">
+                    {booking.customerName || "—"}
+                  </button>
+                ) : booking.customerName} />
+                <InfoField label="Phone" value={booking.phone} />
+              </InfoSection>
+
+              <InfoSection title="Booking Information">
+                <InfoField label="Booking ID" value={booking.bookingID || booking.id} />
+                <InfoField label="Created"    value={fmtDateTime(booking.createdAt)} />
+                <InfoField label="Vehicle" value={booking.carID && booking.vehicleName ? (
+                  <button onClick={goToFleet} title="Open vehicle details in Fleet" className="text-indigo-600 hover:underline font-medium text-left">
+                    {booking.vehicleName}
+                  </button>
+                ) : booking.vehicleName} />
+                <InfoField label="Service Type" value={booking.serviceTypeName} />
+                <InfoField label="Start Date" value={fmtDate(booking.startDateTime)} />
+                <InfoField label="End Date"   value={fmtDate(booking.endDateTime)} />
+                <InfoField wide label="Duration" value={booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : null} />
+                <InfoField label="Driving"    value={booking.modeOfDriving} />
+                <InfoField label="Driver" value={booking.driverID ? (
+                  `${booking.driverName || "—"}${booking.driverPhone && booking.driverPhone !== "—" ? ` · ${booking.driverPhone}` : ""}`
+                ) : (
+                  <span className="text-gray-400 italic font-normal">{isChauffeur ? "No driver assigned" : "Not needed"}</span>
+                )} />
+                {/* Pickup and destination live on the map. */}
+                <div className="col-span-2 flex items-center justify-between gap-4 pt-3 border-t border-gray-100 min-w-0">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Pickup, Destination/s and Drop-off</p>
+                  {locationStops.length > 0 ? (
+                    <button onClick={() => setMapOpen(true)} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors shrink-0">
+                      View Map →
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-300 shrink-0">No map data</span>
+                  )}
+                </div>
+              </InfoSection>
+
+              <InfoSection
+                title="Booking Fee"
+                cols={3}
+                aside={(
+                  <button
+                    type="button"
+                    onClick={goToPayments}
+                    title="Open this booking's payment on the Payments page"
+                    className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors"
+                  >
+                    View payments →
+                  </button>
+                )}
+              >
+                <InfoField label="Rental Fee"       value={fmt(booking.rentalFee)} />
+                <InfoField label="Security Deposit" value={depositText} />
+                <div />
+                <InfoField label="Service Fee"      value={fmt(booking.serviceFee)} />
+                <InfoField label="Gateway Fee"      value={Number(booking.gatewayFee) > 0 ? fmt(booking.gatewayFee) : null} />
+                <div />
+                {/* Chauffeur: rate per day × days = total. driversFee is the total, so the rate is total ÷ days. */}
+                <InfoField label="Driver's Fee"     value={driverTotal > 0 ? fmt(driverTotal / driverDays) : null} />
+                <InfoField label="Duration"         value={driverTotal > 0 ? `× ${driverDays} day${driverDays > 1 ? "s" : ""}` : null} />
+                <InfoField label="Total Driver Fee" value={driverTotal > 0 ? fmt(driverTotal) : null} />
+                <div className="col-span-3 flex items-baseline justify-end gap-4 pt-3 border-t border-gray-100">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Total Fee</span>
+                  <span className="text-base font-bold text-gray-800">{fmt(booking.totalFee)}</span>
+                </div>
+              </InfoSection>
+
+              {/* Cancellation — only for a cancelled booking. Every line shows; "—" = not recorded. */}
+              {isCancelled && (
+                <InfoSection title="Cancellation">
+                  <InfoField label="Cancelled By" value={
+                    booking.cancelledBy === "system" ? "System (auto-cancelled)"
+                    : booking.cancelledBy === "customer" ? `${booking.cancelledByName || booking.customerName || "Customer"} · Customer`
+                    : booking.cancelledBy === "staff" ? (booking.cancelledByName ? `${booking.cancelledByName} · ${booking.cancelledByRole || "Staff"}` : "Staff · name not recorded")
+                    : "Not recorded"
+                  } />
+                  <InfoField label="Cancelled At" value={booking.cancelledAt ? fmtDateTime(booking.cancelledAt) : null} />
+                  {booking.approvedByName && <InfoField label="Approved By" value={`${booking.approvedByName} · ${booking.approvedByRole || "Staff"}`} />}
+                  <InfoField wide label="Reason" value={booking.cancelDisplayReason} />
+                  {booking.refundSummary?.byStaff && (
+                    <InfoField wide label="Refund Type" value={
+                      booking.refundSummary.depositForfeited > 0 ? `No Deposit Refund · ${fmt(booking.refundSummary.depositForfeited)} deposit${booking.refundSummary.gatewayFeeKept > 0 ? ` and ${fmt(booking.refundSummary.gatewayFeeKept)} payment fee` : ""} not returned`
+                      : booking.refundSummary.gatewayFeeKept > 0 ? `Normal refund · ${fmt(booking.refundSummary.gatewayFeeKept)} payment fee not returned`
+                      : booking.refundSummary.bookingPaid > (booking.refundSummary.amount || 0) ? `Partial refund · ${fmt(booking.refundSummary.bookingPaid - booking.refundSummary.amount)} not returned`
+                      : "Full refund"
+                    } />
+                  )}
+                  <InfoField wide label="Refund" value={(booking.refundSummary?.status || refundNote) ? (
+                    <span className="flex items-center justify-between gap-3">
+                      <span>{booking.refundSummary?.status || refundNote}{booking.refundSummary?.scheduled ? " · sends after midnight" : ""}</span>
+                      {booking.refundSummary?.refundRequestID && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/refund-requests?search=${encodeURIComponent(booking.refundSummary.refundRequestID)}`)}
+                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors shrink-0"
+                        >
+                          View refund →
+                        </button>
+                      )}
+                    </span>
+                  ) : null} />
+                </InfoSection>
+              )}
+
+              {/* T&C this customer ticked "I agree" to. Written once at booking creation, never edited. */}
+              <InfoSection title="Terms & Conditions">
+                <InfoField wide label="Agreed Version" value={
+                  booking.termsViewID && booking.termsAcceptedAt ? (
+                    <span className="flex items-center justify-between gap-3">
+                      <button onClick={goToTerms} title="Open the exact Terms & Conditions text the customer agreed to" className="text-indigo-600 hover:underline font-medium text-left">
+                        {booking.termsVersionNumber != null && Number.isFinite(Number(booking.termsVersionNumber))
+                          ? `Version ${Number(booking.termsVersionNumber).toFixed(2)}`
+                          : "View agreed terms"} →
+                      </button>
+                      <span className="text-xs text-gray-400 font-normal shrink-0">Agreed {fmtDateTime(booking.termsAcceptedAt)}</span>
+                    </span>
+                  ) : booking.termsAcceptedAt ? (
+                    <span>Agreed {fmtDateTime(booking.termsAcceptedAt)} <span className="text-xs text-gray-400 font-normal">· Version not recorded</span></span>
+                  ) : (
+                    <span className="text-gray-400 font-normal">No agreement recorded</span>
+                  )
+                } />
+              </InfoSection>
+
+              {/* Admin / Owner only (onRefund is only passed to them). Opens the same Refund & Cancel window the footer button used to. */}
+              {onRefund && (canRefundCancel(booking.status) || status === "ongoing") && (
+                <InfoSection title="Cancel Booking">
+                  {canRefundCancel(booking.status) ? (
+                    <div className="sm:col-span-2 col-span-full flex items-center justify-between gap-4">
+                      <p className="text-sm text-gray-500">Cancel this booking and choose what goes back to the customer: full refund, normal refund, no deposit refund, or cancel only.</p>
+                      <button onClick={() => onRefund(booking)} className="shrink-0 px-3.5 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors whitespace-nowrap">Cancel Booking</button>
+                    </div>
+                  ) : (
+                    <p className="sm:col-span-2 col-span-full text-sm text-gray-400">A trip that is already ongoing can't be cancelled from here. It goes through the customer's cancellation request.</p>
+                  )}
+                </InfoSection>
+              )}
+
+              <InfoSection title="Notes">
+                <InfoField wide label="Notes (User)"  value={booking.notesUser} />
+                <InfoField wide label="Notes (Admin)" value={booking.notesAdmin} />
+              </InfoSection>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Actions — only the ones that apply to this booking / this role. */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+        {(onEdit || onRefund || onDelete) && (
+          <div className="flex flex-col gap-1.5">
+            {onEdit && (
+              <button onClick={() => onEdit(booking)} className="w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Add Note</button>
+            )}
+            {onRefund && status === "cancelled" && !booking.refundSummary && (refundNote === "No refund" || refundNote === "Deposit kept") && (
+              <button onClick={() => onRefund(booking)} className="w-full px-3 py-1.5 border border-orange-200 bg-orange-50 text-orange-700 font-semibold rounded-xl text-sm hover:bg-orange-100 transition-colors whitespace-nowrap">Refund (cancelled)</button>
+            )}
+            {onDelete && (
+              <button onClick={() => onDelete(booking)} className="w-full px-3 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors">Delete</button>
+            )}
+          </div>
+        )}
+          <button onClick={onClose} className="w-full mt-1.5 py-1.5 border rounded-xl text-sm">Close</button>
+        </div>
+      </div>
+
+      <TripMapModal
+        open={mapOpen}
+        onClose={() => setMapOpen(false)}
+        title={`${booking.customerName || "Booking"} — ${booking.vehicleName || ""}`}
+        stops={locationStops}
+      />
     </div>
   );
 }
 
-// ─── CONFIRM DELETE MODAL ─────────────────────────────────────────────────────
-function ConfirmDeleteModal({ message, onConfirm, onCancel }) {
+// Booking ID with a copy icon beside it. Shows the first 8 characters (full ID
+// on hover and what actually gets copied) so the column stays narrow.
+function CopyableId({ value }) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return <span className="text-gray-300">—</span>;
+  const copy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(String(value));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked — nothing to do */ }
+  };
   return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
-        <div className="text-center">
-          <div className="flex justify-center mb-3">
-            <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
-              <Icons.AlertTriangle className="w-7 h-7 text-red-500" />
-            </div>
-          </div>
-          <h3 className="font-bold text-gray-800 text-lg">Confirm Delete</h3>
-          <p className="text-sm text-gray-500 mt-1">{message}</p>
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="font-mono text-xs text-gray-600" title={value}>{String(value).slice(0, 8)}…</span>
+      <button
+        type="button"
+        onClick={copy}
+        title={copied ? "Copied!" : "Copy booking ID"}
+        aria-label="Copy booking ID"
+        className={`p-1 rounded-md transition-colors ${copied ? "text-teal-600 bg-teal-50" : "text-gray-400 hover:text-teal-600 hover:bg-teal-50"}`}
+      >
+        {copied ? (
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+        ) : (
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" /><path strokeLinecap="round" d="M5 15V6a2 2 0 012-2h9" /></svg>
+        )}
+      </button>
+    </span>
+  );
+}
+
+// ─── MAIN PAGE ────────────────────────────────────────────────────────────────
+
+export default function Bookings() {
+  const { getToken, effectiveRole } = useAuth();
+  const canRefundRole = [ROLES.ADMIN, ROLES.OWNER].includes(effectiveRole);
+  const [refundBooking, setRefundBooking] = useState(null);
+  const [activeTab, setActiveTab]           = useState("All");
+  const [search, setSearch]                 = useState("");
+  const [searchBy, setSearchBy]             = useState("customer");
+  const [dateValue, setDateValue]           = useState(""); // "YYYY-MM-DD" from the date picker
+  const [allBookings, setAllBookings]       = useState([]);
+  const [loading, setLoading]               = useState(true);
+  const [error, setError]                   = useState(null);
+  const [viewBooking, setViewBooking]       = useState(null);
+  const [editBooking, setEditBooking]       = useState(null);
+  const [deleteBooking, setDeleteBooking]   = useState(null);
+  const [deleteToast, setDeleteToast]       = useState(null);
+  // Customer name → profile modal, in place, instead of navigating to /users.
+  // Shared by both the table row and ViewModal (ViewModal passes its own
+  // trigger down to this same modal via the userID it's given).
+  const [profileUserID, setProfileUserID]   = useState(null);
+  const [searchParams, setSearchParams]     = useSearchParams();
+  const [sortKey, setSortKey]               = useState("created");  // newest bookings on top by default
+  const [sortDir, setSortDir]               = useState("desc");
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "created" ? "desc" : "asc");
+    }
+  };
+
+  const showToast = (msg, type = "success") => {
+    setDeleteToast({ msg, type });
+    setTimeout(() => setDeleteToast(null), 4000);
+  };
+
+  // `silent` skips the loading spinner — used by the live-refresh listener below
+  // so a change from another admin/customer doesn't flash the whole table blank.
+  const fetchBookings = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
+    try {
+      const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/bookings?status=all`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Failed to load bookings");
+      setAllBookings(json.data);
+    } catch (err) { if (!silent) setError(err.message); }
+    finally { if (!silent) setLoading(false); }
+  }, [getToken]);
+
+  useEffect(() => { fetchBookings(); }, [fetchBookings]);
+
+  // ── Live refresh ────────────────────────────────────────────────────────────
+  // The REST endpoint does all the real work (joins car/user/driver info, sorts,
+  // filters), so instead of re-implementing that here off raw Firestore docs,
+  // we just listen for *any* change to the bookings collection and re-run the
+  // existing fetch. Bursts of writes (e.g. a booking + its history doc changing
+  // together) are coalesced with a short debounce so we don't hammer the API.
+  //
+  // CHANGED: this used to be onSnapshot(collection(db, "bookings")) — which reads
+  // EVERY booking document each time the page opens and again on every change
+  // (per open tab), on top of the API re-fetch it triggered. Now it just
+  // re-runs the same API fetch every 45s while the tab is visible.
+  usePolling(() => fetchBookings(true), 45_000, { immediate: false });
+
+  // Opens a specific status tab when linked in via ?tab=<Upcoming|Ongoing|...>
+  // (used by Dashboard's stat cards). Runs once, on mount — doesn't need to
+  // wait on bookings to load like ?open= below does.
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (!tabParam) return;
+    const match = STATUS_TABS.find((t) => t.toLowerCase() === tabParam.toLowerCase());
+    if (match) setActiveTab(match);
+    setSearchParams((prev) => { prev.delete("tab"); return prev; }, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  // Linked in with ?search=<bookingID> (e.g. Payments' "View booking"): fills the search bar, on the All tab so the
+  // booking can't be hidden by a status tab, then strips the param. The list is filtered right away, no loading wait.
+  useEffect(() => {
+    const q = searchParams.get("search");
+    if (!q) return;
+    setSearchBy("booking"); // these links always carry a booking ID
+    setDateValue("");
+    setSearch(q);
+    setActiveTab("All");
+    setSearchParams((prev) => { prev.delete("search"); return prev; }, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  // Opens the exact booking a notification click pointed to (?open=<refID>,
+  // set by Header.jsx). Runs once bookings are loaded so the record is
+  // actually there to find; strips the param afterward so refreshing/
+  // navigating away doesn't keep re-opening it.
+  useEffect(() => {
+    const openID = searchParams.get("open");
+    if (!openID || loading || allBookings.length === 0) return;
+    const match = allBookings.find((b) => b.id === openID || b.bookingID === openID);
+    if (match) setViewBooking(match);
+    setSearchParams((prev) => { prev.delete("open"); return prev; }, { replace: true });
+  }, [searchParams, allBookings, loading, setSearchParams]);
+
+  // DeleteBundleModal does the asking + the DELETE call (blockers, force, whole-booking archive); we only react.
+  const handleDeleted = (json) => {
+    const removed = deleteBooking;
+    setAllBookings((prev) => prev.filter((b) => b.id !== removed.id));
+    showToast(json?.message || "Booking archived.", "success");
+    setDeleteBooking(null);
+  };
+
+  const counts = {
+    All:       allBookings.length,
+    "To Pay":  allBookings.filter((b) => b.status?.toLowerCase() === "to pay").length,
+    Upcoming:  allBookings.filter((b) => b.status?.toLowerCase() === "upcoming").length,
+    Ongoing:   allBookings.filter((b) => b.status?.toLowerCase() === "ongoing").length,
+    Cancelled: allBookings.filter((b) => b.status?.toLowerCase() === "cancelled").length,
+    Completed: allBookings.filter((b) => b.status?.toLowerCase() === "completed").length,
+  };
+  const cancellationRequestCount = allBookings.filter((b) => b.status?.toLowerCase() === "cancellation_request").length;
+
+  const tabFiltered  = activeTab === "All"
+    ? allBookings
+    : allBookings.filter((b) => b.status?.toLowerCase() === activeTab.toLowerCase());
+
+  const searchType = SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
+
+  const filtered = tabFiltered.filter((b) => {
+    if (searchType === "date") {
+      if (!dateValue) return true;
+      const val = searchBy === "created" ? b.createdAt : searchBy === "start" ? b.startDateTime : b.endDateTime;
+      return dayKey(val) === dateValue;
+    }
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const hay = {
+      customer: b.customerName,
+      phone:    b.phone,
+      vehicle:  b.vehicleName,
+      phase:    b.paymentStage,
+      booking:  b.bookingID || b.id,
+    }[searchBy];
+    return String(hay || "").toLowerCase().includes(q);
+  });
+
+  // Sort (dates/fee/duration only — everything else stays in API/insertion order).
+  // Applied after search+tab filtering, before pagination, so page counts
+  // reflect the sorted set and Page 1 always shows the "top" of the sort.
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sortKey) return 0;
+    let av, bv;
+    if (sortKey === "start") { av = toMillis(a.startDateTime); bv = toMillis(b.startDateTime); }
+    else if (sortKey === "end") { av = toMillis(a.endDateTime); bv = toMillis(b.endDateTime); }
+    else if (sortKey === "fee") { av = a.totalFee ?? -Infinity; bv = b.totalFee ?? -Infinity; }
+    else if (sortKey === "created") { av = toMillis(a.createdAt); bv = toMillis(b.createdAt); }
+    else if (sortKey === "duration") { av = a.totalDays != null ? Number(a.totalDays) : -Infinity; bv = b.totalDays != null ? Number(b.totalDays) : -Infinity; }
+    else return 0;
+    if (av === bv) return 0;   // also avoids -Infinity - -Infinity = NaN when both are missing
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  const { page, setPage, totalPages, pageItems, start, count } = usePagination(sorted);
+  // Jump back to page 1 whenever the visible set changes shape (new search/filter/tab).
+  // (not on allBookings: the 45s background refresh would otherwise throw you back to page 1 while you browse)
+  useEffect(() => { setPage(1); }, [search, searchBy, dateValue, activeTab, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fmtDuration = (days) => { if (days == null) return "—"; return days <= 1 ? `${days} day` : `${days} days`; };
+
+  return (
+    <div className="p-4 space-y-5 font-sans">
+
+      {/* TOAST */}
+      {deleteToast && (
+        <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${deleteToast.type === "error" ? "bg-red-500" : "bg-teal-600"}`}>
+          {deleteToast.msg}
         </div>
-        <div className="flex gap-3">
-          <button onClick={onCancel}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
-            Cancel
-          </button>
-          <button onClick={onConfirm}
-            className="flex-1 px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-medium hover:bg-red-600">
-            Delete
-          </button>
-        </div>
+      )}
+
+      {/* STAT TABS */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+        {STATUS_TABS.map((tab) => {
+          const TabIcon = TAB_ICON[tab];
+          return (
+            <button key={tab} onClick={() => setActiveTab(tab)}
+              className={`p-4 rounded-2xl border text-left transition-all ${activeTab === tab ? "border-teal-500 bg-teal-50 shadow-sm" : "bg-white hover:bg-gray-50"}`}
+            >
+              <div className="flex items-start justify-between">
+                <div className={`text-2xl font-bold ${activeTab === tab ? "text-teal-600" : "text-gray-800"}`}>{loading ? "…" : counts[tab] ?? 0}</div>
+                <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${TAB_ICON_COLOR[tab]}`}>
+                  <TabIcon className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                {tab === "All" ? "All Bookings" : tab}
+                {tab === "Cancelled" && cancellationRequestCount > 0 && <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />}
+              </div>
+            </button>
+          );
+        })}
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex justify-between items-center">
+          <span className="flex items-center gap-2">
+            <IconWarning className="w-4 h-4 shrink-0" />
+            {error}
+          </span>
+          <button onClick={fetchBookings} className="underline font-semibold">Retry</button>
+        </div>
+      )}
+
+      {/* TABLE */}
+      <div className="bg-white rounded-2xl border overflow-hidden">
+        {/* SEARCH + FILTERS */}
+        <div className="flex flex-wrap gap-3 items-end p-4 border-b">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
+            <select
+              value={searchBy}
+              onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
+              className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+            >
+              {SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+          {searchType === "date" ? (
+            <input
+              type="date"
+              value={dateValue}
+              onChange={(e) => setDateValue(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
+            />
+          ) : (
+            <input
+              type="text"
+              placeholder={`Enter ${(SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none"
+            />
+          )}
+          <select
+            value={activeTab}
+            onChange={(e) => setActiveTab(e.target.value)}
+            className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white"
+          >
+            {STATUS_TABS.map((t) => <option key={t} value={t}>{t === "All" ? "All statuses" : t}</option>)}
+          </select>
+          <button
+            onClick={fetchBookings}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-arl-primary text-white hover:bg-[#16526a] flex items-center gap-1.5"
+          >
+            <IconRefresh className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide">
+              <tr>
+                <SortableTh label="Created At" sortKey="created" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left">Phase</th>
+                <th className="px-4 py-3 text-left">Customer</th>
+                <th className="px-4 py-3 text-left">Contact No.</th>
+                <th className="px-4 py-3 text-left">Vehicle</th>
+                <SortableTh label="Trip Start" sortKey="start" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Trip End" sortKey="end" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Duration" sortKey="duration" sortKeyState={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left">Booking ID</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="pl-4 pr-8 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-t">
+                    {Array.from({ length: 11 }).map((__, j) => (
+                      <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
+                    ))}
+                  </tr>
+                ))
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={11} className="text-center text-gray-400 py-12">No bookings found</td></tr>
+              ) : (
+                pageItems.map((b) => {
+                  const needsAction = b.status?.toLowerCase() === "cancellation_request";
+                  return (
+                    <tr key={b.id} className={`border-t hover:bg-gray-50 transition-colors ${needsAction ? "bg-orange-50 border-l-4 border-l-orange-500" : ""}`}>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="text-gray-700">{fmtDate(b.createdAt)}</span>
+                        <span className="mx-1.5 text-gray-300">|</span>
+                        <span className="text-gray-500">{fmtTime(b.createdAt)}</span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {(() => {
+                          const stage = getBookingStage(b);
+                          return stage.tone === "none"
+                            ? <span className="text-gray-300">—</span>
+                            : <span
+                                title={stage.tone === "warn" ? "Booking is completed but this step is still open" : stage.tone === "done" ? "All steps finished" : "Next step to do"}
+                                className={`inline-flex items-center text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${STAGE_STYLE[stage.tone]}`}
+                              >{stage.label}</span>;
+                        })()}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => setProfileUserID(b.userID)}
+                          disabled={!b.userID}
+                          className="font-medium text-gray-800 hover:text-indigo-600 hover:underline text-left disabled:no-underline disabled:cursor-default disabled:hover:text-gray-800"
+                        >
+                          {b.customerName}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{b.phone || "—"}</td>
+                      <td className="px-4 py-3">
+                        <div className="text-gray-700">{b.vehicleName}</div>
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(b.startDateTime)}</td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(b.endDateTime)}</td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                        {fmtDuration(b.totalDays)}
+                        {b.durationType && <span className="text-xs text-gray-400 ml-1">· {b.durationType}</span>}
+                      </td>
+                      <td className="px-4 py-3"><CopyableId value={b.bookingID || b.id} /></td>
+                      <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
+                      <td className="pl-4 pr-8 py-3 text-right">
+                        <button onClick={() => setViewBooking(b)} className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">View</button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+              {/* Same as Refunds: pad a short page with empty rows so the table always keeps its 10-row height. */}
+              {!loading && pageItems.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
+                <tr key={`filler-${i}`} aria-hidden="true" className="border-t">
+                  <td colSpan={11} className="h-[53px]">&nbsp;</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
+      </div>
+
+      {viewBooking   && (
+        <ViewModal
+          booking={viewBooking}
+          onClose={() => setViewBooking(null)}
+          onViewCustomer={setProfileUserID}
+          onEdit={(b) => { setViewBooking(null); setEditBooking(b); }}
+          onRefund={canRefundRole ? (b) => { setViewBooking(null); setRefundBooking(b); } : undefined}
+          onDelete={(b) => { setViewBooking(null); setDeleteBooking(b); }}
+        />
+      )}
+      {editBooking   && <EditModal booking={editBooking} onClose={() => setEditBooking(null)} onSave={() => { setEditBooking(null); fetchBookings(); }} />}
+      {refundBooking && String(refundBooking.status || "").toLowerCase() === "cancelled" && (
+        <RefundAfterCancelModal
+          booking={refundBooking}
+          onClose={() => setRefundBooking(null)}
+          onDone={(msg) => { setRefundBooking(null); showToast(msg, "success"); fetchBookings(); }}
+        />
+      )}
+      {refundBooking && String(refundBooking.status || "").toLowerCase() !== "cancelled" && (
+        <RefundCancelModal
+          booking={refundBooking}
+          onClose={() => setRefundBooking(null)}
+          onDone={(msg) => { setRefundBooking(null); showToast(msg, "success"); fetchBookings(); }}
+        />
+      )}
+      {profileUserID && <CustomerProfileModal userID={profileUserID} bookings={allBookings} onClose={() => setProfileUserID(null)} />}
+      {deleteBooking && (
+        <DeleteBundleModal
+          kind="booking"
+          id={deleteBooking.id}
+          label={deleteBooking.bookingID || deleteBooking.id}
+          onClose={() => setDeleteBooking(null)}
+          onDone={handleDeleted}
+        />
+      )}
     </div>
   );
 }

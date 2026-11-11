@@ -175,7 +175,6 @@ export default function StatementModal({ bookingID, onClose }) {
                     <Row label="Rental fee">{fmt(f.rental)}</Row>
                     <Row label="Service fee">{f.service > 0 ? fmt(f.service) : null}</Row>
                     <Row label="Gateway fee">{f.gateway > 0 ? fmt(f.gateway) : null}</Row>
-                    <Row label="Extra fee (outside base area)">{f.extra > 0 ? fmt(f.extra) : null}</Row>
                     <Row label={`Driver's fee (${fmt(f.driver / f.days)} × ${f.days} day${f.days > 1 ? "s" : ""})`}>{f.driver > 0 ? fmt(f.driver) : null}</Row>
                     <Row label="Security deposit (refundable)">{s.charges.securityDeposit > 0 ? fmt(s.charges.securityDeposit) : null}</Row>
                     <div className="border-t border-gray-200 mt-1 pt-1"><Row label="Total fee" strong>{fmt(s.charges.gross)}</Row></div>

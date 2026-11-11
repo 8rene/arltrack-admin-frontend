@@ -876,7 +876,6 @@ export default function Payments() {
                       {/* What the booking cost, what was paid, and what happened to the deposit / discount / refund. */}
                       <InfoSection title="Fee Breakdown" cols={3} defaultOpen={false}>
                         <InfoField label="Rental Fee" value={peso(selected.rentalFee, fmtCurrency)} />
-                        <InfoField label="Extra Fee" value={peso(selected.extraFee, fmtCurrency)} />
                         {selected.driversFee > 0 && <InfoField label="Driver's Fee" value={peso(selected.driversFee, fmtCurrency)} />}
                         <InfoField label={selected.serviceFeeRate > 0 ? `Service Fee (${selected.serviceFeeRate}% of rental)` : "Service Fee"} value={peso(selected.serviceFee, fmtCurrency)} />
                         {selected.gatewayFee > 0 && <InfoField label={selected.gatewayFeeRate > 0 ? `Gateway Fee (${selected.gatewayFeeRate}% of ${peso(selected.gatewayFeeBase, fmtCurrency)})` : "Gateway Fee"} value={peso(selected.gatewayFee, fmtCurrency)} />}

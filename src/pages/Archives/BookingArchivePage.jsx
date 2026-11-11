@@ -861,7 +861,7 @@ function PaymentTab({ rec, labels }) {
   const stage = rec.paymentStage || rec.status;
   const p = (v) => (v === null ? "\u2014" : fmt(v));
   const feeRows = [
-    ["Rental Fee", numOr(rec.rentalFee)], ["Extra Fee", numOr(rec.extraFee)], ["Driver's Fee", numOr(rec.driversFee)],
+    ["Rental Fee", numOr(rec.rentalFee)], ["Driver's Fee", numOr(rec.driversFee)],
     ["Service Fee", numOr(rec.serviceFee)], ["Gateway Fee", numOr(rec.gatewayFee)],
   ].filter(([label, v]) => v !== null && (v > 0 || label === "Rental Fee" || label === "Service Fee"));
   return (
@@ -1375,7 +1375,7 @@ const ARCHIVE_SEARCH_BY = [
 const SHOWN_KEYS = [
   "bookingArchivesId", "bookingID", "userID", "carID", "customerName", "phone", "createdAt", "archivedAt", "archivedBy",
   "status", "amount", "totalFee", "vehicleName", "serviceTypeName", "startDateTime", "endDateTime", "totalDays",
-  "modeOfDriving", "driverName", "rentalFee", "serviceFee", "gatewayFee", "extraFee", "driversFee",
+  "modeOfDriving", "driverName", "rentalFee", "serviceFee", "gatewayFee", "driversFee",
   "location", "serviceType", "serviceTypeID", "pickupAt", "notesUser", "notesAdmin", "termsAcceptedAt", "archiveDate",
 ];
 
@@ -1520,7 +1520,6 @@ function BookingTab({ record, details, detailsLoading, detailsError, peso, viewe
             <FeeRow label="Rental fee" value={peso(fee("rentalFee"))} />
             <FeeRow label="Service fee" value={peso(fee("serviceFee"))} />
             {Number(fee("gatewayFee")) > 0 && <FeeRow label="Gateway fee" value={peso(fee("gatewayFee"))} />}
-            <FeeRow label={`Extra fee (${Number(fee("extraFee")) > 0 ? "outside base area" : "base area"})`} value={peso(fee("extraFee"))} />
             {driverTotal > 0 && <FeeRow label={`Driver's fee (${peso(driverTotal / driverDays)} × ${driverDays} day${driverDays > 1 ? "s" : ""})`} value={peso(driverTotal)} />}
             {pay?.discountAmount > 0 && <FeeRow label="Discount" value={`− ${peso(pay.discountAmount)}`} />}
             <div className="flex items-baseline justify-between gap-4 pt-3 mt-1 border-t border-gray-100">
