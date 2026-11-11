@@ -22,7 +22,7 @@ const IconMap = ({ className = "w-4 h-4" }) => (
 
 // ─── SECTION CARD ────────────────────────────────────────────────────────────
 // Same grouping as the Bookings details window: a white card with a grey title strip.
-function Section({ icon, title, desc, isDark, children }) {
+function Section({ icon, title, isDark, children }) {
   return (
     <section className={`rounded-2xl border overflow-hidden shadow-sm ${isDark ? "bg-[#1A5F7A] border-[#4FC3F7]/20" : "bg-white"}`}>
       <div className={`flex items-center gap-2 px-4 py-2.5 border-b ${isDark ? "bg-[#212121]/40 border-[#4FC3F7]/20" : "bg-gray-50"}`}>
@@ -30,7 +30,6 @@ function Section({ icon, title, desc, isDark, children }) {
         <h2 className={`text-xs font-semibold uppercase tracking-wide ${isDark ? "text-[#F5F5F5]" : "text-gray-600"}`}>{title}</h2>
       </div>
       <div className="p-4 space-y-4">
-        {desc && <p className={`text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{desc}</p>}
         {children}
       </div>
     </section>
@@ -43,30 +42,30 @@ function Section({ icon, title, desc, isDark, children }) {
 //   service fee = % of the rental fee only
 //   gateway fee = % of everything else (rental + driver's fee + service fee + security deposit)
 const FLAT_FEE_FIELDS = [
-  { key: "serviceFeePercent", label: "Service Fee (%)", unit: "%", hint: "Percent of the RENTAL FEE only — the driver's fee and security deposit are not included." },
-  { key: "gatewayFeePercent", label: "Gateway Fee (%)", unit: "%", hint: "Percent of the whole booking: rental + driver's fee + service fee + security deposit." },
+  { key: "serviceFeePercent", label: "Service Fee (%)", unit: "%" },
+  { key: "gatewayFeePercent", label: "Gateway Fee (%)", unit: "%" },
 ];
 
 // There is no separate "extra fee" setting: being outside the base area just means the higher driver's fee applies.
 // The outside fee must be higher than the base fee.
 const AREA_FEE_FIELDS = [
-  { key: "driversFeeBaseArea", label: "Driver's Fee — Base Area", hint: "Chauffeur fee per day when the pickup and every destination are inside the base area." },
-  { key: "driversFeeOutsideArea", label: "Driver's Fee — Outside Area", hint: "Chauffeur fee per day when the pickup or any destination is outside the base area. Must be higher than the base-area fee." },
+  { key: "driversFeeBaseArea", label: "Driver's Fee — Base Area" },
+  { key: "driversFeeOutsideArea", label: "Driver's Fee — Outside Area" },
 ];
 
 // The real, refundable security deposit + late-return penalty settings.
 // These already existed in the backend model with no admin UI at all —
 // changing them required editing Firestore directly. This is that UI.
 const DEPOSIT_FIELDS = [
-  { key: "securityDepositAmount", label: "Security Deposit Amount", hint: "Refundable deposit collected at pickup. Snapshotted onto each booking at the moment it's actually collected, so changing this never affects a deposit already taken." },
-  { key: "lateFeeRatePerHour", label: "Late Fee Rate (per hour)", hint: "Charged per billable hour late at return, after the grace period below." },
-  { key: "lateFeeGraceMinutes", label: "Late Fee Grace Period (minutes)", hint: "Minutes late that are forgiven before the late fee starts accruing.", unit: "min" },
+  { key: "securityDepositAmount", label: "Security Deposit Amount" },
+  { key: "lateFeeRatePerHour", label: "Late Fee Rate (per hour)" },
+  { key: "lateFeeGraceMinutes", label: "Late Fee Grace Period (minutes)", unit: "min" },
 ];
 
 // Penalty settings. penaltyThreshold decides when the online payment (gateway) fee is added to a penalty paid online: only when
 // the penalty's own amount is HIGHER than this. At or below it there is no fee. (Was a hardcoded 1,000.)
 const PENALTY_FIELDS = [
-  { key: "penaltyThreshold", label: "Penalty Fee Threshold", hint: "A penalty above this amount carries the gateway fee when paid online. A penalty at or below it has no fee. 0 = every penalty carries the fee." },
+  { key: "penaltyThreshold", label: "Penalty Fee Threshold" },
 ];
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
@@ -1179,9 +1178,9 @@ export default function Settings() {
       ) : (
         <>
           {/* Booking Fees */}
-          <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Booking Fees" desc={"Percentage fees added to every booking, shown to the customer at checkout. Bookings already made keep the amounts they were charged."}>
+          <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Booking Fees">
             <div className="grid sm:grid-cols-3 gap-4">
-              {FLAT_FEE_FIELDS.map(({ key, label, hint, unit = "%" }) => (
+              {FLAT_FEE_FIELDS.map(({ key, label, unit = "%" }) => (
                 <div key={key} className="space-y-1">
                   <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
                   <div className="relative">
@@ -1194,16 +1193,15 @@ export default function Settings() {
                       className={`${inputCls} pr-7`}
                     />
                   </div>
-                  <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>{hint}</p>
                 </div>
               ))}
             </div>
           </Section>
 
           {/* Area & Chauffeur Fees */}
-          <Section isDark={isDark} icon={<IconMap className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Area & Chauffeur Fees" desc={"Conditional charges based on the drop-off destination and drive type."}>
+          <Section isDark={isDark} icon={<IconMap className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Area & Chauffeur Fees">
             <div className="grid sm:grid-cols-3 gap-4">
-              {AREA_FEE_FIELDS.map(({ key, label, hint }) => (
+              {AREA_FEE_FIELDS.map(({ key, label }) => (
                 <div key={key} className="space-y-1">
                   <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
                   <div className="relative">
@@ -1216,9 +1214,9 @@ export default function Settings() {
                       className={`${inputCls} pl-6`}
                     />
                   </div>
-                  <p className={`text-[11px] ${key === "driversFeeOutsideArea" && outsideFeeInvalid ? "text-[#D32F2F]" : isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>
-                    {key === "driversFeeOutsideArea" && outsideFeeInvalid ? "The outside fee must be higher than the base-area fee." : hint}
-                  </p>
+                  {key === "driversFeeOutsideArea" && outsideFeeInvalid && (
+                    <p className="text-[11px] text-[#D32F2F]">The outside fee must be higher than the base-area fee.</p>
+                  )}
                 </div>
               ))}
             </div>
@@ -1263,56 +1261,25 @@ export default function Settings() {
                 isDark={isDark}
                 addLabel="base area"
               />
-
-              <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>
-                Search above the map or click it, then press the + button to add a place — names come from the map or the PH
-                location list, so they can't be misspelled. A destination is still
-                treated as "base area" if it <strong>contains</strong> the saved word as text — so short/common names can
-                still overlap (e.g. "manila" also matches "New Manila," a Quezon City district). Picking a place
-                only prevents typos, it doesn't remove that overlap.
-              </p>
             </div>
           </Section>
 
-          {/* Security Deposit & Late Fees */}
-          <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Security Deposit & Late Fees" desc={"The real, refundable deposit collected at pickup, and the late-return penalty rate. Changing these only affects bookings from this point forward — anything already collected keeps its original amount."}>
+          {/* Additional Fees: security deposit, late fees and the penalty threshold */}
+          <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Additional Fees">
             <div className="grid sm:grid-cols-3 gap-4">
-              {DEPOSIT_FIELDS.map(({ key, label, hint, unit = "₱" }) => (
+              {[...DEPOSIT_FIELDS, ...PENALTY_FIELDS].map(({ key, label, unit = "₱" }) => (
                 <div key={key} className="space-y-1">
                   <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
                   <div className="relative">
                     <span className={`absolute ${unit === "₱" ? "left-3" : "right-3"} top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
                     <input
                       type="number" min="0" step="1"
-                      value={form[key]}
+                      value={form[key] ?? (key === "penaltyThreshold" ? 1000 : "")}
                       onChange={(e) => handleNumberChange(key, e.target.value)}
                       disabled={!editMode}
                       className={`${inputCls} ${unit === "₱" ? "pl-6" : "pr-10"}`}
                     />
                   </div>
-                  <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>{hint}</p>
-                </div>
-              ))}
-            </div>
-          </Section>
-
-          {/* Penalty online fee */}
-          <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Penalties" desc={"When a customer pays a penalty online, the gateway fee is added only if the penalty is above this amount. It is judged on the penalty's own amount, however it is paid. Changing it applies to penalties that are still unpaid; payments already made and their receipts are not affected."}>
-            <div className="grid sm:grid-cols-3 gap-4">
-              {PENALTY_FIELDS.map(({ key, label, hint, unit = "₱" }) => (
-                <div key={key} className="space-y-1">
-                  <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
-                  <div className="relative">
-                    <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
-                    <input
-                      type="number" min="0" step="1"
-                      value={form[key] ?? 1000}
-                      onChange={(e) => handleNumberChange(key, e.target.value)}
-                      disabled={!editMode}
-                      className={`${inputCls} pl-6`}
-                    />
-                  </div>
-                  <p className={`text-[11px] ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>{hint}</p>
                 </div>
               ))}
             </div>
