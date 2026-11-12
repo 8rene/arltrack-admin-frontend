@@ -99,6 +99,8 @@ const META_BY_TYPE = {
   // A driver noted a penalty: it waits for a supervisor to edit / confirm it before the customer is told.
   penalty_review:       { bg: "bg-amber-100",  emoji: "📝", title: "Penalty Needs Review" },
   penalty_created:      { bg: "bg-red-100",    emoji: "⚠️", title: "Penalty Charged" },
+  // A customer paid penalties online (written by the CUSTOMER backend when the PayMongo checkout settles).
+  penalty_paid:         { bg: "bg-green-100",  emoji: "💵", title: "Penalty Paid" },
   refund_request:       { bg: "bg-blue-100",   emoji: "💸", title: "Refund Request" },
   refund_due:           { bg: "bg-blue-100",   emoji: "💰", title: "Refund Due" },
   license_expiring:     { bg: "bg-yellow-100", emoji: "🪪", title: "License Expiring Soon" },
