@@ -157,12 +157,22 @@ const PAGE_SIZE = 10;
 const STATUSES  = ["All", "Pending", "Partial", "Completed", "For Refund", "Refunded", "Cancelled", "Failed"];
 // "Search by" options. Status has its own dropdown, so it is not here.
 // Booking ID and Payment ID have no column but stay searchable (the old single box matched them too).
+// YYYY-MM-DD of a timestamp in the browser's own timezone: the same day the "Created At" column shows, and what a
+// <input type="date"> returns, so picking a day matches exactly the rows displayed under that day.
+const localDateKey = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const PAYMENT_SEARCH_BY = [
-  { key: "customer",  label: "Customer",   get: (p) => p.customerName },
-  { key: "bookingID", label: "Booking ID", get: (p) => p.bookingID },
-  { key: "paymentID", label: "Payment ID", get: (p) => p.paymentID },
-  { key: "vehicle",   label: "Vehicle",    get: (p) => p.vehicleName },
-  { key: "method",    label: "Method",     get: (p) => `${p.paymentMethod || ""} ${channelOf(p) || ""}` },
+  { key: "createdAt", label: "Created At", type: "date", get: (p) => p.createdAt },
+  { key: "customer",  label: "Customer",   type: "text", get: (p) => p.customerName },
+  { key: "bookingID", label: "Booking ID", type: "text", get: (p) => p.bookingID },
+  { key: "paymentID", label: "Payment ID", type: "text", get: (p) => p.paymentID },
+  { key: "vehicle",   label: "Vehicle",    type: "text", get: (p) => p.vehicleName },
+  { key: "reference", label: "PayMongo Ref", type: "text", get: (p) => (p.paymongoRefs || []).join(" ") },
+  { key: "method",    label: "Method",     type: "text", get: (p) => `${p.paymentMethod || ""} ${channelOf(p) || ""}` },
 ];
 const stageOf   = (p) => p.paymentStage || p.status;
 // The list's Amount Paid = what the customer actually paid. A refunded payment has amountPaid 0 (nothing is held any more),
@@ -233,6 +243,7 @@ export default function Payments() {
   const [error, setError]                 = useState(null);
   const [search, setSearch]               = useState("");
   const [searchBy, setSearchBy]           = useState("customer");
+  const [dateValue, setDateValue]           = useState(""); // "YYYY-MM-DD" from the date picker
   const [statusF, setStatusF]             = useState("All");
   const [selected, setSelected]           = useState(null);
   const { effectiveRole } = useAuth();
@@ -261,6 +272,8 @@ export default function Payments() {
   const [editingDiscount, setEditingDiscount] = useState(null);
   const [savingDiscountEdit, setSavingDiscountEdit] = useState(false);
   const [notifying, setNotifying] = useState(false);
+  const [cancellingBalance, setCancellingBalance] = useState(false);
+  const [confirmCancelBalance, setConfirmCancelBalance] = useState(false);
   // In-store receipts (Supervisor / Admin / Owner): payment mode + reference number on record.
   const [inStoreOpen, setInStoreOpen] = useState(false);
   const [inStoreMethod, setInStoreMethod] = useState("Cash");
@@ -393,7 +406,7 @@ export default function Payments() {
   const linkCarID  = selected?.carID  || bookingRef?.carID  || null;
 
   const openDetail = async (id) => {
-    setDetailLoading(true); setSelected(null); setEntriesSummary(null); setDetailTab("summary");
+    setDetailLoading(true); setSelected(null); setEntriesSummary(null); setDetailTab("summary"); setConfirmCancelBalance(false);
     try {
       const res  = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
@@ -550,6 +563,33 @@ export default function Payments() {
     finally { setNotifying(false); }
   };
 
+  // The customer opened the online balance checkout and left it pending. This asks PayMongo to expire that checkout and
+  // marks the balance cancelled, which is what unlocks "Record in-store payment". If the customer already paid, the
+  // server refuses and says so, so nothing is cancelled by mistake.
+  const handleCancelOnlineBalance = async () => {
+    if (!selected) return;
+    setCancellingBalance(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/payments/booking/${selected.bookingID}/cancel-balance`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast(data?.data?.noCheckout
+        ? "Rejected. There was no PayMongo checkout behind this balance, so nothing needed cancelling. Check PayMongo for a payment of that amount before recording the in-store payment."
+        : "Online payment cancelled. You can now record the in-store payment.");
+      setConfirmCancelBalance(false);
+      await openDetail(selected.id);
+      await fetchPayments(true);
+    } catch (e) {
+      showToast(e.message, "error");
+      setConfirmCancelBalance(false);
+      await openDetail(selected.id);   // the payment may have just cleared: show the real state
+    }
+    finally { setCancellingBalance(false); }
+  };
+
   // The exception: the customer pays the remaining balance IN STORE. Supervisor / Admin / Owner only,
   // with the payment mode and (for anything but cash) the reference number on record.
   const submitInStorePayment = async () => {
@@ -640,10 +680,13 @@ export default function Payments() {
   };
 
   // ── filter ──
+  const searchType = PAYMENT_SEARCH_BY.find((o) => o.key === searchBy)?.type || "text";
   const filtered = payments.filter((p) => {
     const q = search.trim().toLowerCase();
     const field = PAYMENT_SEARCH_BY.find((o) => o.key === searchBy) || PAYMENT_SEARCH_BY[0];
-    const matchQ = !q || String(field.get(p) || "").toLowerCase().includes(q);
+    const matchQ = field.type === "date"
+      ? (!dateValue || localDateKey(field.get(p)) === dateValue)
+      : (!q || String(field.get(p) || "").toLowerCase().includes(q));
     const matchS = statusF === "All" || stageOf(p) === statusF;
     return matchQ && matchS;
   });
@@ -662,7 +705,7 @@ export default function Payments() {
   });
 
   const { page, setPage, totalPages, pageItems: paginated, start, count } = usePagination(sorted, PAGE_SIZE);
-  useEffect(() => setPage(1), [search, searchBy, statusF]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setPage(1), [search, searchBy, dateValue, statusF]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── stat cards ──
   const totalCollected = payments.filter(p => ["Approved","Paid"].includes(p.status)).reduce((s,p) => s + p.amountPaid, 0);
@@ -691,7 +734,7 @@ export default function Payments() {
       />
 
       {toast && (
-        <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
+        <div className={`fixed top-5 right-5 z-[80] px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${
           toast.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
         }`}>{toast.msg}</div>
       )}
@@ -868,7 +911,33 @@ export default function Payments() {
                           </div>
                         )}
                         {selected.balanceStatus === "pending" && selected.balance > 0 && (
-                          <p className="text-xs text-amber-600 pt-2">The customer has a balance payment in progress on PayMongo — it will show as paid once it clears.</p>
+                          <div className="pt-2 space-y-2.5">
+                            <p className="text-xs text-amber-600">The customer has a balance payment in progress on PayMongo — it will show as paid once it clears.</p>
+                            {canRecordInStore && selected.status === "Approved" && !selected.refundRequestID && (
+                              confirmCancelBalance ? (
+                                <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-2">
+                                  <p className="text-xs text-red-700">
+                                    This closes the customer's PayMongo checkout so they can no longer pay it online. If they have already paid, PayMongo will refuse and nothing changes. Continue?
+                                  </p>
+                                  <div className="flex flex-wrap gap-2">
+                                    <button onClick={handleCancelOnlineBalance} disabled={cancellingBalance}
+                                      className="px-4 py-2 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition disabled:opacity-50">
+                                      {cancellingBalance ? "Cancelling..." : "Yes, cancel online payment"}
+                                    </button>
+                                    <button onClick={() => setConfirmCancelBalance(false)} disabled={cancellingBalance}
+                                      className="px-4 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">
+                                      Keep waiting
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button onClick={() => setConfirmCancelBalance(true)}
+                                  className="px-4 py-2 text-sm font-semibold rounded-xl border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition">
+                                  Cancel online payment
+                                </button>
+                              )
+                            )}
+                          </div>
                         )}
                         </div>
                       </InfoSection>
@@ -1213,14 +1282,19 @@ export default function Payments() {
         <div className="flex flex-wrap gap-3 items-end p-4 border-b">
           <div className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search by</span>
-            <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); }}
+            <select value={searchBy} onChange={(e) => { setSearchBy(e.target.value); setSearch(""); setDateValue(""); }}
               className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
               {PAYMENT_SEARCH_BY.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
             </select>
           </div>
-          <input type="text" placeholder={`Enter ${(PAYMENT_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
-            value={search} onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          {searchType === "date" ? (
+            <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          ) : (
+            <input type="text" placeholder={`Enter ${(PAYMENT_SEARCH_BY.find((o) => o.key === searchBy)?.label || "").toLowerCase()}...`}
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 min-w-52 px-4 py-2 border rounded-xl text-sm outline-none" />
+          )}
           <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
             className="px-3 py-2 border rounded-xl text-sm text-gray-700 outline-none bg-white">
             {STATUSES.map((s) => <option key={s} value={s}>{s === "All" ? "All statuses" : s}</option>)}
@@ -1258,7 +1332,7 @@ export default function Payments() {
                 ))
               ) : paginated.length === 0 ? (
                 <tr><td colSpan={10} className="text-center text-gray-400 py-12">
-                  {search || statusF !== "All" ? "No payments match your filters." : "No payments found."}
+                  {search || dateValue || statusF !== "All" ? "No payments match your filters." : "No payments found."}
                 </td></tr>
               ) : paginated.map((p) => (
                 <tr key={p.id} className="border-t hover:bg-gray-50 transition-colors">
