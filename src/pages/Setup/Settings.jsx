@@ -36,14 +36,59 @@ function Section({ icon, title, isDark, children }) {
   );
 }
 
+// ─── "?" TIP ─────────────────────────────────────────────────────────────────
+// A small ? button next to a field label. Hover (or tap / keyboard focus) shows the description. The bubble is
+// position: fixed so the card's overflow-hidden can't clip it.
+function InfoTip({ text, isDark }) {
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const show = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setPos({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 272)) });
+  };
+  const hide = () => setPos(null);
+  useEffect(() => {
+    if (!pos) return undefined;
+    window.addEventListener("scroll", hide, true);
+    return () => window.removeEventListener("scroll", hide, true);
+  }, [pos]);
+  return (
+    <span className="inline-flex" onMouseEnter={show} onMouseLeave={hide}>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label="More info"
+        onClick={() => (pos ? hide() : show())}
+        onFocus={show}
+        onBlur={hide}
+        className={`w-4 h-4 rounded-full border text-[10px] font-semibold leading-none flex items-center justify-center transition-colors ${
+          isDark ? "border-[#4FC3F7]/40 text-[#4FC3F7] hover:bg-[#4FC3F7]/15" : "border-gray-300 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        }`}
+      >
+        ?
+      </button>
+      {pos && (
+        <span
+          role="tooltip"
+          style={{ top: pos.top, left: pos.left }}
+          className="fixed z-50 w-64 rounded-lg bg-gray-900 px-3 py-2 text-[11px] font-normal normal-case tracking-normal leading-snug text-white shadow-lg"
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ─── FIELD DEFINITIONS ─────────────────────────────────────────────────────
 // Keep these in sync BY HAND with backend/models/systemSettings/systemSettings.model.js
 // Percentages (0-100), not flat pesos. Computed server-side on every booking:
 //   service fee = % of the rental fee only
 //   gateway fee = % of everything else (rental + driver's fee + service fee + security deposit)
 const FLAT_FEE_FIELDS = [
-  { key: "serviceFeePercent", label: "Service Fee (%)", unit: "%" },
-  { key: "gatewayFeePercent", label: "Gateway Fee (%)", unit: "%" },
+  { key: "serviceFeePercent", label: "Service Fee (%)", unit: "%", hint: "Percent of the RENTAL FEE only — the driver's fee and security deposit are not included." },
+  { key: "gatewayFeePercent", label: "Gateway Fee (%)", unit: "%", hint: "Percent of the whole booking: rental + driver's fee + service fee + security deposit." },
 ];
 
 // There is no separate "extra fee" setting: being outside the base area just means the higher driver's fee applies.
@@ -65,7 +110,7 @@ const DEPOSIT_FIELDS = [
 // Penalty settings. penaltyThreshold decides when the online payment (gateway) fee is added to a penalty paid online: only when
 // the penalty's own amount is HIGHER than this. At or below it there is no fee. (Was a hardcoded 1,000.)
 const PENALTY_FIELDS = [
-  { key: "penaltyThreshold", label: "Penalty Fee Threshold" },
+  { key: "penaltyThreshold", label: "Penalty Fee Threshold", hint: "When a customer pays a penalty online, the gateway fee is added only if the penalty is above this amount (0 = every penalty carries the fee). Changing it applies to penalties that are still unpaid; payments already made and their receipts are not affected." },
 ];
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
@@ -965,7 +1010,7 @@ function AreaMap({ areas, editable, onAdd, isDark, addLabel = "base area" }) {
                       key={`${o.type}-${o.id}`}
                       type="button"
                       disabled={added}
-                      onClick={() => onAdd(o.name)}
+                      onClick={() => onAdd(o.name, o.type)}
                       className={`px-3 py-1 rounded-full border text-xs font-semibold transition disabled:opacity-50 ${
                         isDark ? "border-[#4FC3F7]/40 text-[#4FC3F7] hover:bg-[#4FC3F7]/10" : "border-arl-primary/20 bg-arl-primary/5 text-arl-primary hover:bg-arl-primary/10"
                       }`}
@@ -1054,6 +1099,34 @@ export default function Settings() {
 
   useEffect(() => { fetchSettings(); }, []);
 
+  // ── Base area display: which saved names are provinces and which are cities ──
+  // Display only. What gets SAVED is still the one list of names (baseAreaKeywords), unchanged. The kind of each name is
+  // looked up from the same PH location list the search uses; a name found in the province list is a province, anything
+  // else is a city/municipality.
+  const [areaTypes, setAreaTypes] = useState({}); // name -> "province" | "city"
+  useEffect(() => {
+    const missing = (form?.baseAreaKeywords || []).filter((k) => !(k in areaTypes));
+    if (missing.length === 0) return undefined;
+    let cancelled = false;
+    (async () => {
+      const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
+      const found = {};
+      await Promise.all(missing.map(async (k) => {
+        try {
+          const res = await fetch(`${API}/api/settings/pricing/area-options?q=${encodeURIComponent(k)}`, { headers });
+          const j = await res.json();
+          const hits = (j.data || []).filter((o) => norm(o.name) === norm(k));
+          found[k] = hits.some((o) => o.type === "province") ? "province" : "city";
+        } catch {
+          found[k] = "city";
+        }
+      }));
+      if (!cancelled) setAreaTypes((prev) => ({ ...found, ...prev }));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form?.baseAreaKeywords]);
+
   const handleNumberChange = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
@@ -1067,9 +1140,11 @@ export default function Settings() {
   // the map, then press the "+" button for a name it offers. Names come from the
   // PH location list or from OpenStreetMap — never from free typing — so a
   // misspelled keyword can't be saved.
-  const addKeywordValue = (value) => {
+  const addKeywordValue = (value, type) => {
     const clean = value.trim().toLowerCase();
     if (!clean) return;
+    // Display only: remember whether this one is a province or a city so it shows under the right heading.
+    if (type) setAreaTypes((prev) => ({ ...prev, [clean]: type === "province" || type === "region" ? "province" : "city" }));
     setForm((prev) => {
       if ((prev.baseAreaKeywords || []).includes(clean)) return prev; // no duplicates
       return { ...prev, baseAreaKeywords: [...(prev.baseAreaKeywords || []), clean] };
@@ -1079,6 +1154,43 @@ export default function Settings() {
   const removeKeyword = (word) => {
     setForm((prev) => ({ ...prev, baseAreaKeywords: (prev.baseAreaKeywords || []).filter((k) => k !== word) }));
   };
+
+  const provinceWords = (form?.baseAreaKeywords || []).filter((k) => areaTypes[k] === "province");
+  const cityWords     = (form?.baseAreaKeywords || []).filter((k) => areaTypes[k] !== "province");
+
+  // One group of chips, with a remove button on each while editing.
+  const renderAreaGroup = (title, words) => (
+    <div className="space-y-1.5">
+      <p className={`text-[11px] font-medium ${isDark ? "text-[#F5F5F5]/60" : "text-gray-500"}`}>{title}</p>
+      <div className="flex flex-wrap gap-2">
+        {words.map((word) => (
+          <span
+            key={word}
+            className={`inline-flex items-center gap-1.5 rounded-full pl-3 pr-1.5 py-1 text-xs font-medium ${
+              isDark ? "bg-[#212121] text-[#F5F5F5]/80 border border-[#4FC3F7]/20" : "bg-gray-100 text-gray-700 border border-gray-200"
+            }`}
+          >
+            {word}
+            {editMode && (
+              <button
+                type="button"
+                onClick={() => removeKeyword(word)}
+                aria-label={`Remove ${word}`}
+                className={`rounded-full w-4 h-4 flex items-center justify-center leading-none ${
+                  isDark ? "hover:bg-[#4FC3F7]/20 text-[#F5F5F5]/50" : "hover:bg-gray-300 text-gray-500"
+                }`}
+              >
+                &times;
+              </button>
+            )}
+          </span>
+        ))}
+        {words.length === 0 && (
+          <span className={`text-xs italic ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>None added.</span>
+        )}
+      </div>
+    </div>
+  );
 
   // The outside driver's fee must be higher than the base one.
   const outsideFeeInvalid = !!form && !(Number(form.driversFeeOutsideArea) > Number(form.driversFeeBaseArea));
@@ -1180,9 +1292,12 @@ export default function Settings() {
           {/* Booking Fees */}
           <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Booking Fees">
             <div className="grid sm:grid-cols-3 gap-4">
-              {FLAT_FEE_FIELDS.map(({ key, label, unit = "%" }) => (
+              {FLAT_FEE_FIELDS.map(({ key, label, hint, unit = "%" }) => (
                 <div key={key} className="space-y-1">
-                  <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
+                  <div className="flex items-center gap-1.5">
+                    <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
+                    {hint && <InfoTip text={hint} isDark={isDark} />}
+                  </div>
                   <div className="relative">
                     <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
                     <input
@@ -1191,6 +1306,25 @@ export default function Settings() {
                       onChange={(e) => handleNumberChange(key, e.target.value)}
                       disabled={!editMode}
                       className={`${inputCls} pr-7`}
+                    />
+                  </div>
+                </div>
+              ))}
+              {/* Penalty fee threshold sits beside the gateway fee */}
+              {PENALTY_FIELDS.map(({ key, label, hint, unit = "₱" }) => (
+                <div key={key} className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
+                    {hint && <InfoTip text={hint} isDark={isDark} />}
+                  </div>
+                  <div className="relative">
+                    <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
+                    <input
+                      type="number" min="0" step="1"
+                      value={form[key] ?? 1000}
+                      onChange={(e) => handleNumberChange(key, e.target.value)}
+                      disabled={!editMode}
+                      className={`${inputCls} pl-6`}
                     />
                   </div>
                 </div>
@@ -1222,36 +1356,10 @@ export default function Settings() {
             </div>
 
             <div className="space-y-2 pt-2">
-              <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>Base Area Keywords</label>
+              <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>Base Area</label>
 
-              {/* Existing keyword chips */}
-              <div className="flex flex-wrap gap-2">
-                {(form.baseAreaKeywords || []).map((word) => (
-                  <span
-                    key={word}
-                    className={`inline-flex items-center gap-1.5 rounded-full pl-3 pr-1.5 py-1 text-xs font-medium ${
-                      isDark ? "bg-[#212121] text-[#F5F5F5]/80 border border-[#4FC3F7]/20" : "bg-gray-100 text-gray-700 border border-gray-200"
-                    }`}
-                  >
-                    {word}
-                    {editMode && (
-                      <button
-                        type="button"
-                        onClick={() => removeKeyword(word)}
-                        aria-label={`Remove ${word}`}
-                        className={`rounded-full w-4 h-4 flex items-center justify-center leading-none ${
-                          isDark ? "hover:bg-[#4FC3F7]/20 text-[#F5F5F5]/50" : "hover:bg-gray-300 text-gray-500"
-                        }`}
-                      >
-                        ×
-                      </button>
-                    )}
-                  </span>
-                ))}
-                {(form.baseAreaKeywords || []).length === 0 && (
-                  <span className={`text-xs italic ${isDark ? "text-[#F5F5F5]/35" : "text-gray-400"}`}>No keywords yet — add at least one below.</span>
-                )}
-              </div>
+              {renderAreaGroup("Provinces", provinceWords)}
+              {renderAreaGroup("Cities & Municipalities", cityWords)}
 
               {/* Shaded map of every base-area keyword (live preview, incl. unsaved edits) + click-to-add */}
               <AreaMap
@@ -1264,17 +1372,17 @@ export default function Settings() {
             </div>
           </Section>
 
-          {/* Additional Fees: security deposit, late fees and the penalty threshold */}
+          {/* Additional Fees: security deposit and late fees */}
           <Section isDark={isDark} icon={<IconPeso className={`w-4 h-4 ${isDark ? "text-[#4FC3F7]" : "text-gray-500"}`} />} title="Additional Fees">
             <div className="grid sm:grid-cols-3 gap-4">
-              {[...DEPOSIT_FIELDS, ...PENALTY_FIELDS].map(({ key, label, unit = "₱" }) => (
+              {DEPOSIT_FIELDS.map(({ key, label, unit = "₱" }) => (
                 <div key={key} className="space-y-1">
                   <label className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-[#F5F5F5]/70" : "text-gray-400"}`}>{label}</label>
                   <div className="relative">
                     <span className={`absolute ${unit === "₱" ? "left-3" : "right-3"} top-1/2 -translate-y-1/2 text-xs ${isDark ? "text-[#F5F5F5]/40" : "text-gray-400"}`}>{unit}</span>
                     <input
                       type="number" min="0" step="1"
-                      value={form[key] ?? (key === "penaltyThreshold" ? 1000 : "")}
+                      value={form[key]}
                       onChange={(e) => handleNumberChange(key, e.target.value)}
                       disabled={!editMode}
                       className={`${inputCls} ${unit === "₱" ? "pl-6" : "pr-10"}`}
