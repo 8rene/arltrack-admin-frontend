@@ -122,6 +122,32 @@ const tripCodingAreas = (trip) => {
 
 // "Destinations" list shared by the Active tab and the History detail. Tapping a row asks the map
 // to fly to that stop (onFocus); each pinned row has a Directions link.
+// A phone number that copies itself when clicked (instead of opening the dialer). Same look as the old link;
+// the number swaps to "Copied!" for a moment as confirmation.
+function CopyPhone({ phone, className = "text-teal-600 hover:underline" }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(String(phone));
+    } catch {
+      // Older browsers / non-https: fall back to a hidden textarea.
+      const ta = document.createElement("textarea");
+      ta.value = String(phone);
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch { /* nothing else to try */ }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button type="button" onClick={copy} title="Click to copy" className={`${className} text-left`}>
+      {copied ? "Copied!" : phone}
+    </button>
+  );
+}
+
 function DestinationsList({ stops, onFocus }) {
   if (!stops.length) return null;
   return (
@@ -1318,7 +1344,7 @@ function ActiveTripsTab({ tab, setTab }) {
                       <Line label="Vehicle">{trip.vehicleName}</Line>
                       {trip.customerPhone && trip.customerPhone !== "—" && (
                         <Line label="Customer phone">
-                          <a href={`tel:${trip.customerPhone}`} className="font-medium text-teal-600 hover:underline">{trip.customerPhone}</a>
+                          <CopyPhone phone={trip.customerPhone} className="font-medium text-teal-600 hover:underline" />
                         </Line>
                       )}
                       <Line label="Starts">{fmtDateTimeLong(trip.startDateTime)}</Line>
@@ -1424,7 +1450,7 @@ function ActiveTripsTab({ tab, setTab }) {
                   </button>
                   {!droppedOff && (
                     <button onClick={() => handleDropoff(trip)} disabled={busyID === trip.id}
-                      className="flex-[1.6] inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-green-600 hover:bg-green-700 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                      className="flex-[1.6] inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-arl-primary hover:bg-[#16526a] active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                       {busyID === trip.id ? "…" : <><IconPin className="w-3.5 h-3.5" /> Mark Dropped Off</>}
                     </button>
                   )}
@@ -1596,7 +1622,7 @@ function TripDetailModal({ open, onClose, trip, sections = [] }) {
             <InfoField label="Booked on" value={fmtDateTimeLong(trip.bookingCreatedAt)} />
             <InfoField label="Booked by" value={trip.customerName} />
             <InfoField label="Phone" value={trip.customerPhone && trip.customerPhone !== "—" ? (
-              <a href={`tel:${trip.customerPhone}`} className="text-teal-600 hover:underline">{trip.customerPhone}</a>
+              <CopyPhone phone={trip.customerPhone} />
             ) : null} />
             <InfoField label="Vehicle" value={trip.vehicleName} />
             <InfoField label="Driving" value={trip.modeOfDriving} />
@@ -1907,7 +1933,7 @@ function HistoryTab({ tab, setTab }) {
                         </td>
                         <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
                           {trip.customerPhone && trip.customerPhone !== "—"
-                            ? <a href={`tel:${trip.customerPhone}`} className="text-teal-600 hover:underline">{trip.customerPhone}</a>
+                            ? <CopyPhone phone={trip.customerPhone} />
                             : "—"}
                         </td>
                         <td className="px-4 py-3 text-gray-700">{trip.vehicleName}</td>
