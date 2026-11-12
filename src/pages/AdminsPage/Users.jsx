@@ -1350,6 +1350,25 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
   // same component, so a referrer's own referrer can be drilled into too.
   const [nestedUserID, setNestedUserID] = useState(null);
   const [showPhoto, setShowPhoto] = useState(false); // enlarged profile photo
+
+  // Document requests from this person that are still waiting for review (a replacement license / ID photo they sent).
+  // Shown at the top of the Documents tab so staff can see it right where the documents are.
+  const navigate = useNavigate();
+  const [pendingDocReqs, setPendingDocReqs] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    setPendingDocReqs([]);
+    getDocs(query(collection(db, "idResubmitRequests"), where("userID", "==", user.id), where("status", "==", "pending")))
+      .then((snap) => { if (!cancelled) setPendingDocReqs(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); })
+      .catch((e) => console.error("Pending document request fetch error:", e));
+    return () => { cancelled = true; };
+  }, [user.id]);
+  // Opens the Document Request tab on this person's pending request (same deep link the Dashboard uses).
+  const openDocumentRequests = () => {
+    const roleKey = ROLE_TABS.find((r) => r.labelSingular === roleLabelSingular)?.key;
+    navigate(`/users?${roleKey ? `role=${roleKey}&` : ""}tab=documents&open=${encodeURIComponent(user.id)}`);
+    onClose();
+  };
   const nestedUser = nestedUserID ? users?.find((u) => u.id === nestedUserID) : null;
   const det  = user.details  || {};
   const addr = user.address  || {};
@@ -1561,6 +1580,31 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
             <UserActivityTab user={user} kind={roleLabelSingular} viewerRole={viewerRole} />
           ) : (
             <>
+              {/* A document request from this person is waiting for review */}
+              {(pendingDocReqs.length > 0 || (idStatusOf(user) === "pending" && hasImgs)) && (
+                <div className="flex items-start justify-between gap-3 bg-blue-50 border border-blue-200 p-3 rounded-xl text-xs text-blue-800">
+                  <div className="space-y-0.5">
+                    <p className="font-semibold">Document request pending</p>
+                    {pendingDocReqs.map((r) => {
+                      const sent = r.createdAt ? `${fmtDate(r.createdAt)}${fmtTime(r.createdAt) ? " | " + fmtTime(r.createdAt) : ""}` : "";
+                      return (
+                        <p key={r.id}>
+                          {(r.documentKind || "license") === "license" ? "New driver's license" : "New ID / supporting document"}
+                          {sent ? ` · sent ${sent}` : ""}
+                        </p>
+                      );
+                    })}
+                    {pendingDocReqs.length === 0 && <p>New ID waiting for verification</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openDocumentRequests}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-arl-primary text-white font-semibold hover:bg-[#16526a] transition-colors"
+                  >
+                    Review
+                  </button>
+                </div>
+              )}
               <Section title="Document Info" icon={Icons.IdCard}>
                 <Field label="Document Type"   value={docu.documentType} />
                 <Field label="Document Number" value={docu.documentNumber} />

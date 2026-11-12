@@ -321,8 +321,8 @@ function TimelineBars({ traceData, visible, cars, currentTimeMs, onScrub, focuse
               const pastEnd = currentTimeMs > en;
               const fillPct = inRange ? ((currentTimeMs - st) / span) * 100 : pastEnd ? 100 : 0;
               return (
-                <div key={i} className="absolute top-0 h-full rounded pointer-events-none" style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: "#0d948844" }}>
-                  {(inRange || pastEnd) && <div className="absolute top-0 left-0 h-full rounded" style={{ width: `${fillPct}%`, background: "#0d9488" }} />}
+                <div key={i} className="absolute top-0 h-full rounded pointer-events-none" style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: "#1A5F7A44" }}>
+                  {(inRange || pastEnd) && <div className="absolute top-0 left-0 h-full rounded" style={{ width: `${fillPct}%`, background: "#1A5F7A" }} />}
                 </div>
               );
             })}
@@ -1044,7 +1044,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                   key={btn.daysAgo}
                   onClick={() => setDaysAgo(btn.daysAgo)}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    daysAgo === btn.daysAgo ? "bg-teal-600 text-white" : "bg-gray-50 text-gray-500 hover:bg-gray-100"
+                    daysAgo === btn.daysAgo ? "bg-arl-primary text-white" : "bg-gray-50 text-gray-500 hover:bg-gray-100"
                   }`}
                 >
                   {btn.label}
@@ -1151,7 +1151,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                 <button
                   onClick={() => { setShowBookingInfo(v => !v); setShowLogs(false); }}
                   className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
-                    showBookingInfo ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                    showBookingInfo ? "bg-arl-primary text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                   }`}
                 >
                   {isReview ? "Trip Summary" : "Booking Information"}
@@ -1159,7 +1159,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                 <button
                   onClick={() => { setShowLogs(v => !v); setShowBookingInfo(false); }}
                   className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold shadow-lg backdrop-blur-sm transition-all ${
-                    showLogs ? "bg-teal-600 text-white" : "bg-white/95 text-gray-700 hover:bg-white"
+                    showLogs ? "bg-arl-primary text-white" : "bg-white/95 text-gray-700 hover:bg-white"
                   }`}
                 >
                   Booking Logs
@@ -1175,7 +1175,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
             {downloadNotice && (
               <span
                 className={`px-3 py-1.5 rounded-full text-[11px] font-semibold shadow-lg backdrop-blur-sm animate-float-fade ${
-                  downloadNotice.ok ? "bg-teal-600/95 text-white" : "bg-red-500/95 text-white"
+                  downloadNotice.ok ? "bg-arl-primary/95 text-white" : "bg-red-500/95 text-white"
                 }`}
               >
                 {downloadNotice.ok ? "✓ Downloaded" : downloadNotice.msg}
@@ -1288,12 +1288,12 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                 onPointerUp={() => { setDragPct(null); lastRawRef.current = null; }}
                 onKeyUp={() => { setDragPct(null); lastRawRef.current = null; }}
                 onBlur={() => { setDragPct(null); lastRawRef.current = null; }}
-                className="w-full accent-teal-600"
+                className="w-full accent-[#1A5F7A]"
               />
               <div className="flex items-center justify-center gap-2 mt-2">
                 <button onClick={() => { setPlaying(false); setScrubIdx(0); }} className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm">⏮</button>
                 <button onClick={() => setScrubIdx(i => Math.max(0, i - 1))} className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm">◀</button>
-                <button onClick={() => setPlaying(p => !p)} className="w-10 h-8 rounded-lg bg-teal-600 text-white text-sm font-semibold">{playing ? "⏸" : "▶"}</button>
+                <button onClick={() => setPlaying(p => !p)} className="w-10 h-8 rounded-lg bg-arl-primary text-white text-sm font-semibold">{playing ? "⏸" : "▶"}</button>
                 <button onClick={() => setScrubIdx(i => Math.min(maxLen - 1, i + 1))} className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm">▶</button>
                 <button onClick={() => { setPlaying(false); setScrubIdx(maxLen - 1); }} className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm">⏭</button>
                 <div className="flex items-center gap-1 ml-2">
@@ -1301,7 +1301,7 @@ export default function TracebackPanel({ cars = NO_CARS, token, reviewData = nul
                     <button
                       key={s}
                       onClick={() => setPlaySpeed(s)}
-                      className={`px-2 py-1 rounded-md text-[11px] font-semibold ${playSpeed === s ? "bg-teal-600 text-white" : "bg-gray-50 text-gray-400 hover:bg-gray-100"}`}
+                      className={`px-2 py-1 rounded-md text-[11px] font-semibold ${playSpeed === s ? "bg-arl-primary text-white" : "bg-gray-50 text-gray-400 hover:bg-gray-100"}`}
                     >
                       {s}×
                     </button>

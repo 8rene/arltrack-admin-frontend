@@ -181,7 +181,7 @@ export default function TracebackBookingInfoPanel({
             className="bg-gray-50 rounded-xl border border-gray-100 p-3 cursor-pointer hover:border-teal-300 hover:bg-teal-50/60 transition-all"
           >
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-5 h-5 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
+              <span className="w-5 h-5 rounded-full bg-arl-primary text-white text-[10px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
               {canEdit ? (
                 <input
                   value={zone.label || ""}
@@ -203,7 +203,7 @@ export default function TracebackBookingInfoPanel({
                   type="range" min={100} max={3000} step={50}
                   value={zone.radius ?? 500}
                   onChange={e => updateZone(i, "radius", Number(e.target.value))}
-                  className="flex-1 accent-teal-600"
+                  className="flex-1 accent-[#1A5F7A]"
                 />
                 <span className="text-[11px] font-mono text-gray-500 w-14 text-right shrink-0">{zone.radius ?? 500} m</span>
               </div>
