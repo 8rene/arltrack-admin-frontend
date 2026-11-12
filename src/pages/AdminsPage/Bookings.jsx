@@ -1047,6 +1047,38 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
       .finally(() => setInventoryLoading(false));
   }, [booking, getToken]);
 
+  // Is a GPS device linked to this booking's car? undefined = still checking, null = none, object = the device.
+  // gpsError = the device list couldn't be loaded (so we don't claim "no device" when we simply don't know).
+  const [gpsDevice, setGpsDevice] = useState(undefined);
+  const [gpsError, setGpsError]   = useState(false);
+  useEffect(() => {
+    if (!booking.carID) { setGpsDevice(null); return; }
+    let cancelled = false;
+    setGpsDevice(undefined); setGpsError(false);
+    fetch(`${process.env.REACT_APP_API_URL}/api/gps/devices`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json().then((json) => ({ ok: r.ok, json })))
+      .then(({ ok, json }) => {
+        if (cancelled) return;
+        if (!ok) { setGpsError(true); setGpsDevice(null); return; }
+        setGpsDevice((json.data || []).find((d) => d.assigned && d.carID === booking.carID) || null);
+      })
+      .catch(() => { if (!cancelled) { setGpsError(true); setGpsDevice(null); } });
+    return () => { cancelled = true; };
+  }, [booking.carID, getToken]);
+
+  // GPS Setup, in "link a device to this car" mode when the car has none (it asks which device to use, then
+  // brings you back to this booking). With a device already linked it just opens the page.
+  const goToDeviceSetup = () => {
+    const bID = booking.bookingID || booking.id;
+    navigate("/gps-setup", gpsDevice ? undefined : {
+      state: {
+        assignCarId:    booking.carID,
+        assignCarLabel: booking.vehicleName || "this car",
+        returnTo:       `/bookings?open=${encodeURIComponent(bID)}`,
+      },
+    });
+  };
+
   const goToHistory = () => {
     navigate("/car-tracking", {
       state: {
@@ -1166,7 +1198,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   };
 
   // ── Two tabs: "Step by step" (a checklist with View buttons) and "Details" ──
-  // The 8 steps: Booked → Paid → Driver → Before-trip inspection → Pickup & trip
+  // The steps: Booked → Paid → Driver → Before-trip inspection → Device setup → Pickup & trip
   // → Drop-off & after-trip inspection → Maintenance → Deposit & completion.
   // Each step's check is worked out from data this modal already has, and its
   // View button jumps to the page where that step is handled.
@@ -1248,6 +1280,14 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     },
     { key: "before", title: "Before-trip inspection", done: inspectionDone(before, beforeChk), sub: inspectionSub(before, beforeChk, "Not recorded") },
     {
+      // Checked once a GPS device is linked to the booked car, so the trip can be tracked.
+      key: "gps", title: "Device setup", done: !!gpsDevice,
+      sub: gpsDevice === undefined ? "Checking…"
+        : gpsDevice ? `${gpsDevice.gpsName || "GPS device"} connected`
+        : gpsError ? "Couldn't check the car's GPS device"
+        : "No GPS device connected to this car",
+    },
+    {
       // One process: pickup → monitor → drop-off. Done once the car is dropped off.
       key: "trip", title: "Pickup, monitor & drop-off", done: droppedOff,
       sub: droppedOff ? "Dropped off" : started ? "Trip in progress" : "Not started",
@@ -1318,6 +1358,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     paid:        [{ label: "Payments", onClick: goToPayments }],
     driver:      isChauffeur ? [{ label: "Driver Dispatch", onClick: goToDispatch }] : [],
     before:      [{ label: "Vehicle Inspections", onClick: goToInventory }],
+    gps:         booking.carID && gpsDevice !== undefined ? [{ label: gpsDevice ? "View device" : "Device setup", onClick: goToDeviceSetup }] : [],
     after:       [{ label: "Vehicle Inspections", onClick: goToInventory }],
     // Already filed: open it. Nothing filed (or still loading): the add form, as before.
     maintenance: maint.length > 0

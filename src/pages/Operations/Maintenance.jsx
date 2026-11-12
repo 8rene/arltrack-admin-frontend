@@ -275,8 +275,6 @@ export default function Maintenance() {
   const [partNames, setPartNames]         = useState({}); // carPartID -> name, fallback for parts missing from the catalog
   // The open modal's car: every part with its catalog price, from /api/car-part-pricing/car/:carID
   const [catalog, setCatalog]             = useState({ carID: "", parts: [], loading: false });
-  const [customName, setCustomName]       = useState("");
-  const [customPrice, setCustomPrice]     = useState("");
   const [sortKey, setSortKey] = useState(null); // null = default (open first, soonest due on top)
   const [sortDir, setSortDir] = useState("asc");
   const handleSort = (key) => {
@@ -419,7 +417,6 @@ export default function Maintenance() {
       ? entryFromFlagged(flagged)
       : { carPartID, carPartName: partNames[carPartID] || "Unknown Part", conditionBefore: "Damaged", conditionAfter: defaultAfter(), price: undefined, description: "" };
     setForm({ ...EMPTY_FORM, carID, partsAddressed: [entry] });
-    setCustomName(""); setCustomPrice("");
     setEditRecord(null);
     setViewing(false);
     setShowAdd(true);
@@ -475,7 +472,7 @@ export default function Maintenance() {
 
   const servicesTotal = useMemo(() => {
     const catalogSum = form.services.reduce((s, x) => s + (Number(x.price) || 0), 0);
-    const customSum  = form.customServices.reduce((s, x) => s + (Number(x.price) || 0), 0);
+    const customSum  = form.customServices.reduce((s, x) => s + ((x.name || "").trim() ? (Number(x.price) || 0) : 0), 0);
     return catalogSum + customSum;
   }, [form.services, form.customServices]);
   const partsTotal = useMemo(
@@ -502,10 +499,29 @@ export default function Maintenance() {
     setCatalog({ carID: form.carID, parts: [], loading: true });
     (async () => {
       try {
-        const res = await authedFetch(`/api/car-part-pricing/car/${form.carID}`);
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.message || "Failed to load parts.");
-        if (!cancelled) setCatalog({ carID: form.carID, parts: json.data || [], loading: false });
+        // Same two sources the Inventory page uses: /car-parts/car/:id is exactly what Inventory shows,
+        // /car-part-pricing/car/:id is the pricing-only view. A price found in either one counts.
+        const [pricingRes, partsRes] = await Promise.all([
+          authedFetch(`/api/car-part-pricing/car/${form.carID}`),
+          authedFetch(`/api/car-parts/car/${form.carID}`),
+        ]);
+        const pricingJson = await pricingRes.json().catch(() => ({}));
+        const partsJson   = await partsRes.json().catch(() => ({}));
+        if (!pricingRes.ok && !partsRes.ok) throw new Error(pricingJson.message || partsJson.message || "Failed to load parts.");
+
+        const merged = new Map();
+        (partsJson.data || []).forEach(p => merged.set(p.id, {
+          carPartID: p.id, carPartName: p.carPartName || "", price: p.price ?? null,
+        }));
+        (pricingJson.data || []).forEach(p => {
+          const prev = merged.get(p.carPartID);
+          merged.set(p.carPartID, {
+            carPartID:   p.carPartID,
+            carPartName: p.carPartName || prev?.carPartName || "",
+            price:       p.price ?? prev?.price ?? null,
+          });
+        });
+        if (!cancelled) setCatalog({ carID: form.carID, parts: [...merged.values()], loading: false });
       } catch (e) {
         if (!cancelled) { setCatalog({ carID: form.carID, parts: [], loading: false }); showToast(e.message || "Couldn't load this vehicle's parts.", "error"); }
       }
@@ -573,8 +589,7 @@ export default function Maintenance() {
       if (!res.ok) throw new Error(data.message || "Failed to save maintenance record.");
 
       showToast(editRecord ? "Record updated." : "Maintenance scheduled.");
-      setEditRecord(null); setShowAdd(false); setForm(EMPTY_FORM); setCustomName(""); setCustomPrice("");
-      fetchAll();
+      setEditRecord(null); setShowAdd(false); setForm(EMPTY_FORM);      fetchAll();
     } catch (e) { showToast(e.message, "error"); }
     finally { setSaving(false); }
   };
@@ -617,7 +632,6 @@ export default function Maintenance() {
 
   const openAdd = () => {
     setForm(EMPTY_FORM);
-    setCustomName(""); setCustomPrice("");
     setEditRecord(null);
     setViewing(false);
     setShowAdd(true);
@@ -638,7 +652,6 @@ export default function Maintenance() {
   // already on the job. Nothing about the part changes until the job is Completed.
   const openScheduleForPart = (part) => {
     setForm({ ...EMPTY_FORM, carID: part.carID, partsAddressed: [entryFromFlagged(part)] });
-    setCustomName(""); setCustomPrice("");
     setEditRecord(null);
     setShowAdd(true);
   };
@@ -692,11 +705,15 @@ export default function Maintenance() {
     setForm(f => ({ ...f, services: f.services.map(s => s.serviceID === serviceID ? { ...s, price } : s) }));
   };
 
-  const addCustomService = () => {
-    const name = customName.trim();
-    if (!name) return;
-    setForm(f => ({ ...f, customServices: [...f.customServices, { name, price: Number(customPrice) || 0 }] }));
-    setCustomName(""); setCustomPrice("");
+  // "Other" services are inline rows: a blank row is always shown at the end, and typing in it adds
+  // the entry by itself (no + button). Clearing a row's name and price removes it.
+  const updateCustomService = (idx, patch) => {
+    setForm(f => {
+      const list = [...f.customServices];
+      const next = { ...(list[idx] || { name: "", price: "" }), ...patch };
+      if (idx >= list.length) list.push(next); else list[idx] = next;
+      return { ...f, customServices: list.filter(c => (c.name || "").trim() !== "" || String(c.price ?? "") !== "") };
+    });
   };
 
   const removeCustomService = (idx) => {
@@ -1016,9 +1033,7 @@ export default function Maintenance() {
           onClose={closeModal} onSave={handleSave} onCarChange={onCarChange}
           servicesTotal={servicesTotal} partsTotal={partsTotal} computedTotal={computedTotal}
           toggleService={toggleService} updateServicePrice={updateServicePrice}
-          customName={customName} setCustomName={setCustomName}
-          customPrice={customPrice} setCustomPrice={setCustomPrice}
-          addCustomService={addCustomService} removeCustomService={removeCustomService}
+          updateCustomService={updateCustomService} removeCustomService={removeCustomService}
           catalog={catalog} catalogByID={catalogByID} flaggedByPart={flaggedByPart} partNames={partNames}
           addPart={addPart} updatePart={updatePart} removePart={removePart}
         />
@@ -1233,7 +1248,7 @@ function MaintenanceModal({
   onClose, onSave, onCarChange,
   servicesTotal, partsTotal, computedTotal,
   toggleService, updateServicePrice,
-  customName, setCustomName, customPrice, setCustomPrice, addCustomService, removeCustomService,
+  updateCustomService, removeCustomService,
   catalog, catalogByID, flaggedByPart, partNames,
   addPart, updatePart, removePart,
 }) {
@@ -1310,10 +1325,6 @@ function MaintenanceModal({
                         <button type="button" onClick={() => setForm(f => ({ ...f, bookingID: "" }))}
                           className="text-xs text-teal-600 hover:text-teal-800 underline">Unlink</button>
                       )}
-                      <button type="button" onClick={() => setShowPenalties(v => !v)}
-                        className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors">
-                        {showPenalties ? "Hide Penalties" : "View Penalties"}
-                      </button>
                       <button type="button" onClick={() => navigate(`/bookings?open=${encodeURIComponent(form.bookingID)}`)}
                         className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
                         View Booking →
@@ -1406,25 +1417,25 @@ function MaintenanceModal({
               {/* Services */}
               <div className="space-y-1.5">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Services Performed</p>
-                <div className="max-h-80 overflow-y-auto pr-1 space-y-3 border border-gray-100 rounded-xl p-3">
+                <div className="max-h-96 overflow-y-auto pr-1 space-y-4 border border-gray-100 rounded-xl p-3">
                   {config.serviceCatalog.map(group => (
                     <div key={group.group}>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">{group.group}</p>
-                      <div className="space-y-1.5">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{group.group}</p>
+                      <div className="space-y-2">
                         {group.services.map(s => {
                           const selected = form.services.find(x => x.serviceID === s.serviceID);
                           return (
                             <div key={s.serviceID} className="flex items-center gap-2">
-                              <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                              <label className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
                                 <input type="checkbox" checked={!!selected}
                                   onChange={() => toggleService(s.serviceID, s.serviceName)}
-                                  className="accent-teal-600 shrink-0" />
-                                <span className="text-xs text-gray-700 truncate">{s.serviceName}</span>
+                                  className="accent-teal-600 shrink-0 w-4 h-4" />
+                                <span className="text-sm text-gray-700">{s.serviceName}</span>
                               </label>
                               {selected && (
                                 <input type="number" min="0" placeholder="₱0" value={selected.price || ""}
                                   onChange={e => updateServicePrice(s.serviceID, e.target.value)}
-                                  className="w-24 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
+                                  className="w-28 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
                               )}
                             </div>
                           );
@@ -1434,25 +1445,27 @@ function MaintenanceModal({
                   ))}
 
                   <div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Other</p>
-                    {form.customServices.map((c, idx) => (
-                      <div key={idx} className="flex items-center gap-2 mb-1.5">
-                        <span className="text-xs text-gray-700 flex-1 truncate">{c.name}</span>
-                        <span className="text-xs text-gray-500">{peso(c.price)}</span>
-                        <button type="button" onClick={() => removeCustomService(idx)} className="text-gray-400 hover:text-red-500">
-                          <IconX className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))}
-                    <div className="flex gap-1.5">
-                      <input type="text" value={customName} onChange={e => setCustomName(e.target.value)}
-                        placeholder="Custom service…"
-                        className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
-                      <input type="number" min="0" value={customPrice} onChange={e => setCustomPrice(e.target.value)}
-                        placeholder="₱0"
-                        className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-arl-light outline-none" />
-                      <button type="button" onClick={addCustomService}
-                        className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-teal-400 hover:text-teal-600">+</button>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Other</p>
+                    <div className="space-y-2">
+                      {/* Existing entries + one blank row at the end. Typing in the blank row adds it automatically. */}
+                      {[...form.customServices, { name: "", price: "" }].map((c, idx) => {
+                        const isBlank = idx === form.customServices.length;
+                        return (
+                          <div key={idx} className="flex items-center gap-2">
+                            <input type="text" value={c.name} onChange={e => updateCustomService(idx, { name: e.target.value })}
+                              placeholder="Custom service…"
+                              className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
+                            <input type="number" min="0" value={c.price ?? ""} onChange={e => updateCustomService(idx, { price: e.target.value })}
+                              placeholder="₱0"
+                              className="w-28 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:ring-2 focus:ring-arl-light outline-none" />
+                            {isBlank
+                              ? <span className="w-4 shrink-0" />
+                              : <button type="button" onClick={() => removeCustomService(idx)} aria-label="Remove custom service" className="text-gray-400 hover:text-red-500 shrink-0">
+                                  <IconX className="w-3.5 h-3.5" />
+                                </button>}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -1595,6 +1608,12 @@ function MaintenanceModal({
             <>
               <button onClick={onClose}
                 className="w-full py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Close</button>
+              {form.bookingID && (
+                <button type="button" onClick={() => setShowPenalties(v => !v)}
+                  className="w-full py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 text-sm font-semibold transition-colors">
+                  {showPenalties ? "Hide Penalties" : "View Penalties"}
+                </button>
+              )}
               <button onClick={onEdit}
                 className="w-full py-2 rounded-xl bg-arl-primary text-white text-sm font-semibold hover:bg-[#16526a]">Edit</button>
               <span className="text-center text-xs text-gray-400">Read-only. Click Edit to make changes.</span>
@@ -1603,6 +1622,12 @@ function MaintenanceModal({
             <>
               <button onClick={onClose}
                 className="w-full py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
+              {form.bookingID && (
+                <button type="button" onClick={() => setShowPenalties(v => !v)}
+                  className="w-full py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 text-sm font-semibold transition-colors">
+                  {showPenalties ? "Hide Penalties" : "View Penalties"}
+                </button>
+              )}
               <button onClick={onSave} disabled={saving || catalog.loading}
                 className="w-full py-2 rounded-xl bg-arl-primary text-white text-sm font-semibold hover:bg-[#16526a] disabled:opacity-40">
                 {saving ? "Saving…" : editRecord ? "Update" : "Schedule"}

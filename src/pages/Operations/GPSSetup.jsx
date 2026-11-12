@@ -391,7 +391,9 @@ export default function DeviceTrack() {
         // Job's done — go back to Car Tracking and re-select this car so
         // its now-assigned device shows up immediately, rather than leaving
         // the admin to navigate back and re-find it manually.
-        navigate("/car-tracking", { state: { selectCarId: assignForCar.id } });
+        // Came from a booking's "Device setup" step -> go back to that booking; otherwise Car Tracking as before.
+        if (routerLocation.state?.returnTo) navigate(routerLocation.state.returnTo);
+        else navigate("/car-tracking", { state: { selectCarId: assignForCar.id } });
         return;
       } else {
         setNotice({ type: "error", msg: json.message || "Failed to assign car." });
