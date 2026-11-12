@@ -23,10 +23,10 @@ function usePagination(items, pageSize = PAGE_SIZE) {
 }
 
 function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
-  if (totalPages <= 1) return null;
+  if (count === 0) return null; // always shown once there is at least one part, even for a single page (same as Bookings)
   const nums = [1];
   for (let n = page - 1; n <= page + 1; n++) if (n > 1 && n < totalPages) nums.push(n);
-  nums.push(totalPages);
+  if (totalPages > 1) nums.push(totalPages);
   const dedup = [...new Set(nums)].sort((x, y) => x - y);
   const rangeEnd = Math.min(start + pageSize, count);
   return (
@@ -456,6 +456,12 @@ export default function Inventory() {
                         </td>
                       </tr>
                     )
+                  ))}
+                  {/* Same as Bookings: pad a short page with empty rows so the table always keeps its 10-row height. */}
+                  {!partsLoading && pageItems.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
+                    <tr key={`filler-${i}`} aria-hidden="true" className="border-t border-gray-50">
+                      <td colSpan={6} className="h-[53px]">&nbsp;</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

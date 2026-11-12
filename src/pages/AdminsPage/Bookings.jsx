@@ -1079,6 +1079,8 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     });
   };
 
+  const gpsMissing = gpsDevice === null && !gpsError; // we know the car has no device linked
+
   const goToHistory = () => {
     navigate("/car-tracking", {
       state: {
@@ -1198,7 +1200,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   };
 
   // ── Two tabs: "Step by step" (a checklist with View buttons) and "Details" ──
-  // The steps: Booked → Paid → Driver → Before-trip inspection → Device setup → Pickup & trip
+  // The steps: Booked → Paid → Driver → Before-trip inspection (vehicle inspection + device setup) → Pickup & trip
   // → Drop-off & after-trip inspection → Maintenance → Deposit & completion.
   // Each step's check is worked out from data this modal already has, and its
   // View button jumps to the page where that step is handled.
@@ -1278,14 +1280,28 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
       key: "driver", title: "Driver assigned", done: isCancelled ? !!booking.driverID : (!isChauffeur || !!booking.driverID),
       sub: !isChauffeur ? "Self-drive — no driver needed" : booking.driverID ? (booking.driverName || "Assigned") : "No driver yet",
     },
-    { key: "before", title: "Before-trip inspection", done: inspectionDone(before, beforeChk), sub: inspectionSub(before, beforeChk, "Not recorded") },
     {
-      // Checked once a GPS device is linked to the booked car, so the trip can be tracked.
-      key: "gps", title: "Device setup", done: !!gpsDevice,
-      sub: gpsDevice === undefined ? "Checking…"
-        : gpsDevice ? `${gpsDevice.gpsName || "GPS device"} connected`
-        : gpsError ? "Couldn't check the car's GPS device"
-        : "No GPS device connected to this car",
+      // Two things to get done before pickup: the vehicle inspection, and a GPS device linked to the car.
+      // The device part is only held against the step when we know the car has none (still loading / a failed check never block it).
+      key: "before", title: "Before-trip inspection",
+      done: inspectionDone(before, beforeChk) && !gpsMissing,
+      sub: inspectionSub(before, beforeChk, "Not recorded"),
+      parts: [
+        {
+          key: "inspection", label: "Vehicle inspection", done: inspectionDone(before, beforeChk),
+          text: inspectionSub(before, beforeChk, "Not recorded"),
+          actions: [{ label: "Vehicle Inspections", onClick: goToInventory }],
+        },
+        {
+          key: "gps", label: "Device setup",
+          done: gpsDevice === undefined ? undefined : !!gpsDevice,
+          text: gpsDevice === undefined ? "Checking…"
+            : gpsDevice ? `${gpsDevice.gpsName || "GPS device"} connected`
+            : gpsError ? "Couldn't check the car's GPS device"
+            : "No GPS device connected to this car",
+          actions: booking.carID ? [{ label: "GPS Setup", onClick: goToDeviceSetup }] : [],
+        },
+      ],
     },
     {
       // One process: pickup → monitor → drop-off. Done once the car is dropped off.
@@ -1357,8 +1373,6 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
     booked:      [{ label: "Details", onClick: () => setTab("details") }],
     paid:        [{ label: "Payments", onClick: goToPayments }],
     driver:      isChauffeur ? [{ label: "Driver Dispatch", onClick: goToDispatch }] : [],
-    before:      [{ label: "Vehicle Inspections", onClick: goToInventory }],
-    gps:         booking.carID && gpsDevice !== undefined ? [{ label: gpsDevice ? "View device" : "Device setup", onClick: goToDeviceSetup }] : [],
     after:       [{ label: "Vehicle Inspections", onClick: goToInventory }],
     // Already filed: open it. Nothing filed (or still loading): the add form, as before.
     maintenance: maint.length > 0

@@ -499,29 +499,10 @@ export default function Maintenance() {
     setCatalog({ carID: form.carID, parts: [], loading: true });
     (async () => {
       try {
-        // Same two sources the Inventory page uses: /car-parts/car/:id is exactly what Inventory shows,
-        // /car-part-pricing/car/:id is the pricing-only view. A price found in either one counts.
-        const [pricingRes, partsRes] = await Promise.all([
-          authedFetch(`/api/car-part-pricing/car/${form.carID}`),
-          authedFetch(`/api/car-parts/car/${form.carID}`),
-        ]);
-        const pricingJson = await pricingRes.json().catch(() => ({}));
-        const partsJson   = await partsRes.json().catch(() => ({}));
-        if (!pricingRes.ok && !partsRes.ok) throw new Error(pricingJson.message || partsJson.message || "Failed to load parts.");
-
-        const merged = new Map();
-        (partsJson.data || []).forEach(p => merged.set(p.id, {
-          carPartID: p.id, carPartName: p.carPartName || "", price: p.price ?? null,
-        }));
-        (pricingJson.data || []).forEach(p => {
-          const prev = merged.get(p.carPartID);
-          merged.set(p.carPartID, {
-            carPartID:   p.carPartID,
-            carPartName: p.carPartName || prev?.carPartName || "",
-            price:       p.price ?? prev?.price ?? null,
-          });
-        });
-        if (!cancelled) setCatalog({ carID: form.carID, parts: [...merged.values()], loading: false });
+        const res = await authedFetch(`/api/car-part-pricing/car/${form.carID}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || "Failed to load parts.");
+        if (!cancelled) setCatalog({ carID: form.carID, parts: json.data || [], loading: false });
       } catch (e) {
         if (!cancelled) { setCatalog({ carID: form.carID, parts: [], loading: false }); showToast(e.message || "Couldn't load this vehicle's parts.", "error"); }
       }
