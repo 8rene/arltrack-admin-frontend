@@ -1560,7 +1560,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
                     {booking.vehicleName}
                   </button>
                 ) : booking.vehicleName} />
-                <InfoField label="Service Type" value={booking.serviceTypeName} />
+                <InfoField label="Service Type" value={booking.serviceTypeOther ? `Others: ${booking.serviceTypeOther}` : booking.serviceTypeName} />
                 <InfoField label="Start Date" value={fmtDate(booking.startDateTime)} />
                 <InfoField label="End Date"   value={fmtDate(booking.endDateTime)} />
                 <InfoField wide label="Duration" value={booking.totalDays != null ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : null} />

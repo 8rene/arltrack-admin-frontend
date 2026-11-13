@@ -21,7 +21,8 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 // Receives the selected period from Reports.jsx: { period, year, month, week, day }.
 // Each row of report.bookings needs:
 //   carID, carName, userID, customerName, displayStatus
-//   serviceTypeID, serviceTypeName   (for the Service types graph; "Unspecified" when a booking has none)
+//   serviceTypeID, serviceTypeName   (for the Service types graph; "Others" when the customer typed their own, "Unspecified" when a booking has neither)
+//   serviceTypeOther                 (the text they typed for "Others"; shown in the pop-up, cut when long)
 //   modeOfDriving   "With Chauffeur" | "Self Drive"   (for the Driving dropdown, and the thin bar + columns under "All bookings")
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -475,6 +476,10 @@ const THEAD = "bg-gray-50 text-gray-400 text-xs uppercase tracking-wide";
 
 const dayText = (iso) => (iso ? new Date(iso).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" }) : "—");
 
+/** What the customer typed for "Others", cut to fit a table cell (the full text stays in the tooltip). */
+const OTHER_MAX = 28;
+const cutText = (t, max = OTHER_MAX) => (t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t);
+
 /** The status of a booking as a coloured tag. */
 function StatusTag({ status }) {
   const s = STATUSES.find((x) => x.key === status);
@@ -516,7 +521,9 @@ function BookingsModal({ row, kind, bookings, onClose }) {
   const who = kind === "customer" ? [["Vehicle", (b) => b.carName]]
     : kind === "vehicle" ? [["Customer", (b) => b.customerName]]
     : [["Customer", (b) => b.customerName], ["Vehicle", (b) => b.carName]];
-  const heads = ["Booking ID", ...who.map((w) => w[0]), ...(kind === "service" ? [] : ["Service type"]), "Driving", "Status", "Start", "End", "Total fee"];
+  // "Others" bookings: say what the customer typed. In the service pop-up it gets its own column (only when there is something to show).
+  const showOther = kind === "service" && items.some((b) => b.serviceTypeOther);
+  const heads = ["Booking ID", ...who.map((w) => w[0]), ...(kind === "service" ? (showOther ? ["Specified as"] : []) : ["Service type"]), "Driving", "Status", "Start", "End", "Total fee"];
   const driving = (b) => (b.modeOfDriving === "With Chauffeur" ? "With chauffeur" : b.modeOfDriving === "Self Drive" ? "Self-drive" : "");
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -545,7 +552,16 @@ function BookingsModal({ row, kind, bookings, onClose }) {
                     <tr key={b.id || b.bookingID} className="border-t hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 whitespace-nowrap"><span className="font-mono text-xs text-gray-600">{b.bookingID || "—"}</span></td>
                       {who.map((w) => <td key={w[0]} className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{w[1](b) || <span className="text-gray-300">—</span>}</td>)}
-                      {kind !== "service" && <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{b.serviceTypeName || <span className="text-gray-300">—</span>}</td>}
+                      {kind !== "service" && (
+                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap" title={b.serviceTypeOther || undefined}>
+                          {b.serviceTypeOther ? `Others: ${cutText(b.serviceTypeOther)}` : (b.serviceTypeName || <span className="text-gray-300">—</span>)}
+                        </td>
+                      )}
+                      {showOther && (
+                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap" title={b.serviceTypeOther || undefined}>
+                          {b.serviceTypeOther ? cutText(b.serviceTypeOther) : <span className="text-gray-300">—</span>}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{driving(b) || <span className="text-gray-300">—</span>}</td>
                       <td className="px-4 py-3"><StatusTag status={b.displayStatus} /></td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{dayText(b.startDate)}</td>
@@ -738,7 +754,7 @@ function RentalsCustomersView({ report, exportRef }) {
     const text = (v) => (typeof v === "string" ? v : v && typeof v === "object" ? (v.address || v.name || v.label || "") : "");
     const statusLabel = (k) => STATUSES.find((s) => s.key === k)?.label || k;
     const bookingRows = scoped.filter((b) => b.displayStatus).map((b) => [
-      b.bookingID || "", b.customerName, b.carName, svcSupported ? (b.serviceTypeName || "") : "", b.modeOfDriving || "Not recorded",
+      b.bookingID || "", b.customerName, b.carName, svcSupported ? (b.serviceTypeOther ? `Others: ${b.serviceTypeOther}` : (b.serviceTypeName || "")) : "", b.modeOfDriving || "Not recorded",
       statusLabel(b.displayStatus), text(b.location), whenTime(b.startDate), whenTime(b.endDate), count(b.totalDays), money(b.totalFee), whenTime(b.createdAt),
     ]);
     return {
