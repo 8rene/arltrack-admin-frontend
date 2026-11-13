@@ -5,10 +5,10 @@
 // and the more recent event wins:
 //
 //   - the car's latest inspection: a part it lists as Damaged / Stolen / Missing is flagged
-//   - Completed maintenance jobs on that car that cover the part and are not older than that
-//     inspection (linked to the same booking as the inspection, or dated on or after the day
-//     it was recorded — or ANY Completed job when the car has no inspection at all).
-//     If several do, the MOST RECENT one decides: its "After" condition "Good" fixes the
+//   - Completed maintenance jobs on that car that cover the part and were saved (completed) AFTER
+//     that inspection was recorded — or ANY Completed job when the car has no inspection at all.
+//     The trip / booking date and the job's scheduled date do not matter: whichever happened LAST
+//     wins. If several jobs do, the MOST RECENTLY saved one decides: its "After" condition "Good" fixes the
 //     part; "Damaged" leaves it flagged — or flags it, when the job itself found the part
 //     damaged and no inspection had.
 //
@@ -17,8 +17,8 @@
 // A newer inspection that finds the part damaged again flags it again, and
 // reopening/deleting the job un-resolves it.
 //
-// Days are compared in Philippine time (UTC+8), exactly like the backend: an inspection is
-// stamped with the real moment while a job's date is just a day.
+// Same as the backend: an inspection is stamped with the real moment it was saved; a job's "done"
+// moment is when it was last saved (updatedAt), falling back to its date for old records.
 //
 // Used by Maintenance.jsx. The backend (services/carParts/carPartConditions.service.js,
 // getUnresolvedDamage) applies the same rule and writes it to carParts.status, which the
@@ -60,13 +60,11 @@ export const latestJobEntry = (carID, carPartID, record, jobs) => {
     if (j.status !== "Completed" || j.carID !== carID) return;
     const entry = (j.partsAddressed || []).find((p) => p?.carPartID === carPartID);
     if (!entry) return;
-    const jobMs = toMs(j.maintenanceDate);
-    const sameBooking = record && j.bookingID && record.bookingID && j.bookingID === record.bookingID;
-    if (record && !sameBooking && !(jobMs > 0 && phDay(jobMs) >= phDay(toMs(record.recordedAt)))) return;
-    const updatedMs = toMs(j.updatedAt);
-    if (!latest || jobMs > latest.jobMs || (jobMs === latest.jobMs && updatedMs >= latest.updatedMs)) {
-      latest = { entry, jobMs, updatedMs };
-    }
+    // When the job was done = when it was last saved. Whichever happened last wins: a job saved BEFORE the
+    // inspection was recorded can't have fixed what the inspection found.
+    const doneMs = toMs(j.updatedAt) || toMs(j.maintenanceDate);
+    if (record && doneMs < toMs(record.recordedAt)) return;
+    if (!latest || doneMs >= latest.doneMs) latest = { entry, doneMs };
   });
   return latest;
 };
