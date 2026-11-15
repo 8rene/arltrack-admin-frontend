@@ -376,7 +376,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
   const { getToken } = useAuth();
   const [preview, setPreview]   = useState(null);
   const [loading, setLoading]   = useState(true);
-  const [mode, setMode]         = useState("full"); // "full" | "normal" | "no_show" | "cancel"
+  const [pickedMode, setMode]         = useState("full"); // "full" | "normal" | "no_show" | "cancel"
   const [reason, setReason]     = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]       = useState(null);
@@ -401,17 +401,22 @@ function RefundCancelModal({ booking, onClose, onDone }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booking.id]);
 
-  useEffect(() => { setConfirming(false); }, [mode]);
+  useEffect(() => { setConfirming(false); }, [pickedMode]);
 
   const hasMoney = (preview?.total || 0) > 0;
-  const blocked  = !!preview?.existingRequest && (mode === "cancel" || mode === "no_show");
+  const blocked  = false; // an open request no longer blocks anything: its options are locked and "Confirm refund request" is the action
   const ns       = preview?.noShow;
   const nm       = preview?.normal;
   // No pickup check any more: the option is always offered while there is a payment to refund.
   const canNoDeposit = !!ns && !preview?.alreadyRefunded;
   // A customer's open refund request is approved as a Full refund, so Normal / No-show can't be chosen meanwhile.
   const hasOpenRequest = !!preview?.existingRequest;
+  // With the customer's own request open, every option is locked: the only action is "Confirm refund request",
+  // which approves that request as a Full refund.
+  const reqMode = hasOpenRequest && hasMoney && !preview?.alreadyRefunded;
+  const mode = reqMode ? "full" : pickedMode;
   const canNormal = !!nm && nm.available && !hasOpenRequest && !preview?.alreadyRefunded;
+  const requestOpenWhy = "Not available while the customer's own refund request is open.";
   const isRefundMode = mode === "full" || mode === "normal" || mode === "no_show";
   // The figures of the option that is selected.
   const sel = mode === "full" ? { total: preview?.total || 0, online: preview?.onlineAmount || 0, manual: preview?.manualAmount || 0, scheduled: false, sendAfter: null }
@@ -445,8 +450,8 @@ function RefundCancelModal({ booking, onClose, onDone }) {
 
   // disabledWhy: when set the option is greyed out and this says why (instead of the option silently disappearing).
   const opt = (value, title, desc, disabledWhy = null) => (
-    <label className={`flex items-start gap-3 p-3 rounded-xl border ${disabledWhy ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${mode === value ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
-      <input type="radio" className="mt-1" checked={mode === value} disabled={!!disabledWhy} onChange={() => setMode(value)} />
+    <label className={`flex items-start gap-3 p-3 rounded-xl border ${disabledWhy ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${!reqMode && mode === value ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
+      <input type="radio" className="mt-1" checked={!reqMode && mode === value} disabled={!!disabledWhy} onChange={() => setMode(value)} />
       <div>
         <p className="text-sm font-semibold text-gray-800">{title}</p>
         <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
@@ -501,7 +506,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
         {/* Header */}
         <div className="px-6 pt-5 pb-3 shrink-0">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="font-bold text-lg text-gray-800">Cancel Booking</h2>
+            <h2 className="font-bold text-lg text-gray-800">{reqMode ? "Booking Refund" : "Cancel Booking"}</h2>
             <button onClick={onClose} disabled={submitting} className="text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
               <IconX className="w-5 h-5" />
             </button>
@@ -532,13 +537,13 @@ function RefundCancelModal({ booking, onClose, onDone }) {
 
             {preview.existingRequest && (
               <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">
-                The customer already has a refund request ({preview.existingRequest.status}). Refunding here will approve that same request as a Full refund — no double refund.
+                The customer already has a refund request ({preview.existingRequest.status}). Confirm refund request approves that same request as a Full refund — no double refund.
               </div>
             )}
 
             {hasMoney && (
               <div className="space-y-2">
-                {opt("full", "Full refund", "Use this when it's our issue. The deposit and the online payment fee are both returned to the customer.")}
+                {opt("full", "Full refund", "Use this when it's our issue. The deposit and the online payment fee are both returned to the customer.", reqMode ? requestOpenWhy + " Use Confirm refund request below." : null)}
                 {opt(
                   "normal",
                   "Normal refund",
@@ -549,9 +554,9 @@ function RefundCancelModal({ booking, onClose, onDone }) {
                   "no_show",
                   "No Deposit Refund",
                   "The deposit and the online payment fee are not returned. Everything else the customer paid is refunded.",
-                  canNoDeposit ? null : "Not available for this booking."
+                  reqMode ? requestOpenWhy : canNoDeposit ? null : "Not available for this booking."
                 )}
-                {opt("cancel", "Cancel only (no refund)", "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.")}
+                {opt("cancel", "Cancel only (no refund)", "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.", reqMode ? requestOpenWhy : null)}
               </div>
             )}
 
@@ -599,7 +604,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
             disabled={submitting || loading || !preview || !reason.trim() || blocked}
             className="w-full px-3 py-1.5 bg-red-600 text-white font-semibold rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors"
           >
-            {submitting ? "Processing…" : confirming ? "Yes, cancel without refund" : !hasMoney || mode === "cancel" ? "Cancel Booking" : mode === "no_show" ? "No Deposit Refund & Cancel" : mode === "normal" ? "Normal Refund & Cancel" : "Full Refund & Cancel"}
+            {submitting ? "Processing…" : confirming ? "Yes, cancel without refund" : reqMode ? "Confirm Refund Request" : !hasMoney || mode === "cancel" ? "Cancel Booking" : mode === "no_show" ? "No Deposit Refund & Cancel" : mode === "normal" ? "Normal Refund & Cancel" : "Full Refund & Cancel"}
           </button>
           <button onClick={onClose} disabled={submitting} className="w-full py-1.5 border rounded-xl text-sm disabled:opacity-50">Back</button>
           </div>

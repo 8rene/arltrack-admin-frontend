@@ -1091,18 +1091,26 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
   const activeBooking = upcoming.find((b) => b.bookingID === activeBookingID) || null;
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[85vh] overflow-y-auto">
-        <div>
-          <h3 className="font-bold text-gray-800 text-lg">Are you sure?</h3>
+    <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+        {/* Header — same layout as the Bookings page modals */}
+        <div className="px-6 pt-5 pb-3 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-bold text-lg text-gray-800">Change Car Status</h2>
+            <button onClick={onCancel} disabled={submitting} className="text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
+              <IconX className="w-5 h-5" />
+            </button>
+          </div>
           <p className="text-sm text-gray-500 mt-1">
             Switching <span className="font-medium text-gray-700">{carLabel}</span> to {targetStatus}.
           </p>
-          <p className="text-sm text-gray-600 bg-gray-50 border rounded-lg px-3 py-2 mt-2">
+          <p className="text-sm text-gray-600 bg-gray-50 border rounded-xl px-3 py-2 mt-2">
             <span className="font-medium">Reason:</span> {reason}
           </p>
         </div>
 
+        {/* Body */}
+        <div className="px-6 pb-4 space-y-4 overflow-y-auto flex-1 min-h-0">
         {loading ? (
           <p className="text-sm text-gray-400 py-6 text-center">Checking bookings…</p>
         ) : loadError ? (
@@ -1223,15 +1231,17 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
           <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 break-words">{submitError}</div>
         )}
 
-        <div className="flex gap-3 pt-2">
-          <button onClick={onCancel} disabled={submitting}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-            Cancel
-          </button>
-          <button onClick={onSubmit} disabled={loading || !!loadError || !allStaged || submitting}
-            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-xl text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
-            {submitting ? "Processing…" : "Confirm & Change Status"}
-          </button>
+        </div>
+
+        {/* Actions — stacked full-width, same as the Bookings page modals */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+          <div className="flex flex-col gap-1.5">
+            <button onClick={onSubmit} disabled={loading || !!loadError || !allStaged || submitting}
+              className="w-full px-3 py-1.5 bg-red-600 text-white font-semibold rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors">
+              {submitting ? "Processing…" : "Confirm & Change Status"}
+            </button>
+            <button onClick={onCancel} disabled={submitting} className="w-full py-1.5 border rounded-xl text-sm disabled:opacity-50">Cancel</button>
+          </div>
         </div>
       </div>
 
@@ -1255,6 +1265,34 @@ function AreYouSureRefundModal({ car, carLabel, targetStatus, reason, submitting
 // button anymore; this is the actual "are you sure about THIS one"
 // step — the row button only opens it.
 const cancelOnlyLabel = (b) => (b.refundPreview?.alreadyRefunded || b.refundPreview?.noPayment) ? "cancel" : (REFUND_CHOICE_LABEL[b.choice] || "Full refund");
+const IconX = ({ className = "w-5 h-5" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// Card + label-over-value cell — same look as the Booking Details window on the Bookings page.
+function InfoSection({ title, aside, children, cols = 2 }) {
+  return (
+    <section className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 border-b">
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{title}</h3>
+        {aside}
+      </div>
+      <div className={`p-4 grid ${cols === 3 ? "grid-cols-3" : "grid-cols-2"} gap-x-6 gap-y-4`}>{children}</div>
+    </section>
+  );
+}
+function InfoField({ label, value, wide }) {
+  return (
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+      <div className="text-sm font-medium text-gray-800 mt-0.5 break-words">{value || "—"}</div>
+    </div>
+  );
+}
+
 function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) {
   const [choice, setChoice] = useState(booking.choice || "full"); // full | normal | no_show | cancel
   const already = booking.refundPreview?.alreadyRefunded;
@@ -1265,6 +1303,7 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
   const hasRequest = !!booking.refundPreview?.existingRequest && !cancelOnly;
   const effChoice = hasRequest ? "full" : choice;
   const p = booking.paymentDetails; // full detail from getPaymentDetailsByBookingID — may be null if lookup failed
+  const pv = booking.refundPreview || {};
 
   const stageColor = {
     Completed: "text-emerald-700 bg-emerald-50 border-emerald-200",
@@ -1272,151 +1311,130 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
     Pending: "text-gray-600 bg-gray-100 border-gray-200",
   }[p?.paymentStage] || "text-gray-600 bg-gray-100 border-gray-200";
 
+  const mono = (v) => <span className="font-mono text-xs break-all">{v}</span>;
+  const duration = fmtDuration(booking.startDateTime, booking.endDateTime) || (booking.totalDays > 0 ? `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}` : null);
+  const vehicle = (booking.vehicleLabel || p?.vehicleName) ? `${booking.vehicleLabel || p.vehicleName}${booking.plateNumber ? ` · ${booking.plateNumber}` : ""}` : null;
+
+  const open = !!pv.existingRequest;
+  const nm = pv.normal, ns = pv.noShow;
+  const rows = [
+    { v: "full", title: "Full refund", desc: "Our issue. The deposit and the online payment fee are both returned to the customer.",
+      off: open ? "Not available while the customer's own refund request is open. Use Confirm refund request below." : null },
+    { v: "normal", title: "Normal refund",
+      desc: "The deposit is returned, but the online payment fee is not.",
+      off: open ? "Not available while the customer's own refund request is open." : !(nm && nm.available) ? "No online payment fee on this booking, so it would be the same as a Full refund." : null },
+    { v: "no_show", title: "No Deposit Refund",
+      desc: "The deposit and the online payment fee are not returned. Everything else the customer paid is refunded.",
+      off: open ? "Not available while the customer's own refund request is open." : !ns ? "Not available for this booking." : null },
+    { v: "cancel", title: "Cancel only (no refund)", desc: "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.",
+      off: open ? "Not available while the customer's own refund request is open." : null },
+  ];
+  const f = refundFigures(booking.refundPreview, effChoice);
+
+  const actionLabel = cancelOnly ? "Confirm cancel"
+    : hasRequest ? `Confirm Refund Request ${fmt(refundFigures(booking.refundPreview, "full").total)}`
+    : choice === "cancel" ? "Confirm cancel only"
+    : `Confirm ${REFUND_CHOICE_LABEL[choice].toLowerCase()} ${fmt(refundFigures(booking.refundPreview, choice).total)}`;
+
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+    <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
         {/* Header — same layout as the Bookings page modals: title, close, booking ID */}
-        <div>
+        <div className="px-6 pt-5 pb-3 shrink-0">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-bold text-lg text-gray-800">{cancelOnly ? "Cancel Booking" : "Booking Refund"}</h2>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0">
               <IconX className="w-5 h-5" />
             </button>
           </div>
+          <p className="text-xs text-gray-400 font-mono break-all mt-1">{booking.bookingID}</p>
           {booking.staged && (
             <p className="text-xs text-emerald-700 mt-1">Already confirmed — {hasRequest ? "Refund request" : cancelOnlyLabel(booking)}</p>
           )}
         </div>
 
-        {/* Booking details */}
-        <div className="text-sm space-y-1.5">
-          <p><span className="text-gray-500">Booking:</span> <span className="font-medium text-gray-800 break-all">{booking.bookingID}</span></p>
-          <p><span className="text-gray-500">Status:</span> <span className="font-medium text-gray-800 capitalize">{booking.status || "upcoming"}</span></p>
-          <p><span className="text-gray-500">Booked by:</span> <span className="font-medium text-gray-800">{p?.customerName || "—"}</span></p>
-          {(booking.vehicleLabel || p?.vehicleName) && (
-            <p><span className="text-gray-500">Vehicle:</span> <span className="font-medium text-gray-800">
-              {booking.vehicleLabel || p.vehicleName}{booking.plateNumber ? ` · ${booking.plateNumber}` : ""}
-            </span></p>
+        {/* Body */}
+        <div className="px-6 pb-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+          <InfoSection title="Booking Information">
+            <InfoField label="Status" value={<span className="capitalize">{booking.status || "upcoming"}</span>} />
+            <InfoField label="Booked by" value={p?.customerName} />
+            <InfoField label="Vehicle" value={vehicle} />
+            <InfoField label="Driving" value={booking.modeOfDriving} />
+            {booking.location && <InfoField label="Location" value={booking.location} wide />}
+            <InfoField label="Start" value={fmtDateTime(booking.startDateTime)} />
+            <InfoField label="End" value={fmtDateTime(booking.endDateTime)} />
+            <InfoField label="Duration" value={duration} />
+            <InfoField label="Booked on" value={booking.createdAt ? fmtDateTime(booking.createdAt) : null} />
+          </InfoSection>
+
+          {p && (
+            <InfoSection title="Payment" aside={<span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${stageColor}`}>{p.paymentStage}</span>}>
+              {(p.rentalFee > 0 || p.serviceFee > 0) && <InfoField label="Rental fee" value={fmt(p.rentalFee)} />}
+              {p.serviceFee > 0 && <InfoField label="Service fee" value={fmt(p.serviceFee)} />}
+              <InfoField label="Total fee" value={fmt(p.totalFee)} />
+              <InfoField label="Paid so far" value={fmt(p.amountPaid)} />
+              {p.balance > 0 && <InfoField label="Still owed" value={fmt(p.balance)} />}
+              {p.discountAmount > 0 && <InfoField label="Discount" value={<span className="text-teal-700">{fmt(p.discountAmount)}{p.discountReason ? ` — ${p.discountReason}` : ""}</span>} />}
+              <InfoField label="Payment type" value={p.methodOfPayment && p.methodOfPayment !== "—" ? p.methodOfPayment : null} />
+              <InfoField label="Channel" value={paymentChannel(p)} />
+              <InfoField label="Payment ID" value={p.paymentID ? mono(p.paymentID) : null} wide />
+              <InfoField label="PayMongo ref" value={mono(paymentRef(p) || (p.confirmedBy ? `Cash — confirmed by ${p.confirmedBy}` : "— (no online reference on file)"))} wide />
+              {p.balancePaymongoPaymentID && <InfoField label="Balance ref" value={mono(p.balancePaymongoPaymentID)} wide />}
+              {/* Timeline — when the deposit landed and when the balance (if any) was settled */}
+              <InfoField wide label="Timeline" value={
+                <div className="text-xs font-normal text-gray-600 space-y-0.5">
+                  {p.paidAt && <p>Deposit paid {fmtDateTime(p.paidAt)}</p>}
+                  {p.payType !== "Full" && (
+                    p.balanceStatus === "paid" && p.balancePaidAt ? (
+                      <p>Balance settled online {fmtDateTime(p.balancePaidAt)}</p>
+                    ) : p.balanceCollected && p.balanceCollectedAt ? (
+                      <p>Balance collected in person ({p.balanceMethod || "—"}) {fmtDateTime(p.balanceCollectedAt)}</p>
+                    ) : p.balance > 0 ? (
+                      <p>Balance not yet settled</p>
+                    ) : null
+                  )}
+                  {p.paymentStage === "Completed" && <p className="text-emerald-700 font-medium">Fully settled</p>}
+                  {!p.paidAt && !p.balancePaidAt && !p.balanceCollectedAt && <p>No payment activity recorded yet.</p>}
+                </div>
+              } />
+            </InfoSection>
           )}
-          {booking.modeOfDriving && <p><span className="text-gray-500">Driving:</span> <span className="font-medium text-gray-800">{booking.modeOfDriving}</span></p>}
-          {booking.location && <p><span className="text-gray-500">Location:</span> <span className="font-medium text-gray-800">{booking.location}</span></p>}
-        </div>
 
-        {/* Schedule — full date + time */}
-        <div className="text-sm space-y-1.5 bg-gray-50 border rounded-lg px-3 py-2">
-          <p><span className="text-gray-500">Start:</span> <span className="font-medium text-gray-800">{fmtDateTime(booking.startDateTime)}</span></p>
-          <p><span className="text-gray-500">End:</span> <span className="font-medium text-gray-800">{fmtDateTime(booking.endDateTime)}</span></p>
-          {(fmtDuration(booking.startDateTime, booking.endDateTime) || booking.totalDays > 0) && (
-            <p><span className="text-gray-500">Duration:</span> <span className="font-medium text-gray-800">
-              {fmtDuration(booking.startDateTime, booking.endDateTime) || `${booking.totalDays} day${booking.totalDays > 1 ? "s" : ""}`}
-            </span></p>
-          )}
-          {booking.createdAt && <p className="text-xs text-gray-500">Booked on {fmtDateTime(booking.createdAt)}</p>}
-        </div>
-
-        {/* Payment details + timeline */}
-        {p && (
-          <div className="border-t pt-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-gray-500">Payment</span>
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${stageColor}`}>{p.paymentStage}</span>
+          {/* What confirming this row actually does: the staff member picks HOW this booking is refunded */}
+          {cancelOnly ? (
+            <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
+              {noPayment
+                ? "No payment record was found for this booking — confirming this will just cancel it. Nothing is refunded."
+                : "Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued."}
             </div>
-
-            <div className="text-sm space-y-1">
-              {(p.rentalFee > 0 || p.serviceFee > 0) && (
-                <p className="text-xs text-gray-500">
-                  Rental {fmt(p.rentalFee)}{p.serviceFee > 0 ? ` + Service ${fmt(p.serviceFee)}` : ""}
-                </p>
-              )}
-              <p><span className="text-gray-500">Total fee:</span> {fmt(p.totalFee)}</p>
-              <p><span className="text-gray-500">Paid so far:</span> {fmt(p.amountPaid)}</p>
-              {p.balance > 0 && <p><span className="text-gray-500">Still owed:</span> {fmt(p.balance)}</p>}
-              <p><span className="text-gray-500">Payment ID:</span> <span className="font-mono text-xs break-all">{p.paymentID || "—"}</span></p>
-              <p><span className="text-gray-500">Payment type:</span> {p.methodOfPayment && p.methodOfPayment !== "—" ? p.methodOfPayment : "—"}</p>
-              <p><span className="text-gray-500">Channel:</span> {paymentChannel(p) || "—"}</p>
-              <p><span className="text-gray-500">PayMongo ref:</span> <span className="font-mono text-xs break-all">{paymentRef(p) || (p.confirmedBy ? `Cash — confirmed by ${p.confirmedBy}` : "— (no online reference on file)")}</span></p>
-              {p.balancePaymongoPaymentID && <p><span className="text-gray-500">Balance ref:</span> <span className="font-mono text-xs break-all">{p.balancePaymongoPaymentID}</span></p>}
-              {p.discountAmount > 0 && (
-                <p className="text-teal-700">
-                  Discount: {fmt(p.discountAmount)}{p.discountReason ? ` — ${p.discountReason}` : ""}
-                </p>
-              )}
-            </div>
-
-            {/* Timeline — when the deposit landed, when the balance (if any)
-                got settled, and how, so staff aren't refunding blind to the
-                payment's actual history. */}
-            <div className="text-xs text-gray-500 space-y-1 bg-gray-50 border rounded-lg px-3 py-2">
-              {p.paidAt && <p>Deposit paid {fmtDateTime(p.paidAt)}</p>}
-              {p.payType !== "Full" && (
-                p.balanceStatus === "paid" && p.balancePaidAt ? (
-                  <p>Balance settled online {fmtDateTime(p.balancePaidAt)}</p>
-                ) : p.balanceCollected && p.balanceCollectedAt ? (
-                  <p>Balance collected in person ({p.balanceMethod || "—"}) {fmtDateTime(p.balanceCollectedAt)}</p>
-                ) : p.balance > 0 ? (
-                  <p>Balance not yet settled</p>
-                ) : null
-              )}
-              {p.paymentStage === "Completed" && <p className="text-emerald-700 font-medium">Fully settled</p>}
-              {!p.paidAt && !p.balancePaidAt && !p.balanceCollectedAt && <p>No payment activity recorded yet.</p>}
-            </div>
-          </div>
-        )}
-
-        {/* What confirming this row actually does: the staff member picks HOW this booking is refunded */}
-        {cancelOnly ? (
-          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            {noPayment
-              ? "No payment record was found for this booking — confirming this will just cancel it. Nothing is refunded."
-              : "Payment already refunded earlier — confirming this will just cancel the booking to match. No new refund is issued."}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-gray-500">What kind of refund?</p>
-            {(() => {
-              const pv = booking.refundPreview || {};
-              const open = !!pv.existingRequest;
-              const nm = pv.normal, ns = pv.noShow;
-              const rows = [
-                { v: "full", title: "Full refund", desc: "Our issue. The deposit and the online payment fee are both returned to the customer.",
-                  off: open ? "Not available while the customer's own refund request is open. Use Confirm refund request below." : null },
-                { v: "normal", title: "Normal refund",
-                  desc: "The deposit is returned, but the online payment fee is not.",
-                  off: open ? "Not available while the customer's own refund request is open." : !(nm && nm.available) ? "No online payment fee on this booking, so it would be the same as a Full refund." : null },
-                { v: "no_show", title: "No Deposit Refund",
-                  desc: "The deposit and the online payment fee are not returned. Everything else the customer paid is refunded.",
-                  off: open ? "Not available while the customer's own refund request is open." : !ns ? "Not available for this booking." : null },
-                { v: "cancel", title: "Cancel only (no refund)", desc: "Cancels the booking but keeps the customer's money. Use only when the cancellation isn't refundable.",
-                  off: open ? "Not available while the customer's own refund request is open." : null },
-              ];
-              return rows.map((o) => (
-                <label key={o.v} className={`flex items-start gap-3 p-2.5 rounded-xl border ${o.off ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${effChoice === o.v ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
-                  <input type="radio" className="mt-1" checked={!open && choice === o.v} disabled={!!o.off || !!booking.staged} onChange={() => setChoice(o.v)} />
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800">{o.title}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{o.desc}</p>
-                    {o.off && <p className="text-xs text-amber-700 mt-0.5">{o.off}</p>}
+          ) : (
+            <InfoSection title="Refund">
+              <div className="col-span-2 space-y-2">
+                {open && (
+                  <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl">
+                    The customer already has a refund request ({pv.existingRequest.status}). Confirm refund request approves that same request as a Full refund — no double refund.
                   </div>
-                </label>
-              ));
-            })()}
+                )}
+                {rows.map((o) => (
+                  <label key={o.v} className={`flex items-start gap-3 p-3 rounded-xl border ${o.off ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed" : `cursor-pointer ${effChoice === o.v ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}`}>
+                    <input type="radio" className="mt-1" checked={!open && choice === o.v} disabled={!!o.off || !!booking.staged} onChange={() => setChoice(o.v)} />
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">{o.title}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{o.desc}</p>
+                      {o.off && <p className="text-xs text-amber-700 mt-0.5">{o.off}</p>}
+                    </div>
+                  </label>
+                ))}
 
-            {(() => {
-              const f = refundFigures(booking.refundPreview, effChoice);
-              const pv = booking.refundPreview || {};
-              return (
-                <div className={`text-sm border rounded-lg px-3 py-2 space-y-0.5 ${effChoice === "full" ? "bg-gray-50" : "bg-amber-50 border-amber-200"}`}>
+                <div className={`text-sm border rounded-xl p-3 space-y-1 ${effChoice === "full" ? "bg-gray-50 border-gray-200" : "bg-amber-50 border-amber-200"}`}>
                   {effChoice === "cancel" ? (
                     <p className="text-xs text-red-700">No money is returned. The customer keeps nothing back and is told no refund was issued.</p>
                   ) : (
                     <>
-                      {effChoice === "no_show" && pv.noShow && <p className="text-xs text-amber-700">Deposit not refunded: -{fmt(pv.noShow.forfeit)}</p>}
-                      {effChoice === "no_show" && pv.noShow && Number(pv.noShow.gatewayFeeKept) > 0 && <p className="text-xs text-amber-700">Online payment fee kept: -{fmt(pv.noShow.gatewayFeeKept)}</p>}
-                      {effChoice === "normal" && pv.normal && <p className="text-xs text-amber-700">Online payment fee kept: -{fmt(pv.normal.gatewayFeeKept)}</p>}
-                      <p><span className="text-gray-500">To refund:</span> <span className="font-medium text-gray-800">{fmt(f.total)}</span></p>
-                      {pv.existingRequest && (
-                        <p className="text-xs text-blue-700">The customer already requested a refund — Confirm refund request approves it as a Full refund.</p>
-                      )}
+                      {effChoice === "no_show" && pv.noShow && <div className="flex justify-between text-amber-700"><span>Deposit not refunded</span><span className="font-semibold">-{fmt(pv.noShow.forfeit)}</span></div>}
+                      {effChoice === "no_show" && pv.noShow && Number(pv.noShow.gatewayFeeKept) > 0 && <div className="flex justify-between text-amber-700"><span>Online payment fee kept</span><span className="font-semibold">-{fmt(pv.noShow.gatewayFeeKept)}</span></div>}
+                      {effChoice === "normal" && pv.normal && <div className="flex justify-between text-amber-700"><span>Online payment fee kept</span><span className="font-semibold">-{fmt(pv.normal.gatewayFeeKept)}</span></div>}
+                      <div className="flex justify-between border-t border-black/10 pt-1 first:border-0 first:pt-0"><span className="font-bold text-gray-800">To refund</span><span className="font-black">{fmt(f.total)}</span></div>
                       {f.manual > 0 && (
                         <p className="text-xs text-gray-500">{fmt(f.online)} via PayMongo + {fmt(f.manual)} handed back in person</p>
                       )}
@@ -1431,27 +1449,27 @@ function BookingConfirmModal({ booking, fmt, onConfirm, onUnconfirm, onClose }) 
                     </p>
                   )}
                 </div>
-              );
-            })()}
-          </div>
-        )}
-
-        <div className="flex gap-3 pt-2">
-          <button onClick={onClose}
-            className="flex-1 px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">
-            Close
-          </button>
-          {booking.staged ? (
-            <button onClick={onUnconfirm}
-              className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-300">
-              Un-confirm
-            </button>
-          ) : (
-            <button onClick={() => onConfirm(cancelOnly || hasRequest ? "full" : choice)}
-              className={`flex-1 px-4 py-2 text-white rounded-xl text-sm font-medium ${cancelOnly || effChoice === "cancel" ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
-              {cancelOnly ? "Confirm cancel" : hasRequest ? `Confirm refund request ${fmt(refundFigures(booking.refundPreview, "full").total)}` : choice === "cancel" ? "Confirm cancel only" : `Confirm ${REFUND_CHOICE_LABEL[choice].toLowerCase()} ${fmt(refundFigures(booking.refundPreview, choice).total)}`}
-            </button>
+              </div>
+            </InfoSection>
           )}
+        </div>
+
+        {/* Actions — stacked full-width, same as the Bookings page modals */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+          <div className="flex flex-col gap-1.5">
+            {booking.staged ? (
+              <button onClick={onUnconfirm}
+                className="w-full px-3 py-1.5 bg-gray-200 text-gray-700 font-semibold rounded-xl text-sm hover:bg-gray-300 transition-colors">
+                Un-confirm
+              </button>
+            ) : (
+              <button onClick={() => onConfirm(cancelOnly || hasRequest ? "full" : choice)}
+                className={`w-full px-3 py-1.5 text-white font-semibold rounded-xl text-sm transition-colors ${cancelOnly || effChoice === "cancel" ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
+                {actionLabel}
+              </button>
+            )}
+            <button onClick={onClose} className="w-full py-1.5 border rounded-xl text-sm">Back</button>
+          </div>
         </div>
       </div>
     </div>
