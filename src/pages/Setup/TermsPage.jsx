@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTheme } from "../../context/ThemeContext";
 import { useAuth } from "../../context/AuthContext";
@@ -666,7 +667,7 @@ export default function TermsPage() {
       </div>
 
       {/* Older-version viewer */}
-      {viewing && (
+      {viewing && createPortal(
         <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4" onClick={closeViewing}>
           <div className={`w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl shadow-xl ${isDark ? "bg-[#212121] text-[#F5F5F5]" : "bg-white text-gray-700"}`}
             onClick={(e) => e.stopPropagation()}>
@@ -707,8 +708,11 @@ export default function TermsPage() {
             </div>
           </div>
         </div>
+
+        ,
+        document.body
       )}
-      {dlg && (
+      {dlg && createPortal(
         <div className="fixed inset-0 bg-black/40 z-[2200] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-4">
             <h2 className="font-bold text-lg text-gray-800">{dlg.title}</h2>
@@ -728,6 +732,9 @@ export default function TermsPage() {
             </div>
           </div>
         </div>
+
+        ,
+        document.body
       )}
     </div>
   );

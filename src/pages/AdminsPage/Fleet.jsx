@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { createPortal } from "react-dom";
 import { useCurrency } from "../../context/CurrencyContext";
 import {
   collection, getDocs, getDoc, doc, query, where,
@@ -474,7 +475,9 @@ export default function Fleet() {
         </div>
       )}
 
-      {/* MODALS */}
+      {/* MODALS — portaled to <body> so the overlay covers the whole screen */}
+      {createPortal(
+        <>
       {detailCar && (
         <ViewDetailsModal car={detailCar} canEdit={canEdit} onClose={() => setDetailCar(null)}
           onEdit={() => { setDetailCar(null); setEditCar(detailCar); }} />
@@ -502,6 +505,9 @@ export default function Fleet() {
           message={`Delete ${confirmDelete.brandName || ""} ${confirmDelete.modelName || ""}? This will also remove its images and pricing.`}
           onConfirm={() => handleDeleteCar(confirmDelete)}
           onCancel={() => setConfirmDelete(null)} />
+      )}
+        </>,
+        document.body
       )}
     </div>
   );

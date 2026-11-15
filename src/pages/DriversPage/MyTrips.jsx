@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import TripMapModal, { TripLocationsMap } from "../../components/shared/TripMapModal";
 import TermsModal, { TripTermsContent } from "../../components/shared/TermsModal";
@@ -395,7 +396,7 @@ function InspectionMediaGallery({ doc, onView }) {
 
 function ProofLightbox({ photo, onClose }) {
   const [failed, setFailed] = useState(false);
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/70 z-[2100] flex items-center justify-center p-4" onClick={onClose}>
       <div
         className={`bg-white rounded-2xl overflow-hidden w-full shadow-2xl ${photo.type === "video" ? "max-w-3xl" : "max-w-lg"}`}
@@ -421,6 +422,9 @@ function ProofLightbox({ photo, onClose }) {
         )}
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -830,8 +834,8 @@ function DriverPenaltyModal({ open, onClose, title, loadLateFee, onSubmit, needs
 
   const setItem = (idx, patch) => setItems((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-3">
         <div className="flex justify-between items-start">
@@ -875,6 +879,9 @@ function DriverPenaltyModal({ open, onClose, title, loadLateFee, onSubmit, needs
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -1573,7 +1580,7 @@ function TripDetailModal({ open, onClose, trip, sections = [] }) {
   const dead = status === "cancelled" || isStolen;
   const codingByCity = warningsByCity(readCodingWarnings(trip.codingWarnings));
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/40 z-[2000] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
@@ -1649,6 +1656,9 @@ function TripDetailModal({ open, onClose, trip, sections = [] }) {
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 

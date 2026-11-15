@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "../../context/AuthContext";
 import usePolling from "../../hooks/usePolling";
 
@@ -92,7 +93,7 @@ function Toast({ toast }) {
 }
 
 function Modal({ title, onClose, children, footer, width = "max-w-md", busy = false }) {
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
       onClick={() => !busy && onClose()}
@@ -116,6 +117,9 @@ function Modal({ title, onClose, children, footer, width = "max-w-md", busy = fa
         {footer && <div className="flex gap-3 justify-end px-6 py-4">{footer}</div>}
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 

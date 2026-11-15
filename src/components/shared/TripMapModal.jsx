@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { getAreaOutline, peekAreaOutline } from "../../utils/cityBoundary";
@@ -287,7 +288,7 @@ export default function TripMapModal({ open, onClose, title = "Trip Route", stop
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[82vh] flex flex-col overflow-hidden"
@@ -403,6 +404,9 @@ export default function TripMapModal({ open, onClose, title = "Trip Route", stop
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -381,8 +382,8 @@ function AssignModal({ booking, drivers, authedFetch, onClose, onDone, navigate,
   const reasonOk     = reason.trim().length >= OVERRIDE_REASON_MIN;
   const needsReason  = !!conflict?.requiresReason;
 
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
@@ -538,6 +539,9 @@ function AssignModal({ booking, drivers, authedFetch, onClose, onDone, navigate,
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -637,8 +641,8 @@ function DriverModal({ driver, busyID, onUnassign, onClose, navigate, authedFetc
     );
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
         <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
@@ -683,6 +687,9 @@ function DriverModal({ driver, busyID, onUnassign, onClose, navigate, authedFetc
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -915,7 +922,7 @@ export default function DriverDispatch() {
 
       {/* TOAST */}
       {toast && (
-        <div className={`fixed top-5 right-5 z-[60] px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${toast.type === "error" ? "bg-red-500" : "bg-teal-600"}`}>
+        <div className={`fixed top-5 right-5 z-[70] px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${toast.type === "error" ? "bg-red-500" : "bg-teal-600"}`}>
           {toast.msg}
         </div>
       )}

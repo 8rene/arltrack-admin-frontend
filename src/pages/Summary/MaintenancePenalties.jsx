@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
@@ -12,9 +13,8 @@ ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 //
 // Questions this tab answers:  "What did maintenance cost?"  and  "Which penalties were charged, and did they get paid?"
 //
-// Stat cards on top, then two sections, each a graph with its list under it (10 per page, sortable, searchable). A click on a
-// bar searches the list for that customer / vehicle. Each list ends with a Total row, and each row has a View button that
-// opens its detail window:
+// Stat cards on top, then two sections, each a graph with its list under it (10 per page, sortable). Each list ends with a Total
+// row, and each row has a View button that opens its detail window:
 //     Penalties     one row per Confirmed penalty charged in the period: customer, booking, amount, how much was received,
 //                   how much a held deposit / discount credit covered (no money moved), and what is still unpaid.
 //     Maintenance   one row per job (Completed or Scheduled in the period): its type, status, the booking and customer it is
@@ -437,9 +437,9 @@ function SplitBars({ rows, scaleMax = 0, series, onOpen, money }) {
         animation: false,
         categoryPercentage: 0.9,
         layout: { padding: { right: 8 } },
-        interaction: { mode: "nearest", axis: "y", intersect: true },
-        onHover: (_e, els, c) => { c.canvas.style.cursor = els.length ? "pointer" : "default"; },
-        onClick: (_e, els) => { if (els.length) live.current.onOpen(rows[els[0].index]); },
+        interaction: { mode: "index", axis: "y", intersect: false },   // hover anywhere on a row -> one tooltip with every segment, like Revenue & Expense
+        onHover: (_e, els, c) => { c.canvas.style.cursor = els.length && live.current.onOpen ? "pointer" : "default"; },
+        onClick: (_e, els) => { if (els.length && live.current.onOpen) live.current.onOpen(rows[els[0].index]); },
         scales: {
           x: {
             stacked: true, min: 0, max: axisMax,
@@ -493,8 +493,6 @@ function Tag({ label }) {
   return <span className={`inline-flex items-center text-[11px] font-semibold px-2.5 py-0.5 rounded-full border whitespace-nowrap ${TAG_TONE[label] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{label}</span>;
 }
 
-const inputCls = "px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-teal-200";
-
 /** A plain (not sortable) column heading. */
 const Th = ({ children, right }) => <th className={`px-4 py-3 font-semibold whitespace-nowrap ${right ? "text-right" : "text-left"}`}>{children}</th>;
 
@@ -512,8 +510,8 @@ function Modal({ title, subtitle, onClose, children }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+  return createPortal(
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
@@ -525,6 +523,9 @@ function Modal({ title, subtitle, onClose, children }) {
         <div className="overflow-auto flex-1 px-6 py-5 space-y-4">{children}</div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -674,41 +675,25 @@ function JobModal({ j, fmt, onClose, onOpen }) {
 function PenaltiesList({ rows, fmt, label, onView }) {
   const [sort, setSort] = useState({ key: "createdAt", dir: "desc" });
   const [page, setPage] = useState(1);
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState("all");
 
   const shown = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    const list = rows
-      .map((p) => ({ ...p, covered: p.coveredByDeposit + p.coveredByCredit }))
-      .filter((p) => (status === "all" || p.paidStatus === status)
-        && (!needle || [p.customer, p.bookingID, p.car, p.penaltyID, p.reason].some((v) => String(v || "").toLowerCase().includes(needle))));
+    const list = rows.map((p) => ({ ...p, covered: p.coveredByDeposit + p.coveredByCredit }));
     return sortRows(list, sort);
-  }, [rows, q, status, sort]);
+  }, [rows, sort]);
   const pg = paged(shown, page);
   const onSort = (s) => { setSort(s); setPage(1); };
   const bars = useMemo(() => penaltyBars(shown), [shown]);
   const [gPage, setGPage] = useState(1);
-  useEffect(() => { setGPage(1); }, [q, status]);
   const gp = paged(bars, gPage, GRAPH_PAGE);
   const heads = [["Customer", "customer"], ["Booking", "bookingID"], ["Vehicle", "car"], ["Charged", "createdAt"], ["Amount", "amount"], ["Received", "received"], ["Covered", "covered"], ["Unpaid", "pending"], ["Status", "paidStatus"]];
 
   return (
     <Card className="p-4">
       <SectionHead title="Penalties" />
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search customer, booking, vehicle or reason" className={`${inputCls} flex-1 min-w-[220px]`} />
-        <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className={inputCls}>
-          <option value="all">All statuses</option>
-          <option value="Paid">Paid</option>
-          <option value="Partly paid">Partly paid</option>
-          <option value="Unpaid">Unpaid</option>
-        </select>
-      </div>
       {rows.length > 0 && bars.length > 0 && (
         <div className="mb-4">
           <Legend items={PEN_SERIES} />
-          <SplitBars rows={gp.rows} scaleMax={Math.max(0, ...bars.map((r) => r.total))} series={PEN_SERIES} onOpen={(r) => { setQ(r.name); setPage(1); }} money={fmt} />
+          <SplitBars rows={gp.rows} scaleMax={Math.max(0, ...bars.map((r) => r.total))} series={PEN_SERIES} money={fmt} />
           {bars.length > GRAPH_PAGE && (
             <div className="mt-2 rounded-xl border border-gray-100 overflow-hidden">
               <TablePagination page={gp.no} totalPages={gp.count} onChange={setGPage} pageSize={GRAPH_PAGE} count={bars.length} />
@@ -728,7 +713,7 @@ function PenaltiesList({ rows, fmt, label, onView }) {
               </thead>
               <tbody>
                 {pg.rows.length === 0 ? (
-                  <tr><td colSpan={heads.length + 1} className="text-center text-gray-400 py-12">No penalty matches this search.</td></tr>
+                  <tr><td colSpan={heads.length + 1} className="text-center text-gray-400 py-12">No penalties in this period.</td></tr>
                 ) : pg.rows.map((p) => (
                   <tr key={p.penaltyID} className="border-t hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{p.customer}</td>
@@ -768,12 +753,8 @@ function PenaltiesList({ rows, fmt, label, onView }) {
 function JobsList({ rows, fmt, label, onView }) {
   const [sort, setSort] = useState({ key: "date", dir: "desc" });
   const [page, setPage] = useState(1);
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState("all");
-  const [link, setLink] = useState("all");
 
   const shown = useMemo(() => {
-    const needle = q.trim().toLowerCase();
     const list = rows
       .map((j) => ({
         ...j,
@@ -781,18 +762,14 @@ function JobsList({ rows, fmt, label, onView }) {
         done: j.status === "Completed" ? j.amount : 0,
         expected: j.status === "Scheduled" ? j.amount : 0,
         bookingKey: j.bookingID || "",
-      }))
-      .filter((j) => (status === "all" || j.status === status)
-        && (link === "all" || (link === "booking" ? !!j.bookingID : !j.bookingID))
-        && (!needle || [j.car, j.type, j.bookingID, j.customer].some((v) => String(v || "").toLowerCase().includes(needle))));
+      }));
     return sortRows(list, sort);
-  }, [rows, q, status, link, sort]);
+  }, [rows, sort]);
   const pg = paged(shown, page);
   const onSort = (s) => { setSort(s); setPage(1); };
   const bars = useMemo(() => jobBars(shown), [shown]);
   const barSeries = jobSeriesFor(bars);
   const [gPage, setGPage] = useState(1);
-  useEffect(() => { setGPage(1); }, [q, status, link]);
   const gp = paged(bars, gPage, GRAPH_PAGE);
   const heads = [["Date", "date"], ["Vehicle", "car"], ["Type", "type"], ["Status", "status"], ["Booking", "bookingKey"], ["Customer", "customer"], ["Cost", "done"], ["Scheduled", "expected"], ["Covered", "covered"], ["Absorbed", "absorbed"]];
   const completed = shown.filter((j) => j.status === "Completed");
@@ -800,23 +777,10 @@ function JobsList({ rows, fmt, label, onView }) {
   return (
     <Card className="p-4">
       <SectionHead title="Maintenance" />
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search vehicle, type, booking or customer" className={`${inputCls} flex-1 min-w-[220px]`} />
-        <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className={inputCls}>
-          <option value="all">All statuses</option>
-          <option value="Completed">Completed</option>
-          <option value="Scheduled">Scheduled</option>
-        </select>
-        <select value={link} onChange={(e) => { setLink(e.target.value); setPage(1); }} className={inputCls}>
-          <option value="all">With or without a booking</option>
-          <option value="booking">Linked to a booking</option>
-          <option value="routine">Routine (no booking)</option>
-        </select>
-      </div>
       {rows.length > 0 && bars.length > 0 && (
         <div className="mb-4">
           <Legend items={barSeries} />
-          <SplitBars rows={gp.rows} scaleMax={Math.max(0, ...bars.map(barLen))} series={barSeries} onOpen={(r) => { setQ(r.name); setPage(1); }} money={fmt} />
+          <SplitBars rows={gp.rows} scaleMax={Math.max(0, ...bars.map(barLen))} series={barSeries} money={fmt} />
           {bars.length > GRAPH_PAGE && (
             <div className="mt-2 rounded-xl border border-gray-100 overflow-hidden">
               <TablePagination page={gp.no} totalPages={gp.count} onChange={setGPage} pageSize={GRAPH_PAGE} count={bars.length} />
@@ -836,7 +800,7 @@ function JobsList({ rows, fmt, label, onView }) {
               </thead>
               <tbody>
                 {pg.rows.length === 0 ? (
-                  <tr><td colSpan={heads.length + 1} className="text-center text-gray-400 py-12">No maintenance matches this search.</td></tr>
+                  <tr><td colSpan={heads.length + 1} className="text-center text-gray-400 py-12">No maintenance in this period.</td></tr>
                 ) : pg.rows.map((j) => (
                   <tr key={j.id} className="border-t hover:bg-gray-50 transition-colors">
                     <Txt muted>{dayText(j.date)}</Txt>

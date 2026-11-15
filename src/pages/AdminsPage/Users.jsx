@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 import {
   collection, getDocs, query, where, orderBy
 } from "firebase/firestore";
@@ -1054,11 +1055,17 @@ function DirectoryTab({ users, onRefresh, roleLabel, roleLabelSingular, canDelet
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
+      {/* Portaled to <body> so the dim overlay covers the whole screen (header + sidebar included) */}
+      {createPortal(
+        <>
       {detailUser    && <ViewDetailsModal user={detailUser} users={users} roleLabelSingular={roleLabelSingular} viewerRole={viewerRole} onClose={() => setDetailUser(null)} onEdit={() => { setDetailUser(null); setEditUser(detailUser); }} />}
       {editUser      && <EditUserModal   user={editUser}   roleLabelSingular={roleLabelSingular}   onClose={() => setEditUser(null)}   onSaved={() => { setEditUser(null); onRefresh(); }}
         onDelete={canDelete ? () => setConfirmDelete(editUser) : undefined}
         viewerRole={viewerRole} currentRoleName={currentRoleName} onDocumentsChanged={onRefresh} />}
       {confirmDelete && <ConfirmDeleteModal name={confirmDelete.details?.firstName || confirmDelete.username || "this user"} roleLabelSingular={roleLabelSingular} error={deleteError} onConfirm={() => handleDelete(confirmDelete)} onCancel={() => { setConfirmDelete(null); setDeleteError(null); }} />}
+        </>,
+        document.body
+      )}
     </>
   );
 }
@@ -1407,7 +1414,7 @@ function ViewDetailsModal({ user, users, roleLabelSingular, viewerRole, onClose,
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* HEADER */}
         <div className="flex items-center gap-4 p-5 border-b shrink-0 bg-white">
@@ -1762,7 +1769,7 @@ function ReplaceDocumentModal({ user, kind, onClose, onSaved }) {
 
   const currentUrl = isLicense ? docu.driverLicenseUrl : docu.documentImageUrl;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={() => !saving && onClose()}>
       <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b">
@@ -1853,6 +1860,9 @@ function ReplaceDocumentModal({ user, kind, onClose, onSaved }) {
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -2262,7 +2272,7 @@ function ReviewField({ label, value, wide }) {
 }
 // Fixed header + scrolling body + fixed footer, so Reject / Approve / Close never scroll away.
 function ReviewModalShell({ title, subtitle, statusPill, onClose, footer, children }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-start gap-3 p-5 border-b shrink-0">
@@ -2279,6 +2289,9 @@ function ReviewModalShell({ title, subtitle, statusPill, onClose, footer, childr
         <div className="flex flex-col gap-1.5 px-6 py-4 border-t border-gray-100 bg-white shrink-0">{footer}</div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 const btnReject  = "w-full flex items-center justify-center gap-1.5 px-3 py-1.5 border border-red-200 bg-red-50 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
@@ -2831,7 +2844,7 @@ function ProfileRequestHistoryModal({ userID, user, userLookup = {}, requests, b
   };
   const updatedOn = (req) => ((req.status === "approved" || req.status === "rejected") ? when(req.reviewedAt) : req.status === "cancelled" ? when(req.updatedAt) : "—");
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
@@ -2903,12 +2916,15 @@ function ProfileRequestHistoryModal({ userID, user, userLookup = {}, requests, b
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
 function RejectNoteModal({ onCancel, onConfirm }) {
   const [note, setNote] = useState("");
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onCancel}>
       <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
         <h3 className="font-bold text-gray-800">Reject request</h3>
@@ -2922,6 +2938,9 @@ function RejectNoteModal({ onCancel, onConfirm }) {
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -3196,8 +3215,8 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, onDelete, vi
   );
   const group = (g) => PROFILE_FIELDS.filter((f) => f.group === g).map(pField);
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => !saving && onClose()}>
+  return createPortal(
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={() => !saving && onClose()}>
       <div className={`bg-white rounded-2xl w-full ${canEditProfile ? "max-w-2xl" : "max-w-sm"} max-h-[92vh] flex flex-col`} onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b">
           <h2 className="font-bold text-lg text-gray-800">Edit {roleLabelSingular}</h2>
@@ -3411,6 +3430,9 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, onDelete, vi
         </div>
       )}
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -3418,7 +3440,7 @@ function EditUserModal({ user, roleLabelSingular, onClose, onSaved, onDelete, vi
 // Shown when Save would newly flag an account. For customers it also previews the notice they will receive
 // (the real text lives in the backend: FLAGGED_NOTICE in controllers/user/user.controller.js — keep them in step).
 function ConfirmFlagModal({ name, roleLabelSingular, notifiesCustomer, onConfirm, onCancel }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
         <div className="text-center">
@@ -3465,12 +3487,15 @@ function ConfirmFlagModal({ name, roleLabelSingular, notifiesCustomer, onConfirm
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
 // ─── CONFIRM DELETE ───────────────────────────────────────────────────────────
 function ConfirmDeleteModal({ name, roleLabelSingular, error, onConfirm, onCancel }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
         <div className="text-center">
@@ -3495,6 +3520,9 @@ function ConfirmDeleteModal({ name, roleLabelSingular, error, onConfirm, onCance
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 

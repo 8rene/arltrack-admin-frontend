@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "../../context/AuthContext";
 
 // ─── Local helpers ───────────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ function Toast({ toast }) {
 }
 
 function Modal({ title, onClose, children, footer, width = "max-w-md", busy = false }) {
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
       onClick={() => !busy && onClose()}
@@ -100,6 +101,9 @@ function Modal({ title, onClose, children, footer, width = "max-w-md", busy = fa
         {footer && <div className="flex gap-3 justify-end px-6 py-4">{footer}</div>}
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
@@ -1172,8 +1176,8 @@ function BranchPanel({
   const below = row ? lk.countsBelow(levelKey, row[L.idField]) : null;
   const deeper = LEVELS.slice(LEVELS.indexOf(L) + 1);
 
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
@@ -1280,5 +1284,8 @@ function BranchPanel({
         </ConfirmDialog>
       )}
     </div>
+
+    ,
+    document.body
   );
 }

@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../../fireabase";
@@ -1248,7 +1249,7 @@ function MaintenanceModal({
   const effectiveTotal = form.useManualTotal && form.overrideTotal !== "" ? Number(form.overrideTotal) || 0 : computedTotal;
   const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-arl-light outline-none disabled:bg-gray-50 disabled:text-gray-500";
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={viewing ? "Maintenance details" : editRecord ? "Edit maintenance record" : "Schedule maintenance"}>
       <div className="absolute inset-0 bg-black/40" />
       <div className="relative flex flex-col md:flex-row items-stretch justify-center gap-3 w-full max-h-[92vh] overflow-y-auto md:overflow-visible">
@@ -1619,6 +1620,9 @@ function MaintenanceModal({
       </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 

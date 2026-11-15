@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { MapContainer, TileLayer, Marker, GeoJSON, CircleMarker, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -270,7 +271,7 @@ const StoreLocationMapPicker = ({ isOpen, onClose, onConfirm, initialLabel = "",
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-2 sm:p-4">
       <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[90vh]">
         <div className="flex items-center justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100">
@@ -369,6 +370,9 @@ const StoreLocationMapPicker = ({ isOpen, onClose, onConfirm, initialLabel = "",
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 };
 

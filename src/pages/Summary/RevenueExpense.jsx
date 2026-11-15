@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
@@ -398,8 +399,8 @@ function VehicleBookingsModal({ car, fmt, onClose }) {
     return i < 0 ? [String(name), ""] : [name.slice(0, i), name.slice(i + 3)];
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+  return createPortal(
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
@@ -463,6 +464,9 @@ function VehicleBookingsModal({ car, fmt, onClose }) {
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 

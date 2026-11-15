@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import usePolling from "../../hooks/usePolling";
 import { useCurrency } from "../../context/CurrencyContext";
@@ -344,7 +345,7 @@ function EditModal({ booking, onClose, onSave }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <h2 className="font-bold text-lg text-gray-800">Add Note</h2>
         {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 p-3 rounded-xl">{error}</div>}
@@ -459,7 +460,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
     const finish = () => onDone(notice.message);
     const toPayments = () => { finish(); navigate(notice.paymentID ? `/payments?paymentID=${encodeURIComponent(notice.paymentID)}` : "/payments"); };
     return (
-      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
           <div className="px-6 pt-5 pb-3 shrink-0">
             <h2 className="font-bold text-lg text-gray-800">{notice.onlineAmount > 0 ? "Partial refund sent" : "Booking cancelled"}</h2>
@@ -495,7 +496,7 @@ function RefundCancelModal({ booking, onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="px-6 pt-5 pb-3 shrink-0">
@@ -684,7 +685,7 @@ function RefundAfterCancelModal({ booking, onClose, onDone }) {
   );
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <h2 className="font-bold text-lg text-gray-800">Refund Cancelled Booking</h2>
         <p className="text-xs text-gray-400 font-mono break-all">{booking.bookingID || booking.id}</p>
@@ -846,7 +847,7 @@ function CustomerProfileModal({ userID, bookings, onClose }) {
   );
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 z-[70] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-2 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 min-w-0">
@@ -1398,7 +1399,7 @@ function ViewModal({ booking, onClose, onViewCustomer, onEdit, onRefund, onDelet
   );
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="px-6 pt-5 shrink-0">
@@ -2099,6 +2100,9 @@ export default function Bookings() {
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
+      {/* Portal to <body> so overlays cover the whole viewport (header/sidebar included) — no white strip on top */}
+      {createPortal(
+        <>
       {viewBooking   && (
         <ViewModal
           booking={viewBooking}
@@ -2133,6 +2137,9 @@ export default function Bookings() {
           onClose={() => setDeleteBooking(null)}
           onDone={handleDeleted}
         />
+      )}
+        </>,
+        document.body
       )}
     </div>
   );

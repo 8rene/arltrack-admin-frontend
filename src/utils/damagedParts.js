@@ -26,9 +26,6 @@
 
 export const FLAGGED_STATUSES = ["Damaged", "Stolen", "Missing"];
 
-const PH_OFFSET_MS = 8 * 60 * 60 * 1000;
-const phDay = (ms) => Math.floor((ms + PH_OFFSET_MS) / 86400000);
-
 // Firestore client Timestamp, backend-JSON Timestamp, ISO string or Date -> ms.
 export const toMs = (val) => {
   if (!val) return 0;

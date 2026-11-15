@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useCurrency } from "../../context/CurrencyContext";
 import { barRows } from "../../utils/reportTabPdf";
@@ -328,7 +329,7 @@ function SplitBars({ rows, scaleMax = 0, series, sourceSeries, sourceLabel = "Re
         animation: false,
         categoryPercentage: 0.9,
         layout: { padding: { right: 8 } },
-        interaction: { mode: "nearest", axis: "y", intersect: true },
+        interaction: { mode: "index", axis: "y", intersect: false },   // hover anywhere on a row -> one tooltip with every segment, like Revenue & Expense
         onHover: (_e, els, c) => { c.canvas.style.cursor = els.length ? "pointer" : "default"; },
         onClick: (_e, els) => { if (els.length) live.current.onOpen(rows[els[0].index]); },
         scales: {
@@ -530,8 +531,8 @@ function RowsModal({ title, subtitle, heads, items, renderRow, emptyText, onClos
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+  return createPortal(
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 pt-5 pb-4 shrink-0 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
@@ -561,6 +562,9 @@ function RowsModal({ title, subtitle, heads, items, renderRow, emptyText, onClos
         </div>
       </div>
     </div>
+
+    ,
+    document.body
   );
 }
 
