@@ -2115,7 +2115,7 @@ export default function Bookings() {
           onViewCustomer={setProfileUserID}
           onEdit={(b) => { setViewBooking(null); setEditBooking(b); }}
           onRefund={canRefundRole ? (b) => { setViewBooking(null); setRefundBooking(b); } : undefined}
-          onDelete={(b) => { setViewBooking(null); setDeleteBooking(b); }}
+          onDelete={canRefundRole ? (b) => { setViewBooking(null); setDeleteBooking(b); } : undefined}
         />
       )}
       {editBooking   && <EditModal booking={editBooking} onClose={() => setEditBooking(null)} onSave={() => { setEditBooking(null); fetchBookings(); }} />}
