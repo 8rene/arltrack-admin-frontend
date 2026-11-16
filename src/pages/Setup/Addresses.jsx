@@ -171,8 +171,9 @@ function ErrorBanner({ children, onRetry }) {
 //             one Save changes (POST /api/addresses/batch). Close goes back
 //             to the table.
 //
-// Backend: routes/addresses. View/add/edit — Owner, Admin, Supervisor.
-// Delete — Owner and Admin only (mirrored here by `canDelete`). Deleting an
+// Backend: routes/addresses. View — Owner, Admin, Supervisor.
+// Add / edit / delete — Owner and Admin only (mirrored here by `canEdit`).
+// Supervisors get a read-only page. Deleting an
 // entry also removes everything under it; the confirm dialog says how many.
 
 const PAGE_SIZE = 10;
@@ -325,7 +326,8 @@ function InfoField({ label, value }) {
 // ─── The page ────────────────────────────────────────────────────────────────
 export default function Addresses() {
   const { effectiveRole } = useAuth();
-  const canDelete = effectiveRole === "Owner" || effectiveRole === "Admin";
+  const canEdit = effectiveRole === "Owner" || effectiveRole === "Admin";
+  const canDelete = canEdit;
   const api = useApi();
   const [toast, showToast] = useToast();
 
@@ -606,7 +608,7 @@ export default function Addresses() {
     return () => { document.body.style.overflow = prev; };
   }, [hasPanel]);
   const panelProps = {
-    bundle, lk, parentOptionsBy, canDelete, api,
+    bundle, lk, parentOptionsBy, canDelete, canEdit, api,
     onClose: closePanel,
     onSaved: handleSaved,
     onDiscard: discardEdit,
@@ -694,10 +696,12 @@ export default function Addresses() {
                 <IconRefresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
                 Refresh
               </button>
-              <button onClick={startCreate} disabled={loading}
-                className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold disabled:opacity-60">
-                + Add region
-              </button>
+              {canEdit && (
+                <button onClick={startCreate} disabled={loading}
+                  className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold disabled:opacity-60">
+                  + Add region
+                </button>
+              )}
             </div>
           </div>
 
@@ -715,7 +719,7 @@ export default function Addresses() {
                 {loading ? skeleton(cols) : count === 0 ? (
                   <tr>
                     <td colSpan={cols} className="text-center py-16 text-gray-400 text-sm">
-                      {tokens.length ? "No matches." : tab === "regions" ? "No regions yet. Add the first one." : `No ${LEVEL[tab].label.toLowerCase()} yet.`}
+                      {tokens.length ? "No matches." : tab === "regions" ? (canEdit ? "No regions yet. Add the first one." : "No regions yet.") : `No ${LEVEL[tab].label.toLowerCase()} yet.`}
                     </td>
                   </tr>
                 ) : pageItems.map((e, i) => {
@@ -977,7 +981,7 @@ function TreeNode({ nodeKey, ctx }) {
 }
 
 function BranchPanel({
-  levelKey, row, focus, bundle, lk, parentOptionsBy, canDelete, api,
+  levelKey, row, focus, bundle, lk, parentOptionsBy, canDelete, canEdit, api,
   onClose, onSaved, onDiscard, onDirtyChange, onDelete,
 }) {
   const isNew = !row;
@@ -1238,7 +1242,7 @@ function BranchPanel({
                 <div className="border border-gray-200 rounded-xl p-2">
                   {rootKids.map((k) => <TreeNode key={k} nodeKey={k} ctx={ctx} />)}
                   {!editing && rootKids.length === 0 && (
-                    <p className="text-xs text-gray-400 py-2 px-2">No {childL.label.toLowerCase()} yet. Use Edit to add some.</p>
+                    <p className="text-xs text-gray-400 py-2 px-2">No {childL.label.toLowerCase()} yet.{canEdit ? " Use Edit to add some." : ""}</p>
                   )}
                   {editing && <AddRow noun={childL.singular.toLowerCase()} indent={!!CHILD_OF[childKey]} onAdd={(names) => addChildren(rootKey, names)} />}
                 </div>
@@ -1261,7 +1265,9 @@ function BranchPanel({
           ) : (
             <>
               <div className="flex flex-col gap-1.5">
-                <button onClick={() => setEditing(true)} className="w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Edit</button>
+                {canEdit && (
+                  <button onClick={() => setEditing(true)} className="w-full px-3 py-1.5 bg-arl-primary text-white font-semibold rounded-xl text-sm hover:bg-[#16526a] transition-colors">Edit</button>
+                )}
                 {canDelete && (
                   <button onClick={() => onDelete(levelKey, row)} className="w-full px-3 py-1.5 border border-red-200 bg-red-50 text-red-600 font-semibold rounded-xl text-sm hover:bg-red-100 transition-colors">Delete</button>
                 )}

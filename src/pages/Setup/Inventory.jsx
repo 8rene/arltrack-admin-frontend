@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../../fireabase";
+import { useAuth } from "../../context/AuthContext";
 
 const API_URL = process.env.REACT_APP_API_URL;
 
@@ -101,6 +102,11 @@ const parsePriceInput = (raw) => {
 // + Past Trips section instead.
 
 export default function Inventory() {
+  // View — Owner, Admin, Supervisor. Add / edit / remove parts — Owner and Admin
+  // only (backend: routes/carParts). Supervisors get a read-only catalog.
+  const { effectiveRole } = useAuth();
+  const canEdit = effectiveRole === "Owner" || effectiveRole === "Admin";
+  const cols = canEdit ? 6 : 5;
   // In-page confirm dialog (replaces the browser's confirm/alert popups). `await askConfirm({...})` gives true / false.
   const [dlg, setDlg] = useState(null);
   const askConfirm = (opts) => new Promise((resolve) => setDlg({ ...opts, resolve }));
@@ -374,12 +380,14 @@ export default function Inventory() {
                 <h3 className="font-bold text-gray-800 text-sm">{selectedCar.label}</h3>
                 <p className="text-xs text-gray-400">{parts.length} part{parts.length !== 1 ? "s" : ""}</p>
               </div>
-              <button
-                onClick={startAdd}
-                className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold"
-              >
-                + Add Part
-              </button>
+              {canEdit && (
+                <button
+                  onClick={startAdd}
+                  className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold"
+                >
+                  + Add Part
+                </button>
+              )}
             </div>
 
             <div className="overflow-x-auto">
@@ -391,13 +399,13 @@ export default function Inventory() {
                     <th className="px-4 py-3 text-left font-semibold">Serial No.</th>
                     <th className="px-4 py-3 text-left font-semibold">Price</th>
                     <th className="px-4 py-3 text-left font-semibold">Status</th>
-                    <th className="px-4 py-3 text-left font-semibold">Action</th>
+                    {canEdit && <th className="px-4 py-3 text-left font-semibold">Action</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {isAdding && (
+                  {canEdit && isAdding && (
                     <tr className="border-b border-gray-50">
-                      <td colSpan={6} className="p-3">
+                      <td colSpan={cols} className="p-3">
                         <PartFormRow
                           formState={formState} setFormState={setFormState} partTypes={partTypes}
                           onSave={saveNew} onCancel={cancelForm} saving={saving} inputCls={inputCls}
@@ -409,21 +417,21 @@ export default function Inventory() {
                   {partsLoading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <tr key={i} className="border-b border-gray-50">
-                        {Array.from({ length: 6 }).map((__, j) => (
+                        {Array.from({ length: cols }).map((__, j) => (
                           <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                         ))}
                       </tr>
                     ))
                   ) : parts.length === 0 && !isAdding ? (
                     <tr>
-                      <td colSpan={6} className="text-center py-16 text-gray-400 text-sm">
+                      <td colSpan={cols} className="text-center py-16 text-gray-400 text-sm">
                         No parts in the catalog for this vehicle yet.
                       </td>
                     </tr>
                   ) : pageItems.map((part, i) => (
-                    editingID === part.id ? (
+                    canEdit && editingID === part.id ? (
                       <tr key={part.id} className="border-b border-gray-50">
-                        <td colSpan={6} className="p-3">
+                        <td colSpan={cols} className="p-3">
                           <PartFormRow
                             formState={formState} setFormState={setFormState} partTypes={partTypes}
                             onSave={saveEdit} onCancel={cancelForm} saving={saving} inputCls={inputCls}
@@ -446,21 +454,23 @@ export default function Inventory() {
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap"><PartStatusBadge status={part.status} /></td>
-                        <td className="px-4 py-3 text-left whitespace-nowrap">
-                          <div className="inline-flex items-center gap-2">
-                            <button onClick={() => startEdit(part)}
-                              className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">Edit</button>
-                            <button onClick={() => removePart(part)}
-                              className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">Remove</button>
-                          </div>
-                        </td>
+                        {canEdit && (
+                          <td className="px-4 py-3 text-left whitespace-nowrap">
+                            <div className="inline-flex items-center gap-2">
+                              <button onClick={() => startEdit(part)}
+                                className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">Edit</button>
+                              <button onClick={() => removePart(part)}
+                                className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">Remove</button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     )
                   ))}
                   {/* Same as Bookings: pad a short page with empty rows so the table always keeps its 10-row height. */}
                   {!partsLoading && pageItems.length > 0 && Array.from({ length: Math.max(0, PAGE_SIZE - pageItems.length) }).map((_, i) => (
                     <tr key={`filler-${i}`} aria-hidden="true" className="border-t border-gray-50">
-                      <td colSpan={6} className="h-[53px]">&nbsp;</td>
+                      <td colSpan={cols} className="h-[53px]">&nbsp;</td>
                     </tr>
                   ))}
                 </tbody>

@@ -59,10 +59,11 @@ export const PAGE_ACCESS = {
   // backend — routes/terms — and mirrored by canEdit in pages/TermsPage.jsx).
   "/terms": [OWNER, ADMIN, SUPERVISOR, DRIVER],
 
-  // Setup catalogs. View/add/edit is open to all three staff roles; DELETE is
-  // narrower (Owner/Admin) and enforced by the backend (routes/holidays,
-  // routes/codingRules, routes/addresses) — each page hides its Delete
-  // buttons for Supervisor to match.
+  // Setup catalogs. All three staff roles can VIEW them (Supervisors need the
+  // rules to run daily operations), but add/edit/delete is Owner/Admin only —
+  // Supervisors are read-only. Enforced by the backend (routes/holidays,
+  // routes/codingRules, routes/addresses, routes/carParts) and mirrored by
+  // each page's `canEdit`, which hides its Add / Edit / Delete controls.
   "/holidays": [OWNER, ADMIN, SUPERVISOR],
   "/coding-restrictions": [OWNER, ADMIN, SUPERVISOR],
   "/addresses": [OWNER, ADMIN, SUPERVISOR],

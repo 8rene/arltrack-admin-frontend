@@ -205,7 +205,8 @@ const EmptyRow = ({ cols, children }) => (
 // string on the rule (not an address-hierarchy reference).
 //
 // Backend: routes/codingRules. View/add/edit — Owner, Admin, Supervisor.
-// Delete — Owner and Admin only (mirrored here by `canDelete`).
+// Add / edit / delete — Owner and Admin only (mirrored here by `canEdit`).
+// Supervisors get a read-only page.
 //
 // The live GPS check caches these rules for ~5 minutes (and holidays for
 // ~1 hour), so a change can take that long to affect an in-progress trip.
@@ -398,7 +399,8 @@ function Pagination({ page, totalPages, onChange, start, pageSize, count }) {
 
 export default function CodingRestrictions() {
   const { effectiveRole } = useAuth();
-  const canDelete = effectiveRole === "Owner" || effectiveRole === "Admin";
+  const canEdit = effectiveRole === "Owner" || effectiveRole === "Admin";
+  const canDelete = canEdit;
   const api = useApi();
   const [toast, showToast] = useToast();
 
@@ -519,7 +521,7 @@ export default function CodingRestrictions() {
         <div>
           <h1 className="text-2xl font-bold text-arl-dark">Coding Restrictions</h1>
         </div>
-        <button onClick={() => setCityDialog(true)} className={btnPrimary}>+ Add city</button>
+        {canEdit && <button onClick={() => setCityDialog(true)} className={btnPrimary}>+ Add city</button>}
       </div>
 
       {/* ── Summary ── */}
@@ -570,7 +572,7 @@ export default function CodingRestrictions() {
               <SkeletonRows rows={6} cols={gridDays.length + 2} />
             ) : cityRows.length === 0 ? (
               <EmptyRow cols={gridDays.length + 2}>
-                {data.cities.length === 0 ? "No coding schedules yet. Add a city to get started." : "No city matches your search."}
+                {data.cities.length === 0 ? (canEdit ? "No coding schedules yet. Add a city to get started." : "No coding schedules yet.") : "No city matches your search."}
               </EmptyRow>
             ) : (
               pagedRows.map((r) => (
@@ -610,6 +612,7 @@ export default function CodingRestrictions() {
           city={city}
           rules={cityRules}
           canDelete={canDelete}
+          canEdit={canEdit}
           onClose={() => setCity(null)}
           onEditCity={() => setCityToRename(city)}
           onDeleteCity={() => setCityToDelete({ city, count: cityRules.length })}
@@ -620,7 +623,7 @@ export default function CodingRestrictions() {
       )}
 
       {/* Dialogs below are rendered after the city modal so they stack on top of it. */}
-      {ruleDialog && (
+      {canEdit && ruleDialog && (
         <RuleDialog
           city={city}
           existing={ruleDialog.rule}
@@ -631,7 +634,7 @@ export default function CodingRestrictions() {
         />
       )}
 
-      {cityDialog && (
+      {canEdit && cityDialog && (
         <CityDialog
           existingCities={data.cities}
           allRules={data.rules}
@@ -646,7 +649,7 @@ export default function CodingRestrictions() {
         />
       )}
 
-      {cityToRename && (
+      {canEdit && cityToRename && (
         <RenameCityDialog
           oldName={cityToRename}
           existingCities={data.cities}
@@ -696,7 +699,7 @@ export default function CodingRestrictions() {
 // ─── A city's Monday–Sunday rules, in a modal ────────────────────────────────
 // Every day of the week gets a row. Days with no rule show "No coding" with an
 // Add button that pre-selects that day.
-function CityRulesModal({ city, rules, canDelete, onClose, onEditCity, onDeleteCity, onAdd, onEdit, onDelete }) {
+function CityRulesModal({ city, rules, canDelete, canEdit, onClose, onEditCity, onDeleteCity, onAdd, onEdit, onDelete }) {
   return (
     <Modal
       title={city}
@@ -720,11 +723,13 @@ function CityRulesModal({ city, rules, canDelete, onClose, onEditCity, onDeleteC
       <div className="mb-3">
         <CityMap readOnly value={city} />
       </div>
-      <div className="flex justify-end mb-4">
-        <button onClick={onEditCity} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>
-          Edit
-        </button>
-      </div>
+      {canEdit && (
+        <div className="flex justify-end mb-4">
+          <button onClick={onEditCity} className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}>
+            Edit
+          </button>
+        </div>
+      )}
       <div className="border border-gray-100 rounded-2xl overflow-x-auto mb-2">
         <table className="w-full text-sm font-sans min-w-[560px]">
           <thead>
@@ -732,7 +737,7 @@ function CityRulesModal({ city, rules, canDelete, onClose, onEditCity, onDeleteC
               <th className={thCls}>Day</th>
               <th className={thCls}>Time window</th>
               <th className={thCls}>Banned digits</th>
-              <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
+              {canEdit && <th className="px-5 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -748,17 +753,19 @@ function CityRulesModal({ city, rules, canDelete, onClose, onEditCity, onDeleteC
                 return [
                   <tr key={day} className="border-b border-gray-50">
                     {dayCell}
-                    <td className="px-5 py-3 text-gray-400" colSpan={2}>No coding</td>
-                    <td className="px-5 py-3">
-                      <div className="flex justify-end">
-                        <button
-                          onClick={() => onAdd(day)}
-                          className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}
-                        >
-                          + Add
-                        </button>
-                      </div>
-                    </td>
+                    <td className="px-5 py-3 text-gray-400" colSpan={canEdit ? 2 : 3}>No coding</td>
+                    {canEdit && (
+                      <td className="px-5 py-3">
+                        <div className="flex justify-end">
+                          <button
+                            onClick={() => onAdd(day)}
+                            className={`${actionBtn} border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100`}
+                          >
+                            + Add
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>,
                 ];
               }
@@ -768,12 +775,14 @@ function CityRulesModal({ city, rules, canDelete, onClose, onEditCity, onDeleteC
                   {dayCell}
                   <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{r.startTime} – {r.endTime}</td>
                   <td className="px-5 py-3"><DigitChips digits={r.bannedDigits} /></td>
-                  <td className="px-5 py-3">
-                    <RowActions
-                      onEdit={() => onEdit(r)}
-                      onDelete={canDelete ? () => onDelete(r) : null}
-                    />
-                  </td>
+                  {canEdit && (
+                    <td className="px-5 py-3">
+                      <RowActions
+                        onEdit={() => onEdit(r)}
+                        onDelete={canDelete ? () => onDelete(r) : null}
+                      />
+                    </td>
+                  )}
                 </tr>
               ));
             })}

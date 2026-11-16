@@ -190,8 +190,9 @@ function Pill({ children, tone = "teal" }) {
 // booking-time check both read the `holidays` collection). Dates are Manila
 // calendar dates ("YYYY-MM-DD"), exactly as the backend returns them.
 //
-// Backend: routes/holidays. View/add/edit — Owner, Admin, Supervisor.
-// Delete — Owner and Admin only (mirrored here by `canDelete`).
+// Backend: routes/holidays. View — Owner, Admin, Supervisor.
+// Add / edit / delete — Owner and Admin only (mirrored here by `canEdit`).
+// Supervisors get a read-only page.
 //
 // Switching the Year dropdown RETRACES every holiday onto that year: Holy
 // Week and National Heroes Day are recomputed from their real rules, every
@@ -284,7 +285,8 @@ const IconRefresh = ({ className = "w-4 h-4" }) => (
 
 export default function Holidays() {
   const { effectiveRole } = useAuth();
-  const canDelete = effectiveRole === "Owner" || effectiveRole === "Admin";
+  const canEdit = effectiveRole === "Owner" || effectiveRole === "Admin";
+  const canDelete = canEdit;
   const api = useApi();
   const [toast, showToast] = useToast();
 
@@ -423,10 +425,12 @@ export default function Holidays() {
                 <IconRefresh className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
                 Refresh
               </button>
-              <button onClick={() => setDialog({ holiday: null })}
-                className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold">
-                + Add holiday
-              </button>
+              {canEdit && (
+                <button onClick={() => setDialog({ holiday: null })}
+                  className="px-4 py-2 text-sm rounded-xl bg-arl-primary text-white hover:bg-[#16526a] font-semibold">
+                  + Add holiday
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -461,23 +465,23 @@ export default function Holidays() {
                 <SortableTh label="Date" active dir={sortDir} onSort={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))} />
                 <th className="px-4 py-3 text-left font-semibold">Holiday</th>
                 <th className="px-4 py-3 text-left font-semibold">Day</th>
-                <th className="px-4 py-3 text-left font-semibold">Action</th>
+                {canEdit && <th className="px-4 py-3 text-left font-semibold">Action</th>}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    {Array.from({ length: 4 }).map((__, j) => (
+                    {Array.from({ length: canEdit ? 4 : 3 }).map((__, j) => (
                       <td key={j} className="px-4 py-4"><div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" /></td>
                     ))}
                   </tr>
                 ))
               ) : visible.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="text-center py-16 text-gray-400 text-sm">
+                  <td colSpan={canEdit ? 4 : 3} className="text-center py-16 text-gray-400 text-sm">
                     {holidays.length === 0
-                      ? "No holidays yet. Add the first one."
+                      ? (canEdit ? "No holidays yet. Add the first one." : "No holidays yet.")
                       : selectedDay ? "No holidays on this day." : "No holidays found."}
                   </td>
                 </tr>
@@ -494,20 +498,22 @@ export default function Holidays() {
                       {isWeekendYmd(h.holidayDate) && <span className="ml-2 align-middle"><Pill tone="gray">Weekend</Pill></span>}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">{h.holidayDay || "—"}</td>
-                    <td className="px-4 py-3 text-left whitespace-nowrap">
-                      <div className="inline-flex items-center gap-2">
-                        <button onClick={() => setDialog({ holiday: h })}
-                          className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
-                          Edit
-                        </button>
-                        {canDelete && (
-                          <button onClick={() => setToDelete(h)}
-                            className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">
-                            Delete
+                    {canEdit && (
+                      <td className="px-4 py-3 text-left whitespace-nowrap">
+                        <div className="inline-flex items-center gap-2">
+                          <button onClick={() => setDialog({ holiday: h })}
+                            className="px-3.5 py-1 rounded-lg text-xs font-semibold bg-arl-primary text-white hover:bg-[#16526a] transition-colors">
+                            Edit
                           </button>
-                        )}
-                      </div>
-                    </td>
+                          {canDelete && (
+                            <button onClick={() => setToDelete(h)}
+                              className="px-3.5 py-1 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors">
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -517,7 +523,7 @@ export default function Holidays() {
         <Pagination page={page} totalPages={totalPages} onChange={setPage} start={start} pageSize={PAGE_SIZE} count={count} />
       </div>
 
-      {dialog && (
+      {canEdit && dialog && (
         <HolidayDialog
           existing={dialog.holiday}
           api={api}
@@ -526,7 +532,7 @@ export default function Holidays() {
         />
       )}
 
-      {toDelete && (
+      {canDelete && toDelete && (
         <ConfirmDialog
           title="Delete holiday?"
           danger
