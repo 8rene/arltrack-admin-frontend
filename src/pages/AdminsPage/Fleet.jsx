@@ -259,11 +259,11 @@ function fmtDuration(start, end) {
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Fleet() {
   const { effectiveRole } = useAuth();
-  // Owner, Admin and Supervisor can all edit an existing vehicle's details —
-  // the same three roles the backend's /api/fleet routes allow
-  // (routes/fleet/fleet.routes.js). Uses effectiveRole so an Admin previewing
-  // as another role sees exactly what that role would.
-  const canEdit = [ROLES.OWNER, ROLES.ADMIN, ROLES.SUPERVISOR].includes(effectiveRole);
+  // Only Owner and Admin can add, edit, change status of or delete vehicles
+  // (and manage brands/models). Supervisor has view-only access — the backend's
+  // /api/fleet write routes enforce the same rule (routes/fleet/fleet.routes.js).
+  // Uses effectiveRole so an Admin previewing as another role sees exactly what that role would.
+  const canEdit = [ROLES.OWNER, ROLES.ADMIN].includes(effectiveRole);
   const [cars, setCars]           = useState([]);
   const [brands, setBrands]       = useState([]);
   const [models, setModels]       = useState([]);
@@ -388,7 +388,7 @@ export default function Fleet() {
       {/* HEADER — Add Vehicle is the one primary action on this page */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         
-        <div className="flex items-center gap-2">
+        {canEdit && <div className="flex items-center gap-2">
           <button onClick={() => setShowManageBrands(true)}
             className="flex items-center gap-2 px-4 py-2 border border-gray-300 bg-white rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
             <Icons.Tag className="w-4 h-4" />
@@ -399,7 +399,7 @@ export default function Fleet() {
             <Icons.Plus className="w-4 h-4" />
             Add Vehicle
           </button>
-        </div>
+        </div>}
       </div>
 
       {/* STAT CARDS — click one to filter, same pattern as Bookings */}
@@ -602,18 +602,18 @@ function VehicleCard({ car, canEdit, onViewDetails, onStatusChange }) {
             <Icons.Car className="w-16 h-16" />
           </div>
         )}
-        {/* Status badge — click to change */}
+        {/* Status badge — click to change (Owner/Admin only) */}
         <div className="absolute top-3 right-3 z-10">
           <button
-            onClick={(e) => { e.stopPropagation(); setStatusOpen((v) => !v); }}
+            onClick={(e) => { e.stopPropagation(); if (canEdit) setStatusOpen((v) => !v); }}
             disabled={statusSaving}
             title={car.statusReason && (car.status === "Inactive" || car.status === "Maintenance") ? `${car.status}: ${car.statusReason}` : undefined}
-            className={`px-3 py-1 text-xs rounded-full font-semibold flex items-center gap-1 transition-opacity ${STATUS_STYLE[car.status] || "bg-gray-100 text-gray-600"} hover:opacity-80`}
+            className={`px-3 py-1 text-xs rounded-full font-semibold flex items-center gap-1 transition-opacity ${STATUS_STYLE[car.status] || "bg-gray-100 text-gray-600"} ${canEdit ? "hover:opacity-80" : "cursor-default"}`}
           >
             {statusSaving ? "…" : car.status}
-            <Icons.ChevronDown className="w-3 h-3" />
+            {canEdit && <Icons.ChevronDown className="w-3 h-3" />}
           </button>
-          {statusOpen && (
+          {canEdit && statusOpen && (
             <div className="absolute right-0 mt-1 bg-white border border-gray-100 rounded-xl shadow-xl overflow-hidden z-20 min-w-[130px]">
               {CAR_STATUSES.map((s) => (
                 <button key={s} onClick={(e) => { e.stopPropagation(); handleStatusChange(s); }}
