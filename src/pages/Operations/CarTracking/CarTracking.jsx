@@ -17,7 +17,7 @@ import ReturnChecklistModal from "../../../components/ReturnChecklistModal";
 import GeofenceBanner from "./GeofenceBanner";
 import PlaceLabel from "./PlaceLabel";
 import { reverseGeocode, roundKey } from "../../../utils/reverseGeocode";
-import { isGeofenceBreachedNow, isCodingRestrictedNow, activeCodingAlertNow } from "../../../utils/geofenceAlerts";
+import { isGeofenceBreachedNow, activeCodingAlertNow } from "../../../utils/geofenceAlerts";
 import { colorForCar } from "../../../utils/carColors";
 import { fetchCityBoundary } from "../../../utils/cityBoundary";
 
@@ -677,6 +677,7 @@ export default function CarTracking() {
   const [reviewHandoff, setReviewHandoff] = useState(null);
   const [deepLinkDone,  setDeepLinkDone]  = useState(false); // the Bookings → History deep link only auto-opens once
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(false); // hide/show the selected-car trip card body
   const [refreshTick,  setRefreshTick]  = useState(0);
 
   const mapRef      = useRef(null);
@@ -837,11 +838,20 @@ export default function CarTracking() {
         snap.docs.forEach((d) => {
           const data = d.data();
           if (!data.carID) return;
+          // A car can have several "active" sessions (an old unreturned trip + the current one). Keep the one
+          // that is actually receiving pings (newest lastPingReceivedAt), not whichever doc came last.
+          const stamp = Date.parse(data.lastPingReceivedAt || "") || 0;
+          if (map[data.carID] && map[data.carID]._stamp >= stamp) return;
           map[data.carID] = {
+            _stamp: stamp,
             geofenceAlerts:  data.geofenceAlerts  || [],
             codingAlerts:    data.codingAlerts    || [],
+            // Plain live value written by the backend (livePing.service.js). null = older trip that doesn't have it yet.
+            codingRestricted: typeof data.codingRestricted === "boolean" ? data.codingRestricted : null,
+            codingCity:      data.codingCity || null,
             geofenceZones:   data.geofenceZones   || [],
             dropoffLocation: data.dropoffLocation || null,
+            droppedOffTime:  data.droppedOffTime  || null,
           };
         });
         setLiveSessionsByCar(map);
@@ -866,6 +876,18 @@ export default function CarTracking() {
   const todayYmd = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); // Manila calendar day
   const holidayToday = holidays.find((h) => h.holidayDate === todayYmd) || null;
 
+  // Is this trip coding-restricted right now, and in which city? Reads the plain value the backend stores
+  // (codingRestricted / codingCity). Only a trip started before that value existed falls back to the alert log.
+  // A holiday suspends coding, so it always reads "not restricted".
+  const codingStateOf = (session) => {
+    if (!session || holidayToday) return { restricted: false, city: null };
+    if (typeof session.codingRestricted === "boolean") {
+      return { restricted: session.codingRestricted, city: session.codingCity || null };
+    }
+    const alert = activeCodingAlertNow(session.codingAlerts);
+    return { restricted: !!alert, city: alert?.city || null };
+  };
+
   // ── Real city boundary for whichever city(ies) currently have an active
   // coding restriction — keyed by city name (lowercased), not by car, so two
   // cars restricted in the same city at once share one fetch. Sequential
@@ -878,8 +900,8 @@ export default function CarTracking() {
   useEffect(() => {
     const citiesNeeded = new Set();
     Object.values(liveSessionsByCar).forEach((s) => {
-      const alert = holidayToday ? null : activeCodingAlertNow(s.codingAlerts);
-      if (alert?.city) citiesNeeded.add(alert.city);
+      const { restricted, city } = codingStateOf(s);
+      if (restricted && city) citiesNeeded.add(city);
     });
     const toFetch = [...citiesNeeded].filter((city) => {
       const key = city.toLowerCase();
@@ -980,8 +1002,25 @@ export default function CarTracking() {
 
   // ── Geofence / coding-restriction badges — from the realtime listener,
   // cheap (only active-trip cars are ever in this map). ─────────────────────
-  const isBreached          = (carId) => isGeofenceBreachedNow(liveSessionsByCar[carId]?.geofenceAlerts);
-  const isCodingRestricted  = (carId) => !holidayToday && isCodingRestrictedNow(liveSessionsByCar[carId]?.codingAlerts);
+  // "Outside its zone" = the backend logged a breach, OR the car has been dropped off and its live position is
+  // outside every saved zone right now. The second part reads the saved zones directly, so a dropped-off car
+  // (and one the backend hasn't logged yet) is flagged without waiting for the next ping's log entry.
+  const distMeters = (lat1, lng1, lat2, lng2) => {
+    const R = 6371000, rad = (d) => (d * Math.PI) / 180;
+    const a = Math.sin(rad(lat2 - lat1) / 2) ** 2 +
+      Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(rad(lng2 - lng1) / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+  const isOutsideSavedZones = (carId) => {
+    const loc = locationForCar(carId);
+    const zones = (liveSessionsByCar[carId]?.geofenceZones || []).filter((z) => typeof z.lat === "number" && typeof z.lng === "number");
+    if (!loc || typeof loc.lat !== "number" || typeof loc.lng !== "number" || !zones.length) return false;
+    return zones.every((z) => distMeters(loc.lat, loc.lng, z.lat, z.lng) > (z.radius || 500));
+  };
+  const isBreached          = (carId) =>
+    isGeofenceBreachedNow(liveSessionsByCar[carId]?.geofenceAlerts) ||
+    (!!liveSessionsByCar[carId]?.droppedOffTime && isOutsideSavedZones(carId));
+  const isCodingRestricted  = (carId) => codingStateOf(liveSessionsByCar[carId]).restricted;
 
   // Cars currently breaching a zone right now — feeds the top-center pulsing
   // banner on the map, same "show every breaching car, not just the focused
@@ -1132,7 +1171,8 @@ export default function CarTracking() {
       // zone). Uses the real city boundary once Nominatim resolves it;
       // falls back to an approximate circle around the car's current
       // position if the boundary fetch failed or hasn't resolved yet. ────
-      const codingAlert = holidayToday ? null : activeCodingAlertNow(session?.codingAlerts);
+      const codingState = codingStateOf(session);
+      const codingAlert = codingState.restricted ? { city: codingState.city } : null;
       if (codingAlert?.city) {
         const boundary = zoneBoundaries[codingAlert.city.toLowerCase()];
         const style = { color, fillColor: color, fillOpacity: 0.28, weight: 3 };
@@ -1746,9 +1786,31 @@ export default function CarTracking() {
 
           return (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-soft p-4 shrink-0 max-h-64 overflow-y-auto scrollbar-hide">
-              <p className="font-bold text-gray-800 text-sm mb-3">{getCarLabel(car)}</p>
+              <div className={`flex items-center justify-between gap-2 ${panelCollapsed ? "" : "mb-3"}`}>
+                <p className="font-bold text-gray-800 text-sm truncate">
+                  {getCarLabel(car)}
+                  {panelCollapsed && ongoing && (
+                    <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
+                      On trip
+                    </span>
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setPanelCollapsed(v => !v)}
+                  title={panelCollapsed ? "Show details" : "Hide details"}
+                  aria-label={panelCollapsed ? "Show details" : "Hide details"}
+                  aria-expanded={!panelCollapsed}
+                  className="shrink-0 p-1.5 rounded-full text-gray-500 hover:bg-gray-100 active:scale-95 transition-all"
+                >
+                  {panelCollapsed
+                    ? <Icons.ChevronDown className="w-4 h-4" />
+                    : <Icons.ChevronUp className="w-4 h-4" />}
+                </button>
+              </div>
 
-              {ongoing ? (
+              {panelCollapsed ? null : ongoing ? (
                 <div className="bg-teal-50 border border-teal-100 rounded-xl p-3">
                   <p className="text-xs font-semibold text-teal-800 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
