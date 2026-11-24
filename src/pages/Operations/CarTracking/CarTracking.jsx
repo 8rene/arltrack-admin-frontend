@@ -1002,8 +1002,8 @@ export default function CarTracking() {
 
   // ── Geofence / coding-restriction badges — from the realtime listener,
   // cheap (only active-trip cars are ever in this map). ─────────────────────
-  // "Outside its zone" = the backend logged a breach, OR the car has been dropped off and its live position is
-  // outside every saved zone right now. The second part reads the saved zones directly, so a dropped-off car
+  // "Outside its zone" = the backend logged a breach, OR the car's live position is
+  // outside every saved zone right now (trip active or dropped off). The second part reads the saved zones directly, so a dropped-off car
   // (and one the backend hasn't logged yet) is flagged without waiting for the next ping's log entry.
   const distMeters = (lat1, lng1, lat2, lng2) => {
     const R = 6371000, rad = (d) => (d * Math.PI) / 180;
@@ -1019,7 +1019,7 @@ export default function CarTracking() {
   };
   const isBreached          = (carId) =>
     isGeofenceBreachedNow(liveSessionsByCar[carId]?.geofenceAlerts) ||
-    (!!liveSessionsByCar[carId]?.droppedOffTime && isOutsideSavedZones(carId));
+    isOutsideSavedZones(carId); // live position vs saved zones, so it doesn't wait for the backend's log entry
   const isCodingRestricted  = (carId) => codingStateOf(liveSessionsByCar[carId]).restricted;
 
   // Cars currently breaching a zone right now — feeds the top-center pulsing
